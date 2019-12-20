@@ -16,6 +16,8 @@
 #include "base/time/time.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_export.h"
+#include "net/base/network_isolation_key.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/websockets/websocket_event_interface.h"
 #include "net/websockets/websocket_handshake_request_info.h"
 #include "net/websockets/websocket_handshake_response_info.h"
@@ -34,9 +36,9 @@ namespace net {
 
 class AuthChallengeInfo;
 class AuthCredentials;
-class HostPortPair;
 class HttpRequestHeaders;
 class HttpResponseHeaders;
+class IPEndPoint;
 class NetLogWithSource;
 class URLRequest;
 class URLRequestContext;
@@ -116,6 +118,7 @@ class NET_EXPORT_PRIVATE WebSocketStream {
     virtual void OnSSLCertificateError(
         std::unique_ptr<WebSocketEventInterface::SSLErrorCallbacks>
             ssl_error_callbacks,
+        int net_error,
         const SSLInfo& ssl_info,
         bool fatal) = 0;
 
@@ -129,9 +132,9 @@ class NET_EXPORT_PRIVATE WebSocketStream {
     // async case) cancels authentication. Otherwise the new credentials are set
     // and the opening handshake will be retried with the credentials.
     virtual int OnAuthRequired(
-        scoped_refptr<AuthChallengeInfo> auth_info,
+        const AuthChallengeInfo& auth_info,
         scoped_refptr<HttpResponseHeaders> response_headers,
-        const HostPortPair& host_port_pair,
+        const IPEndPoint& remote_endpoint,
         base::OnceCallback<void(const AuthCredentials*)> callback,
         base::Optional<AuthCredentials>* credentials) = 0;
   };
@@ -152,7 +155,8 @@ class NET_EXPORT_PRIVATE WebSocketStream {
       const GURL& socket_url,
       const std::vector<std::string>& requested_subprotocols,
       const url::Origin& origin,
-      const GURL& site_for_cookies,
+      const SiteForCookies& site_for_cookies,
+      const net::NetworkIsolationKey& network_isolation_key,
       const HttpRequestHeaders& additional_headers,
       URLRequestContext* url_request_context,
       const NetLogWithSource& net_log,
@@ -167,7 +171,8 @@ class NET_EXPORT_PRIVATE WebSocketStream {
       const GURL& socket_url,
       const std::vector<std::string>& requested_subprotocols,
       const url::Origin& origin,
-      const GURL& site_for_cookies,
+      const SiteForCookies& site_for_cookies,
+      const net::NetworkIsolationKey& network_isolation_key,
       const HttpRequestHeaders& additional_headers,
       URLRequestContext* url_request_context,
       const NetLogWithSource& net_log,
@@ -221,6 +226,9 @@ class NET_EXPORT_PRIVATE WebSocketStream {
   // Extensions which use reserved header bits should clear them when they are
   // set correctly. If the reserved header bits are set incorrectly, it is okay
   // to leave it to the caller to report the error.
+  //
+  // Each WebSocketFrame.data is owned by WebSocketStream and must be valid
+  // until next ReadFrames() call.
   virtual int ReadFrames(std::vector<std::unique_ptr<WebSocketFrame>>* frames,
                          CompletionOnceCallback callback) = 0;
 
@@ -275,7 +283,7 @@ void WebSocketDispatchOnFinishOpeningHandshake(
     WebSocketStream::ConnectDelegate* connect_delegate,
     const GURL& gurl,
     const scoped_refptr<HttpResponseHeaders>& headers,
-    const HostPortPair& socket_address,
+    const IPEndPoint& remote_endpoint,
     base::Time response_time);
 
 }  // namespace net

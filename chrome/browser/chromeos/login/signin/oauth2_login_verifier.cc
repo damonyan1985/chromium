@@ -7,7 +7,10 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "components/signin/public/identity_manager/accounts_cookie_mutator.h"
+#include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "content/public/browser/browser_thread.h"
+#include "google_apis/gaia/gaia_auth_util.h"
 
 using content::BrowserThread;
 
@@ -15,12 +18,10 @@ namespace chromeos {
 
 OAuth2LoginVerifier::OAuth2LoginVerifier(
     OAuth2LoginVerifier::Delegate* delegate,
-    GaiaCookieManagerService* cookie_manager_service,
-    identity::IdentityManager* identity_manager,
-    const std::string& primary_account_id,
+    signin::IdentityManager* identity_manager,
+    const CoreAccountId& primary_account_id,
     const std::string& oauthlogin_access_token)
     : delegate_(delegate),
-      cookie_manager_service_(cookie_manager_service),
       identity_manager_(identity_manager),
       primary_account_id_(primary_account_id),
       access_token_(oauthlogin_access_token) {
@@ -37,7 +38,7 @@ void OAuth2LoginVerifier::VerifyUserCookies() {
 
   std::vector<gaia::ListedAccount> accounts;
   std::vector<gaia::ListedAccount> signed_out_accounts;
-  identity::AccountsInCookieJarInfo accounts_in_cookie_jar_info =
+  signin::AccountsInCookieJarInfo accounts_in_cookie_jar_info =
       identity_manager_->GetAccountsInCookieJar();
   if (accounts_in_cookie_jar_info.accounts_are_fresh) {
     OnAccountsInCookieUpdated(
@@ -48,18 +49,24 @@ void OAuth2LoginVerifier::VerifyUserCookies() {
 
 void OAuth2LoginVerifier::VerifyProfileTokens() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  signin::AccountsCookieMutator::AddAccountToCookieCompletedCallback
+      completion_callback =
+          base::BindOnce(&OAuth2LoginVerifier::OnAddAccountToCookieCompleted,
+                         weak_ptr_factory_.GetWeakPtr());
   if (access_token_.empty()) {
-    cookie_manager_service_->AddAccountToCookie(
-        primary_account_id_, gaia::GaiaSource::kOAuth2LoginVerifier);
+    identity_manager_->GetAccountsCookieMutator()->AddAccountToCookie(
+        primary_account_id_, gaia::GaiaSource::kOAuth2LoginVerifier,
+        std::move(completion_callback));
   } else {
-    cookie_manager_service_->AddAccountToCookieWithToken(
+    identity_manager_->GetAccountsCookieMutator()->AddAccountToCookieWithToken(
         primary_account_id_, access_token_,
-        gaia::GaiaSource::kOAuth2LoginVerifier);
+        gaia::GaiaSource::kOAuth2LoginVerifier, std::move(completion_callback));
   }
 }
 
 void OAuth2LoginVerifier::OnAddAccountToCookieCompleted(
-    const std::string& account_id,
+    const CoreAccountId& account_id,
     const GoogleServiceAuthError& error) {
   if (account_id != primary_account_id_)
     return;
@@ -76,7 +83,7 @@ void OAuth2LoginVerifier::OnAddAccountToCookieCompleted(
 }
 
 void OAuth2LoginVerifier::OnAccountsInCookieUpdated(
-    const identity::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
+    const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info,
     const GoogleServiceAuthError& error) {
   if (error.state() == GoogleServiceAuthError::State::NONE) {
     VLOG(1) << "ListAccounts successful.";

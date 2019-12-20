@@ -42,7 +42,6 @@ BluetoothLowEnergyDeviceMac::BluetoothLowEnergyDeviceMac(
       peripheral_(peripheral, base::scoped_policy::RETAIN),
       connected_(false),
       discovery_pending_count_(0) {
-  DCHECK(BluetoothAdapterMac::IsLowEnergyAvailable());
   DCHECK(peripheral_);
   peripheral_delegate_.reset([[BluetoothLowEnergyPeripheralDelegate alloc]
       initWithBluetoothLowEnergyDeviceMac:this]);
@@ -152,10 +151,9 @@ void BluetoothLowEnergyDeviceMac::SetConnectionLatency(
   NOTIMPLEMENTED();
 }
 
-void BluetoothLowEnergyDeviceMac::Connect(
-    PairingDelegate* pairing_delegate,
-    const base::Closure& callback,
-    const ConnectErrorCallback& error_callback) {
+void BluetoothLowEnergyDeviceMac::Connect(PairingDelegate* pairing_delegate,
+                                          base::OnceClosure callback,
+                                          ConnectErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 
@@ -400,7 +398,6 @@ void BluetoothLowEnergyDeviceMac::DidWriteValueForDescriptor(
 // static
 std::string BluetoothLowEnergyDeviceMac::GetPeripheralIdentifier(
     CBPeripheral* peripheral) {
-  DCHECK(BluetoothAdapterMac::IsLowEnergyAvailable());
   NSUUID* uuid = [peripheral identifier];
   NSString* uuidString = [uuid UUIDString];
   return base::SysNSStringToUTF8(uuidString);

@@ -65,7 +65,8 @@ UncheckedScopedBlockingCall::~UncheckedScopedBlockingCall() {
 
 }  // namespace internal
 
-ScopedBlockingCall::ScopedBlockingCall(BlockingType blocking_type)
+ScopedBlockingCall::ScopedBlockingCall(const Location& from_here,
+                                       BlockingType blocking_type)
     : UncheckedScopedBlockingCall(blocking_type) {
 #if DCHECK_IS_ON()
   DCHECK(!tls_construction_in_progress.Get().Get());
@@ -73,9 +74,9 @@ ScopedBlockingCall::ScopedBlockingCall(BlockingType blocking_type)
 #endif
 
   internal::AssertBlockingAllowed();
-  TRACE_EVENT_BEGIN1("base", "ScopedBlockingCall", "blocking_type",
-                     static_cast<int>(blocking_type));
-
+  TRACE_EVENT_BEGIN2("base", "ScopedBlockingCall", "file_name",
+                     from_here.file_name(), "function_name",
+                     from_here.function_name());
 #if DCHECK_IS_ON()
   tls_construction_in_progress.Get().Set(false);
 #endif
@@ -88,7 +89,8 @@ ScopedBlockingCall::~ScopedBlockingCall() {
 namespace internal {
 
 ScopedBlockingCallWithBaseSyncPrimitives::
-    ScopedBlockingCallWithBaseSyncPrimitives(BlockingType blocking_type)
+    ScopedBlockingCallWithBaseSyncPrimitives(const Location& from_here,
+                                             BlockingType blocking_type)
     : UncheckedScopedBlockingCall(blocking_type) {
 #if DCHECK_IS_ON()
   DCHECK(!tls_construction_in_progress.Get().Get());
@@ -96,8 +98,9 @@ ScopedBlockingCallWithBaseSyncPrimitives::
 #endif
 
   internal::AssertBaseSyncPrimitivesAllowed();
-  TRACE_EVENT_BEGIN1("base", "ScopedBlockingCallWithBaseSyncPrimitives",
-                     "blocking_type", static_cast<int>(blocking_type));
+  TRACE_EVENT_BEGIN2("base", "ScopedBlockingCallWithBaseSyncPrimitives",
+                     "file_name", from_here.file_name(), "function_name",
+                     from_here.function_name());
 
 #if DCHECK_IS_ON()
   tls_construction_in_progress.Get().Set(false);
@@ -114,7 +117,7 @@ void SetBlockingObserverForCurrentThread(BlockingObserver* blocking_observer) {
   tls_blocking_observer.Get().Set(blocking_observer);
 }
 
-void ClearBlockingObserverForTesting() {
+void ClearBlockingObserverForCurrentThread() {
   tls_blocking_observer.Get().Set(nullptr);
 }
 

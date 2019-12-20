@@ -80,7 +80,7 @@ gfx::ImageSkiaRep CrostiniAppIcon::Source::GetImageForScale(float scale) {
 
   // Host loads icon asynchronously, so use default icon so far.
   int resource_id;
-  if (host_ && host_->app_id() == crostini::kCrostiniTerminalId) {
+  if (host_ && host_->app_id() == crostini::GetTerminalId()) {
     // Don't initiate the icon request from the container because we have this
     // one already.
     resource_id = IDR_LOGO_CROSTINI_TERMINAL;
@@ -198,8 +198,7 @@ CrostiniAppIcon::CrostiniAppIcon(Profile* profile,
               ->GetWeakPtr()),
       app_id_(app_id),
       resource_size_in_dip_(resource_size_in_dip),
-      observer_(observer),
-      weak_ptr_factory_(this) {
+      observer_(observer) {
   DCHECK_NE(observer_, nullptr);
   auto source = std::make_unique<Source>(weak_ptr_factory_.GetWeakPtr(),
                                          resource_size_in_dip);
@@ -216,8 +215,9 @@ void CrostiniAppIcon::LoadForScaleFactor(ui::ScaleFactor scale_factor) {
       registry_service_->GetIconPath(app_id_, scale_factor);
   DCHECK(!path.empty());
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::BindOnce(&CrostiniAppIcon::ReadOnFileThread, scale_factor, path),
       base::BindOnce(&CrostiniAppIcon::OnIconRead,
                      weak_ptr_factory_.GetWeakPtr()));

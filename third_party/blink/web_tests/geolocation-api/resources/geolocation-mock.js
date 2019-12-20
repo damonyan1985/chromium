@@ -8,7 +8,7 @@
 class GeolocationMock {
   constructor() {
     this.geolocationServiceInterceptor_ = new MojoInterfaceInterceptor(
-        blink.mojom.GeolocationService.name);
+        blink.mojom.GeolocationService.name, "context", true);
     this.geolocationServiceInterceptor_.oninterfacerequest =
         e => this.connectGeolocationService_(e.handle);
     this.geolocationServiceInterceptor_.start();
@@ -18,6 +18,11 @@ class GeolocationMock {
      * call.
     */
     this.geoposition_ = null;
+
+    /**
+     * While true, position requests will result in a timeout error.
+     */
+    this.shouldTimeout_ = false;
 
     /**
      * A pending request for permission awaiting a decision to be set via a
@@ -62,6 +67,11 @@ class GeolocationMock {
    * setGeolocationPositionUnavailableError().
    */
   queryNextPosition() {
+    if (this.shouldTimeout_) {
+      // Return a promise that will never be resolved. Since no geoposition is
+      // returned, the request will eventually time out.
+      return new Promise((resolve, reject) => {});
+    }
     if (!this.geoposition_) {
       this.setGeolocationPositionUnavailableError(
           'Test error: position not set before call to queryNextPosition()');
@@ -118,6 +128,13 @@ class GeolocationMock {
   }
 
   /**
+   * Sets whether geolocation requests should cause timeout errors.
+   */
+  setGeolocationTimeoutError(shouldTimeout) {
+    this.shouldTimeout_ = shouldTimeout;
+  }
+
+  /**
    * Reject any connection requests for the geolocation service. This will
    * trigger a connection error in the client.
    */
@@ -133,6 +150,11 @@ class GeolocationMock {
   createGeolocation(request, user_gesture) {
     switch (this.permissionStatus_) {
      case blink.mojom.PermissionStatus.ASK:
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          resolve(this.createGeolocation(request, user_gesture));
+        }, 50);
+      });
       setTimeout(() => { this.createGeolocation(request, user_gesture)}, 50);
       break;
 
@@ -143,6 +165,7 @@ class GeolocationMock {
      default:
       request.close();
     }
+    return Promise.resolve(this.permissionStatus_);
   }
 
   /**

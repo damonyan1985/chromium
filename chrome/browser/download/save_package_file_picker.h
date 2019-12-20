@@ -18,13 +18,12 @@ class DownloadPrefs;
 // Handles showing a dialog to the user to ask for the filename to save a page.
 class SavePackageFilePicker : public ui::SelectFileDialog::Listener {
  public:
-  SavePackageFilePicker(
-      content::WebContents* web_contents,
-      const base::FilePath& suggested_path,
-      const base::FilePath::StringType& default_extension,
-      bool can_save_as_complete,
-      DownloadPrefs* download_prefs,
-      const content::SavePackagePathPickedCallback& callback);
+  SavePackageFilePicker(content::WebContents* web_contents,
+                        const base::FilePath& suggested_path,
+                        const base::FilePath::StringType& default_extension,
+                        bool can_save_as_complete,
+                        DownloadPrefs* download_prefs,
+                        content::SavePackagePathPickedCallback callback);
   ~SavePackageFilePicker() override;
 
   // Used to disable prompting the user for a directory/filename of the saved
@@ -38,6 +37,7 @@ class SavePackageFilePicker : public ui::SelectFileDialog::Listener {
                     void* unused_params) override;
   void FileSelectionCanceled(void* unused_params) override;
 
+  bool ShouldSaveAsOnlyHTML(content::WebContents* web_contents) const;
   bool ShouldSaveAsMHTML() const;
 
   // Used to look up the renderer process for this request to get the context.

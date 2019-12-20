@@ -11,7 +11,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -24,7 +24,7 @@ class CannedBrowsingDataServiceWorkerHelperTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 };
 
@@ -37,7 +37,7 @@ TEST_F(CannedBrowsingDataServiceWorkerHelperTest, Empty) {
       new CannedBrowsingDataServiceWorkerHelper(ServiceWorkerContext()));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddServiceWorker(origin, scopes);
+  helper->Add(url::Origin::Create(origin));
   ASSERT_FALSE(helper->empty());
   helper->Reset();
   ASSERT_TRUE(helper->empty());
@@ -57,25 +57,25 @@ TEST_F(CannedBrowsingDataServiceWorkerHelperTest, Delete) {
       new CannedBrowsingDataServiceWorkerHelper(ServiceWorkerContext()));
 
   EXPECT_TRUE(helper->empty());
-  helper->AddServiceWorker(origin1, scopes1);
-  helper->AddServiceWorker(origin2, scopes2);
-  EXPECT_EQ(2u, helper->GetServiceWorkerCount());
+  helper->Add(url::Origin::Create(origin1));
+  helper->Add(url::Origin::Create(origin2));
+  EXPECT_EQ(2u, helper->GetCount());
   helper->DeleteServiceWorkers(origin2);
-  EXPECT_EQ(1u, helper->GetServiceWorkerCount());
+  EXPECT_EQ(1u, helper->GetCount());
 }
 
 TEST_F(CannedBrowsingDataServiceWorkerHelperTest, IgnoreExtensionsAndDevTools) {
   const GURL origin1("chrome-extension://abcdefghijklmnopqrstuvwxyz/");
-  const GURL origin2("chrome-devtools://abcdefghijklmnopqrstuvwxyz/");
+  const GURL origin2("devtools://abcdefghijklmnopqrstuvwxyz/");
   const std::vector<GURL> scopes;
 
   scoped_refptr<CannedBrowsingDataServiceWorkerHelper> helper(
       new CannedBrowsingDataServiceWorkerHelper(ServiceWorkerContext()));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddServiceWorker(origin1, scopes);
+  helper->Add(url::Origin::Create(origin1));
   ASSERT_TRUE(helper->empty());
-  helper->AddServiceWorker(origin2, scopes);
+  helper->Add(url::Origin::Create(origin2));
   ASSERT_TRUE(helper->empty());
 }
 

@@ -154,7 +154,7 @@ bool TestTaskManager::GetV8Memory(TaskId task_id,
 
 bool TestTaskManager::GetWebCacheStats(
     TaskId task_id,
-    blink::WebCache::ResourceTypeStats* stats) const {
+    blink::WebCacheResourceTypeStats* stats) const {
   return false;
 }
 
@@ -175,6 +175,10 @@ TaskIdList TestTaskManager::GetIdsOfTasksSharingSameProcess(
 
 size_t TestTaskManager::GetNumberOfTasksOnSameProcess(TaskId task_id) const {
   return 1;
+}
+
+bool TestTaskManager::IsRunningInVM(TaskId task_id) const {
+  return false;
 }
 
 TaskId TestTaskManager::GetTaskIdForWebContents(

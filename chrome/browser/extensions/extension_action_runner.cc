@@ -19,6 +19,7 @@
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
+#include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/permissions_updater.h"
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/tab_helper.h"
@@ -35,7 +36,8 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/api/declarative_net_request/action_tracker.h"
+#include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/extension_set.h"
@@ -70,9 +72,7 @@ ExtensionActionRunner::ExtensionActionRunner(content::WebContents* web_contents)
       browser_context_(web_contents->GetBrowserContext()),
       was_used_on_page_(false),
       ignore_active_tab_granted_(false),
-      test_observer_(nullptr),
-      extension_registry_observer_(this),
-      weak_factory_(this) {
+      test_observer_(nullptr) {
   CHECK(web_contents);
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context_));
 }
@@ -353,9 +353,6 @@ void ExtensionActionRunner::NotifyChange(const Extension* extension) {
     extension_action_api->NotifyChange(extension_action, web_contents(),
                                        browser_context_);
   }
-
-  // We also notify that page actions may have changed.
-  extension_action_api->NotifyPageActionsChanged(web_contents());
 }
 
 void ExtensionActionRunner::LogUMA() const {
@@ -376,18 +373,18 @@ void ExtensionActionRunner::ShowBlockedActionBubble(
     const base::Callback<void(ToolbarActionsBarBubbleDelegate::CloseAction)>&
         callback) {
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-  ToolbarActionsBar* toolbar_actions_bar =
-      browser ? browser->window()->GetToolbarActionsBar() : nullptr;
-  if (toolbar_actions_bar) {
-    if (default_bubble_close_action_for_testing_) {
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::BindOnce(callback, *default_bubble_close_action_for_testing_));
-    } else {
-      toolbar_actions_bar->ShowToolbarActionBubble(
-          std::make_unique<BlockedActionBubbleDelegate>(callback,
-                                                        extension->id()));
-    }
+  ExtensionsContainer* const extensions_container =
+      browser ? browser->window()->GetExtensionsContainer() : nullptr;
+  if (!extensions_container)
+    return;
+  if (default_bubble_close_action_for_testing_) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(callback, *default_bubble_close_action_for_testing_));
+  } else {
+    extensions_container->ShowToolbarActionBubble(
+        std::make_unique<BlockedActionBubbleDelegate>(callback,
+                                                      extension->id()));
   }
 }
 
@@ -453,6 +450,8 @@ void ExtensionActionRunner::UpdatePageAccessSettings(const Extension* extension,
 
   switch (new_access) {
     case PageAccess::RUN_ON_CLICK:
+      if (modifier.HasBroadGrantedHostPermissions())
+        modifier.RemoveBroadGrantedHostPermissions();
       // Note: SetWithholdHostPermissions() is a no-op if host permissions are
       // already being withheld.
       modifier.SetWithholdHostPermissions(true);
@@ -460,6 +459,8 @@ void ExtensionActionRunner::UpdatePageAccessSettings(const Extension* extension,
         modifier.RemoveGrantedHostPermission(url);
       break;
     case PageAccess::RUN_ON_SITE:
+      if (modifier.HasBroadGrantedHostPermissions())
+        modifier.RemoveBroadGrantedHostPermissions();
       // Note: SetWithholdHostPermissions() is a no-op if host permissions are
       // already being withheld.
       modifier.SetWithholdHostPermissions(true);
@@ -473,7 +474,7 @@ void ExtensionActionRunner::UpdatePageAccessSettings(const Extension* extension,
 }
 
 void ExtensionActionRunner::RunBlockedActions(const Extension* extension) {
-  DCHECK(base::ContainsKey(pending_scripts_, extension->id()) ||
+  DCHECK(base::Contains(pending_scripts_, extension->id()) ||
          web_request_blocked_.count(extension->id()) != 0);
 
   // Clicking to run the extension counts as granting it permission to run on
@@ -506,11 +507,21 @@ bool ExtensionActionRunner::OnMessageReceived(
 
 void ExtensionActionRunner::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!navigation_handle->IsInMainFrame() ||
-      !navigation_handle->HasCommitted() ||
-      navigation_handle->IsSameDocument()) {
-    return;
+  declarative_net_request::RulesMonitorService* rules_monitor_service =
+      declarative_net_request::RulesMonitorService::Get(browser_context_);
+
+  const bool is_main_frame = navigation_handle->IsInMainFrame();
+  const bool has_committed = navigation_handle->HasCommitted();
+
+  if (is_main_frame && !has_committed && rules_monitor_service) {
+    // Clean up any pending actions recorded in the action tracker for this
+    // navigation.
+    rules_monitor_service->action_tracker().ClearPendingNavigation(
+        navigation_handle->GetNavigationId());
   }
+
+  if (!is_main_frame || !has_committed || navigation_handle->IsSameDocument())
+    return;
 
   LogUMA();
   num_page_requests_ = 0;
@@ -525,11 +536,31 @@ void ExtensionActionRunner::DidFinishNavigation(
   // run".
   ExtensionActionAPI::Get(browser_context_)
       ->ClearAllValuesForTab(web_contents());
+  // |rules_monitor_service| can be null for some unit tests.
+  if (rules_monitor_service) {
+    int tab_id = ExtensionTabUtil::GetTabId(web_contents());
+    declarative_net_request::ActionTracker& action_tracker =
+        rules_monitor_service->action_tracker();
+    action_tracker.ResetActionCountForTab(tab_id,
+                                          navigation_handle->GetNavigationId());
+  }
 }
 
 void ExtensionActionRunner::WebContentsDestroyed() {
   ExtensionActionAPI::Get(browser_context_)
       ->ClearAllValuesForTab(web_contents());
+
+  declarative_net_request::RulesMonitorService* rules_monitor_service =
+      declarative_net_request::RulesMonitorService::Get(browser_context_);
+
+  // |rules_monitor_service| can be null for some unit tests.
+  if (rules_monitor_service) {
+    declarative_net_request::ActionTracker& action_tracker =
+        rules_monitor_service->action_tracker();
+
+    int tab_id = ExtensionTabUtil::GetTabId(web_contents());
+    action_tracker.ClearTabData(tab_id);
+  }
 }
 
 void ExtensionActionRunner::OnExtensionUnloaded(
@@ -539,8 +570,7 @@ void ExtensionActionRunner::OnExtensionUnloaded(
   auto iter = pending_scripts_.find(extension->id());
   if (iter != pending_scripts_.end()) {
     pending_scripts_.erase(iter);
-    ExtensionActionAPI::Get(browser_context_)
-        ->NotifyPageActionsChanged(web_contents());
+    NotifyChange(extension);
   }
 }
 

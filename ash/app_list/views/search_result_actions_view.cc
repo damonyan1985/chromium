@@ -11,10 +11,14 @@
 
 #include "ash/app_list/views/search_result_actions_view_delegate.h"
 #include "ash/app_list/views/search_result_view.h"
+#include "ash/public/cpp/app_list/app_list_config.h"
+#include "base/numerics/ranges.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/image/image_skia_operations.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
@@ -24,7 +28,7 @@
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/layout/box_layout.h"
 
-namespace app_list {
+namespace ash {
 
 namespace {
 
@@ -68,6 +72,8 @@ class SearchResultImageButton : public views::ImageButton {
   // views::View overrides:
   void OnPaintBackground(gfx::Canvas* canvas) override;
 
+  void SetButtonImage(const gfx::ImageSkia& source, int icon_dimension);
+
   int GetInkDropRadius() const;
   const char* GetClassName() const override;
 
@@ -91,10 +97,15 @@ SearchResultImageButton::SearchResultImageButton(
   SetInkDropMode(InkDropMode::ON);
 
   SetPreferredSize({kImageButtonSizeDip, kImageButtonSizeDip});
-  SetImageAlignment(HorizontalAlignment::ALIGN_CENTER,
-                    VerticalAlignment::ALIGN_MIDDLE);
-  SetImage(views::ImageButton::STATE_NORMAL, &action.image);
+  SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+  SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
+
+  SetButtonImage(action.image,
+                 AppListConfig::instance().search_list_icon_dimension());
+
   SetAccessibleName(action.tooltip_text);
+
+  SetTooltipText(action.tooltip_text);
 
   SetVisible(!visible_on_hover_);
 }
@@ -102,6 +113,8 @@ SearchResultImageButton::SearchResultImageButton(
 void SearchResultImageButton::OnFocus() {
   parent_->ActionButtonStateChanged();
   SchedulePaint();
+  if (GetVisible())
+    NotifyAccessibilityEvent(ax::mojom::Event::kFocus, true);
 }
 
 void SearchResultImageButton::OnBlur() {
@@ -168,21 +181,16 @@ SearchResultImageButton::CreateInkDropHighlight() const {
 }
 
 void SearchResultImageButton::UpdateOnStateChanged() {
-  if (!visible_on_hover_)
-    return;
-
   // Show button if the associated result row is hovered or selected, or one
   // of the action buttons is selected.
-  if (parent_->IsSearchResultHoveredOrSelected() ||
-      parent()->Contains(GetFocusManager()->GetFocusedView())) {
-    SetVisible(true);
-  } else {
-    SetVisible(false);
+  if (visible_on_hover_) {
+    SetVisible(parent_->IsSearchResultHoveredOrSelected() ||
+               parent()->Contains(GetFocusManager()->GetFocusedView()));
   }
 }
 
 void SearchResultImageButton::OnPaintBackground(gfx::Canvas* canvas) {
-  if (HasFocus()) {
+  if (HasFocus() || parent_->GetSelectedAction() == tag()) {
     cc::PaintFlags circle_flags;
     circle_flags.setAntiAlias(true);
     circle_flags.setColor(kButtonHoverColor);
@@ -190,6 +198,14 @@ void SearchResultImageButton::OnPaintBackground(gfx::Canvas* canvas) {
     canvas->DrawCircle(GetLocalBounds().CenterPoint(), GetInkDropRadius(),
                        circle_flags);
   }
+}
+
+void SearchResultImageButton::SetButtonImage(const gfx::ImageSkia& source,
+                                             int icon_dimension) {
+  SetImage(views::ImageButton::STATE_NORMAL,
+           gfx::ImageSkiaOperations::CreateResizedImage(
+               source, skia::ImageOperations::RESIZE_BEST,
+               gfx::Size(icon_dimension, icon_dimension)));
 }
 
 int SearchResultImageButton::GetInkDropRadius() const {
@@ -202,45 +218,27 @@ const char* SearchResultImageButton::GetClassName() const {
 
 SearchResultActionsView::SearchResultActionsView(
     SearchResultActionsViewDelegate* delegate)
-    : delegate_(delegate), selected_action_(-1) {
+    : delegate_(delegate) {
   SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::kHorizontal, gfx::Insets(),
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
       kActionButtonBetweenSpacing));
 }
 
 SearchResultActionsView::~SearchResultActionsView() {}
 
 void SearchResultActionsView::SetActions(const SearchResult::Actions& actions) {
+  if (selected_action_.has_value())
+    selected_action_.reset();
   buttons_.clear();
   RemoveAllChildViews(true);
 
-  for (size_t i = 0; i < actions.size(); ++i) {
-    const SearchResult::Action& action = actions.at(i);
-    CreateImageButton(action);
-  }
-
+  for (size_t i = 0; i < actions.size(); ++i)
+    CreateImageButton(actions[i], i);
   PreferredSizeChanged();
-  SetSelectedAction(-1);
 }
 
-void SearchResultActionsView::SetSelectedAction(int action_index) {
-  // Clamp |action_index| in [-1, child_count()].
-  action_index = std::min(child_count(), std::max(-1, action_index));
-
-  if (selected_action_ == action_index)
-    return;
-
-  selected_action_ = action_index;
-  SchedulePaint();
-
-  if (IsValidActionIndex(selected_action_)) {
-    child_at(selected_action_)
-        ->NotifyAccessibilityEvent(ax::mojom::Event::kHover, true);
-  }
-}
-
-bool SearchResultActionsView::IsValidActionIndex(int action_index) const {
-  return action_index >= 0 && action_index < child_count();
+bool SearchResultActionsView::IsValidActionIndex(size_t action_index) const {
+  return action_index < GetActionCount();
 }
 
 bool SearchResultActionsView::IsSearchResultHoveredOrSelected() const {
@@ -256,20 +254,84 @@ void SearchResultActionsView::ActionButtonStateChanged() {
   UpdateButtonsOnStateChanged();
 }
 
+const char* SearchResultActionsView::GetClassName() const {
+  return "SearchResultActionsView";
+}
+
+bool SearchResultActionsView::SelectInitialAction(bool reverse_tab_order) {
+  if (GetActionCount() == 0)
+    return false;
+
+  if (reverse_tab_order) {
+    selected_action_ = GetActionCount() - 1;
+  } else {
+    selected_action_.reset();
+  }
+  UpdateButtonsOnStateChanged();
+  return selected_action_.has_value();
+}
+
+bool SearchResultActionsView::SelectNextAction(bool reverse_tab_order) {
+  if (GetActionCount() == 0)
+    return false;
+
+  // For reverse tab order, consider moving to non-selected state.
+  if (reverse_tab_order) {
+    if (!selected_action_.has_value())
+      return false;
+
+    if (selected_action_.value() == 0) {
+      ClearSelectedAction();
+      return true;
+    }
+  }
+
+  const int next_index =
+      selected_action_.value_or(-1) + (reverse_tab_order ? -1 : 1);
+  if (!IsValidActionIndex(next_index))
+    return false;
+
+  selected_action_ = next_index;
+  UpdateButtonsOnStateChanged();
+  return true;
+}
+
+void SearchResultActionsView::NotifyA11yResultSelected() {
+  DCHECK(HasSelectedAction());
+
+  int selected_action = GetSelectedAction();
+  for (views::Button* button : buttons_) {
+    if (button->tag() == selected_action) {
+      button->NotifyAccessibilityEvent(ax::mojom::Event::kSelection, true);
+      return;
+    }
+  }
+}
+
+void SearchResultActionsView::ClearSelectedAction() {
+  selected_action_.reset();
+  UpdateButtonsOnStateChanged();
+}
+
+int SearchResultActionsView::GetSelectedAction() const {
+  return selected_action_.value_or(-1);
+}
+
+bool SearchResultActionsView::HasSelectedAction() const {
+  return selected_action_.has_value();
+}
+
 void SearchResultActionsView::CreateImageButton(
-    const SearchResult::Action& action) {
+    const SearchResult::Action& action,
+    int action_index) {
   SearchResultImageButton* button = new SearchResultImageButton(this, action);
+  button->set_tag(action_index);
   AddChildView(button);
   buttons_.emplace_back(button);
 }
 
-void SearchResultActionsView::OnPaint(gfx::Canvas* canvas) {
-  if (!IsValidActionIndex(selected_action_))
-    return;
-
-  const gfx::Rect active_action_bounds(child_at(selected_action_)->bounds());
-  const SkColor kActiveActionBackground = SkColorSetRGB(0xA0, 0xA0, 0xA0);
-  canvas->FillRect(active_action_bounds, kActiveActionBackground);
+size_t SearchResultActionsView::GetActionCount() const {
+  return buttons_.size();
 }
 
 void SearchResultActionsView::ChildVisibilityChanged(views::View* child) {
@@ -281,9 +343,9 @@ void SearchResultActionsView::ButtonPressed(views::Button* sender,
   if (!delegate_)
     return;
 
-  const int index = GetIndexOf(sender);
-  DCHECK_NE(-1, index);
-  delegate_->OnSearchResultActionActivated(index, event.flags());
+  DCHECK_GE(sender->tag(), 0);
+  DCHECK_LT(sender->tag(), static_cast<int>(GetActionCount()));
+  delegate_->OnSearchResultActionActivated(sender->tag(), event.flags());
 }
 
-}  // namespace app_list
+}  // namespace ash

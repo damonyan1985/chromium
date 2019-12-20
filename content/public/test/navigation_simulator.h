@@ -11,14 +11,17 @@
 #include "base/memory/scoped_refptr.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/reload_type.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/mojom/referrer.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
 
 namespace net {
-class HostPortPair;
+class IPEndPoint;
 class HttpResponseHeaders;
+class SSLInfo;
 }  // namespace net
 
 namespace content {
@@ -27,7 +30,6 @@ class NavigationHandle;
 class RenderFrameHost;
 class WebContents;
 struct GlobalRequestID;
-struct Referrer;
 
 // An interface for simulating a navigation in unit tests. Supports both
 // renderer and browser-initiated navigations.
@@ -195,6 +197,11 @@ class NavigationSimulator {
   // Simulates the commit of a navigation or an error page aborting.
   virtual void AbortCommit() = 0;
 
+  // Simulates aborting the navigation from the renderer, e.g. window.stop(),
+  // before it was committed in the renderer.
+  // Note: this is only valid for renderer-initiated navigations.
+  virtual void AbortFromRenderer() = 0;
+
   // Simulates the navigation failing with the error code |error_code| and
   // response headers |response_headers|.
   virtual void FailWithResponseHeaders(
@@ -202,6 +209,8 @@ class NavigationSimulator {
       scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
 
   // Simulates the navigation failing with the error code |error_code|.
+  // IMPORTANT NOTE: This is simulating a network connection error and implies
+  // we do not get a response. Error codes like 204 are not properly managed.
   virtual void Fail(int error_code) = 0;
 
   // Simulates the commit of an error page following a navigation failure.
@@ -242,29 +251,37 @@ class NavigationSimulator {
   // Sets whether this navigation originated as the result of a form submission.
   virtual void SetIsFormSubmission(bool is_form_submission) = 0;
 
+  // Sets whether this navigation originated as the result of a link click.
+  virtual void SetWasInitiatedByLinkClick(bool was_initiated_by_link_click) = 0;
+
   // The following parameters can change during redirects. They should be
   // specified before calling |Start| if they need to apply to the navigation to
   // the original url. Otherwise, they should be specified before calling
   // |Redirect|.
-  virtual void SetReferrer(const Referrer& referrer) = 0;
+  virtual void SetReferrer(blink::mojom::ReferrerPtr referrer) = 0;
 
   // The following parameters can change at any point until the page fails or
   // commits. They should be specified before calling |Fail| or |Commit|.
-  virtual void SetSocketAddress(const net::HostPortPair& socket_address) = 0;
+  virtual void SetSocketAddress(const net::IPEndPoint& remote_endpoint) = 0;
+
+  // Pretend the navigation response is served from cache.
+  virtual void SetWasFetchedViaCache(bool was_fetched_via_cache) = 0;
 
   // Pretend the navigation is against an inner response of a signed exchange.
   virtual void SetIsSignedExchangeInnerResponse(
       bool is_signed_exchange_inner_response) = 0;
 
-  // Sets the InterfaceProvider interface request to pass in as an argument to
+  // Sets the InterfaceProvider interface receiver to pass in as an argument to
   // DidCommitProvisionalLoad for cross-document navigations. If not called,
-  // a stub will be passed in (which will never receive any interface requests).
+  // a stub will be passed in (which will never receive any interface
+  // receivers).
   //
   // This interface connection would normally be created by the RenderFrame,
   // with the client end bound to |remote_interfaces_| to allow the new document
   // to access services exposed by the RenderFrameHost.
-  virtual void SetInterfaceProviderRequest(
-      service_manager::mojom::InterfaceProviderRequest request) = 0;
+  virtual void SetInterfaceProviderReceiver(
+      mojo::PendingReceiver<service_manager::mojom::InterfaceProvider>
+          receiver) = 0;
 
   // Provides the contents mime type to be set at commit. It should be
   // specified before calling |Commit|.
@@ -279,6 +296,10 @@ class NavigationSimulator {
   // in throttles deferring the navigation with a call to Wait().
   virtual void SetAutoAdvance(bool auto_advance) = 0;
 
+  // Sets the SSLInfo to be set on the response. This should be called before
+  // Commit().
+  virtual void SetSSLInfo(const net::SSLInfo& ssl_info) = 0;
+
   // --------------------------------------------------------------------------
 
   // Gets the last throttle check result computed by the navigation throttles.
@@ -289,13 +310,28 @@ class NavigationSimulator {
   // Returns the NavigationHandle associated with the navigation being
   // simulated. It is an error to call this before Start() or after the
   // navigation has finished (successfully or not).
-  virtual NavigationHandle* GetNavigationHandle() const = 0;
+  virtual NavigationHandle* GetNavigationHandle() = 0;
 
   // Returns the GlobalRequestID for the simulated navigation request. Can be
   // invoked after the navigation has completed. It is an error to call this
   // before the simulated navigation has completed its WillProcessResponse
   // callback.
-  virtual GlobalRequestID GetGlobalRequestID() const = 0;
+  virtual GlobalRequestID GetGlobalRequestID() = 0;
+
+  // By default, committing a navigation will also simulate the load stopping.
+  // In the cases where the NavigationSimulator needs to navigate but still be
+  // in a loading state, use the functions below.
+
+  // If |keep_loading| is true, maintain the loading state after committing.
+  virtual void SetKeepLoading(bool keep_loading) = 0;
+
+  // Simulate the ongoing load stopping successfully.
+  virtual void StopLoading() = 0;
+
+  // Simulates the ongoing load stopping due to |error_code|.
+  virtual void FailLoading(const GURL& url,
+                           int error_code,
+                           const base::string16& error_description) = 0;
 
  private:
   // This interface should only be implemented inside content.

@@ -37,6 +37,9 @@ void SecurityInterstitialTabHelper::DidFinishNavigation(
   if (it != blocking_pages_for_navigations_.end()) {
     blocking_pages_for_navigations_.erase(it);
   }
+
+  // Interstitials may change the visibility of the URL or other security state.
+  web_contents()->DidChangeVisibleSecurityState();
 }
 
 void SecurityInterstitialTabHelper::WebContentsDestroyed() {
@@ -60,6 +63,15 @@ void SecurityInterstitialTabHelper::AssociateBlockingPage(
   helper->SetBlockingPage(navigation_id, std::move(blocking_page));
 }
 
+bool SecurityInterstitialTabHelper::ShouldDisplayURL() const {
+  CHECK(IsDisplayingInterstitial());
+  return blocking_page_for_currently_committed_navigation_->ShouldDisplayURL();
+}
+
+bool SecurityInterstitialTabHelper::IsDisplayingInterstitial() const {
+  return blocking_page_for_currently_committed_navigation_ != nullptr;
+}
+
 security_interstitials::SecurityInterstitialPage*
 SecurityInterstitialTabHelper::
     GetBlockingPageForCurrentlyCommittedNavigationForTesting() {
@@ -68,7 +80,7 @@ SecurityInterstitialTabHelper::
 
 SecurityInterstitialTabHelper::SecurityInterstitialTabHelper(
     content::WebContents* web_contents)
-    : WebContentsObserver(web_contents), binding_(web_contents, this) {}
+    : WebContentsObserver(web_contents), receiver_(web_contents, this) {}
 
 void SecurityInterstitialTabHelper::SetBlockingPage(
     int64_t navigation_id,
@@ -110,8 +122,8 @@ void SecurityInterstitialTabHelper::OpenHelpCenter() {
 }
 
 void SecurityInterstitialTabHelper::OpenDiagnostic() {
-  // SSL error pages do not implement this.
-  NOTREACHED();
+  HandleCommand(
+      security_interstitials::SecurityInterstitialCommand::CMD_OPEN_DIAGNOSTIC);
 }
 
 void SecurityInterstitialTabHelper::Reload() {
@@ -150,8 +162,8 @@ void SecurityInterstitialTabHelper::OpenWhitepaper() {
 }
 
 void SecurityInterstitialTabHelper::ReportPhishingError() {
-  // SSL error pages do not implement this.
-  NOTREACHED();
+  HandleCommand(security_interstitials::SecurityInterstitialCommand::
+                    CMD_REPORT_PHISHING_ERROR);
 }
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(SecurityInterstitialTabHelper)

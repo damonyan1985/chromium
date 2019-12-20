@@ -86,6 +86,7 @@ class HostVerifierImpl : public HostVerifier,
       device_sync::mojom::NetworkRequestResult result,
       multidevice::RemoteDeviceRefList eligible_devices,
       multidevice::RemoteDeviceRefList ineligible_devices);
+  void OnNotifyDevicesFinished(device_sync::mojom::NetworkRequestResult result);
   void OnSyncTimerFired();
 
   HostBackendDelegate* host_backend_delegate_;
@@ -94,7 +95,7 @@ class HostVerifierImpl : public HostVerifier,
   base::Clock* clock_;
   std::unique_ptr<base::OneShotTimer> retry_timer_;
   std::unique_ptr<base::OneShotTimer> sync_timer_;
-  base::WeakPtrFactory<HostVerifierImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<HostVerifierImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(HostVerifierImpl);
 };

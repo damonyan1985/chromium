@@ -71,7 +71,7 @@ class AccountMigrationRunner {
     void FinishWithSuccess();
 
     // Called by implementations of |Step| to signal an unsuccessful execution.
-    void FinishWithFailure();
+    void FinishWithFailure(bool emit_uma_stats = true);
 
    private:
     friend class AccountMigrationRunner;
@@ -141,7 +141,7 @@ class AccountMigrationRunner {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<AccountMigrationRunner> weak_factory_;
+  base::WeakPtrFactory<AccountMigrationRunner> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AccountMigrationRunner);
 };

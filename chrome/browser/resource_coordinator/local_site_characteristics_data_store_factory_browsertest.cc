@@ -4,13 +4,13 @@
 
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_factory.h"
 
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/resource_coordinator/tab_manager_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -40,8 +40,6 @@ class LocalSiteCharacteristicsDataStoreFactoryTest
   ~LocalSiteCharacteristicsDataStoreFactoryTest() override = default;
 
   void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kSiteCharacteristicsDatabase);
     InProcessBrowserTest::SetUp();
   }
 
@@ -51,8 +49,6 @@ class LocalSiteCharacteristicsDataStoreFactoryTest
         chromeos::switches::kIgnoreUserProfileMappingForTests);
   }
 #endif
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalSiteCharacteristicsDataStoreFactoryTest);
 };
@@ -77,11 +73,8 @@ IN_PROC_BROWSER_TEST_F(LocalSiteCharacteristicsDataStoreFactoryTest, EndToEnd) {
   EXPECT_TRUE(DataStoreRespectsOffTheRecordValue(incognito_profile,
                                                  incognito_data_store));
 
-  content::WindowedNotificationObserver browser_creation_observer(
-      chrome::NOTIFICATION_BROWSER_OPENED,
-      content::NotificationService::AllSources());
   profiles::SwitchToGuestProfile(ProfileManager::CreateCallback());
-  browser_creation_observer.Wait();
+  ui_test_utils::WaitForBrowserToOpen();
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   Profile* guest_profile =

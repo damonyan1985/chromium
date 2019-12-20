@@ -11,15 +11,16 @@ import android.graphics.Rect;
 import android.os.Build;
 import android.os.StrictMode;
 import android.provider.Settings;
-import android.support.annotation.IntDef;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import android.support.v13.view.inputmethod.EditorInfoCompat;
 import android.support.v4.text.BidiFormatter;
+import android.support.v4.util.ObjectsCompat;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.Layout;
 import android.text.Selection;
+import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.text.style.ReplacementSpan;
 import android.util.AttributeSet;
 import android.view.GestureDetector;
@@ -31,13 +32,16 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
 
+import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Log;
 import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.chrome.browser.WindowDelegate;
-import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 
 import java.lang.annotation.Retention;
@@ -46,8 +50,8 @@ import java.lang.annotation.RetentionPolicy;
 /**
  * The URL text entry view for the Omnibox.
  */
-public class UrlBar extends AutocompleteEditText {
-    private static final String TAG = "cr_UrlBar";
+public abstract class UrlBar extends AutocompleteEditText {
+    private static final String TAG = "UrlBar";
 
     private static final boolean DEBUG = false;
 
@@ -58,15 +62,32 @@ public class UrlBar extends AutocompleteEditText {
     private static final CachedMetrics.ActionEvent ACTION_LONG_PRESS_SHARE =
             new CachedMetrics.ActionEvent("Omnibox.LongPress.Share");
 
-    // TODO(tedchoc): Replace with EditorInfoCompat#IME_FLAG_NO_PERSONALIZED_LEARNING or
-    //                EditorInfo#IME_FLAG_NO_PERSONALIZED_LEARNING as soon as either is available in
-    //                all build config types.
-    private static final int IME_FLAG_NO_PERSONALIZED_LEARNING = 0x1000000;
+    private static final CachedMetrics.TimesHistogramSample TIME_UNTIL_COPY =
+            new CachedMetrics.TimesHistogramSample("Omnibox.TimeUntilFirst.Copy");
+    private static final CachedMetrics.TimesHistogramSample TIME_UNTIL_CUT =
+            new CachedMetrics.TimesHistogramSample("Omnibox.TimeUntilFirst.Cut");
+    private static final CachedMetrics.TimesHistogramSample TIME_UNTIL_SHARE =
+            new CachedMetrics.TimesHistogramSample("Omnibox.TimeUntilFirst.Share");
+
+    @IntDef({OmniboxAction.CUT, OmniboxAction.COPY, OmniboxAction.SHARE})
+    @Retention(RetentionPolicy.SOURCE)
+    /** Actions that can be taken from the omnibox. */
+    public @interface OmniboxAction {
+        int CUT = 0;
+        int COPY = 1;
+        int SHARE = 2;
+    }
 
     // TextView becomes very slow on long strings, so we limit maximum length
     // of what is displayed to the user, see limitDisplayableLength().
     private static final int MAX_DISPLAYABLE_LENGTH = 4000;
     private static final int MAX_DISPLAYABLE_LENGTH_LOW_END = 1000;
+
+    /** The last time that the omnibox was focused. */
+    private long mLastOmniboxFocusTime;
+
+    /** Whether a timing event should be recorded. This will be true once per omnibox focus. */
+    private boolean mShouldRecordTimingEvent;
 
     private boolean mFirstDrawComplete;
 
@@ -77,7 +98,8 @@ public class UrlBar extends AutocompleteEditText {
     private int mUrlDirection;
 
     private UrlBarDelegate mUrlBarDelegate;
-    private UrlTextChangeListener mTextChangeListener;
+    private UrlTextChangeListener mUrlTextChangeListener;
+    private TextWatcher mTextChangedListener;
     private UrlBarTextContextMenuDelegate mTextContextMenuDelegate;
     private UrlDirectionListener mUrlDirectionListener;
 
@@ -136,6 +158,14 @@ public class UrlBar extends AutocompleteEditText {
     }
 
     /**
+     * An optional string to use with AccessibilityNodeInfo to report text content.
+     * This is particularly important for auto-fill applications, such as password managers, that
+     * rely on AccessibilityNodeInfo data to apply related form-fill data.
+     */
+    private CharSequence mTextForAutofillServices;
+    protected boolean mRequestingAutofillStructure;
+
+    /**
      * Implement this to get updates when the direction of the text in the URL bar changes.
      * E.g. If the user is typing a URL, then erases it and starts typing a query in Arabic,
      * the direction will change from left-to-right to right-to-left.
@@ -179,15 +209,23 @@ public class UrlBar extends AutocompleteEditText {
          *         whatever's in the URL bar verbatim.
          */
         boolean shouldCutCopyVerbatim();
+
+        /**
+         * Called to notify that a tap or long press gesture has been detected.
+         * @param isLongPress Whether or not is a long press gesture.
+         */
+        void gestureDetected(boolean isLongPress);
     }
 
     /** Provides updates about the URL text changes. */
     public interface UrlTextChangeListener {
         /**
-         * Called when the text state has changed and the autocomplete suggestions should be
-         * refreshed.
+         * Called when the text state has changed.
+         * @param textWithoutAutocomplete The url bar text without autocompletion.
+         * @param textWithAutocomplete The url bar text with autocompletion.
          */
-        void onTextChangedForAutocomplete();
+        // TODO(crbug.com/1003080): Consider splitting these into two different callbacks.
+        void onTextChanged(String textWithoutAutocomplete, String textWithAutocomplete);
     }
 
     /** Delegate that provides the additional functionality to the textual context menus. */
@@ -239,16 +277,14 @@ public class UrlBar extends AutocompleteEditText {
                 new GestureDetector(getContext(), new GestureDetector.SimpleOnGestureListener() {
                     @Override
                     public void onLongPress(MotionEvent e) {
-                        ToolbarManager.recordOmniboxFocusReason(
-                                ToolbarManager.OmniboxFocusReason.OMNIBOX_LONG_PRESS);
+                        mUrlBarDelegate.gestureDetected(true);
                         performLongClick();
                     }
 
                     @Override
                     public boolean onSingleTapUp(MotionEvent e) {
                         requestFocus();
-                        ToolbarManager.recordOmniboxFocusReason(
-                                ToolbarManager.OmniboxFocusReason.OMNIBOX_TAP);
+                        mUrlBarDelegate.gestureDetected(false);
                         return true;
                     }
                 }, ThreadUtils.getUiThreadHandler());
@@ -261,6 +297,30 @@ public class UrlBar extends AutocompleteEditText {
         });
 
         ApiCompatibilityUtils.disableSmartSelectionTextClassifier(this);
+    }
+
+    /**
+     * Record than an action occurred in the omnibox.
+     * @param actionTaken The action taken that triggered the recording.
+     * @param lastOmniboxFocusTime The time that the last omnibox focus event occurred.
+     */
+    public static void recordTimedActionForMetrics(
+            @OmniboxAction int actionTaken, long lastOmniboxFocusTime) {
+        final long finalTime = System.currentTimeMillis() - lastOmniboxFocusTime;
+        assert finalTime >= 0;
+        switch (actionTaken) {
+            case OmniboxAction.COPY:
+                TIME_UNTIL_COPY.record(finalTime);
+                break;
+            case OmniboxAction.CUT:
+                TIME_UNTIL_CUT.record(finalTime);
+                break;
+            case OmniboxAction.SHARE:
+                TIME_UNTIL_SHARE.record(finalTime);
+                break;
+            default:
+                break;
+        }
     }
 
     /**
@@ -304,7 +364,9 @@ public class UrlBar extends AutocompleteEditText {
 
         if (focused) {
             mPendingScroll = false;
+            mLastOmniboxFocusTime = System.currentTimeMillis();
         }
+        mShouldRecordTimingEvent = focused;
 
         fixupTextDirection();
     }
@@ -331,12 +393,12 @@ public class UrlBar extends AutocompleteEditText {
         // insertion point when an RTL user enters RTL text). Also render text normally when the
         // text field is empty (because then it displays an instruction that is not a URL).
         if (mFocused || length() == 0 || !mUrlBarDelegate.shouldForceLTR()) {
-            ApiCompatibilityUtils.setTextDirection(this, TEXT_DIRECTION_INHERIT);
+            setTextDirection(TEXT_DIRECTION_INHERIT);
         } else {
-            ApiCompatibilityUtils.setTextDirection(this, TEXT_DIRECTION_LTR);
+            setTextDirection(TEXT_DIRECTION_LTR);
         }
         // Always align to the same as the paragraph direction (LTR = left, RTL = right).
-        ApiCompatibilityUtils.setTextAlignment(this, TEXT_ALIGNMENT_TEXT_START);
+        setTextAlignment(TEXT_ALIGNMENT_TEXT_START);
     }
 
     @Override
@@ -427,14 +489,6 @@ public class UrlBar extends AutocompleteEditText {
             Log.w(TAG, "Ignoring IndexOutOfBoundsException in UrlBar#onTouchEvent.", e);
             return true;
         }
-    }
-
-    @Override
-    public boolean performLongClick(float x, float y) {
-        if (!shouldPerformLongClick()) return false;
-
-        releaseSuppressedTouchDownEvent();
-        return super.performLongClick(x, y);
     }
 
     @Override
@@ -542,7 +596,29 @@ public class UrlBar extends AutocompleteEditText {
      * @param listener The listener to be notified.
      */
     public void setUrlTextChangeListener(UrlTextChangeListener listener) {
-        mTextChangeListener = listener;
+        mUrlTextChangeListener = listener;
+    }
+
+    /**
+     * Set the listener to be notified when the view's text has changed.
+     * @param textChangedListener The listener to be notified.
+     */
+    public void setTextChangedListener(TextWatcher textChangedListener) {
+        if (ObjectsCompat.equals(mTextChangedListener, textChangedListener)) {
+            return;
+        } else if (mTextChangedListener != null) {
+            removeTextChangedListener(mTextChangedListener);
+        }
+
+        mTextChangedListener = textChangedListener;
+        addTextChangedListener(mTextChangedListener);
+    }
+
+    /**
+     * Set the text to report to Autofill services upon call to onProvideAutofillStructure.
+     */
+    public void setTextForAutofillServices(CharSequence text) {
+        mTextForAutofillServices = text;
     }
 
     @Override
@@ -577,6 +653,12 @@ public class UrlBar extends AutocompleteEditText {
             } else {
                 ACTION_LONG_PRESS_COPY.record();
             }
+            if (mShouldRecordTimingEvent) {
+                recordTimedActionForMetrics(
+                        id == android.R.id.copy ? OmniboxAction.COPY : OmniboxAction.CUT,
+                        mLastOmniboxFocusTime);
+                mShouldRecordTimingEvent = false;
+            }
             String currentText = getText().toString();
             String replacementCutCopyText = mTextContextMenuDelegate.getReplacementCutCopyText(
                     currentText, getSelectionStart(), getSelectionEnd());
@@ -604,6 +686,10 @@ public class UrlBar extends AutocompleteEditText {
 
         if (id == android.R.id.shareText) {
             ACTION_LONG_PRESS_SHARE.record();
+            if (mShouldRecordTimingEvent) {
+                recordTimedActionForMetrics(OmniboxAction.SHARE, mLastOmniboxFocusTime);
+                mShouldRecordTimingEvent = false;
+            }
         }
 
         return super.onTextContextMenuItem(id);
@@ -659,7 +745,7 @@ public class UrlBar extends AutocompleteEditText {
         setSelection(0);
 
         float currentTextSize = getTextSize();
-        boolean currentIsRtl = ApiCompatibilityUtils.isLayoutRtl(this);
+        boolean currentIsRtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
 
         int measuredWidth = getMeasuredWidth() - (getPaddingLeft() + getPaddingRight());
         if (scrollType == mPreviousScrollType && TextUtils.equals(text, mPreviousScrollText)
@@ -699,7 +785,7 @@ public class UrlBar extends AutocompleteEditText {
         Editable text = getText();
         float scrollPos = 0f;
         if (TextUtils.isEmpty(text)) {
-            if (ApiCompatibilityUtils.isLayoutRtl(this)
+            if (getLayoutDirection() == LAYOUT_DIRECTION_RTL
                     && BidiFormatter.getInstance().isRtl(getHint())) {
                 // Compared to below that uses getPrimaryHorizontal(1) due to 0 returning an
                 // invalid value, if the text is empty, getPrimaryHorizontal(0) returns the actual
@@ -800,7 +886,7 @@ public class UrlBar extends AutocompleteEditText {
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
         InputConnection connection = super.onCreateInputConnection(outAttrs);
         if (mUrlBarDelegate == null || !mUrlBarDelegate.allowKeyboardLearning()) {
-            outAttrs.imeOptions |= IME_FLAG_NO_PERSONALIZED_LEARNING;
+            outAttrs.imeOptions |= EditorInfoCompat.IME_FLAG_NO_PERSONALIZED_LEARNING;
         }
         return connection;
     }
@@ -816,8 +902,8 @@ public class UrlBar extends AutocompleteEditText {
         // To limit displayable length we replace middle portion of the string with ellipsis.
         // That affects only presentation of the text, and doesn't affect other aspects like
         // copying to the clipboard, getting text with getText(), etc.
-        final int maxLength = SysUtils.isLowEndDevice()
-                ? MAX_DISPLAYABLE_LENGTH_LOW_END : MAX_DISPLAYABLE_LENGTH;
+        final int maxLength =
+                SysUtils.isLowEndDevice() ? MAX_DISPLAYABLE_LENGTH_LOW_END : MAX_DISPLAYABLE_LENGTH;
 
         Editable text = getText();
         int textLength = text.length();
@@ -858,6 +944,12 @@ public class UrlBar extends AutocompleteEditText {
     }
 
     @Override
+    public Editable getText() {
+        return mRequestingAutofillStructure ? new SpannableStringBuilder(mTextForAutofillServices)
+                                            : super.getText();
+    }
+
+    @Override
     public CharSequence getAccessibilityClassName() {
         // When UrlBar is used as a read-only TextView, force Talkback to pronounce it like
         // TextView. Otherwise Talkback will say "Edit box, http://...". crbug.com/636988
@@ -879,12 +971,13 @@ public class UrlBar extends AutocompleteEditText {
         if (DEBUG) {
             Log.i(TAG, "onAutocompleteTextStateChanged: DIS[%b]", updateDisplay);
         }
-        if (mTextChangeListener == null) return;
+        if (mUrlTextChangeListener == null) return;
         if (updateDisplay) limitDisplayableLength();
         // crbug.com/764749
         Log.w(TAG, "Text change observed, triggering autocomplete.");
 
-        mTextChangeListener.onTextChangedForAutocomplete();
+        mUrlTextChangeListener.onTextChanged(
+                getTextWithoutAutocomplete(), getTextWithAutocomplete());
     }
 
     /**
@@ -897,14 +990,14 @@ public class UrlBar extends AutocompleteEditText {
         public static final EllipsisSpan INSTANCE = new EllipsisSpan();
 
         @Override
-        public int getSize(Paint paint, CharSequence text,
-                int start, int end, Paint.FontMetricsInt fm) {
+        public int getSize(
+                Paint paint, CharSequence text, int start, int end, Paint.FontMetricsInt fm) {
             return (int) paint.measureText(ELLIPSIS);
         }
 
         @Override
-        public void draw(Canvas canvas, CharSequence text, int start, int end,
-                float x, int top, int y, int bottom, Paint paint) {
+        public void draw(Canvas canvas, CharSequence text, int start, int end, float x, int top,
+                int y, int bottom, Paint paint) {
             canvas.drawText(ELLIPSIS, x, y, paint);
         }
     }

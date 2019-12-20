@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
+namespace cssvalue {
 
 CSSURIValue::CSSURIValue(const AtomicString& relative_url,
                          const AtomicString& absolute_url)
@@ -17,6 +18,9 @@ CSSURIValue::CSSURIValue(const AtomicString& relative_url,
       relative_url_(relative_url),
       is_local_(relative_url.StartsWith('#')),
       absolute_url_(absolute_url) {}
+
+CSSURIValue::CSSURIValue(const AtomicString& absolute_url)
+    : CSSURIValue(absolute_url, absolute_url) {}
 
 CSSURIValue::CSSURIValue(const AtomicString& relative_url, const KURL& url)
     : CSSURIValue(relative_url, AtomicString(url.GetString())) {}
@@ -68,9 +72,21 @@ bool CSSURIValue::Equals(const CSSURIValue& other) const {
   return absolute_url_ == other.absolute_url_;
 }
 
+CSSURIValue* CSSURIValue::ValueWithURLMadeAbsolute(
+    const KURL& base_url,
+    const WTF::TextEncoding& charset) const {
+  if (!charset.IsValid()) {
+    return MakeGarbageCollected<CSSURIValue>(
+        AtomicString(KURL(base_url, relative_url_).GetString()));
+  }
+  return MakeGarbageCollected<CSSURIValue>(
+      AtomicString(KURL(base_url, relative_url_, charset).GetString()));
+}
+
 void CSSURIValue::TraceAfterDispatch(blink::Visitor* visitor) {
   visitor->Trace(resource_);
   CSSValue::TraceAfterDispatch(visitor);
 }
 
+}  // namespace cssvalue
 }  // namespace blink

@@ -7,6 +7,9 @@
 
 #include <stddef.h>
 
+#include <functional>
+#include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -83,16 +86,6 @@ class UnretainedWrapper {
 };
 
 template <typename T>
-class ConstRefWrapper {
- public:
-  explicit ConstRefWrapper(const T& o) : ptr_(&o) {}
-  const T& get() const { return *ptr_; }
-
- private:
-  const T* ptr_;
-};
-
-template <typename T>
 class RetainedRefWrapper {
  public:
   explicit RetainedRefWrapper(T* o) : ptr_(o) {}
@@ -111,26 +104,16 @@ struct IgnoreResultHelper {
   T functor_;
 };
 
-// An alternate implementation is to avoid the destructive copy, and instead
-// specialize ParamTraits<> for OwnedWrapper<> to change the StorageType to
-// a class that is essentially a std::unique_ptr<>.
-//
-// The current implementation has the benefit though of leaving ParamTraits<>
-// fully in callback_internal.h as well as avoiding type conversions during
-// storage.
-template <typename T>
+template <typename T, typename Deleter = std::default_delete<T>>
 class OwnedWrapper {
  public:
   explicit OwnedWrapper(T* o) : ptr_(o) {}
-  ~OwnedWrapper() { delete ptr_; }
-  T* get() const { return ptr_; }
-  OwnedWrapper(OwnedWrapper&& other) {
-    ptr_ = other.ptr_;
-    other.ptr_ = NULL;
-  }
+  explicit OwnedWrapper(std::unique_ptr<T, Deleter>&& ptr)
+      : ptr_(std::move(ptr)) {}
+  T* get() const { return ptr_.get(); }
 
  private:
-  mutable T* ptr_;
+  std::unique_ptr<T, Deleter> ptr_;
 };
 
 // PassedWrapper is a copyable adapter for a scoper that ignores const.
@@ -372,10 +355,9 @@ template <typename Functor, typename SFINAE>
 struct FunctorTraits;
 
 // For empty callable types.
-// This specialization is intended to allow binding captureless lambdas by
-// base::Bind(), based on the fact that captureless lambdas are empty while
-// capturing lambdas are not. This also allows any functors as far as it's an
-// empty class.
+// This specialization is intended to allow binding captureless lambdas, based
+// on the fact that captureless lambdas are empty while capturing lambdas are
+// not. This also allows any functors as far as it's an empty class.
 // Example:
 //
 //   // Captureless lambdas are allowed.
@@ -809,10 +791,10 @@ BanUnconstructedRefCountedReceiver(const Receiver& receiver, Unused&&...) {
   //
   //   scoped_refptr<Foo> oo = Foo::Create();
   DCHECK(receiver->HasAtLeastOneRef())
-      << "base::Bind() refuses to create the first reference to ref-counted "
-         "objects. That is typically happens around PostTask() in their "
-         "constructor, and such objects can be destroyed before `new` returns "
-         "if the task resolves fast enough.";
+      << "base::Bind{Once,Repeating}() refuses to create the first reference "
+         "to ref-counted objects. That typically happens around PostTask() in "
+         "their constructor, and such objects can be destroyed before `new` "
+         "returns if the task resolves fast enough.";
 }
 
 // BindState<>
@@ -935,12 +917,12 @@ using MakeBindStateType =
 //   };
 //
 //   WeakPtr<Foo> oo = nullptr;
-//   base::Bind(&Foo::bar, oo).Run();
+//   base::BindOnce(&Foo::bar, oo).Run();
 template <typename T>
 struct IsWeakReceiver : std::false_type {};
 
 template <typename T>
-struct IsWeakReceiver<internal::ConstRefWrapper<T>> : IsWeakReceiver<T> {};
+struct IsWeakReceiver<std::reference_wrapper<T>> : IsWeakReceiver<T> {};
 
 template <typename T>
 struct IsWeakReceiver<WeakPtr<T>> : std::true_type {};
@@ -962,10 +944,8 @@ struct BindUnwrapTraits<internal::UnretainedWrapper<T>> {
 };
 
 template <typename T>
-struct BindUnwrapTraits<internal::ConstRefWrapper<T>> {
-  static const T& Unwrap(const internal::ConstRefWrapper<T>& o) {
-    return o.get();
-  }
+struct BindUnwrapTraits<std::reference_wrapper<T>> {
+  static T& Unwrap(std::reference_wrapper<T> o) { return o.get(); }
 };
 
 template <typename T>
@@ -973,9 +953,11 @@ struct BindUnwrapTraits<internal::RetainedRefWrapper<T>> {
   static T* Unwrap(const internal::RetainedRefWrapper<T>& o) { return o.get(); }
 };
 
-template <typename T>
-struct BindUnwrapTraits<internal::OwnedWrapper<T>> {
-  static T* Unwrap(const internal::OwnedWrapper<T>& o) { return o.get(); }
+template <typename T, typename Deleter>
+struct BindUnwrapTraits<internal::OwnedWrapper<T, Deleter>> {
+  static T* Unwrap(const internal::OwnedWrapper<T, Deleter>& o) {
+    return o.get();
+  }
 };
 
 template <typename T>

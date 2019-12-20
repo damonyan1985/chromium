@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_TABS_BROWSER_TAB_STRIP_CONTROLLER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -19,7 +20,6 @@
 class Browser;
 class BrowserNonClientFrameView;
 class Tab;
-struct TabRendererData;
 
 namespace content {
 class WebContents;
@@ -55,45 +55,52 @@ class BrowserTabStripController : public TabStripController,
   int GetActiveIndex() const override;
   bool IsTabSelected(int model_index) const override;
   bool IsTabPinned(int model_index) const override;
-  void SelectTab(int model_index) override;
+  void SelectTab(int model_index, const ui::Event& event) override;
   void ExtendSelectionTo(int model_index) override;
   void ToggleSelected(int model_index) override;
   void AddSelectionFromAnchorTo(int model_index) override;
   bool BeforeCloseTab(int model_index, CloseTabSource source) override;
   void CloseTab(int model_index, CloseTabSource source) override;
+  void UngroupAllTabsInGroup(tab_groups::TabGroupId group) override;
+  void AddNewTabInGroup(tab_groups::TabGroupId group) override;
+  void MoveTab(int start_index, int final_index) override;
   void ShowContextMenuForTab(Tab* tab,
                              const gfx::Point& p,
                              ui::MenuSourceType source_type) override;
   int HasAvailableDragActions() const override;
   void OnDropIndexUpdate(int index, bool drop_before) override;
-  bool IsCompatibleWith(TabStrip* other) const override;
-  NewTabButtonPosition GetNewTabButtonPosition() const override;
   void CreateNewTab() override;
   void CreateNewTabWithLocation(const base::string16& loc) override;
   void StackedLayoutMaybeChanged() override;
-  bool IsSingleTabModeAvailable() override;
-  void OnStartedDraggingTabs() override;
-  void OnStoppedDraggingTabs() override;
+  void OnStartedDragging() override;
+  void OnStoppedDragging() override;
+  void OnKeyboardFocusedTabChanged(base::Optional<int> index) override;
+  const tab_groups::TabGroupVisualData* GetVisualDataForGroup(
+      tab_groups::TabGroupId group_id) const override;
+  void SetVisualDataForGroup(
+      tab_groups::TabGroupId group,
+      tab_groups::TabGroupVisualData visual_data) override;
+  std::vector<int> ListTabsInGroup(
+      tab_groups::TabGroupId group_id) const override;
   bool IsFrameCondensed() const override;
   bool HasVisibleBackgroundTabShapes() const override;
   bool EverHasVisibleBackgroundTabShapes() const override;
   bool ShouldPaintAsActiveFrame() const override;
   bool CanDrawStrokes() const override;
-  SkColor GetFrameColor(
-      BrowserNonClientFrameView::ActiveState active_state =
-          BrowserNonClientFrameView::kUseCurrent) const override;
+  SkColor GetFrameColor(BrowserFrameActiveState active_state) const override;
   SkColor GetToolbarTopSeparatorColor() const override;
-  int GetTabBackgroundResourceId(
-      BrowserNonClientFrameView::ActiveState active_state,
-      bool* has_custom_image) const override;
+  base::Optional<int> GetCustomBackgroundId(
+      BrowserFrameActiveState active_state) const override;
   base::string16 GetAccessibleTabName(const Tab* tab) const override;
   Profile* GetProfile() const override;
+  const Browser* GetBrowser() const override;
 
   // TabStripModelObserver implementation:
   void OnTabStripModelChanged(
       TabStripModel* tab_strip_model,
       const TabStripModelChange& change,
       const TabStripSelectionChange& selection) override;
+  void OnTabGroupChanged(const TabGroupChange& change) override;
   void TabChangedAt(content::WebContents* contents,
                     int model_index,
                     TabChangeType change_type) override;
@@ -102,6 +109,8 @@ class BrowserTabStripController : public TabStripController,
                              int model_index) override;
   void TabBlockedStateChanged(content::WebContents* contents,
                               int model_index) override;
+  void TabGroupedStateChanged(base::Optional<tab_groups::TabGroupId> group,
+                              int index) override;
   void SetTabNeedsAttentionAt(int index, bool attention) override;
 
   const Browser* browser() const { return browser_view_->browser(); }
@@ -109,19 +118,8 @@ class BrowserTabStripController : public TabStripController,
  private:
   class TabContextMenuContents;
 
-  // The context in which TabRendererDataFromModel is being called.
-  enum TabStatus {
-    NEW_TAB,
-    EXISTING_TAB
-  };
-
   BrowserNonClientFrameView* GetFrameView();
   const BrowserNonClientFrameView* GetFrameView() const;
-
-  // Returns the TabRendererData for the specified tab.
-  TabRendererData TabRendererDataFromModel(content::WebContents* contents,
-                                           int model_index,
-                                           TabStatus tab_status);
 
   // Invokes tabstrip_->SetTabData.
   void SetTabDataAt(content::WebContents* web_contents, int model_index);

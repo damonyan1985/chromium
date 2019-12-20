@@ -221,6 +221,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, TabsOnCreated) {
   ASSERT_TRUE(RunExtensionTest("tabs/on_created")) << message_;
 }
 
+IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, LazyBackgroundTabsOnCreated) {
+  ASSERT_TRUE(RunExtensionTest("tabs/lazy_background_on_created")) << message_;
+}
+
 IN_PROC_BROWSER_TEST_F(ExtensionApiTabTest, TabsOnUpdated) {
   ASSERT_TRUE(RunExtensionTest("tabs/on_updated")) << message_;
 }
@@ -309,7 +313,7 @@ IN_PROC_BROWSER_TEST_P(IncognitoExtensionApiTabTest, Tabs) {
       << message_;
 }
 
-INSTANTIATE_TEST_SUITE_P(, IncognitoExtensionApiTabTest, testing::Bool());
+INSTANTIATE_TEST_SUITE_P(All, IncognitoExtensionApiTabTest, testing::Bool());
 
 // Adding a new test? Awesome. But API tests are the old hotness. The new
 // hotness is extension_function_test_utils. See tabs_test.cc for an example.

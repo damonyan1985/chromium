@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include <iterator>
+#include <utility>
 
 #include "base/no_destructor.h"
 #include "base/strings/string_util.h"
@@ -17,6 +18,8 @@
 
 namespace content {
 namespace {
+
+bool g_registered_url_schemes = false;
 
 const char* const kDefaultSavableSchemes[] = {
   url::kHttpScheme,
@@ -39,11 +42,6 @@ std::vector<std::string>& GetMutableSavableSchemes() {
 
 // This set contains serialized canonicalized origins as well as hostname
 // patterns. The latter are canonicalized by component.
-std::vector<std::string>& GetMutableSecureOriginsAndPatterns() {
-  static base::NoDestructor<std::vector<std::string>> origins;
-  return *origins;
-}
-
 std::vector<std::string>& GetMutableServiceWorkerSchemes() {
   static base::NoDestructor<std::vector<std::string>> schemes;
   return *schemes;
@@ -51,7 +49,11 @@ std::vector<std::string>& GetMutableServiceWorkerSchemes() {
 
 }  // namespace
 
-void RegisterContentSchemes(bool lock_schemes) {
+void RegisterContentSchemes() {
+  // On Android, schemes may have been registered already.
+  if (g_registered_url_schemes)
+    return;
+  g_registered_url_schemes = true;
   ContentClient::Schemes schemes;
   GetContentClient()->AddAdditionalSchemes(&schemes);
 
@@ -95,14 +97,6 @@ void RegisterContentSchemes(bool lock_schemes) {
     url::EnableNonStandardSchemesForAndroidWebView();
 #endif
 
-  // Prevent future modification of the scheme lists. This is to prevent
-  // accidental creation of data races in the program. Add*Scheme aren't
-  // threadsafe so must be called when GURL isn't used on any other thread. This
-  // is really easy to mess up, so we say that all calls to Add*Scheme in Chrome
-  // must be inside this function.
-  if (lock_schemes)
-    url::LockSchemeRegistries();
-
   // Combine the default savable schemes with the additional ones given.
   GetMutableSavableSchemes().assign(std::begin(kDefaultSavableSchemes),
                                     std::end(kDefaultSavableSchemes));
@@ -111,16 +105,15 @@ void RegisterContentSchemes(bool lock_schemes) {
                                     schemes.savable_schemes.end());
 
   GetMutableServiceWorkerSchemes() = std::move(schemes.service_worker_schemes);
+}
 
-  GetMutableSecureOriginsAndPatterns() = std::move(schemes.secure_origins);
+void ReRegisterContentSchemesForTests() {
+  g_registered_url_schemes = false;
+  RegisterContentSchemes();
 }
 
 const std::vector<std::string>& GetSavableSchemes() {
   return GetMutableSavableSchemes();
-}
-
-const std::vector<std::string>& GetSecureOriginsAndPatterns() {
-  return GetMutableSecureOriginsAndPatterns();
 }
 
 const std::vector<std::string>& GetServiceWorkerSchemes() {

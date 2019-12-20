@@ -41,8 +41,8 @@ void CheckParse(const ConstCommandsTestData& data,
                 bool platform_specific_only,
                 std::vector<std::string>& platforms) {
   SCOPED_TRACE(std::string("Command name: |") + data.command_name + "| key: |" +
-               data.key + "| description: |" + data.description + "| index: " +
-               base::IntToString(i));
+               data.key + "| description: |" + data.description +
+               "| index: " + base::NumberToString(i));
 
   extensions::Command command;
   std::unique_ptr<base::DictionaryValue> input(new base::DictionaryValue);
@@ -67,7 +67,7 @@ void CheckParse(const ConstCommandsTestData& data,
   if (data.key[0] != '\0') {
     std::string current_platform = extensions::Command::CommandPlatform();
     if (platform_specific_only &&
-        !base::ContainsValue(platforms, current_platform)) {
+        !base::Contains(platforms, current_platform)) {
       // Given a |current_platform| without a |suggested_key|, |default| is
       // used. However, some keys, such as Search on Chrome OS, are only valid
       // for platform specific entries. Skip the test in this case.

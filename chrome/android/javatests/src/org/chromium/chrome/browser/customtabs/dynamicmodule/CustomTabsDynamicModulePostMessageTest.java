@@ -12,18 +12,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.customtabs.CustomTabsService;
-import android.support.customtabs.PostMessageBackend;
 import android.support.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.RuleChain;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.AppHooksModule;
@@ -31,12 +30,16 @@ import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.customtabs.CustomTabActivityTestRule;
+import org.chromium.chrome.browser.customtabs.dynamicmodule.CustomTabsDynamicModuleTestUtils.AppHooksModuleForTest;
 import org.chromium.chrome.browser.customtabs.dynamicmodule.CustomTabsDynamicModuleTestUtils.IntentBuilder;
-import org.chromium.chrome.browser.dependency_injection.ModuleFactoryOverrides;
+import org.chromium.chrome.browser.dependency_injection.ModuleOverridesRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.net.test.util.TestWebServer;
+
+import androidx.browser.customtabs.CustomTabsService;
+import androidx.browser.customtabs.PostMessageBackend;
 
 /**
  * Instrumentation tests for the CCT Dynamic Module post message API.
@@ -44,8 +47,15 @@ import org.chromium.net.test.util.TestWebServer;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class CustomTabsDynamicModulePostMessageTest {
+
+    private final TestRule mModuleOverridesRule = new ModuleOverridesRule()
+            .setOverride(AppHooksModule.Factory.class, AppHooksModuleForTest::new);
+
+    private final CustomTabActivityTestRule mActivityRule = new CustomTabActivityTestRule();
+
     @Rule
-    public CustomTabActivityTestRule mActivityRule = new CustomTabActivityTestRule();
+    public final TestRule mOverrideModulesThenLaunchRule =
+            RuleChain.outerRule(mModuleOverridesRule).around(mActivityRule);
 
     private TestWebServer mServer;
 
@@ -80,16 +90,13 @@ public class CustomTabsDynamicModulePostMessageTest {
 
     @Before
     public void setUp() throws Exception {
-        LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_BROWSER);
+        LibraryLoader.getInstance().ensureInitialized();
         mServer = TestWebServer.start();
-        ModuleFactoryOverrides.setOverride(AppHooksModule.Factory.class,
-                CustomTabsDynamicModuleTestUtils.AppHooksModuleForTest::new);
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         mServer.shutdown();
-        ModuleFactoryOverrides.clearOverrides();
     }
 
     /**
@@ -98,7 +105,7 @@ public class CustomTabsDynamicModulePostMessageTest {
     @Test
     @SmallTest
     @Features.EnableFeatures(ChromeFeatureList.CCT_MODULE_POST_MESSAGE)
-    public void testPostMessageFromDynamicModuleReceivedInPage() throws Exception {
+    public void testPostMessageFromDynamicModuleReceivedInPage() {
         final String url =
                 mServer.setResponse("/test.html", TITLE_FROM_POSTMESSAGE_TO_CHANNEL, null);
 
@@ -167,8 +174,8 @@ public class CustomTabsDynamicModulePostMessageTest {
         });
 
         assertTrue(coordinator.requestPostMessageChannel(FAKE_ORIGIN_URI));
-        messageChannelHelper.waitForCallback();
-        onPostMessageHelper.waitForCallback();
+        messageChannelHelper.waitForFirst();
+        onPostMessageHelper.waitForFirst();
     }
 
     /**
@@ -176,9 +183,10 @@ public class CustomTabsDynamicModulePostMessageTest {
      */
     @Test
     @SmallTest
-    @Features.EnableFeatures(ChromeFeatureList.CCT_MODULE_POST_MESSAGE)
-    @Features.DisableFeatures(ChromeFeatureList.CCT_MODULE)
-    public void testPostMessageFromDynamicModuleDisallowedBeforeModuleLoaded() throws Exception {
+    @Features
+            .EnableFeatures(ChromeFeatureList.CCT_MODULE_POST_MESSAGE)
+            @Features.DisableFeatures(ChromeFeatureList.CCT_MODULE)
+            public void testPostMessageFromDynamicModuleDisallowedBeforeModuleLoaded() {
         final CallbackHelper messageChannelHelper = new CallbackHelper();
         final CallbackHelper onPostMessageHelper = new CallbackHelper();
         final String url = mServer.setResponse("/test.html", MESSAGE_FROM_PAGE_TO_CHANNEL, null);
@@ -193,7 +201,8 @@ public class CustomTabsDynamicModulePostMessageTest {
         // onFinishNativeInitialization() call happens before therefore if we instantiate
         // DynamicModuleCoordinator now, the module will not be loaded.
         DynamicModuleCoordinator coordinator = getModuleCoordinator();
-        assertFalse(coordinator.isModuleLoading() || coordinator.isModuleLoaded());
+        assertFalse(coordinator.isModuleLoading() || coordinator.isModuleLoaded()
+                || coordinator.hasModuleFailedToLoad());
 
         // We shouldn't be able to open a channel or post messages yet.
         assertFalse(coordinator.requestPostMessageChannel(FAKE_ORIGIN_URI));
@@ -225,9 +234,10 @@ public class CustomTabsDynamicModulePostMessageTest {
 
     @Test
     @SmallTest
-    @Features.EnableFeatures(ChromeFeatureList.CCT_MODULE)
-    @Features.DisableFeatures(ChromeFeatureList.CCT_MODULE_POST_MESSAGE)
-    public void testPostMessageFromDynamicModuleDisallowedWhenFeatureDisabled() throws Exception {
+    @Features
+            .EnableFeatures(ChromeFeatureList.CCT_MODULE)
+            @Features.DisableFeatures(ChromeFeatureList.CCT_MODULE_POST_MESSAGE)
+            public void testPostMessageFromDynamicModuleDisallowedWhenFeatureDisabled() {
         final String url = mServer.setResponse("/test.html", MESSAGE_FROM_PAGE_TO_CHANNEL, null);
 
         Intent intent = new IntentBuilder(url).build();

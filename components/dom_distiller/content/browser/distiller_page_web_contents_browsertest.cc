@@ -17,7 +17,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/dom_distiller/content/browser/distiller_javascript_utils.h"
-#include "components/dom_distiller/content/browser/web_contents_main_frame_observer.h"
 #include "components/dom_distiller/core/distiller_page.h"
 #include "components/dom_distiller/core/proto/distilled_article.pb.h"
 #include "components/dom_distiller/core/proto/distilled_page.pb.h"
@@ -31,6 +30,7 @@
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/shell/browser/shell.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/dom_distiller_js/dom_distiller.pb.h"
@@ -46,7 +46,7 @@ namespace {
 
 // Helper class to know how far in the loading process the current WebContents
 // has come. It will call the callback either after
-// DidCommitProvisionalLoadForFrame or DocumentLoadedInFrame is called for the
+// DidCommitProvisionalLoadForFrame or DOMContentLoaded is called for the
 // main frame, based on the value of |wait_for_document_loaded|.
 class WebContentsMainFrameHelper : public content::WebContentsObserver {
  public:
@@ -65,8 +65,7 @@ class WebContentsMainFrameHelper : public content::WebContentsObserver {
       callback_.Run();
   }
 
-  void DocumentLoadedInFrame(
-      content::RenderFrameHost* render_frame_host) override {
+  void DOMContentLoaded(content::RenderFrameHost* render_frame_host) override {
     if (wait_for_document_loaded_) {
       if (!render_frame_host->GetParent())
         callback_.Run();
@@ -84,6 +83,24 @@ namespace dom_distiller {
 
 const char* kSimpleArticlePath = "/simple_article.html";
 const char* kVideoArticlePath = "/video_article.html";
+const char* kDistilledPagePath = "/distilled_page.html";
+
+void ExecuteJsScript(content::WebContents* web_contents,
+                     const std::string& script) {
+  base::Value result;
+  base::RunLoop run_loop;
+  web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
+      base::UTF8ToUTF16(script),
+      base::BindOnce(
+          [](base::Closure callback, base::Value* out, base::Value result) {
+            (*out) = std::move(result);
+            callback.Run();
+          },
+          run_loop.QuitClosure(), &result));
+  run_loop.Run();
+  ASSERT_EQ(base::Value::Type::BOOLEAN, result.type());
+  EXPECT_TRUE(result.GetBool());
+}
 
 class DistillerPageWebContentsTest : public ContentBrowserTest {
  public:
@@ -113,11 +130,6 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
     quit_closure.Run();
   }
 
-  void OnJsExecutionDone(base::Closure callback, const base::Value* value) {
-    js_result_.reset(value->DeepCopy());
-    callback.Run();
-  }
-
  private:
   void AddComponentsResources() {
     base::FilePath pak_file;
@@ -137,22 +149,27 @@ class DistillerPageWebContentsTest : public ContentBrowserTest {
   void SetUpTestServer() {
     base::FilePath path;
     base::PathService::Get(base::DIR_SOURCE_ROOT, &path);
+
     embedded_test_server()->ServeFilesFromDirectory(
         path.AppendASCII("components/test/data/dom_distiller"));
     embedded_test_server()->ServeFilesFromDirectory(
         path.AppendASCII("components/dom_distiller/core/javascript"));
+
+    response_ = std::make_unique<net::test_server::ControllableHttpResponse>(
+        embedded_test_server(), kDistilledPagePath);
+
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
  protected:
   void RunUseCurrentWebContentsTest(const std::string& url,
                                     bool expect_new_web_contents,
-                                    bool setup_main_frame_observer,
                                     bool wait_for_document_loaded);
 
   DistillerPageWebContents* distiller_page_;
   std::unique_ptr<proto::DomDistillerResult> distiller_result_;
-  std::unique_ptr<base::Value> js_result_;
+
+  std::unique_ptr<net::test_server::ControllableHttpResponse> response_;
 };
 
 // Use this class to be able to leak the WebContents, which is needed for when
@@ -329,28 +346,8 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
                        MAYBE_UsingCurrentWebContentsWrongUrl) {
   std::string url("/bogus");
   bool expect_new_web_contents = true;
-  bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = true;
   RunUseCurrentWebContentsTest(url, expect_new_web_contents,
-                               setup_main_frame_observer,
-                               wait_for_document_loaded);
-}
-
-#if defined(OS_WIN)
-#define MAYBE_UsingCurrentWebContentsNoMainFrameObserver \
-  DISABLED_UsingCurrentWebContentsNoMainFrameObserver
-#else
-#define MAYBE_UsingCurrentWebContentsNoMainFrameObserver \
-  UsingCurrentWebContentsNoMainFrameObserver
-#endif
-IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
-                       MAYBE_UsingCurrentWebContentsNoMainFrameObserver) {
-  std::string url(kSimpleArticlePath);
-  bool expect_new_web_contents = true;
-  bool setup_main_frame_observer = false;
-  bool wait_for_document_loaded = true;
-  RunUseCurrentWebContentsTest(url, expect_new_web_contents,
-                               setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
@@ -365,10 +362,8 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
                        MAYBE_UsingCurrentWebContentsNotFinishedLoadingYet) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
-  bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = false;
   RunUseCurrentWebContentsTest(url, expect_new_web_contents,
-                               setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
@@ -383,23 +378,16 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
                        MAYBE_UsingCurrentWebContentsReadyForDistillation) {
   std::string url(kSimpleArticlePath);
   bool expect_new_web_contents = false;
-  bool setup_main_frame_observer = true;
   bool wait_for_document_loaded = true;
   RunUseCurrentWebContentsTest(url, expect_new_web_contents,
-                               setup_main_frame_observer,
                                wait_for_document_loaded);
 }
 
 void DistillerPageWebContentsTest::RunUseCurrentWebContentsTest(
     const std::string& url,
     bool expect_new_web_contents,
-    bool setup_main_frame_observer,
     bool wait_for_document_loaded) {
   content::WebContents* current_web_contents = shell()->web_contents();
-  if (setup_main_frame_observer) {
-    dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
-        current_web_contents);
-  }
   base::RunLoop url_loaded_runner;
   WebContentsMainFrameHelper main_frame_loaded(current_web_contents,
                                                url_loaded_runner.QuitClosure(),
@@ -437,9 +425,6 @@ void DistillerPageWebContentsTest::RunUseCurrentWebContentsTest(
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
                        MAYBE_PageDestroyedBeforeFinishDistillation) {
   content::WebContents* current_web_contents = shell()->web_contents();
-
-  dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
-      current_web_contents);
 
   base::RunLoop url_loaded_runner;
   WebContentsMainFrameHelper main_frame_loaded(
@@ -556,33 +541,28 @@ IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest,
 IN_PROC_BROWSER_TEST_F(DistillerPageWebContentsTest, MAYBE_TestPinch) {
   // Load the test file in content shell and wait until it has fully loaded.
   content::WebContents* web_contents = shell()->web_contents();
-  dom_distiller::WebContentsMainFrameObserver::CreateForWebContents(
-      web_contents);
   base::RunLoop url_loaded_runner;
   WebContentsMainFrameHelper main_frame_loaded(
       web_contents, url_loaded_runner.QuitClosure(), true);
   web_contents->GetController().LoadURL(
-      embedded_test_server()->GetURL("/pinch_tester.html"), content::Referrer(),
+      embedded_test_server()->GetURL(kDistilledPagePath), content::Referrer(),
       ui::PAGE_TRANSITION_TYPED, std::string());
+
+  const std::string html_template = viewer::GetArticleTemplateHtml(
+      DistilledPagePrefs::THEME_LIGHT,
+      DistilledPagePrefs::FONT_FAMILY_SANS_SERIF);
+
+  const std::string scripts = R"(
+    <script src='dom_distiller_viewer.js'></script>
+    <script src='pinch_tester.js'></script>
+  )";
+
+  response_->WaitForRequest();
+  response_->Send(net::HTTP_OK, "text/html", html_template + scripts);
+  response_->Done();
   url_loaded_runner.Run();
 
-  // Execute the JS to run the tests, and wait until it has finished.
-  base::RunLoop run_loop;
-  web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
-      base::UTF8ToUTF16("(function() {return pinchtest.run();})();"),
-      base::Bind(&DistillerPageWebContentsTest::OnJsExecutionDone,
-                 base::Unretained(this), run_loop.QuitClosure()));
-  run_loop.Run();
-
-  // Convert to dictionary and parse the results.
-  const base::DictionaryValue* dict;
-  ASSERT_TRUE(js_result_);
-  ASSERT_TRUE(js_result_->GetAsDictionary(&dict));
-
-  ASSERT_TRUE(dict->HasKey("success"));
-  bool success;
-  ASSERT_TRUE(dict->GetBoolean("success", &success));
-  EXPECT_TRUE(success);
+  ExecuteJsScript(web_contents, "pinchtest.run()");
 }
 
 }  // namespace dom_distiller

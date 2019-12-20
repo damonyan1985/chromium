@@ -13,6 +13,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/autofill/core/browser/autofill_client.h"
+#include "components/autofill/core/browser/payments/legal_message_line.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/android/view_android.h"
 
@@ -22,7 +23,6 @@ class AutofillPopupDelegate;
 class CardUnmaskDelegate;
 class CreditCard;
 class FormStructure;
-class LegacyStrikeDatabase;
 class MigratableCreditCard;
 class PersonalDataManager;
 class StrikeDatabase;
@@ -66,10 +66,9 @@ class AwAutofillClient : public autofill::AutofillClient,
       override;
   PrefService* GetPrefs() override;
   syncer::SyncService* GetSyncService() override;
-  identity::IdentityManager* GetIdentityManager() override;
+  signin::IdentityManager* GetIdentityManager() override;
   autofill::FormDataImporter* GetFormDataImporter() override;
   autofill::payments::PaymentsClient* GetPaymentsClient() override;
-  autofill::LegacyStrikeDatabase* GetLegacyStrikeDatabase() override;
   autofill::StrikeDatabase* GetStrikeDatabase() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
@@ -84,7 +83,7 @@ class AwAutofillClient : public autofill::AutofillClient,
   void ShowLocalCardMigrationDialog(
       base::OnceClosure show_migration_dialog_closure) override;
   void ConfirmMigrateLocalCardToCloud(
-      std::unique_ptr<base::DictionaryValue> legal_message,
+      const autofill::LegalMessageLines& legal_message_lines,
       const std::string& user_email,
       const std::vector<autofill::MigratableCreditCard>&
           migratable_credit_cards,
@@ -99,26 +98,30 @@ class AwAutofillClient : public autofill::AutofillClient,
                                   base::OnceClosure callback) override;
   void ConfirmSaveCreditCardLocally(
       const autofill::CreditCard& card,
-      bool show_prompt,
+      SaveCreditCardOptions options,
       LocalSaveCardPromptCallback callback) override;
   void ConfirmAccountNameFixFlow(
       base::OnceCallback<void(const base::string16&)> callback) override;
+  void ConfirmExpirationDateFixFlow(
+      const autofill::CreditCard& card,
+      base::OnceCallback<void(const base::string16&, const base::string16&)>
+          callback) override;
   void ConfirmSaveCreditCardToCloud(
       const autofill::CreditCard& card,
-      std::unique_ptr<base::DictionaryValue> legal_message,
-      bool should_request_name_from_user,
-      bool should_request_expiration_date_from_user,
-      bool show_prompt,
+      const autofill::LegalMessageLines& legal_message_lines,
+      SaveCreditCardOptions options,
       UploadSaveCardPromptCallback callback) override;
+  void CreditCardUploadCompleted(bool card_saved) override;
   void ConfirmCreditCardFillAssist(const autofill::CreditCard& card,
                                    base::OnceClosure callback) override;
   bool HasCreditCardScanFeature() override;
-  void ScanCreditCard(const CreditCardScanCallback& callback) override;
+  void ScanCreditCard(CreditCardScanCallback callback) override;
   void ShowAutofillPopup(
       const gfx::RectF& element_bounds,
       base::i18n::TextDirection text_direction,
       const std::vector<autofill::Suggestion>& suggestions,
       bool /*unused_autoselect_first_suggestion*/,
+      autofill::PopupType popup_type,
       base::WeakPtr<autofill::AutofillPopupDelegate> delegate) override;
   void UpdateAutofillPopupDataListValues(
       const std::vector<base::string16>& values,

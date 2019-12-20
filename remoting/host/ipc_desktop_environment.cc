@@ -22,6 +22,7 @@
 #include "remoting/host/desktop_session_proxy.h"
 #include "remoting/host/file_transfer/file_operations.h"
 #include "remoting/host/input_injector.h"
+#include "remoting/host/keyboard_layout_monitor.h"
 #include "remoting/host/screen_controls.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
@@ -68,6 +69,13 @@ IpcDesktopEnvironment::CreateMouseCursorMonitor() {
   return desktop_session_proxy_->CreateMouseCursorMonitor();
 }
 
+std::unique_ptr<KeyboardLayoutMonitor>
+IpcDesktopEnvironment::CreateKeyboardLayoutMonitor(
+    base::RepeatingCallback<void(const protocol::KeyboardLayout&)> callback) {
+  return desktop_session_proxy_->CreateKeyboardLayoutMonitor(
+      std::move(callback));
+}
+
 std::unique_ptr<webrtc::DesktopCapturer>
 IpcDesktopEnvironment::CreateVideoCapturer() {
   return desktop_session_proxy_->CreateVideoCapturer();
@@ -97,8 +105,7 @@ IpcDesktopEnvironmentFactory::IpcDesktopEnvironmentFactory(
     : audio_task_runner_(audio_task_runner),
       caller_task_runner_(caller_task_runner),
       io_task_runner_(io_task_runner),
-      daemon_channel_(daemon_channel),
-      connector_factory_(this) {}
+      daemon_channel_(daemon_channel) {}
 
 IpcDesktopEnvironmentFactory::~IpcDesktopEnvironmentFactory() = default;
 
@@ -178,9 +185,9 @@ void IpcDesktopEnvironmentFactory::OnDesktopSessionAgentAttached(
   if (!caller_task_runner_->BelongsToCurrentThread()) {
     caller_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&IpcDesktopEnvironmentFactory::OnDesktopSessionAgentAttached,
-                   base::Unretained(this), terminal_id, session_id,
-                   desktop_pipe));
+        base::BindOnce(
+            &IpcDesktopEnvironmentFactory::OnDesktopSessionAgentAttached,
+            base::Unretained(this), terminal_id, session_id, desktop_pipe));
     return;
   }
 
@@ -195,9 +202,10 @@ void IpcDesktopEnvironmentFactory::OnDesktopSessionAgentAttached(
 
 void IpcDesktopEnvironmentFactory::OnTerminalDisconnected(int terminal_id) {
   if (!caller_task_runner_->BelongsToCurrentThread()) {
-    caller_task_runner_->PostTask(FROM_HERE, base::Bind(
-        &IpcDesktopEnvironmentFactory::OnTerminalDisconnected,
-        base::Unretained(this), terminal_id));
+    caller_task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&IpcDesktopEnvironmentFactory::OnTerminalDisconnected,
+                       base::Unretained(this), terminal_id));
     return;
   }
 

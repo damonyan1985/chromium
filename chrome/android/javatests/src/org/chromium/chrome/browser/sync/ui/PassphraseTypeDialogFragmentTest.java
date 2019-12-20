@@ -41,10 +41,10 @@ public class PassphraseTypeDialogFragmentTest {
     private static final boolean UNCHECKED = false;
 
     private static class TypeOptions {
-        public final PassphraseType type;
+        public final @PassphraseType int type;
         public final boolean isEnabled;
         public final boolean isChecked;
-        public TypeOptions(PassphraseType type, boolean isEnabled, boolean isChecked) {
+        public TypeOptions(@PassphraseType int type, boolean isEnabled, boolean isChecked) {
             this.type = type;
             this.isEnabled = isEnabled;
             this.isChecked = isChecked;
@@ -56,7 +56,7 @@ public class PassphraseTypeDialogFragmentTest {
     @Test
     @SmallTest
     @Feature({"Sync"})
-    public void testKeystoreEncryptionOptions() throws Exception {
+    public void testKeystoreEncryptionOptions() {
         createFragment(PassphraseType.KEYSTORE_PASSPHRASE, true);
         assertPassphraseTypeOptions(false,
                 new TypeOptions(PassphraseType.CUSTOM_PASSPHRASE, ENABLED, UNCHECKED),
@@ -66,7 +66,7 @@ public class PassphraseTypeDialogFragmentTest {
     @Test
     @SmallTest
     @Feature({"Sync"})
-    public void testCustomEncryptionOptions() throws Exception {
+    public void testCustomEncryptionOptions() {
         createFragment(PassphraseType.CUSTOM_PASSPHRASE, true);
         assertPassphraseTypeOptions(true,
                 new TypeOptions(PassphraseType.CUSTOM_PASSPHRASE, DISABLED, CHECKED),
@@ -79,7 +79,7 @@ public class PassphraseTypeDialogFragmentTest {
      */
     @Test
     @FlakyTest(message = "crbug.com/588050")
-    public void testFrozenImplicitEncryptionOptions() throws Exception {
+    public void testFrozenImplicitEncryptionOptions() {
         createFragment(PassphraseType.FROZEN_IMPLICIT_PASSPHRASE, true);
         assertPassphraseTypeOptions(true,
                 new TypeOptions(PassphraseType.FROZEN_IMPLICIT_PASSPHRASE, DISABLED, CHECKED),
@@ -89,7 +89,7 @@ public class PassphraseTypeDialogFragmentTest {
     @Test
     @SmallTest
     @Feature({"Sync"})
-    public void testImplicitEncryptionOptions() throws Exception {
+    public void testImplicitEncryptionOptions() {
         createFragment(PassphraseType.IMPLICIT_PASSPHRASE, true);
         assertPassphraseTypeOptions(false,
                 new TypeOptions(PassphraseType.CUSTOM_PASSPHRASE, ENABLED, UNCHECKED),
@@ -99,7 +99,7 @@ public class PassphraseTypeDialogFragmentTest {
     @Test
     @SmallTest
     @Feature({"Sync"})
-    public void testKeystoreEncryptionOptionsEncryptEverythingDisallowed() throws Exception {
+    public void testKeystoreEncryptionOptionsEncryptEverythingDisallowed() {
         createFragment(PassphraseType.KEYSTORE_PASSPHRASE, false);
         assertPassphraseTypeOptions(false,
                 new TypeOptions(PassphraseType.CUSTOM_PASSPHRASE, DISABLED, UNCHECKED),
@@ -109,16 +109,16 @@ public class PassphraseTypeDialogFragmentTest {
     @Test
     @SmallTest
     @Feature({"Sync"})
-    public void testImplicitEncryptionOptionsEncryptEverythingDisallowed() throws Exception {
+    public void testImplicitEncryptionOptionsEncryptEverythingDisallowed() {
         createFragment(PassphraseType.IMPLICIT_PASSPHRASE, false);
         assertPassphraseTypeOptions(false,
                 new TypeOptions(PassphraseType.CUSTOM_PASSPHRASE, DISABLED, UNCHECKED),
                 new TypeOptions(PassphraseType.IMPLICIT_PASSPHRASE, ENABLED, CHECKED));
     }
 
-    public void createFragment(PassphraseType type, boolean isEncryptEverythingAllowed) {
+    public void createFragment(@PassphraseType int type, boolean isEncryptEverythingAllowed) {
         mTypeFragment = PassphraseTypeDialogFragment.create(type, 0, isEncryptEverythingAllowed);
-        mTypeFragment.show(mSyncTestRule.getActivity().getFragmentManager(), TAG);
+        mTypeFragment.show(mSyncTestRule.getActivity().getSupportFragmentManager(), TAG);
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
     }
 

@@ -33,9 +33,9 @@ n * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
-#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink.h"
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/loader/base_fetch_context.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/loader/fetch/client_hints_preferences.h"
@@ -49,27 +49,26 @@ n * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 namespace blink {
 
 class ClientHintsPreferences;
+class ContentSecurityPolicy;
 class CoreProbeSink;
 class Document;
 class DocumentLoader;
 class FrameOrImportedDocument;
-class FrameResourceFetcherProperties;
 class LocalFrame;
 class LocalFrameClient;
-class ResourceError;
-class ResourceResponse;
 class Settings;
 class WebContentSettingsClient;
-struct WebEnabledClientHints;
 
 class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
  public:
-  static ResourceFetcher* CreateFetcher(const FrameResourceFetcherProperties&);
+  static ResourceFetcher* CreateFetcherForCommittedDocument(DocumentLoader&,
+                                                            Document&);
   // Used for creating a FrameFetchContext for an imported Document.
   // |document_loader_| will be set to nullptr.
   static ResourceFetcher* CreateFetcherForImportedDocument(Document* document);
 
-  explicit FrameFetchContext(const FrameOrImportedDocument&);
+  FrameFetchContext(const FrameOrImportedDocument&,
+                    const DetachableResourceFetcherProperties&);
   ~FrameFetchContext() override = default;
 
   void AddAdditionalRequestHeaders(ResourceRequest&) override;
@@ -84,47 +83,10 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
       const ResourceRequest&,
       ResourceType,
       FetchParameters::DeferOption) const override;
-  void DispatchDidChangeResourcePriority(unsigned long identifier,
-                                         ResourceLoadPriority,
-                                         int intra_priority_value) override;
   void PrepareRequest(ResourceRequest&,
+                      const FetchInitiatorInfo&,
                       WebScopedVirtualTimePauser&,
-                      RedirectType) override;
-  void DispatchWillSendRequest(
-      unsigned long identifier,
-      ResourceRequest&,
-      const ResourceResponse& redirect_response,
-      ResourceType,
-      const FetchInitiatorInfo& = FetchInitiatorInfo()) override;
-  // Resource* is null if and only if this is a navigation response.
-  void DispatchDidReceiveResponse(unsigned long identifier,
-                                  const ResourceRequest&,
-                                  const ResourceResponse&,
-                                  Resource*,
-                                  ResourceResponseType) override;
-  void DispatchDidReceiveData(unsigned long identifier,
-                              const char* data,
-                              uint64_t data_length) override;
-  void DispatchDidReceiveEncodedData(unsigned long identifier,
-                                     size_t encoded_data_length) override;
-  void DispatchDidDownloadToBlob(unsigned long identifier,
-                                 BlobDataHandle*) override;
-  void DispatchDidFinishLoading(unsigned long identifier,
-                                TimeTicks finish_time,
-                                int64_t encoded_data_length,
-                                int64_t decoded_body_length,
-                                bool should_report_corb_blocking) override;
-  void DispatchDidFail(const KURL&,
-                       unsigned long identifier,
-                       const ResourceError&,
-                       int64_t encoded_data_length,
-                       bool is_internal_request) override;
-
-  void RecordLoadingActivity(const ResourceRequest&,
-                             ResourceType,
-                             const AtomicString& fetch_initiator_name) override;
-  void DidLoadResource(Resource*) override;
-  void DidObserveLoadingBehavior(WebLoadingBehaviorFlag) override;
+                      ResourceType) override;
 
   void AddResourceTiming(const ResourceTimingInfo&) override;
   bool AllowImage(bool images_enabled, const KURL&) const override;
@@ -144,9 +106,11 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
 
   void Trace(blink::Visitor*) override;
 
-  ResourceLoadPriority ModifyPriorityForExperiments(
-      ResourceLoadPriority) const override;
-  void DispatchNetworkQuiet() override;
+  bool CalculateIfAdSubresource(const ResourceRequest& resource_request,
+                                ResourceType type) override;
+
+  mojo::PendingReceiver<mojom::blink::WorkerTimingContainer>
+  TakePendingWorkerTimingReceiver(int request_id) override;
 
  private:
   class FrameConsoleLogger;
@@ -165,9 +129,11 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
 
   // BaseFetchContext overrides:
   KURL GetSiteForCookies() const override;
+  scoped_refptr<const SecurityOrigin> GetTopFrameOrigin() const override;
   SubresourceFilter* GetSubresourceFilter() const override;
   PreviewsResourceLoadingHints* GetPreviewsResourceLoadingHints()
       const override;
+  WebURLRequest::PreviewsState previews_state() const override;
   bool AllowScriptFromSource(const KURL&) const override;
   bool ShouldBlockRequestByInspector(const KURL&) const override;
   void DispatchDidBlockRequest(const ResourceRequest&,
@@ -183,7 +149,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
       override;
   bool ShouldBlockFetchByMixedContentCheck(
       mojom::RequestContextType,
-      network::mojom::RequestContextFrameType,
       ResourceRequest::RedirectStatus,
       const KURL&,
       SecurityViolationReportingPolicy) const override;
@@ -198,15 +163,12 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
   WebContentSettingsClient* GetContentSettingsClient() const;
   Settings* GetSettings() const;
   String GetUserAgent() const;
+  UserAgentMetadata GetUserAgentMetadata() const;
   const ClientHintsPreferences GetClientHintsPreferences() const;
   float GetDevicePixelRatio() const;
   bool ShouldSendClientHint(mojom::WebClientHintsType,
                             const ClientHintsPreferences&,
                             const WebEnabledClientHints&) const;
-  // Checks if the origin requested persisting the client hints, and notifies
-  // the |WebContentSettingsClient| with the list of client hints and the
-  // persistence duration.
-  void ParseAndPersistClientHints(const ResourceResponse&);
   void SetFirstPartyCookie(ResourceRequest&);
 
   // Returns true if execution of scripts from the url are allowed. Compared to
@@ -220,9 +182,6 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext {
   // Returns true if the origin of |url| is same as the origin of the top level
   // frame's main resource.
   bool IsFirstPartyOrigin(const KURL& url) const;
-
-  // Returns the origin of the top frame in the document.
-  scoped_refptr<const SecurityOrigin> GetTopFrameOrigin() const;
 
   CoreProbeSink* Probe() const;
 

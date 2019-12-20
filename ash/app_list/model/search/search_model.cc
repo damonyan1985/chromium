@@ -8,7 +8,9 @@
 #include <string>
 #include <utility>
 
-namespace app_list {
+#include "base/bind.h"
+
+namespace ash {
 
 SearchModel::SearchModel()
     : search_box_(std::make_unique<SearchBoxModel>()),
@@ -29,15 +31,30 @@ std::vector<SearchResult*> SearchModel::FilterSearchResultsByDisplayType(
     SearchResult::DisplayType display_type,
     const std::set<std::string>& excludes,
     size_t max_results) {
+  base::RepeatingCallback<bool(const SearchResult&)> filter_function =
+      base::BindRepeating(
+          [](const SearchResult::DisplayType& display_type,
+             const std::set<std::string>& excludes,
+             const SearchResult& r) -> bool {
+            return excludes.count(r.id()) == 0 &&
+                   display_type == r.display_type();
+          },
+          display_type, excludes);
+  return SearchModel::FilterSearchResultsByFunction(results, filter_function,
+                                                    max_results);
+}
+
+std::vector<SearchResult*> SearchModel::FilterSearchResultsByFunction(
+    SearchResults* results,
+    const base::RepeatingCallback<bool(const SearchResult&)>& result_filter,
+    size_t max_results) {
   std::vector<SearchResult*> matches;
   for (size_t i = 0; i < results->item_count(); ++i) {
+    if (matches.size() == max_results)
+      break;
     SearchResult* item = results->GetItemAt(i);
-    if (item->display_type() == display_type &&
-        excludes.count(item->id()) == 0) {
+    if (result_filter.Run(*item))
       matches.push_back(item);
-      if (matches.size() == max_results)
-        break;
-    }
   }
   return matches;
 }
@@ -111,4 +128,4 @@ void SearchModel::DeleteResultById(const std::string& id) {
   }
 }
 
-}  // namespace app_list
+}  // namespace ash

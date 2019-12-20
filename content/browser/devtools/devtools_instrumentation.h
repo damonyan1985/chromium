@@ -14,7 +14,10 @@
 #include "base/optional.h"
 #include "content/common/navigation_params.mojom.h"
 #include "content/public/browser/certificate_request_result_type.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 
 class GURL;
 
@@ -27,17 +30,14 @@ class SSLInfo;
 class X509Certificate;
 }  // namespace net
 
-namespace network {
-struct ResourceResponse;
-}
-
 namespace content {
 class SignedExchangeEnvelope;
 class FrameTreeNode;
-class NavigationHandleImpl;
+class NavigationHandle;
 class NavigationRequest;
 class NavigationThrottle;
 class RenderFrameHostImpl;
+class RenderProcessHost;
 class WebContents;
 
 struct SignedExchangeError;
@@ -52,7 +52,14 @@ bool WillCreateURLLoaderFactory(
     RenderFrameHostImpl* rfh,
     bool is_navigation,
     bool is_download,
-    network::mojom::URLLoaderFactoryRequest* loader_factory_request);
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory>*
+        loader_factory_receiver);
+
+bool WillCreateURLLoaderFactoryForServiceWorker(
+    RenderProcessHost* rph,
+    int routing_id,
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory>*
+        loader_factory_receiver);
 
 bool WillCreateURLLoaderFactory(
     RenderFrameHostImpl* rfh,
@@ -62,17 +69,22 @@ bool WillCreateURLLoaderFactory(
 
 void OnResetNavigationRequest(NavigationRequest* navigation_request);
 void OnNavigationRequestWillBeSent(const NavigationRequest& navigation_request);
-void OnNavigationResponseReceived(const NavigationRequest& nav_request,
-                                  const network::ResourceResponse& response);
+void OnNavigationResponseReceived(
+    const NavigationRequest& nav_request,
+    const network::mojom::URLResponseHead& response);
 void OnNavigationRequestFailed(
     const NavigationRequest& nav_request,
     const network::URLLoaderCompletionStatus& status);
+
+void WillBeginDownload(int render_process_id,
+                       int render_frame_id,
+                       const GURL& url);
 
 void OnSignedExchangeReceived(
     FrameTreeNode* frame_tree_node,
     base::Optional<const base::UnguessableToken> devtools_navigation_token,
     const GURL& outer_request_url,
-    const network::ResourceResponseHead& outer_response,
+    const network::mojom::URLResponseHead& outer_response,
     const base::Optional<SignedExchangeEnvelope>& header,
     const scoped_refptr<net::X509Certificate>& certificate,
     const base::Optional<net::SSLInfo>& ssl_info,
@@ -88,14 +100,28 @@ void OnSignedExchangeCertificateResponseReceived(
     const base::UnguessableToken& request_id,
     const base::UnguessableToken& loader_id,
     const GURL& url,
-    const network::ResourceResponseHead& head);
+    const network::mojom::URLResponseHead& head);
 void OnSignedExchangeCertificateRequestCompleted(
     FrameTreeNode* frame_tree_node,
     const base::UnguessableToken& request_id,
     const network::URLLoaderCompletionStatus& status);
 
+void OnRequestWillBeSentExtraInfo(
+    int process_id,
+    int routing_id,
+    const std::string& devtools_request_id,
+    const net::CookieStatusList& request_cookie_list,
+    const std::vector<network::mojom::HttpRawHeaderPairPtr>& request_headers);
+void OnResponseReceivedExtraInfo(
+    int process_id,
+    int routing_id,
+    const std::string& devtools_request_id,
+    const net::CookieAndLineStatusList& response_cookie_list,
+    const std::vector<network::mojom::HttpRawHeaderPairPtr>& response_headers,
+    const base::Optional<std::string>& response_headers_text);
+
 std::vector<std::unique_ptr<NavigationThrottle>> CreateNavigationThrottles(
-    NavigationHandleImpl* navigation_handle);
+    NavigationHandle* navigation_handle);
 
 // Asks any interested agents to handle the given certificate error. Returns
 // |true| if the error was handled, |false| otherwise.
@@ -105,6 +131,10 @@ bool HandleCertificateError(WebContents* web_contents,
                             int cert_error,
                             const GURL& request_url,
                             CertErrorCallback callback);
+
+void PortalAttached(RenderFrameHostImpl* render_frame_host_impl);
+void PortalDetached(RenderFrameHostImpl* render_frame_host_impl);
+void PortalActivated(RenderFrameHostImpl* render_frame_host_impl);
 
 }  // namespace devtools_instrumentation
 

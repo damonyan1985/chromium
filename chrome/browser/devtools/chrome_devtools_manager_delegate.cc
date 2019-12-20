@@ -102,17 +102,22 @@ void ChromeDevToolsManagerDelegate::Inspect(
 void ChromeDevToolsManagerDelegate::HandleCommand(
     DevToolsAgentHost* agent_host,
     content::DevToolsAgentHostClient* client,
-    std::unique_ptr<base::DictionaryValue> command_dict,
-    const std::string& message,
+    const std::string& method,
+    base::span<const uint8_t> message,
     NotHandledCallback callback) {
-  DCHECK(sessions_.find(client) != sessions_.end());
-  sessions_[client]->HandleCommand(std::move(command_dict), message,
-                                   std::move(callback));
+  if (sessions_.find(client) == sessions_.end()) {
+    std::move(callback).Run(message);
+    // This should not happen, but happens. NOTREACHED tries to get
+    // a repro in some test.
+    NOTREACHED();
+    return;
+  }
+  sessions_[client]->HandleCommand(method, message, std::move(callback));
 }
 
 std::string ChromeDevToolsManagerDelegate::GetTargetType(
     content::WebContents* web_contents) {
-  if (base::ContainsValue(AllTabContentses(), web_contents))
+  if (base::Contains(AllTabContentses(), web_contents))
     return DevToolsAgentHost::kTypePage;
 
   std::string extension_name;
@@ -222,9 +227,8 @@ ChromeDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
 }
 
 std::string ChromeDevToolsManagerDelegate::GetDiscoveryPageHTML() {
-  return ui::ResourceBundle::GetSharedInstance()
-      .GetRawDataResource(IDR_DEVTOOLS_DISCOVERY_PAGE_HTML)
-      .as_string();
+  return ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+      IDR_DEVTOOLS_DISCOVERY_PAGE_HTML);
 }
 
 std::vector<content::BrowserContext*>

@@ -20,8 +20,8 @@
 #include "base/optional.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/common/buildflags.h"
 
-class PrefService;
 class Profile;
 
 namespace extensions {
@@ -33,8 +33,6 @@ class ExtensionServiceInterface;
 class ComponentLoader {
  public:
   ComponentLoader(ExtensionServiceInterface* extension_service,
-                  PrefService* prefs,
-                  PrefService* local_state,
                   Profile* browser_context);
   virtual ~ComponentLoader();
 
@@ -161,31 +159,36 @@ class ComponentLoader {
   void AddDefaultComponentExtensionsWithBackgroundPages(
       bool skip_session_components);
   void AddDefaultComponentExtensionsWithBackgroundPagesForKioskMode();
-  void AddFileManagerExtension();
-  void AddVideoPlayerExtension();
-  void AddAudioPlayerExtension();
-  void AddGalleryExtension();
-  void AddZipArchiverExtension();
+
+#if BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
   void AddHangoutServicesExtension();
-  void AddImageLoaderExtension();
+#endif  // BUILDFLAG(ENABLE_HANGOUT_SERVICES_EXTENSION)
+
   void AddNetworkSpeechSynthesisExtension();
 
   void AddWithNameAndDescription(int manifest_resource_id,
                                  const base::FilePath& root_directory,
                                  const std::string& name_string,
                                  const std::string& description_string);
-  void AddChromeApp();
-  void AddKeyboardApp();
   void AddWebStoreApp();
+
+#if defined(OS_CHROMEOS)
+  void AddChromeApp();
+  void AddFileManagerExtension();
+  void AddVideoPlayerExtension();
+  void AddAudioPlayerExtension();
+  void AddGalleryExtension();
+  void AddImageLoaderExtension();
+  void AddKeyboardApp();
+  void AddChromeCameraApp();
+  void AddZipArchiverExtension();
+#endif  // defined(OS_CHROMEOS)
 
   scoped_refptr<const Extension> CreateExtension(
       const ComponentExtensionInfo& info, std::string* utf8_error);
 
   // Unloads |component| from the memory.
   void UnloadComponent(ComponentExtensionInfo* component);
-
-  // Enable HTML5 FileSystem for given component extension in Guest mode.
-  void EnableFileSystemInGuestMode(const std::string& id);
 
 #if defined(OS_CHROMEOS)
   // Used as a reply callback by |AddComponentFromDir|.
@@ -198,10 +201,11 @@ class ComponentLoader {
       const base::Optional<std::string>& description_string,
       const base::Closure& done_cb,
       std::unique_ptr<base::DictionaryValue> manifest);
+
+  // Finishes loading an extension tts engine.
+  void FinishLoadSpeechSynthesisExtension(const char* extension_id);
 #endif
 
-  PrefService* profile_prefs_;
-  PrefService* local_state_;
   Profile* profile_;
 
   ExtensionServiceInterface* extension_service_;
@@ -212,7 +216,7 @@ class ComponentLoader {
 
   bool ignore_whitelist_for_testing_;
 
-  base::WeakPtrFactory<ComponentLoader> weak_factory_;
+  base::WeakPtrFactory<ComponentLoader> weak_factory_{this};
 
   friend class TtsApiTest;
 

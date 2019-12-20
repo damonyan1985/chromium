@@ -12,14 +12,15 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
+#include "base/hash/sha1.h"
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
+#include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_ioobject.h"
 #include "base/no_destructor.h"
 #include "base/optional.h"
 #include "base/path_service.h"
-#include "base/sha1.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -172,33 +173,14 @@ BrowserDMTokenStorage* BrowserDMTokenStorage::Get() {
   return storage.get();
 }
 
-BrowserDMTokenStorageMac::BrowserDMTokenStorageMac() : weak_factory_(this) {}
+BrowserDMTokenStorageMac::BrowserDMTokenStorageMac()
+    : task_runner_(
+          base::CreateTaskRunner({base::ThreadPool(), base::MayBlock()})) {}
 
 BrowserDMTokenStorageMac::~BrowserDMTokenStorageMac() {}
 
 std::string BrowserDMTokenStorageMac::InitClientId() {
-  // Returns the device s/n.
-  base::mac::ScopedIOObject<io_service_t> expert_device(
-      IOServiceGetMatchingService(kIOMasterPortDefault,
-                                  IOServiceMatching("IOPlatformExpertDevice")));
-  if (!expert_device) {
-    SYSLOG(ERROR) << "Error retrieving the machine serial number.";
-    return std::string();
-  }
-
-  base::ScopedCFTypeRef<CFTypeRef> serial_number(
-      IORegistryEntryCreateCFProperty(expert_device,
-                                      CFSTR(kIOPlatformSerialNumberKey),
-                                      kCFAllocatorDefault, 0));
-  CFStringRef serial_number_cfstring =
-      base::mac::CFCast<CFStringRef>(serial_number);
-  if (!serial_number_cfstring) {
-    SYSLOG(ERROR) << "Error retrieving the machine serial number.";
-    return std::string();
-  }
-
-  ignore_result(serial_number.release());
-  return base::SysCFStringRefToUTF8(serial_number_cfstring);
+  return base::mac::GetPlatformSerialNumber();
 }
 
 std::string BrowserDMTokenStorageMac::InitEnrollmentToken() {
@@ -221,7 +203,7 @@ std::string BrowserDMTokenStorageMac::InitDMToken() {
   if (!base::ReadFileToString(token_file_path, &token))
     return std::string();
 
-  return token;
+  return base::TrimWhitespaceASCII(token, base::TRIM_ALL).as_string();
 }
 
 bool BrowserDMTokenStorageMac::InitEnrollmentErrorOption() {
@@ -232,26 +214,15 @@ bool BrowserDMTokenStorageMac::InitEnrollmentErrorOption() {
   return IsEnrollmentMandatoryByFile().value_or(false);
 }
 
-void BrowserDMTokenStorageMac::SaveDMToken(const std::string& token) {
-  std::string client_id = RetrieveClientId();
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock()},
-      base::BindOnce(&StoreDMTokenInDirAppDataDir, token, client_id),
-      base::BindOnce(&BrowserDMTokenStorage::OnDMTokenStored,
-                     weak_factory_.GetWeakPtr()));
+BrowserDMTokenStorage::StoreTask BrowserDMTokenStorageMac::SaveDMTokenTask(
+    const std::string& token,
+    const std::string& client_id) {
+  return base::BindOnce(&StoreDMTokenInDirAppDataDir, token, client_id);
 }
 
-void BrowserDMTokenStorageMac::DeletePolicyDirectory() {
-  base::FilePath token_file_path;
-  std::string dummy_id = "id";
-  if (!GetDmTokenFilePath(&token_file_path, dummy_id, /* create_dir = */ false))
-    return;
-
-  base::FilePath token_dir_path = token_file_path.DirName();
-  if (base::DirectoryExists(token_dir_path) &&
-      base::IsDirectoryEmpty(token_dir_path)) {
-    base::DeleteFile(token_dir_path, /* recursive = */ false);
-  }
+scoped_refptr<base::TaskRunner>
+BrowserDMTokenStorageMac::SaveDMTokenTaskRunner() {
+  return task_runner_;
 }
 
 }  // namespace policy

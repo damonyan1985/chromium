@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -11,14 +12,18 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/content_client.h"
+#include "content/public/common/web_preferences.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "media/base/media_switches.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "net/dns/mock_host_resolver.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/blink/public/platform/autoplay.mojom.h"
+#include "third_party/blink/public/mojom/autoplay/autoplay.mojom.h"
 
 namespace {
 
@@ -26,6 +31,27 @@ static constexpr char const kFramedTestPagePath[] =
     "/media/autoplay_iframe.html";
 
 static constexpr char const kTestPagePath[] = "/media/unified_autoplay.html";
+
+class ChromeContentBrowserClientOverrideWebAppScope
+    : public ChromeContentBrowserClient {
+ public:
+  ChromeContentBrowserClientOverrideWebAppScope() = default;
+  ~ChromeContentBrowserClientOverrideWebAppScope() override = default;
+
+  void OverrideWebkitPrefs(content::RenderViewHost* rvh,
+                           content::WebPreferences* web_prefs) override {
+    ChromeContentBrowserClient::OverrideWebkitPrefs(rvh, web_prefs);
+
+    web_prefs->web_app_scope = web_app_scope_;
+  }
+
+  void set_web_app_scope(const GURL& web_app_scope) {
+    web_app_scope_ = web_app_scope;
+  }
+
+ private:
+  GURL web_app_scope_;
+};
 
 }  // anonymous namespace
 
@@ -35,11 +61,13 @@ static constexpr char const kTestPagePath[] = "/media/unified_autoplay.html";
 // conflict with "AutoplayBrowserTest" in extensions code.
 class UnifiedAutoplayBrowserTest : public InProcessBrowserTest {
  public:
+  UnifiedAutoplayBrowserTest() {
+    scoped_feature_list_.InitAndEnableFeature(media::kUnifiedAutoplay);
+  }
+
   ~UnifiedAutoplayBrowserTest() override = default;
 
   void SetUpOnMainThread() override {
-    scoped_feature_list_.InitAndEnableFeature(media::kUnifiedAutoplay);
-
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -83,7 +111,7 @@ class UnifiedAutoplayBrowserTest : public InProcessBrowserTest {
   }
 
   void SetAutoplayForceAllowFlag(const GURL& url) {
-    blink::mojom::AutoplayConfigurationClientAssociatedPtr client;
+    mojo::AssociatedRemote<blink::mojom::AutoplayConfigurationClient> client;
     GetWebContents()
         ->GetMainFrame()
         ->GetRemoteAssociatedInterfaces()
@@ -259,7 +287,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest, ForceWasActivated_Yes) {
   const GURL kTestPageUrl = embedded_test_server()->GetURL(kTestPagePath);
 
   NavigateParams params(browser(), kTestPageUrl, ui::PAGE_TRANSITION_LINK);
-  params.was_activated = content::WasActivatedOption::kYes;
+  params.was_activated = content::mojom::WasActivatedOption::kYes;
   ui_test_utils::NavigateToURL(&params);
 
   EXPECT_TRUE(AttemptPlay(GetWebContents()));
@@ -272,7 +300,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
   const GURL kTestPageUrl = embedded_test_server()->GetURL(kTestPagePath);
 
   NavigateParams params(browser(), kRedirectPageUrl, ui::PAGE_TRANSITION_LINK);
-  params.was_activated = content::WasActivatedOption::kYes;
+  params.was_activated = content::mojom::WasActivatedOption::kYes;
   ui_test_utils::NavigateToURL(&params);
 
   EXPECT_TRUE(NavigateInRenderer(GetWebContents(), kTestPageUrl));
@@ -302,7 +330,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
       embedded_test_server()->GetURL("foo.example.com", kTestPagePath);
 
   NavigateParams params(browser(), kRedirectPageUrl, ui::PAGE_TRANSITION_LINK);
-  params.was_activated = content::WasActivatedOption::kYes;
+  params.was_activated = content::mojom::WasActivatedOption::kYes;
   ui_test_utils::NavigateToURL(&params);
 
   EXPECT_TRUE(NavigateInRenderer(GetWebContents(), kTestPageUrl));
@@ -325,16 +353,82 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
   EXPECT_FALSE(AttemptPlay(GetWebContents()));
 }
 
+IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
+                       MatchingWebAppScopeAllowsAutoplay_Origin) {
+  GURL kTestPageUrl(
+      embedded_test_server()->GetURL("example.com", kTestPagePath));
+
+  ChromeContentBrowserClientOverrideWebAppScope browser_client;
+  browser_client.set_web_app_scope(kTestPageUrl.GetOrigin());
+
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  GetWebContents()->GetRenderViewHost()->OnWebkitPreferencesChanged();
+
+  ui_test_utils::NavigateToURL(browser(), kTestPageUrl);
+  content::WaitForLoadStop(GetWebContents());
+
+  EXPECT_TRUE(AttemptPlay(GetWebContents()));
+
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+
+IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
+                       MatchingWebAppScopeAllowsAutoplay_Path) {
+  GURL kTestPageUrl(
+      embedded_test_server()->GetURL("example.com", kTestPagePath));
+
+  ChromeContentBrowserClientOverrideWebAppScope browser_client;
+  browser_client.set_web_app_scope(kTestPageUrl.GetWithoutFilename());
+
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  GetWebContents()->GetRenderViewHost()->OnWebkitPreferencesChanged();
+
+  ui_test_utils::NavigateToURL(browser(), kTestPageUrl);
+  content::WaitForLoadStop(GetWebContents());
+
+  EXPECT_TRUE(AttemptPlay(GetWebContents()));
+
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+
+IN_PROC_BROWSER_TEST_F(UnifiedAutoplayBrowserTest,
+                       NotMatchingWebAppScopeDoesNotAllowAutoplay) {
+  GURL kTestPageUrl(
+      embedded_test_server()->GetURL("example.com", kTestPagePath));
+
+  ChromeContentBrowserClientOverrideWebAppScope browser_client;
+  browser_client.set_web_app_scope(GURL("http://www.foobar.com"));
+
+  content::ContentBrowserClient* old_browser_client =
+      content::SetBrowserClientForTesting(&browser_client);
+
+  GetWebContents()->GetRenderViewHost()->OnWebkitPreferencesChanged();
+
+  ui_test_utils::NavigateToURL(browser(), kTestPageUrl);
+  content::WaitForLoadStop(GetWebContents());
+
+  EXPECT_FALSE(AttemptPlay(GetWebContents()));
+
+  content::SetBrowserClientForTesting(old_browser_client);
+}
+
 // Integration tests for the new unified autoplay sound settings UI.
 
 class UnifiedAutoplaySettingBrowserTest : public UnifiedAutoplayBrowserTest {
  public:
-  ~UnifiedAutoplaySettingBrowserTest() override = default;
-
-  void SetUpOnMainThread() override {
+  UnifiedAutoplaySettingBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
         {media::kAutoplayDisableSettings, media::kAutoplayWhitelistSettings},
         {});
+  }
+
+  ~UnifiedAutoplaySettingBrowserTest() override = default;
+
+  void SetUpOnMainThread() override {
     UnifiedAutoplayBrowserTest::SetUpOnMainThread();
   }
 
@@ -383,7 +477,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplaySettingBrowserTest, Allow) {
   GURL foo_url(embedded_test_server()->GetURL("foo.com", kFramedTestPagePath));
 
   GetSettingsMap()->SetContentSettingDefaultScope(
-      main_url, main_url, CONTENT_SETTINGS_TYPE_SOUND, std::string(),
+      main_url, main_url, ContentSettingsType::SOUND, std::string(),
       CONTENT_SETTING_ALLOW);
 
   NavigateFrameAndWait(main_frame(), main_url);
@@ -411,7 +505,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplaySettingBrowserTest, Allow_Wildcard) {
   // Set a wildcard allow sound setting for *.com.
   ContentSettingsPattern pattern(ContentSettingsPattern::FromString("[*.]com"));
   GetSettingsMap()->SetWebsiteSettingCustomScope(
-      pattern, pattern, CONTENT_SETTINGS_TYPE_SOUND, std::string(),
+      pattern, pattern, ContentSettingsType::SOUND, std::string(),
       std::make_unique<base::Value>(CONTENT_SETTING_ALLOW));
 
   NavigateFrameAndWait(main_frame(), main_url);
@@ -430,7 +524,7 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplaySettingBrowserTest, Block) {
   GURL foo_url(embedded_test_server()->GetURL("foo.com", kFramedTestPagePath));
 
   GetSettingsMap()->SetContentSettingDefaultScope(
-      main_url, main_url, CONTENT_SETTINGS_TYPE_SOUND, std::string(),
+      main_url, main_url, ContentSettingsType::SOUND, std::string(),
       CONTENT_SETTING_BLOCK);
 
   NavigateFrameAndWait(main_frame(), main_url);
@@ -449,11 +543,11 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplaySettingBrowserTest, Block_Wildcard) {
   // Set a wildcard block sound setting for *.com.
   ContentSettingsPattern pattern(ContentSettingsPattern::FromString("[*.]com"));
   GetSettingsMap()->SetWebsiteSettingCustomScope(
-      pattern, pattern, CONTENT_SETTINGS_TYPE_SOUND, std::string(),
+      pattern, pattern, ContentSettingsType::SOUND, std::string(),
       std::make_unique<base::Value>(CONTENT_SETTING_BLOCK));
 
   GetSettingsMap()->SetContentSettingDefaultScope(
-      foo_url, foo_url, CONTENT_SETTINGS_TYPE_SOUND, std::string(),
+      foo_url, foo_url, ContentSettingsType::SOUND, std::string(),
       CONTENT_SETTING_ALLOW);
 
   NavigateFrameAndWait(main_frame(), main_url);
@@ -471,10 +565,9 @@ IN_PROC_BROWSER_TEST_F(UnifiedAutoplaySettingBrowserTest, DefaultAllow) {
       embedded_test_server()->GetURL("example.com", kFramedTestPagePath));
   GURL foo_url(embedded_test_server()->GetURL("foo.com", kFramedTestPagePath));
 
-  EXPECT_EQ(
-      CONTENT_SETTING_ALLOW,
-      GetSettingsMap()->GetContentSetting(
-          main_url, main_url, CONTENT_SETTINGS_TYPE_SOUND, std::string()));
+  EXPECT_EQ(CONTENT_SETTING_ALLOW,
+            GetSettingsMap()->GetContentSetting(
+                main_url, main_url, ContentSettingsType::SOUND, std::string()));
 
   NavigateFrameAndWait(main_frame(), main_url);
   NavigateFrameAndWait(first_child(), foo_url);

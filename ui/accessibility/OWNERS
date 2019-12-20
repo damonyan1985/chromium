@@ -4,12 +4,12 @@ aboxhall@chromium.org
 nektar@chromium.org
 dougt@chromium.org
 aleventhal@chromium.org
+katie@chromium.org
 
 per-file *.mojom=set noparent
 per-file *.mojom=file://ipc/SECURITY_OWNERS
 
-per-file ax_host_service_manifest.json=set noparent
-per-file ax_host_service_manifest.json=file://ipc/SECURITY_OWNERS
+per-file ax_language_detection*=chrishall@chromium.org
 
 # TEAM: chromium-accessibility@chromium.org
 # COMPONENT: Internals>Accessibility

@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "chrome/browser/chromeos/login/users/affiliation.h"
 #include "chrome/browser/chromeos/login/users/user_manager_interface.h"
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
@@ -22,7 +22,8 @@ namespace chromeos {
 class ChromeUserManager : public user_manager::UserManagerBase,
                           public UserManagerInterface {
  public:
-  explicit ChromeUserManager(scoped_refptr<base::TaskRunner> task_runner);
+  explicit ChromeUserManager(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~ChromeUserManager() override;
 
   // user_manager::UserManagerBase:
@@ -37,11 +38,6 @@ class ChromeUserManager : public user_manager::UserManagerBase,
   // Returns current ChromeUserManager or NULL if instance hasn't been
   // yet initialized.
   static ChromeUserManager* Get();
-
-  // Helper method for sorting out of user list only users that can create
-  // supervised users.
-  static user_manager::UserList GetUsersAllowedAsSupervisedUserManagers(
-      const user_manager::UserList& user_list);
 
   // Sets affiliation status for the user identified with |account_id|
   // judging by |user_affiliation_ids| and device affiliation IDs.

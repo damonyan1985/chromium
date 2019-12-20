@@ -6,10 +6,7 @@
 #define CHROMECAST_APP_CAST_MAIN_DELEGATE_H_
 
 #include <memory>
-#include <string>
-#include <vector>
 
-#include "base/files/file_path.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chromecast/common/cast_content_client.h"
@@ -31,12 +28,13 @@ class CastFeatureListCreator;
 namespace shell {
 
 class CastContentBrowserClient;
+class CastContentGpuClient;
 class CastContentRendererClient;
 class CastContentUtilityClient;
 
 class CastMainDelegate : public content::ContentMainDelegate {
  public:
-  CastMainDelegate(int argc, const char** argv);
+  CastMainDelegate();
   ~CastMainDelegate() override;
 
   // content::ContentMainDelegate implementation:
@@ -50,23 +48,17 @@ class CastMainDelegate : public content::ContentMainDelegate {
 #endif  // defined(OS_LINUX)
   bool ShouldCreateFeatureList() override;
   void PostEarlyInitialization(bool is_running_tests) override;
+  content::ContentClient* CreateContentClient() override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
+  content::ContentGpuClient* CreateContentGpuClient() override;
   content::ContentRendererClient* CreateContentRendererClient() override;
   content::ContentUtilityClient* CreateContentUtilityClient() override;
 
-  int argc() const { return argv_.size(); }
-  const char** argv() const { return const_cast<const char**>(argv_.data()); }
-
  private:
-  friend class CastMainDelegateTest;
-
-  // Used for testing.
-  CastMainDelegate(int argc,
-                   const char** argv,
-                   base::FilePath command_line_path);
   void InitializeResourceBundle();
 
   std::unique_ptr<CastContentBrowserClient> browser_client_;
+  std::unique_ptr<CastContentGpuClient> gpu_client_;
   std::unique_ptr<CastContentRendererClient> renderer_client_;
   std::unique_ptr<CastContentUtilityClient> utility_client_;
   std::unique_ptr<CastResourceDelegate> resource_delegate_;
@@ -83,11 +75,6 @@ class CastMainDelegate : public content::ContentMainDelegate {
   std::unique_ptr<base::FieldTrialList> field_trial_list_;
 
   std::unique_ptr<CastFeatureListCreator> cast_feature_list_creator_;
-
-  // Combined list of args passed through the main function, and a specified
-  // command-line file.
-  std::vector<std::string> argv_strs_;
-  std::vector<const char*> argv_;
 
   DISALLOW_COPY_AND_ASSIGN(CastMainDelegate);
 };

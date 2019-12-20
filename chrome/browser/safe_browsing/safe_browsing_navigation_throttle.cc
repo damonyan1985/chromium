@@ -36,17 +36,13 @@ SafeBrowsingNavigationThrottle::WillFailRequest() {
   if (manager->PopUnsafeResourceForURL(handle->GetURL(), &resource)) {
     SafeBrowsingBlockingPage* blocking_page =
         SafeBrowsingBlockingPage::CreateBlockingPage(
-            manager.get(), handle->GetWebContents(), handle->GetURL(),
-            resource);
+            manager.get(), handle->GetWebContents(), handle->GetURL(), resource,
+            true);
     std::string error_page_content = blocking_page->GetHTMLContents();
     security_interstitials::SecurityInterstitialTabHelper::
         AssociateBlockingPage(handle->GetWebContents(),
                               handle->GetNavigationId(),
                               base::WrapUnique(blocking_page));
-
-    manager->AddToWhitelistUrlSet(handle->GetURL().GetWithEmptyPath(),
-                                  handle->GetWebContents(), true /* pending */,
-                                  resource.threat_type);
 
     return content::NavigationThrottle::ThrottleCheckResult(
         CANCEL, net::ERR_BLOCKED_BY_CLIENT, error_page_content);

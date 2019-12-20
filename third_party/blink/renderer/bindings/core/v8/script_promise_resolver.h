@@ -5,10 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCRIPT_PROMISE_RESOLVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SCRIPT_PROMISE_RESOLVER_H_
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/platform/bindings/scoped_persistent.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
@@ -35,26 +36,16 @@ namespace blink {
 // There are cases where promises cannot work (e.g., where the thread is being
 // terminated). In such cases operations will silently fail.
 class CORE_EXPORT ScriptPromiseResolver
-    : public GarbageCollectedFinalized<ScriptPromiseResolver>,
+    : public GarbageCollected<ScriptPromiseResolver>,
       public ContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(ScriptPromiseResolver);
-  WTF_MAKE_NONCOPYABLE(ScriptPromiseResolver);
+  USING_PRE_FINALIZER(ScriptPromiseResolver, Dispose);
 
  public:
-  static ScriptPromiseResolver* Create(ScriptState* script_state) {
-    return MakeGarbageCollected<ScriptPromiseResolver>(script_state);
-  }
-
-  // You need to call suspendIfNeeded after the construction because
-  // this is an PausableObject.
   explicit ScriptPromiseResolver(ScriptState*);
   virtual ~ScriptPromiseResolver();
 
-#if DCHECK_IS_ON()
-  // Eagerly finalized so as to ensure valid access to getExecutionContext()
-  // from the destructor's assert.
-  EAGERLY_FINALIZE();
-#endif
+  void Dispose();
 
   // Anything that can be passed to toV8 can be passed to this function.
   template <typename T>
@@ -157,7 +148,7 @@ class CORE_EXPORT ScriptPromiseResolver
   const Member<ScriptState> script_state_;
   TaskHandle deferred_resolve_task_;
   Resolver resolver_;
-  ScopedPersistent<v8::Value> value_;
+  TraceWrapperV8Reference<v8::Value> value_;
 
   // To support keepAliveWhilePending(), this object needs to keep itself
   // alive while in that state.
@@ -169,6 +160,8 @@ class CORE_EXPORT ScriptPromiseResolver
 
   base::debug::StackTrace create_stack_trace_{8};
 #endif
+
+  DISALLOW_COPY_AND_ASSIGN(ScriptPromiseResolver);
 };
 
 }  // namespace blink

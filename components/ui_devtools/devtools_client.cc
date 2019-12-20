@@ -5,6 +5,7 @@
 #include "components/ui_devtools/devtools_client.h"
 
 #include "components/ui_devtools/devtools_server.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
 
 namespace ui_devtools {
 
@@ -29,13 +30,19 @@ void UiDevToolsClient::Disconnect() {
   DisableAllAgents();
 }
 
-void UiDevToolsClient::Dispatch(const std::string& data) {
+void UiDevToolsClient::Dispatch(const std::string& json) {
+  std::vector<uint8_t> cbor;
+  crdtp::Status status =
+      crdtp::json::ConvertJSONToCBOR(crdtp::SpanFrom(json), &cbor);
+  LOG_IF(ERROR, !status.ok()) << status.ToASCIIString();
+
   int call_id;
   std::string method;
   std::unique_ptr<protocol::Value> protocolCommand =
-      protocol::StringUtil::parseJSON(data);
+      protocol::Value::parseBinary(cbor.data(), cbor.size());
   if (dispatcher_.parseCommand(protocolCommand.get(), &call_id, &method)) {
-    dispatcher_.dispatch(call_id, method, std::move(protocolCommand), data);
+    dispatcher_.dispatch(call_id, method, std::move(protocolCommand),
+                         crdtp::SpanFrom(cbor));
   }
 }
 
@@ -56,17 +63,28 @@ void UiDevToolsClient::DisableAllAgents() {
     agent->Disable();
 }
 
+void UiDevToolsClient::MaybeSendProtocolResponseOrNotification(
+    std::unique_ptr<protocol::Serializable> message) {
+  if (!connected())
+    return;
+
+  std::vector<uint8_t> cbor = std::move(*message).TakeSerialized();
+  std::string json;
+  crdtp::Status status =
+      crdtp::json::ConvertCBORToJSON(crdtp::SpanFrom(cbor), &json);
+  LOG_IF(ERROR, !status.ok()) << status.ToASCIIString();
+  server_->SendOverWebSocket(connection_id_, base::StringPiece(json));
+}
+
 void UiDevToolsClient::sendProtocolResponse(
     int callId,
     std::unique_ptr<protocol::Serializable> message) {
-  if (connected())
-    server_->SendOverWebSocket(connection_id_, message->serialize());
+  MaybeSendProtocolResponseOrNotification(std::move(message));
 }
 
 void UiDevToolsClient::sendProtocolNotification(
     std::unique_ptr<protocol::Serializable> message) {
-  if (connected())
-    server_->SendOverWebSocket(connection_id_, message->serialize());
+  MaybeSendProtocolResponseOrNotification(std::move(message));
 }
 
 void UiDevToolsClient::flushProtocolNotifications() {
@@ -75,7 +93,7 @@ void UiDevToolsClient::flushProtocolNotifications() {
 
 void UiDevToolsClient::fallThrough(int call_id,
                                    const std::string& method,
-                                   const std::string& message) {
+                                   crdtp::span<uint8_t> message) {
   NOTIMPLEMENTED();
 }
 

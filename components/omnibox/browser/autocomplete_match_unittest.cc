@@ -8,9 +8,12 @@
 
 #include <utility>
 
+#include "autocomplete_match.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -135,6 +138,11 @@ TEST(AutocompleteMatchTest, InlineTailPrefix) {
        // should prepend ellipsis, and offset remainder
        {{0, ACMatchClassification::NONE}, {2, ACMatchClassification::MATCH}},
        {{0, ACMatchClassification::NONE}, {6, ACMatchClassification::MATCH}}},
+      {"90123456",
+       "... 90123456",
+       // should prepend ellipsis
+       {},
+       {{0, ACMatchClassification::NONE}}},
   };
   for (const auto& test_case : cases) {
     AutocompleteMatch match;
@@ -288,13 +296,38 @@ TEST(AutocompleteMatchTest, SupportsDeletion) {
   EXPECT_TRUE(m.SupportsDeletion());
 }
 
+// Structure containing URL pairs for deduping-related tests.
+struct DuplicateCase {
+  const wchar_t* input;
+  const std::string url1;
+  const std::string url2;
+  const bool expected_duplicate;
+};
+
+// Runs deduping logic against URLs in |duplicate_case| and makes sure they are
+// unique or matched as duplicates as expected.
+void CheckDuplicateCase(const DuplicateCase& duplicate_case) {
+  SCOPED_TRACE("input=" + base::WideToUTF8(duplicate_case.input) +
+               " url1=" + duplicate_case.url1 + " url2=" + duplicate_case.url2);
+  AutocompleteInput input(base::WideToUTF16(duplicate_case.input),
+                          metrics::OmniboxEventProto::OTHER,
+                          TestSchemeClassifier());
+  AutocompleteMatch m1(nullptr, 100, false,
+                       AutocompleteMatchType::URL_WHAT_YOU_TYPED);
+  m1.destination_url = GURL(duplicate_case.url1);
+  m1.ComputeStrippedDestinationURL(input, nullptr);
+  AutocompleteMatch m2(nullptr, 100, false,
+                       AutocompleteMatchType::URL_WHAT_YOU_TYPED);
+  m2.destination_url = GURL(duplicate_case.url2);
+  m2.ComputeStrippedDestinationURL(input, nullptr);
+  EXPECT_EQ(duplicate_case.expected_duplicate,
+            m1.stripped_destination_url == m2.stripped_destination_url);
+  EXPECT_TRUE(m1.stripped_destination_url.is_valid());
+  EXPECT_TRUE(m2.stripped_destination_url.is_valid());
+}
+
 TEST(AutocompleteMatchTest, Duplicates) {
-  struct DuplicateCases {
-    const wchar_t* input;
-    const std::string url1;
-    const std::string url2;
-    const bool expected_duplicate;
-  } cases[] = {
+  DuplicateCase cases[] = {
     { L"g", "http://www.google.com/",  "https://www.google.com/",    true },
     { L"g", "http://www.google.com/",  "http://www.google.com",      true },
     { L"g", "http://google.com/",      "http://www.google.com/",     true },
@@ -342,22 +375,105 @@ TEST(AutocompleteMatchTest, Duplicates) {
   };
 
   for (size_t i = 0; i < base::size(cases); ++i) {
-    SCOPED_TRACE("input=" + base::WideToUTF8(cases[i].input) +
-                 " url1=" + cases[i].url1 + " url2=" + cases[i].url2);
-    AutocompleteInput input(base::WideToUTF16(cases[i].input),
+    CheckDuplicateCase(cases[i]);
+  }
+}
+
+TEST(AutocompleteMatchTest, DedupeDriveURLs) {
+  DuplicateCase cases[] = {
+      // Document URLs pointing to the same document, perhaps with different
+      // /edit points, hashes, or cgiargs, are deduped.
+      {L"docs", "https://docs.google.com/spreadsheets/d/the_doc-id/preview?x=1",
+       "https://docs.google.com/spreadsheets/d/the_doc-id/edit?x=2#y=3", true},
+      {L"report", "https://drive.google.com/open?id=the-doc-id",
+       "https://docs.google.com/spreadsheets/d/the-doc-id/edit?x=2#y=3", true},
+      // Similar but different URLs should not be deduped.
+      {L"docs", "https://docs.google.com/spreadsheets/d/the_doc-id/preview",
+       "https://docs.google.com/spreadsheets/d/another_doc-id/preview", false},
+      {L"report", "https://drive.google.com/open?id=the-doc-id",
+       "https://drive.google.com/open?id=another-doc-id", false},
+  };
+
+  for (size_t i = 0; i < base::size(cases); ++i) {
+    CheckDuplicateCase(cases[i]);
+  }
+}
+
+TEST(AutocompleteMatchTest, UpgradeMatchPropertiesWhileMergingDuplicates) {
+  AutocompleteMatch search_history_match(nullptr, 500, true,
+                                         AutocompleteMatchType::SEARCH_HISTORY);
+
+  // Entity match should get the increased score, but not change types.
+  AutocompleteMatch entity_match(nullptr, 400, false,
+                                 AutocompleteMatchType::SEARCH_SUGGEST_ENTITY);
+  entity_match.UpgradeMatchWithPropertiesFrom(search_history_match);
+  EXPECT_EQ(500, entity_match.relevance);
+  EXPECT_EQ(AutocompleteMatchType::SEARCH_SUGGEST_ENTITY, entity_match.type);
+
+  // Suggest and search-what-typed matches should get the search history type.
+  AutocompleteMatch suggest_match(nullptr, 400, true,
+                                  AutocompleteMatchType::SEARCH_SUGGEST);
+  AutocompleteMatch search_what_you_typed(
+      nullptr, 400, true, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED);
+  suggest_match.UpgradeMatchWithPropertiesFrom(search_history_match);
+  search_what_you_typed.UpgradeMatchWithPropertiesFrom(search_history_match);
+  EXPECT_EQ(500, suggest_match.relevance);
+  EXPECT_EQ(500, search_what_you_typed.relevance);
+  EXPECT_EQ(AutocompleteMatchType::SEARCH_HISTORY, suggest_match.type);
+  EXPECT_EQ(AutocompleteMatchType::SEARCH_HISTORY, search_what_you_typed.type);
+}
+
+TEST(AutocompleteMatchTest, SetAllowedToBeDefault) {
+  auto test = [](int caseI, const std::string input_text,
+                 bool input_prevent_inline_autocomplete,
+                 const std::string match_inline_autocompletion,
+                 const std::string expected_inline_autocompletion,
+                 bool expected_allowed_to_be_default_match) {
+    AutocompleteInput input(base::UTF8ToUTF16(input_text),
                             metrics::OmniboxEventProto::OTHER,
                             TestSchemeClassifier());
-    AutocompleteMatch m1(nullptr, 100, false,
-                         AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-    m1.destination_url = GURL(cases[i].url1);
-    m1.ComputeStrippedDestinationURL(input, nullptr);
-    AutocompleteMatch m2(nullptr, 100, false,
-                         AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-    m2.destination_url = GURL(cases[i].url2);
-    m2.ComputeStrippedDestinationURL(input, nullptr);
-    EXPECT_EQ(cases[i].expected_duplicate,
-              m1.stripped_destination_url == m2.stripped_destination_url);
-    EXPECT_TRUE(m1.stripped_destination_url.is_valid());
-    EXPECT_TRUE(m2.stripped_destination_url.is_valid());
-  }
+    input.set_prevent_inline_autocomplete(input_prevent_inline_autocomplete);
+
+    AutocompleteMatch match;
+    match.inline_autocompletion =
+        base::UTF8ToUTF16(match_inline_autocompletion);
+
+    match.SetAllowedToBeDefault(input);
+
+    EXPECT_EQ(base::UTF16ToUTF8(match.inline_autocompletion).c_str(),
+              expected_inline_autocompletion)
+        << "case " << caseI;
+    EXPECT_EQ(match.allowed_to_be_default_match,
+              expected_allowed_to_be_default_match)
+        << "case " << caseI;
+  };
+
+  // Test all combinations of:
+  // 1) input text in ["goo", "goo ", "goo  "]
+  // 2) input prevent_inline_autocomplete in [false, true]
+  // 3) match inline_autocopmletion in ["", "gle.com", " gle.com", "  gle.com"]
+  test(1, "goo", false, "", "", true);
+  test(2, "goo", false, "gle.com", "gle.com", true);
+  test(3, "goo", false, " gle.com", " gle.com", true);
+  test(4, "goo", false, "  gle.com", "  gle.com", true);
+  test(5, "goo ", false, "", "", true);
+  test(6, "goo ", false, "gle.com", "gle.com", false);
+  test(7, "goo ", false, " gle.com", "gle.com", true);
+  test(8, "goo ", false, "  gle.com", " gle.com", true);
+  test(9, "goo  ", false, "", "", true);
+  test(10, "goo  ", false, "gle.com", "gle.com", false);
+  test(11, "goo  ", false, " gle.com", " gle.com", false);
+  test(12, "goo  ", false, "  gle.com", "gle.com", true);
+  test(13, "goo", true, "", "", true);
+  test(14, "goo", true, "gle.com", "gle.com", false);
+  test(15, "goo", true, " gle.com", " gle.com", false);
+  test(16, "goo", true, "  gle.com", "  gle.com", false);
+  test(17, "goo ", true, "", "", true);
+  test(18, "goo ", true, "gle.com", "gle.com", false);
+  test(19, "goo ", true, " gle.com", " gle.com", false);
+  test(20, "goo ", true, "  gle.com", "  gle.com", false);
+  test(21, "goo  ", true, "", "", true);
+  test(22, "goo  ", true, "gle.com", "gle.com", false);
+  test(23, "goo  ", true, " gle.com", " gle.com", false);
+  test(24, "goo  ", true, "  gle.com", "  gle.com", false);
 }

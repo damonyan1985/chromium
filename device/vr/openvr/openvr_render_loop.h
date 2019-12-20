@@ -5,6 +5,9 @@
 #ifndef DEVICE_VR_OPENVR_RENDER_LOOP_H
 #define DEVICE_VR_OPENVR_RENDER_LOOP_H
 
+#include <string>
+#include <vector>
+
 #include "base/memory/scoped_refptr.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
@@ -33,10 +36,6 @@ class OpenVRRenderLoop : public XRCompositorCommon {
  private:
   // XRDeviceAbstraction:
   mojom::XRFrameDataPtr GetNextFrameData() override;
-  mojom::XRGamepadDataPtr GetNextGamepadData() override;
-  void GetEnvironmentIntegrationProvider(
-      mojom::XREnvironmentIntegrationProviderAssociatedRequest
-          environment_provider) override;
   bool StartRuntime() override;
   void StopRuntime() override;
   void OnSessionStart() override;
@@ -44,7 +43,6 @@ class OpenVRRenderLoop : public XRCompositorCommon {
   bool SubmitCompositedFrame() override;
 
   // Helpers to implement XRDeviceAbstraction.
-  mojom::VRPosePtr GetPose();
   std::vector<mojom::XRInputSourceStatePtr> GetInputState(
       vr::TrackedDevicePose_t* poses,
       uint32_t count);
@@ -54,6 +52,14 @@ class OpenVRRenderLoop : public XRCompositorCommon {
     bool primary_input_pressed;
     vr::ETrackedDeviceClass device_class;
     vr::ETrackedControllerRole controller_role;
+
+    std::vector<std::string> profiles;
+
+    InputActiveState();
+    ~InputActiveState();
+    void MarkAsInactive();
+
+    DISALLOW_COPY_AND_ASSIGN(InputActiveState);
   };
 
   InputActiveState input_active_states_[vr::k_unMaxTrackedDeviceCount];

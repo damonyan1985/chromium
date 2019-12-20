@@ -78,9 +78,25 @@ AssistantNotificationModel::GetNotificationById(const std::string& id) const {
   return it != notifications_.end() ? it->second.get() : nullptr;
 }
 
+std::vector<const chromeos::assistant::mojom::AssistantNotification*>
+AssistantNotificationModel::GetNotifications() const {
+  return GetNotificationsByType(base::nullopt);
+}
+
+std::vector<const chromeos::assistant::mojom::AssistantNotification*>
+AssistantNotificationModel::GetNotificationsByType(
+    base::Optional<AssistantNotificationType> type) const {
+  std::vector<const AssistantNotification*> notifications;
+  for (const auto& notification : notifications_) {
+    if (!type || notification.second->type == type.value())
+      notifications.push_back(notification.second.get());
+  }
+  return notifications;
+}
+
 bool AssistantNotificationModel::HasNotificationForId(
     const std::string& id) const {
-  return base::ContainsKey(notifications_, id);
+  return base::Contains(notifications_, id);
 }
 
 void AssistantNotificationModel::NotifyNotificationAdded(

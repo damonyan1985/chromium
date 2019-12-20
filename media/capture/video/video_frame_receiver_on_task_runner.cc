@@ -20,9 +20,8 @@ void VideoFrameReceiverOnTaskRunner::OnNewBuffer(
     int buffer_id,
     media::mojom::VideoBufferHandlePtr buffer_handle) {
   task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&VideoFrameReceiver::OnNewBuffer, receiver_, buffer_id,
-                     base::Passed(std::move(buffer_handle))));
+      FROM_HERE, base::BindOnce(&VideoFrameReceiver::OnNewBuffer, receiver_,
+                                buffer_id, std::move(buffer_handle)));
 }
 
 void VideoFrameReceiverOnTaskRunner::OnFrameReadyInBuffer(
@@ -40,8 +39,8 @@ void VideoFrameReceiverOnTaskRunner::OnFrameReadyInBuffer(
 
 void VideoFrameReceiverOnTaskRunner::OnBufferRetired(int buffer_id) {
   task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&VideoFrameReceiver::OnBufferRetired, receiver_, buffer_id));
+      FROM_HERE, base::BindOnce(&VideoFrameReceiver::OnBufferRetired, receiver_,
+                                buffer_id));
 }
 
 void VideoFrameReceiverOnTaskRunner::OnError(VideoCaptureError error) {
@@ -70,6 +69,11 @@ void VideoFrameReceiverOnTaskRunner::OnStartedUsingGpuDecode() {
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(&VideoFrameReceiver::OnStartedUsingGpuDecode, receiver_));
+}
+
+void VideoFrameReceiverOnTaskRunner::OnStopped() {
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&VideoFrameReceiver::OnStopped, receiver_));
 }
 
 }  // namespace media

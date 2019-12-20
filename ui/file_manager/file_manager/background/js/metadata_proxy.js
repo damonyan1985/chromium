@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 // Namespace
-var metadataProxy = {};
+const metadataProxy = {};
 
 /**
  * Maximum number of entries whose metadata can be cached.
@@ -13,7 +13,36 @@ var metadataProxy = {};
 metadataProxy.MAX_CACHED_METADATA_ = 10000;
 
 /**
- * @private {!LRUCache<!Metadata>}
+ * Maximum time for entry to not be considered stale.
+ * @const {number}
+ * @private
+ */
+metadataProxy.MAX_TTL_SECONDS_ = 60;
+
+/**
+ * @type {number}
+ * @private
+ */
+metadataProxy.cache_ttl_seconds_ = metadataProxy.MAX_TTL_SECONDS_;
+
+/**
+ * Cached metadata element with a timestamp when it was fetched.
+ */
+class CachedMetadata {
+  /**
+   * @param {!Metadata} metadata
+   */
+  constructor(metadata) {
+    /** @type {!Metadata} */
+    this.metadata = metadata;
+
+    /** @type {!Date}} */
+    this.mtime = new Date();
+  }
+}
+
+/**
+ * @private {!LRUCache<!CachedMetadata>}
  */
 metadataProxy.cache_ = new LRUCache(metadataProxy.MAX_CACHED_METADATA_);
 
@@ -23,16 +52,27 @@ metadataProxy.cache_ = new LRUCache(metadataProxy.MAX_CACHED_METADATA_);
  * @param {!FileEntry} entry
  * @return {!Promise<!Metadata>}
  */
-metadataProxy.getEntryMetadata = function(entry) {
-  var entryURL = entry.toURL();
-  if (metadataProxy.cache_.hasKey(entryURL)) {
-    return Promise.resolve(metadataProxy.cache_.get(entryURL));
+metadataProxy.getEntryMetadata = entry => {
+  const expiryCutoffTime = Date.now() - metadataProxy.cache_ttl_seconds_ * 1000;
+  const entryURL = entry.toURL();
+  const cachedData = metadataProxy.cache_.get(entryURL);
+  if (cachedData && cachedData.mtime.getTime() >= expiryCutoffTime) {
+    return Promise.resolve(cachedData.metadata);
   } else {
-    return new Promise(function(resolve, reject) {
-      entry.getMetadata(function(metadata) {
-        metadataProxy.cache_.put(entryURL, metadata);
+    return new Promise((resolve, reject) => {
+      entry.getMetadata(metadata => {
+        metadataProxy.cache_.put(entryURL, new CachedMetadata(metadata));
         resolve(metadata);
       }, reject);
     });
   }
+};
+
+/**
+ * Override cache TTL for testing.
+ *
+ * @param {number=} ttl
+ */
+metadataProxy.overrideCacheTtlForTesting = ttl => {
+  metadataProxy.cache_ttl_seconds_ = ttl ? ttl : metadataProxy.MAX_TTL_SECONDS_;
 };

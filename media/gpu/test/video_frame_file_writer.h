@@ -5,6 +5,7 @@
 #ifndef MEDIA_GPU_TEST_VIDEO_FRAME_FILE_WRITER_H_
 #define MEDIA_GPU_TEST_VIDEO_FRAME_FILE_WRITER_H_
 
+#include <limits>
 #include <memory>
 
 #include "base/files/file_path.h"
@@ -16,49 +17,71 @@
 #include "media/gpu/test/video_frame_helpers.h"
 
 namespace media {
-namespace test {
 
 class VideoFrameMapper;
 
+namespace test {
+
 // The video frame file writer class implements functionality to write video
-// frames to file. Currently only the PNG output format is supported.
+// frames to file. The supported output formats are PNG and raw I420 YUV.
 class VideoFrameFileWriter : public VideoFrameProcessor {
  public:
+  // Supported output formats.
+  enum class OutputFormat {
+    kPNG = 0,
+    kYUV,
+  };
+
   ~VideoFrameFileWriter() override;
 
   // Create an instance of the video frame file writer.
-  static std::unique_ptr<VideoFrameFileWriter> Create();
-
-  // Set the folder the video frame files will be written to.
-  void SetOutputFolder(const base::FilePath& output_folder);
-
-  // Wait until all currently scheduled frame write operations are done.
-  void WaitUntilDone() const;
+  // |output_folder| specifies the folder video frames will be written to.
+  // |output_format| specifies the output file format.
+  // |output_limit| limits the max number of files that can be written.
+  static std::unique_ptr<VideoFrameFileWriter> Create(
+      const base::FilePath& output_folder,
+      OutputFormat output_format = OutputFormat::kPNG,
+      size_t output_limit = std::numeric_limits<size_t>::max());
 
   // Interface VideoFrameProcessor
   void ProcessVideoFrame(scoped_refptr<const VideoFrame> video_frame,
                          size_t frame_index) override;
+  // Wait until all currently scheduled frame write operations are done.
+  bool WaitUntilDone() override;
 
  private:
-  VideoFrameFileWriter();
+  VideoFrameFileWriter(const base::FilePath& output_folder,
+                       OutputFormat output_format,
+                       size_t output_limit);
 
   // Initialize the video frame file writer.
   bool Initialize();
-  // Destroy the video frame file writer.
-  void Destroy();
 
   // Writes the specified video frame to file on the |file_writer_thread_|.
   void ProcessVideoFrameTask(scoped_refptr<const VideoFrame> video_frame,
                              size_t frame_index);
 
+  // Write the video frame to disk in PNG format.
+  void WriteVideoFramePNG(scoped_refptr<const VideoFrame> video_frame,
+                          const base::FilePath& filename);
+  // Write the video frame to disk in I420 YUV format.
+  void WriteVideoFrameYUV(scoped_refptr<const VideoFrame> video_frame,
+                          const base::FilePath& filename);
+
   // Output folder the frames will be written to.
-  base::FilePath output_folder_ GUARDED_BY(frame_writer_lock_);
+  const base::FilePath output_folder_;
+  // Output format of the frames.
+  const OutputFormat output_format_;
+  // The maximum number of frames that can be written.
+  const size_t output_limit_;
 
   // The video frame mapper used to gain access to the raw video frame memory.
   std::unique_ptr<VideoFrameMapper> video_frame_mapper_;
 
   // The number of frames currently queued for writing.
   size_t num_frames_writing_ GUARDED_BY(frame_writer_lock_);
+  // The number of frames currently written or queued to be written.
+  size_t num_frames_writes_requested_ = 0u;
 
   // Thread on which video frame writing is done.
   base::Thread frame_writer_thread_;

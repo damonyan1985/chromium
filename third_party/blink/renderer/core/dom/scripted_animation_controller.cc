@@ -33,8 +33,8 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -43,27 +43,22 @@ std::pair<EventTarget*, StringImpl*> EventTargetKey(const Event* event) {
 }
 
 ScriptedAnimationController::ScriptedAnimationController(Document* document)
-    : document_(document), callback_collection_(document), suspend_count_(0) {}
+    : ContextLifecycleStateObserver(document), callback_collection_(document) {
+  UpdateStateIfNeeded();
+}
 
 void ScriptedAnimationController::Trace(Visitor* visitor) {
-  visitor->Trace(document_);
+  ContextLifecycleStateObserver::Trace(visitor);
   visitor->Trace(callback_collection_);
   visitor->Trace(event_queue_);
   visitor->Trace(media_query_list_listeners_);
   visitor->Trace(per_frame_events_);
 }
 
-void ScriptedAnimationController::Pause() {
-  ++suspend_count_;
-}
-
-void ScriptedAnimationController::Unpause() {
-  // It would be nice to put an DCHECK_GT(suspend_count_, 0) here, but in WK1
-  // resume() can be called even when suspend hasn't (if a tab was created in
-  // the background).
-  if (suspend_count_ > 0)
-    --suspend_count_;
-  ScheduleAnimationIfNeeded();
+void ScriptedAnimationController::ContextLifecycleStateChanged(
+    mojom::FrameLifecycleState state) {
+  if (state == mojom::FrameLifecycleState::kRunning)
+    ScheduleAnimationIfNeeded();
 }
 
 void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
@@ -72,19 +67,31 @@ void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
 }
 
 ScriptedAnimationController::CallbackId
-ScriptedAnimationController::RegisterCallback(
+ScriptedAnimationController::RegisterFrameCallback(
     FrameRequestCallbackCollection::FrameCallback* callback) {
-  CallbackId id = callback_collection_.RegisterCallback(callback);
+  CallbackId id = callback_collection_.RegisterFrameCallback(callback);
   ScheduleAnimationIfNeeded();
   return id;
 }
 
-void ScriptedAnimationController::CancelCallback(CallbackId id) {
-  callback_collection_.CancelCallback(id);
+void ScriptedAnimationController::CancelFrameCallback(CallbackId id) {
+  callback_collection_.CancelFrameCallback(id);
 }
 
-bool ScriptedAnimationController::HasCallback() const {
-  return !callback_collection_.IsEmpty();
+bool ScriptedAnimationController::HasFrameCallback() const {
+  return callback_collection_.HasFrameCallback();
+}
+
+ScriptedAnimationController::CallbackId
+ScriptedAnimationController::RegisterPostFrameCallback(
+    FrameRequestCallbackCollection::FrameCallback* callback) {
+  CallbackId id = callback_collection_.RegisterPostFrameCallback(callback);
+  ScheduleAnimationIfNeeded();
+  return id;
+}
+
+void ScriptedAnimationController::CancelPostFrameCallback(CallbackId id) {
+  callback_collection_.CancelPostFrameCallback(id);
 }
 
 void ScriptedAnimationController::RunTasks() {
@@ -119,7 +126,8 @@ void ScriptedAnimationController::DispatchEvents(
     // avoid special casting window.
     // FIXME: We should not fire events for nodes that are no longer in the
     // tree.
-    probe::AsyncTask async_task(event_target->GetExecutionContext(), event);
+    probe::AsyncTask async_task(event_target->GetExecutionContext(),
+                                event->async_task_id());
     if (LocalDOMWindow* window = event_target->ToLocalDOMWindow())
       window->DispatchEvent(*event, nullptr);
     else
@@ -127,24 +135,13 @@ void ScriptedAnimationController::DispatchEvents(
   }
 }
 
-void ScriptedAnimationController::ExecuteCallbacks(
-    base::TimeTicks monotonic_time_now) {
+void ScriptedAnimationController::ExecuteFrameCallbacks() {
   // dispatchEvents() runs script which can cause the document to be destroyed.
-  if (!document_)
+  if (!GetDocument())
     return;
 
-  double high_res_now_ms =
-      document_->Loader()
-          ->GetTiming()
-          .MonotonicTimeToZeroBasedDocumentTime(monotonic_time_now)
-          .InMillisecondsF();
-  double legacy_high_res_now_ms =
-      document_->Loader()
-          ->GetTiming()
-          .MonotonicTimeToPseudoWallTime(monotonic_time_now)
-          .InMillisecondsF();
-  callback_collection_.ExecuteCallbacks(high_res_now_ms,
-                                        legacy_high_res_now_ms);
+  callback_collection_.ExecuteFrameCallbacks(current_frame_time_ms_,
+                                             current_frame_legacy_time_ms_);
 }
 
 void ScriptedAnimationController::CallMediaQueryListListeners() {
@@ -156,27 +153,79 @@ void ScriptedAnimationController::CallMediaQueryListListeners() {
   }
 }
 
-bool ScriptedAnimationController::HasScheduledItems() const {
-  if (suspend_count_)
-    return false;
-
-  return !callback_collection_.IsEmpty() || !task_queue_.IsEmpty() ||
-         !event_queue_.IsEmpty() || !media_query_list_listeners_.IsEmpty();
+bool ScriptedAnimationController::HasScheduledFrameTasks() const {
+  return callback_collection_.HasFrameCallback() || !task_queue_.IsEmpty() ||
+         !event_queue_.IsEmpty() || !media_query_list_listeners_.IsEmpty() ||
+         GetDocument()->HasAutofocusCandidates();
 }
 
 void ScriptedAnimationController::ServiceScriptedAnimations(
     base::TimeTicks monotonic_time_now) {
-  current_frame_had_raf_ = HasCallback();
-  if (!HasScheduledItems())
+  if (!GetDocument() || !GetDocument()->GetFrame() ||
+      GetDocument()->IsContextPaused()) {
+    return;
+  }
+
+  current_frame_time_ms_ =
+      GetDocument()
+          ->Loader()
+          ->GetTiming()
+          .MonotonicTimeToZeroBasedDocumentTime(monotonic_time_now)
+          .InMillisecondsF();
+  current_frame_legacy_time_ms_ =
+      GetDocument()
+          ->Loader()
+          ->GetTiming()
+          .MonotonicTimeToPseudoWallTime(monotonic_time_now)
+          .InMillisecondsF();
+  current_frame_had_raf_ = HasFrameCallback();
+
+  if (!HasScheduledFrameTasks())
     return;
 
+  // https://html.spec.whatwg.org/C/#update-the-rendering
+
+  // 10.5. For each fully active Document in docs, flush autofocus
+  // candidates for that Document if its browsing context is a top-level
+  // browsing context.
+  GetDocument()->FlushAutofocusCandidates();
+
+  // 10.8. For each fully active Document in docs, evaluate media
+  // queries and report changes for that Document, passing in now as the
+  // timestamp
   CallMediaQueryListListeners();
+
+  // 10.6. For each fully active Document in docs, run the resize steps
+  // for that Document, passing in now as the timestamp.
+  // 10.7. For each fully active Document in docs, run the scroll steps
+  // for that Document, passing in now as the timestamp.
+  // 10.9. For each fully active Document in docs, update animations and
+  // send events for that Document, passing in now as the timestamp.
+  //
+  // We share a single event queue for them.
   DispatchEvents();
+
+  // 10.10. For each fully active Document in docs, run the fullscreen
+  // steps for that Document, passing in now as the timestamp.
   RunTasks();
-  ExecuteCallbacks(monotonic_time_now);
-  next_frame_has_pending_raf_ = HasCallback();
+
+  // 10.11. For each fully active Document in docs, run the animation
+  // frame callbacks for that Document, passing in now as the timestamp.
+  ExecuteFrameCallbacks();
+  next_frame_has_pending_raf_ = HasFrameCallback();
+
+  // See LocalFrameView::RunPostLifecycleSteps() for 10.12.
 
   ScheduleAnimationIfNeeded();
+}
+
+void ScriptedAnimationController::RunPostFrameCallbacks() {
+  if (!callback_collection_.HasPostFrameCallback())
+    return;
+  DCHECK(current_frame_time_ms_ > 0.);
+  DCHECK(current_frame_legacy_time_ms_ > 0.);
+  callback_collection_.ExecutePostFrameCallbacks(current_frame_time_ms_,
+                                                 current_frame_legacy_time_ms_);
 }
 
 void ScriptedAnimationController::EnqueueTask(base::OnceClosure task) {
@@ -186,7 +235,7 @@ void ScriptedAnimationController::EnqueueTask(base::OnceClosure task) {
 
 void ScriptedAnimationController::EnqueueEvent(Event* event) {
   probe::AsyncTaskScheduled(event->target()->GetExecutionContext(),
-                            event->type(), event);
+                            event->type(), event->async_task_id());
   event_queue_.push_back(event);
   ScheduleAnimationIfNeeded();
 }
@@ -206,14 +255,26 @@ void ScriptedAnimationController::EnqueueMediaQueryChangeListeners(
 }
 
 void ScriptedAnimationController::ScheduleAnimationIfNeeded() {
-  if (!HasScheduledItems())
+  if (!GetDocument() || !GetDocument()->GetFrame() ||
+      GetDocument()->IsContextPaused()) {
     return;
+  }
 
-  if (!document_)
+  // If there is any pre-frame work to do, schedule an animation
+  // unconditionally.
+  if (HasScheduledFrameTasks()) {
+    GetDocument()->View()->ScheduleAnimation();
     return;
+  }
 
-  if (LocalFrameView* frame_view = document_->View())
-    frame_view->ScheduleAnimation();
+  // If there is post-frame work to do, only schedule an animation if we're not
+  // currently running one -- if we're currently running an animation, then any
+  // scheduled post-frame tasks will get run at the end of the current frame, so
+  // no need to schedule another one.
+  if (callback_collection_.HasPostFrameCallback() &&
+      !GetDocument()->GetPage()->Animator().IsServicingAnimations()) {
+    GetDocument()->View()->ScheduleAnimation();
+  }
 }
 
 }  // namespace blink

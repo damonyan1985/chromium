@@ -10,11 +10,14 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/crostini/crostini_pref_names.h"
 #include "chrome/browser/chromeos/crostini/crostini_test_helper.h"
 #include "chrome/browser/chromeos/crostini/crostini_util.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/dbus/vm_applications/apps.pb.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "components/prefs/pref_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,12 +57,21 @@ class CrostiniRegistryServiceTest : public testing::Test {
   }
 
   CrostiniRegistryService* service() { return service_.get(); }
+  Profile* profile() { return &profile_; }
+
+  std::vector<std::string> GetRegisteredAppIds() {
+    std::vector<std::string> result;
+    for (const auto& pair : service_->GetRegisteredApps()) {
+      result.emplace_back(pair.first);
+    }
+    return result;
+  }
 
  protected:
   base::SimpleTestClock test_clock_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
   CrostiniTestHelper crostini_test_helper_;
 
@@ -79,6 +91,8 @@ TEST_F(CrostiniRegistryServiceTest, SetAndGetRegistration) {
   std::set<std::string> mime_types = {"text/plain", "text/x-python"};
   bool no_display = true;
   std::string executable_file_name = "execName";
+  std::string package_id =
+      "vim;2:8.0.0197-4+deb9u1;amd64;installed:debian-stable";
 
   std::string app_id = CrostiniTestHelper::GenerateAppId(
       desktop_file_id, vm_name, container_name);
@@ -92,6 +106,7 @@ TEST_F(CrostiniRegistryServiceTest, SetAndGetRegistration) {
   app->set_desktop_file_id(desktop_file_id);
   app->set_no_display(no_display);
   app->set_executable_file_name(executable_file_name);
+  app->set_package_id(package_id);
 
   for (const auto& localized_name : name) {
     App::LocaleString::Entry* entry = app->mutable_name()->add_values();
@@ -129,6 +144,7 @@ TEST_F(CrostiniRegistryServiceTest, SetAndGetRegistration) {
   EXPECT_EQ(result->MimeTypes(), mime_types);
   EXPECT_EQ(result->NoDisplay(), no_display);
   EXPECT_EQ(result->ExecutableFileName(), executable_file_name);
+  EXPECT_EQ(result->PackageId(), package_id);
 }
 
 TEST_F(CrostiniRegistryServiceTest, Observer) {
@@ -270,7 +286,7 @@ TEST_F(CrostiniRegistryServiceTest, MultipleContainers) {
   std::string app_id_3 =
       CrostiniTestHelper::GenerateAppId("app", "vm 2", "container 1");
 
-  EXPECT_THAT(service()->GetRegisteredAppIds(),
+  EXPECT_THAT(GetRegisteredAppIds(),
               testing::UnorderedElementsAre(app_id_1, app_id_2, app_id_3,
                                             kCrostiniTerminalId));
 
@@ -280,7 +296,7 @@ TEST_F(CrostiniRegistryServiceTest, MultipleContainers) {
   std::string new_app_id =
       CrostiniTestHelper::GenerateAppId("app 2", "vm 1", "container 2");
 
-  EXPECT_THAT(service()->GetRegisteredAppIds(),
+  EXPECT_THAT(GetRegisteredAppIds(),
               testing::UnorderedElementsAre(app_id_1, app_id_3, new_app_id,
                                             kCrostiniTerminalId));
 }
@@ -305,14 +321,14 @@ TEST_F(CrostiniRegistryServiceTest, ClearApplicationList) {
   std::string app_id_4 =
       CrostiniTestHelper::GenerateAppId("app 2", "vm 2", "container 1");
 
-  EXPECT_THAT(service()->GetRegisteredAppIds(),
+  EXPECT_THAT(GetRegisteredAppIds(),
               testing::UnorderedElementsAre(app_id_1, app_id_2, app_id_3,
                                             app_id_4, kCrostiniTerminalId));
 
-  service()->ClearApplicationList("vm 2");
+  service()->ClearApplicationList("vm 2", "");
 
   EXPECT_THAT(
-      service()->GetRegisteredAppIds(),
+      GetRegisteredAppIds(),
       testing::UnorderedElementsAre(app_id_1, app_id_2, kCrostiniTerminalId));
 }
 
@@ -326,7 +342,7 @@ TEST_F(CrostiniRegistryServiceTest, GetCrostiniAppIdNoStartupID) {
   service()->UpdateApplicationList(
       CrostiniTestHelper::BasicAppList("super", "vm 2", "container"));
 
-  EXPECT_THAT(service()->GetRegisteredAppIds(), testing::SizeIs(5));
+  EXPECT_THAT(service()->GetRegisteredApps(), testing::SizeIs(5));
 
   EXPECT_TRUE(service()->GetCrostiniShelfAppId(nullptr, nullptr).empty());
 
@@ -357,10 +373,6 @@ TEST_F(CrostiniRegistryServiceTest, GetCrostiniAppIdNoStartupID) {
   window_app_id = "fancy.app";
   EXPECT_EQ(service()->GetCrostiniShelfAppId(&window_app_id, nullptr),
             "crostini:fancy.app");
-
-  window_app_id = "org.chromium.arc.h";
-  EXPECT_EQ(service()->GetCrostiniShelfAppId(&window_app_id, nullptr),
-            std::string());
 }
 
 TEST_F(CrostiniRegistryServiceTest, GetCrostiniAppIdStartupWMClass) {
@@ -373,7 +385,7 @@ TEST_F(CrostiniRegistryServiceTest, GetCrostiniAppIdStartupWMClass) {
   app_list.mutable_apps(2)->set_startup_wm_class("app2");
   service()->UpdateApplicationList(app_list);
 
-  EXPECT_THAT(service()->GetRegisteredAppIds(), testing::SizeIs(4));
+  EXPECT_THAT(service()->GetRegisteredApps(), testing::SizeIs(4));
 
   std::string window_app_id = WindowIdForWMClass("app_start");
   EXPECT_EQ(service()->GetCrostiniShelfAppId(&window_app_id, nullptr),
@@ -510,6 +522,47 @@ TEST_F(CrostiniRegistryServiceTest, SetAndGetRegistrationExecutableFileName) {
       service()->GetRegistration(app_id_no_exec);
   EXPECT_EQ(result_valid_exec->ExecutableFileName(), executable_file_name);
   EXPECT_EQ(result_no_exec->ExecutableFileName(), "");
+}
+
+TEST_F(CrostiniRegistryServiceTest, SetAndGetPackageId) {
+  std::string package_id =
+      "vim;2:8.0.0197-4+deb9u1;amd64;installed:debian-stable";
+  std::string app_id_valid_package_id =
+      CrostiniTestHelper::GenerateAppId("app", "vm", "container");
+  std::string app_id_no_package_id =
+      CrostiniTestHelper::GenerateAppId("noPackageId", "vm", "container");
+  ApplicationList app_list =
+      CrostiniTestHelper::BasicAppList("app", "vm", "container");
+  *app_list.add_apps() = CrostiniTestHelper::BasicApp("noPackageId");
+
+  app_list.mutable_apps(0)->set_package_id(package_id);
+  service()->UpdateApplicationList(app_list);
+
+  base::Optional<CrostiniRegistryService::Registration>
+      result_valid_package_id =
+          service()->GetRegistration(app_id_valid_package_id);
+  base::Optional<CrostiniRegistryService::Registration> result_no_package_id =
+      service()->GetRegistration(app_id_no_package_id);
+  EXPECT_EQ(result_valid_package_id->PackageId(), package_id);
+  EXPECT_EQ(result_no_package_id->PackageId(), "");
+}
+
+TEST_F(CrostiniRegistryServiceTest, MigrateTerminal) {
+  // Add prefs entry for the deleted terminal.
+  base::DictionaryValue registry;
+  registry.SetKey(GetDeletedTerminalId(), base::DictionaryValue());
+  profile()->GetPrefs()->Set(prefs::kCrostiniRegistry, std::move(registry));
+
+  // Only current terminal returned.
+  RecreateService();
+  EXPECT_THAT(GetRegisteredAppIds(),
+              testing::UnorderedElementsAre(GetTerminalId()));
+
+  // Deleted terminal removed from prefs.
+  EXPECT_FALSE(profile()
+                   ->GetPrefs()
+                   ->GetDictionary(prefs::kCrostiniRegistry)
+                   ->HasKey(GetDeletedTerminalId()));
 }
 
 }  // namespace crostini

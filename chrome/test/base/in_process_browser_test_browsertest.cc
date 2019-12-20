@@ -34,9 +34,9 @@ IN_PROC_BROWSER_TEST_P(InProcessBrowserTestP, TestP) {
   EXPECT_EQ(0, strcmp("foo", GetParam()));
 }
 
-INSTANTIATE_TEST_CASE_P(IPBTP,
-                        InProcessBrowserTestP,
-                        ::testing::Values("foo"));
+INSTANTIATE_TEST_SUITE_P(IPBTP,
+                         InProcessBrowserTestP,
+                         ::testing::Values("foo"));
 
 // WebContents observer that can detect provisional load failures.
 class LoadFailObserver : public content::WebContentsObserver {
@@ -105,7 +105,15 @@ class SingleProcessBrowserTest : public InProcessBrowserTest {
   }
 };
 
-IN_PROC_BROWSER_TEST_F(SingleProcessBrowserTest, Test) {
+#if defined(OS_LINUX) || defined(OS_WIN)
+// TODO(https://crbug.com/931233): Reenable on Linux.
+// TODO(https://crbug.com/987448): Reenable on Windows.
+#define MAYBE_Test DISABLED_Test
+#else
+#define MAYBE_Test Test
+#endif
+
+IN_PROC_BROWSER_TEST_F(SingleProcessBrowserTest, MAYBE_Test) {
   // Should not crash.
 }
 

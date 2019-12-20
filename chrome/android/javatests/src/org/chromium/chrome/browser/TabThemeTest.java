@@ -13,7 +13,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -24,6 +23,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabThemeColorHelper;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.test.util.UiRestriction;
 
@@ -86,11 +86,12 @@ public class TabThemeTest {
     }
 
     private static int getThemeColor(Tab tab) throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> TabThemeColorHelper.getColor(tab));
+        return TestThreadUtils.runOnUiThreadBlocking(() -> TabThemeColorHelper.getColor(tab));
     }
 
     private static int getDefaultThemeColor(Tab tab) throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> TabThemeColorHelper.getDefaultColor(tab));
+        return TestThreadUtils.runOnUiThreadBlocking(
+                () -> TabThemeColorHelper.getDefaultColor(tab));
     }
 
     /**
@@ -101,8 +102,7 @@ public class TabThemeTest {
     @MediumTest
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
     @RetryOnFailure
-    public void testThemeColorIsCorrect()
-            throws ExecutionException, InterruptedException, TimeoutException {
+    public void testThemeColorIsCorrect() throws ExecutionException, TimeoutException {
         EmbeddedTestServer testServer =
                 EmbeddedTestServer.createAndStartServer(InstrumentationRegistry.getContext());
 
@@ -121,9 +121,7 @@ public class TabThemeTest {
         // Navigate to a native page from a themed page.
         mActivityTestRule.loadUrl("chrome://newtab/");
         // WebContents does not set theme color for native pages, so don't wait for the call.
-        int nativePageThemeColor = ThreadUtils.runOnUiThreadBlocking(
-                () -> tab.getNativePage().getThemeColor());
-        assertColorsEqual(nativePageThemeColor, getThemeColor(tab));
+        assertColorsEqual(getDefaultThemeColor(tab), getThemeColor(tab));
 
         // Navigate to a themed page from a native page.
         curCallCount = themeColorHelper.getCallCount();

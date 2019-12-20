@@ -28,6 +28,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/hit_test_region_observer.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/extensions_api_client.h"
@@ -45,6 +46,7 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "net/base/filename_util.h"
+#include "net/test/embedded_test_server/default_handlers.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -52,7 +54,7 @@
 #include "ui/display/display_switches.h"
 
 #if defined(USE_AURA)
-#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #endif
 
 using guest_view::GuestViewManager;
@@ -238,6 +240,8 @@ void WebViewAPITest::StartTestServer(const std::string& app_location) {
           kUserAgentRedirectResponsePath,
           embedded_test_server()->GetURL(kRedirectResponseFullPath)));
 
+  net::test_server::RegisterDefaultHandlers(embedded_test_server());
+
   embedded_test_server()->StartAcceptingConnections();
 }
 
@@ -399,6 +403,7 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestCustomElementCallbacksInaccessible) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestAssignSrcAfterCrash) {
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   RunTest("testAssignSrcAfterCrash", "web_view/apitest");
 }
 
@@ -461,7 +466,7 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestContextMenu) {
 
   // Ensure the webview's surface is ready for hit testing.
   content::WebContents* guest_web_contents = GetGuestWebContents();
-  content::WaitForHitTestDataOrGuestSurfaceReady(guest_web_contents);
+  content::WaitForHitTestData(guest_web_contents);
 
   // Register a ContextMenuFilter to wait for the context menu event to be sent.
   content::RenderProcessHost* guest_process_host =
@@ -520,7 +525,10 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestDialogConfirmDefaultCancel) {
   RunTest("testDialogConfirmDefaultCancel", "web_view/dialog");
 }
 
-IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestDialogConfirmDefaultGCCancel) {
+// This test is flaky and times out on all platforms.
+// https://crbug.com/937461.
+IN_PROC_BROWSER_TEST_F(WebViewAPITest,
+                       DISABLED_TestDialogConfirmDefaultGCCancel) {
   RunTest("testDialogConfirmDefaultGCCancel", "web_view/dialog");
 }
 
@@ -539,6 +547,7 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestEventName) {
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   RunTest("testEventName", "web_view/apitest");
 }
 
@@ -704,6 +713,8 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestReassignSrcAttribute) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestRemoveWebviewOnExit) {
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
+
   std::string app_location = "web_view/apitest";
   StartTestServer(app_location);
 
@@ -740,6 +751,7 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestReload) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestReloadAfterTerminate) {
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   RunTest("testReloadAfterTerminate", "web_view/apitest");
 }
 
@@ -762,6 +774,7 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, MAYBE_TestResizeWebviewResizesContent) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestTerminateAfterExit) {
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   RunTest("testTerminateAfterExit", "web_view/apitest");
 }
 
@@ -782,6 +795,13 @@ IN_PROC_BROWSER_TEST_F(WebViewAPITest, MAYBE_TestWebRequestAPIWithHeaders) {
   std::string app_location = "web_view/apitest";
   StartTestServer(app_location);
   RunTest("testWebRequestAPIWithHeaders", app_location);
+  StopTestServer();
+}
+
+IN_PROC_BROWSER_TEST_F(WebViewAPITest, TestWebRequestAPIWithExtraHeaders) {
+  std::string app_location = "web_view/apitest";
+  StartTestServer(app_location);
+  RunTest("testWebRequestAPIWithExtraHeaders", app_location);
   StopTestServer();
 }
 

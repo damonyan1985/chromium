@@ -4,11 +4,11 @@
 
 #import "ios/web_view/internal/cwv_preferences_internal.h"
 
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "ios/web_view/cwv_web_view_buildflags.h"
-#include "ios/web_view/internal/pref_names.h"
 
 #if BUILDFLAG(IOS_WEB_VIEW_ENABLE_AUTOFILL)
 #include "components/autofill/core/common/autofill_prefs.h"
@@ -43,7 +43,7 @@
 
 - (void)resetTranslationSettings {
   translate::TranslatePrefs translatePrefs(
-      _prefService, prefs::kAcceptLanguages,
+      _prefService, language::prefs::kAcceptLanguages,
       /*preferred_languages_pref=*/nullptr);
   translatePrefs.ResetToDefaults();
 }
@@ -52,19 +52,19 @@
 #pragma mark - Autofill
 
 - (void)setProfileAutofillEnabled:(BOOL)enabled {
-  autofill::prefs::SetProfileAutofillEnabled(_prefService, enabled);
+  autofill::prefs::SetAutofillProfileEnabled(_prefService, enabled);
 }
 
 - (BOOL)isProfileAutofillEnabled {
-  return autofill::prefs::IsProfileAutofillEnabled(_prefService);
+  return autofill::prefs::IsAutofillProfileEnabled(_prefService);
 }
 
 - (void)setCreditCardAutofillEnabled:(BOOL)enabled {
-  autofill::prefs::SetCreditCardAutofillEnabled(_prefService, enabled);
+  autofill::prefs::SetAutofillCreditCardEnabled(_prefService, enabled);
 }
 
 - (BOOL)isCreditCardAutofillEnabled {
-  return autofill::prefs::IsCreditCardAutofillEnabled(_prefService);
+  return autofill::prefs::IsAutofillCreditCardEnabled(_prefService);
 }
 
 - (void)setPasswordAutofillEnabled:(BOOL)enabled {

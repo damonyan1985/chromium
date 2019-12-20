@@ -13,9 +13,10 @@
 #include "ash/app_list/model/app_list_model_export.h"
 #include "ash/app_list/model/search/search_box_model.h"
 #include "ash/app_list/model/search/search_result.h"
+#include "base/callback.h"
 #include "ui/base/models/list_model.h"
 
-namespace app_list {
+namespace ash {
 
 class SearchBoxModel;
 
@@ -47,6 +48,13 @@ class APP_LIST_MODEL_EXPORT SearchModel {
       const std::set<std::string>& excludes,
       size_t max_results);
 
+  // Filter the given |results| by those which |result_filter| returns true for.
+  // The returned list is truncated to |max_results|.
+  static std::vector<SearchResult*> FilterSearchResultsByFunction(
+      SearchResults* results,
+      const base::RepeatingCallback<bool(const SearchResult&)>& result_filter,
+      size_t max_results);
+
   SearchBoxModel* search_box() { return search_box_.get(); }
   SearchResults* results() { return results_.get(); }
 
@@ -71,6 +79,6 @@ class APP_LIST_MODEL_EXPORT SearchModel {
   DISALLOW_COPY_AND_ASSIGN(SearchModel);
 };
 
-}  // namespace app_list
+}  // namespace ash
 
 #endif  // ASH_APP_LIST_MODEL_SEARCH_SEARCH_MODEL_H_

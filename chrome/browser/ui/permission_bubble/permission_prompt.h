@@ -10,7 +10,6 @@
 
 #include "base/callback.h"
 #include "base/strings/string16.h"
-#include "ui/gfx/native_widget_types.h"
 
 class PermissionRequest;
 
@@ -29,6 +28,20 @@ class PermissionPrompt {
   struct DisplayNameOrOrigin {
     base::string16 name_or_origin;
     bool is_origin;
+  };
+
+  // Permission prompt behavior on tab switching.
+  enum TabSwitchingBehavior {
+    // The prompt should be kept as-is on tab switching (usually because it's
+    // part of the containing tab so it will be hidden automatically when
+    // switching from said tab)
+    kKeepPromptAlive,
+    // Destroy the prompt but keep the permission request pending. When the user
+    // revisits the tab, the permission prompt is re-displayed.
+    kDestroyPromptButKeepRequestPending,
+    // Destroy the prompt and treat the permission request as being resolved
+    // with the PermissionAction::IGNORED result.
+    kDestroyPromptAndIgnoreRequest,
   };
 
   // The delegate will receive events caused by user action which need to
@@ -63,9 +76,9 @@ class PermissionPrompt {
   // Updates where the prompt should be anchored. ex: fullscreen toggle.
   virtual void UpdateAnchorPosition() = 0;
 
-  // Returns a reference to this prompt's native window.
-  // TODO(hcarmona): Remove this as part of the bubble API work.
-  virtual gfx::NativeWindow GetNativeWindow() = 0;
+  // Get the behavior of this prompt when the user switches away from the
+  // associated tab.
+  virtual TabSwitchingBehavior GetTabSwitchingBehavior() = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_PERMISSION_BUBBLE_PERMISSION_PROMPT_H_

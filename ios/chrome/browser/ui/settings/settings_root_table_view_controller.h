@@ -12,14 +12,16 @@
 #import "ios/chrome/browser/ui/table_view/cells/table_view_link_header_footer_item.h"
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_controller.h"
 
-extern NSString* const kSettingsToolbarDeleteButtonId;
-
 // SettingsRootTableViewController is a base class for integrating UITableViews
 // into the Settings UI.  It handles the configuration and display of the MDC
 // AppBar.
 @interface SettingsRootTableViewController
     : ChromeTableViewController <SettingsRootViewControlling,
-                                 TableViewLinkHeaderFooterItemDelegate>
+                                 TableViewLinkHeaderFooterItemDelegate,
+                                 UIAdaptivePresentationControllerDelegate>
+
+// Delete button for the toolbar.
+@property(nonatomic, strong, readonly) UIBarButtonItem* deleteButton;
 
 // Whether this table view controller should hide the "Done" button (the right
 // navigation bar button). Default is NO.
@@ -28,7 +30,9 @@ extern NSString* const kSettingsToolbarDeleteButtonId;
 // Updates the edit or done button to reflect editing state.  If the
 // tableView is not in edit mode (and thus showing the 'Done' button) it is
 // using shouldHideDoneButton to know if it should display the edit button.
-- (void)updateEditButton;
+// TODO(crbug.com/952227): This method should probably be called from the
+// setEditing:animated: method instead of being manually triggered.
+- (void)updateUIForEditState;
 
 // Reloads the table view model with |loadModel| and then reloads the
 // table view data.
@@ -39,6 +43,9 @@ extern NSString* const kSettingsToolbarDeleteButtonId;
 // Subclasses of SettingsRootTableViewController should implement the
 // following methods to customize the behavior.
 @interface SettingsRootTableViewController (Subclassing)
+
+// Returns YES. Subclasses should overload this if a toolbar is required.
+- (BOOL)shouldHideToolbar;
 
 // Returns NO.  Subclasses should overload this if an edit button is required.
 - (BOOL)shouldShowEditButton;

@@ -6,9 +6,7 @@
 
 #include "base/bind.h"
 #include "components/account_id/account_id.h"
-#include "services/identity/public/mojom/constants.mojom.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace drivefs {
 
@@ -18,13 +16,17 @@ constexpr char kIdentityConsumerId[] = "drivefs";
 
 DriveFsAuth::DriveFsAuth(const base::Clock* clock,
                          const base::FilePath& profile_path,
+                         std::unique_ptr<base::OneShotTimer> timer,
                          Delegate* delegate)
-    : clock_(clock), profile_path_(profile_path), delegate_(delegate) {}
+    : clock_(clock),
+      profile_path_(profile_path),
+      timer_(std::move(timer)),
+      delegate_(delegate) {}
 
 DriveFsAuth::~DriveFsAuth() {}
 
-base::Optional<std::string> DriveFsAuth::TakeCachedAccessToken() {
-  const auto& token = MaybeGetCachedToken(true);
+base::Optional<std::string> DriveFsAuth::GetCachedAccessToken() {
+  const auto& token = GetOrResetCachedToken(true);
   if (token.empty()) {
     return base::nullopt;
   }
@@ -40,22 +42,30 @@ void DriveFsAuth::GetAccessToken(
     return;
   }
 
-  const std::string& token = MaybeGetCachedToken(use_cached);
+  const std::string& token = GetOrResetCachedToken(use_cached);
   if (!token.empty()) {
     std::move(callback).Run(mojom::AccessTokenStatus::kSuccess, token);
     return;
   }
 
   get_access_token_callback_ = std::move(callback);
-  GetIdentityManager().GetPrimaryAccountWhenAvailable(
-      base::BindOnce(&DriveFsAuth::AccountReady, base::Unretained(this)));
+  timer_->Start(FROM_HERE, base::TimeDelta::FromSeconds(30),
+                base::BindOnce(&DriveFsAuth::AuthTimeout,
+                               weak_ptr_factory_.GetWeakPtr()));
+  GetIdentityAccessor()->GetPrimaryAccountWhenAvailable(base::BindOnce(
+      &DriveFsAuth::AccountReady, weak_ptr_factory_.GetWeakPtr()));
 }
 
-void DriveFsAuth::AccountReady(const AccountInfo& info,
+void DriveFsAuth::AccountReady(const CoreAccountId& account_id,
+                               const std::string& gaia,
+                               const std::string& email,
                                const identity::AccountState& state) {
-  GetIdentityManager().GetAccessToken(
-      delegate_->GetAccountId().GetUserEmail(),
-      {"https://www.googleapis.com/auth/drive"}, kIdentityConsumerId,
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  timer_->Stop();
+  GetIdentityAccessor()->GetAccessToken(
+      account_id, {"https://www.googleapis.com/auth/drive"},
+      kIdentityConsumerId,
       base::BindOnce(&DriveFsAuth::GotChromeAccessToken,
                      base::Unretained(this)));
 }
@@ -78,8 +88,7 @@ void DriveFsAuth::GotChromeAccessToken(
       .Run(mojom::AccessTokenStatus::kSuccess, *access_token);
 }
 
-const std::string& DriveFsAuth::MaybeGetCachedToken(bool use_cached) {
-  // Return value from cache at most once per mount.
+const std::string& DriveFsAuth::GetOrResetCachedToken(bool use_cached) {
   if (!use_cached || clock_->Now() >= last_token_expiry_) {
     last_token_.clear();
   }
@@ -92,13 +101,20 @@ void DriveFsAuth::UpdateCachedToken(const std::string& token,
   last_token_expiry_ = expiry;
 }
 
-identity::mojom::IdentityManager& DriveFsAuth::GetIdentityManager() {
+void DriveFsAuth::AuthTimeout() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!identity_manager_) {
-    delegate_->GetConnector()->BindInterface(
-        identity::mojom::kServiceName, mojo::MakeRequest(&identity_manager_));
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  std::move(get_access_token_callback_)
+      .Run(mojom::AccessTokenStatus::kAuthError, "");
+}
+
+identity::mojom::IdentityAccessor* DriveFsAuth::GetIdentityAccessor() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!identity_accessor_) {
+    delegate_->BindIdentityAccessor(
+        identity_accessor_.BindNewPipeAndPassReceiver());
   }
-  return *identity_manager_;
+  return identity_accessor_.get();
 }
 
 }  // namespace drivefs

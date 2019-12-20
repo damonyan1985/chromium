@@ -6,15 +6,20 @@ package org.chromium.net.impl;
 
 import android.annotation.SuppressLint;
 
+import androidx.annotation.IntDef;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.Log;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.base.annotations.NativeClassQualifiedName;
+import org.chromium.base.annotations.NativeMethods;
 import org.chromium.net.UploadDataProvider;
 import org.chromium.net.UploadDataSink;
 
 import java.io.IOException;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.nio.ByteBuffer;
 import java.util.concurrent.Executor;
 
@@ -81,14 +86,19 @@ public final class CronetUploadDataStream extends UploadDataSink {
     // to the adapter is synchronized, for safe usage and cleanup.
     @GuardedBy("mLock")
     private long mUploadDataStreamAdapter;
-    enum UserCallback {
-        READ,
-        REWIND,
-        GET_LENGTH,
-        NOT_IN_CALLBACK,
+
+    @IntDef({UserCallback.READ, UserCallback.REWIND, UserCallback.GET_LENGTH,
+            UserCallback.NOT_IN_CALLBACK})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface UserCallback {
+        int READ = 0;
+        int REWIND = 1;
+        int GET_LENGTH = 2;
+        int NOT_IN_CALLBACK = 3;
     }
+
     @GuardedBy("mLock")
-    private UserCallback mInWhichUserCallback = UserCallback.NOT_IN_CALLBACK;
+    private @UserCallback int mInWhichUserCallback = UserCallback.NOT_IN_CALLBACK;
     @GuardedBy("mLock")
     private boolean mDestroyAdapterPostponed;
     private Runnable mOnDestroyedCallbackForTesting;
@@ -152,7 +162,7 @@ public final class CronetUploadDataStream extends UploadDataSink {
     }
 
     @GuardedBy("mLock")
-    private void checkState(UserCallback mode) {
+    private void checkState(@UserCallback int mode) {
         if (mInWhichUserCallback != mode) {
             throw new IllegalStateException(
                     "Expected " + mode + ", but was " + mInWhichUserCallback);
@@ -231,7 +241,8 @@ public final class CronetUploadDataStream extends UploadDataSink {
             if (mUploadDataStreamAdapter == 0) {
                 return;
             }
-            nativeOnReadSucceeded(mUploadDataStreamAdapter, bytesRead, lastChunk);
+            CronetUploadDataStreamJni.get().onReadSucceeded(
+                    mUploadDataStreamAdapter, CronetUploadDataStream.this, bytesRead, lastChunk);
         }
     }
 
@@ -253,7 +264,8 @@ public final class CronetUploadDataStream extends UploadDataSink {
             if (mUploadDataStreamAdapter == 0) {
                 return;
             }
-            nativeOnRewindSucceeded(mUploadDataStreamAdapter);
+            CronetUploadDataStreamJni.get().onRewindSucceeded(
+                    mUploadDataStreamAdapter, CronetUploadDataStream.this);
         }
     }
 
@@ -293,7 +305,7 @@ public final class CronetUploadDataStream extends UploadDataSink {
             if (mUploadDataStreamAdapter == 0) {
                 return;
             }
-            nativeDestroy(mUploadDataStreamAdapter);
+            CronetUploadDataStreamJni.get().destroy(mUploadDataStreamAdapter);
             mUploadDataStreamAdapter = 0;
             if (mOnDestroyedCallbackForTesting != null) {
                 mOnDestroyedCallbackForTesting.run();
@@ -358,7 +370,8 @@ public final class CronetUploadDataStream extends UploadDataSink {
      */
     void attachNativeAdapterToRequest(final long requestAdapter) {
         synchronized (mLock) {
-            mUploadDataStreamAdapter = nativeAttachUploadDataToRequest(requestAdapter, mLength);
+            mUploadDataStreamAdapter = CronetUploadDataStreamJni.get().attachUploadDataToRequest(
+                    CronetUploadDataStream.this, requestAdapter, mLength);
         }
     }
 
@@ -370,10 +383,12 @@ public final class CronetUploadDataStream extends UploadDataSink {
     @VisibleForTesting
     public long createUploadDataStreamForTesting() throws IOException {
         synchronized (mLock) {
-            mUploadDataStreamAdapter = nativeCreateAdapterForTesting();
+            mUploadDataStreamAdapter = CronetUploadDataStreamJni.get().createAdapterForTesting(
+                    CronetUploadDataStream.this);
             mLength = mDataProvider.getLength();
             mRemainingLength = mLength;
-            return nativeCreateUploadDataStreamForTesting(mLength, mUploadDataStreamAdapter);
+            return CronetUploadDataStreamJni.get().createUploadDataStreamForTesting(
+                    CronetUploadDataStream.this, mLength, mUploadDataStreamAdapter);
         }
     }
 
@@ -383,19 +398,22 @@ public final class CronetUploadDataStream extends UploadDataSink {
     }
 
     // Native methods are implemented in upload_data_stream_adapter.cc.
+    @NativeMethods
+    interface Natives {
+        long attachUploadDataToRequest(
+                CronetUploadDataStream caller, long urlRequestAdapter, long length);
 
-    private native long nativeAttachUploadDataToRequest(long urlRequestAdapter, long length);
+        long createAdapterForTesting(CronetUploadDataStream caller);
+        long createUploadDataStreamForTesting(
+                CronetUploadDataStream caller, long length, long adapter);
+        @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
+        void onReadSucceeded(
+                long nativePtr, CronetUploadDataStream caller, int bytesRead, boolean finalChunk);
 
-    private native long nativeCreateAdapterForTesting();
+        @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
+        void onRewindSucceeded(long nativePtr, CronetUploadDataStream caller);
 
-    private native long nativeCreateUploadDataStreamForTesting(long length, long adapter);
-
-    @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
-    private native void nativeOnReadSucceeded(long nativePtr, int bytesRead, boolean finalChunk);
-
-    @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
-    private native void nativeOnRewindSucceeded(long nativePtr);
-
-    @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
-    private static native void nativeDestroy(long nativePtr);
+        @NativeClassQualifiedName("CronetUploadDataStreamAdapter")
+        void destroy(long nativePtr);
+    }
 }

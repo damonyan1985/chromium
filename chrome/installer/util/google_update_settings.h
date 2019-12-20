@@ -170,9 +170,6 @@ class GoogleUpdateSettings {
   // true if this operation succeeded.
   static bool ClearReferral();
 
-  // Updates Chrome's "did run" state, returning true if the update succeeds.
-  static bool UpdateDidRunState(bool did_run);
-
   // This method changes the Google Update "ap" value to move the installation
   // on to or off of one of the recovery channels.
   // - If incremental installer fails we append a magic string ("-full"), if
@@ -215,11 +212,6 @@ class GoogleUpdateSettings {
   static bool UpdateGoogleUpdateApKey(installer::ArchiveType archive_type,
                                       int install_return_code,
                                       installer::ChannelInfo* value);
-
-  // This method updates the values that report how many profiles are in use
-  // and how many of those are signed-in.
-  static void UpdateProfileCounts(size_t profiles_active,
-                                  size_t profiles_signedin);
 
   // Returns the effective update policy for |app_guid| as dictated by
   // Group Policy settings.  |is_overridden|, if non-NULL, is populated with

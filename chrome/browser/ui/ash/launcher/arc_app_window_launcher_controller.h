@@ -12,10 +12,11 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
-#include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "chrome/browser/chromeos/arc/session/arc_session_manager.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/ash/launcher/app_window_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/arc_app_shelf_id.h"
+#include "chrome/browser/ui/ash/launcher/arc_app_window_delegate.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/window_observer.h"
@@ -34,13 +35,11 @@ class ArcAppWindowLauncherController : public AppWindowLauncherController,
                                        public aura::EnvObserver,
                                        public aura::WindowObserver,
                                        public ArcAppListPrefs::Observer,
-                                       public arc::ArcSessionManager::Observer {
+                                       public arc::ArcSessionManager::Observer,
+                                       public ArcAppWindowDelegate {
  public:
   explicit ArcAppWindowLauncherController(ChromeLauncherController* owner);
   ~ArcAppWindowLauncherController() override;
-
-  // Returns ARC task id for the window.
-  static int GetWindowTaskId(aura::Window* window);
 
   // AppWindowLauncherController:
   void ActiveUserChanged(const std::string& user_email) override;
@@ -73,7 +72,12 @@ class ArcAppWindowLauncherController : public AppWindowLauncherController,
   void OnTaskDestroyed(int task_id) override;
   void OnTaskSetActive(int32_t task_id) override;
 
-  int active_task_id() const { return active_task_id_; }
+  // ArcAppWindowDelegate:
+  int GetActiveTaskId() const override;
+
+  const std::vector<aura::Window*>& GetObservedWindows() {
+    return observed_windows_;
+  }
 
  private:
   class AppWindowInfo;
@@ -90,6 +94,7 @@ class ArcAppWindowLauncherController : public AppWindowLauncherController,
 
   void RegisterApp(AppWindowInfo* app_window_info);
   void UnregisterApp(AppWindowInfo* app_window_info);
+  void HandlePlayStoreLaunch(AppWindowInfo* app_window_info);
 
   AppWindowInfo* GetAppWindowInfoForTask(int task_id);
   ArcAppWindow* GetAppWindowForTask(int task_id);

@@ -21,8 +21,7 @@ MockIMEEngineHandler::MockIMEEngineHandler()
       last_set_surrounding_cursor_pos_(0),
       last_set_surrounding_anchor_pos_(0) {}
 
-MockIMEEngineHandler::~MockIMEEngineHandler() {
-}
+MockIMEEngineHandler::~MockIMEEngineHandler() = default;
 
 void MockIMEEngineHandler::FocusIn(const InputContext& input_context) {
   last_text_input_context_ = input_context;
@@ -42,23 +41,22 @@ void MockIMEEngineHandler::Enable(const std::string& component_id) {
 void MockIMEEngineHandler::Disable() {
 }
 
-void MockIMEEngineHandler::PropertyActivate(const std::string& property_name) {
-  last_activated_property_ = property_name;
-}
-
 void MockIMEEngineHandler::Reset() {
   ++reset_call_count_;
-}
-
-bool MockIMEEngineHandler::IsInterestedInKeyEvent() const {
-  return true;
 }
 
 void MockIMEEngineHandler::ProcessKeyEvent(const ui::KeyEvent& key_event,
                                            KeyEventDoneCallback callback) {
   ++process_key_event_call_count_;
-  last_processed_key_event_.reset(new ui::KeyEvent(key_event));
+  last_processed_key_event_ = std::make_unique<ui::KeyEvent>(key_event);
   last_passed_callback_ = std::move(callback);
+}
+
+void MockIMEEngineHandler::SetCompositionBounds(
+    const std::vector<gfx::Rect>& bounds) {}
+
+void MockIMEEngineHandler::PropertyActivate(const std::string& property_name) {
+  last_activated_property_ = property_name;
 }
 
 void MockIMEEngineHandler::CandidateClicked(uint32_t index) {}
@@ -73,49 +71,12 @@ void MockIMEEngineHandler::SetSurroundingText(const std::string& text,
   last_set_surrounding_anchor_pos_ = anchor_pos;
 }
 
-void MockIMEEngineHandler::SetCompositionBounds(
-    const std::vector<gfx::Rect>& bounds) {
-}
-
 void MockIMEEngineHandler::SetMirroringEnabled(bool mirroring_enabled) {}
 
 void MockIMEEngineHandler::SetCastingEnabled(bool casting_enabled) {}
 
-bool MockIMEEngineHandler::ClearComposition(int context_id,
-                                            std::string* error) {
-  return false;
-}
-
-bool MockIMEEngineHandler::CommitText(int context_id,
-                                      const char* text,
-                                      std::string* error) {
-  return false;
-}
-
-bool MockIMEEngineHandler::IsActive() const {
-  return false;
-}
-
 const std::string& MockIMEEngineHandler::GetActiveComponentId() const {
   return active_component_id_;
-}
-
-bool MockIMEEngineHandler::DeleteSurroundingText(int context_id,
-                                                 int offset,
-                                                 size_t number_of_chars,
-                                                 std::string* error) {
-  return false;
-}
-
-bool MockIMEEngineHandler::SetCandidateWindowVisible(bool visible,
-                                                     std::string* error) {
-  return false;
-}
-
-bool MockIMEEngineHandler::SetCursorPosition(int context_id,
-                                             int candidate_id,
-                                             std::string* error) {
-  return false;
 }
 
 } // namespace chromeos

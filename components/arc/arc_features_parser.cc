@@ -29,8 +29,8 @@ base::Optional<ArcFeatures> ParseFeaturesJson(base::StringPiece input_json) {
   int error_code;
   std::string error_msg;
   std::unique_ptr<base::Value> json_value =
-      base::JSONReader::ReadAndReturnError(input_json, base::JSON_PARSE_RFC,
-                                           &error_code, &error_msg);
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          input_json, base::JSON_PARSE_RFC, &error_code, &error_msg);
   if (!json_value || !json_value->is_dict()) {
     LOG(ERROR) << "Error parsing feature JSON: " << error_msg;
     return base::nullopt;
@@ -110,12 +110,13 @@ base::Optional<ArcFeatures> ParseFeaturesJson(base::StringPiece input_json) {
 
 base::Optional<ArcFeatures> ReadOnFileThread(const base::FilePath& file_path) {
   DCHECK(!file_path.empty());
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   std::string input_json;
   {
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     if (!base::ReadFileToString(file_path, &input_json)) {
       PLOG(ERROR) << "Cannot read file " << file_path.value()
                   << " into string.";
@@ -140,8 +141,9 @@ ArcFeatures& ArcFeatures::operator=(ArcFeatures&& other) = default;
 
 void ArcFeaturesParser::GetArcFeatures(
     base::OnceCallback<void(base::Optional<ArcFeatures>)> callback) {
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&ReadOnFileThread, base::FilePath(kArcFeaturesJsonFile)),
       std::move(callback));
 }

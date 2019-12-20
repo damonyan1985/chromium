@@ -42,13 +42,14 @@ sys.path.remove(_TEST_DIR)
 # pylint: enable=g-import-not-at-top, g-bad-import-order
 
 
-_VERSION_SPECIFIC_NEGATIVE_FILTER = {}
+_NEGATIVE_FILTER = []
 
 
 def SubstituteVariableEntries(s):
   """Identifies and removes items that can legitimately vary between runs."""
-  white_list = r'(("(id|userDataDir|frameId|version|ELEMENT|message|timestamp' \
-               r'|expiry|chromedriverVersion)": ' \
+  white_list = r'(("(id|userDataDir|frameId|version' \
+               r'|element-6066-11e4-a52e-4f735466cecf|message|timestamp' \
+               r'|expiry|chromedriverVersion|sessionId)": ' \
                r'("[0-9]\.[0-9]*(\.[0-9]*)? \([a-f0-9]*\)"|[^\s},]*))' \
                r'|CDwindow-[A-F0-9]*|cd_frame_id_="[a-f0-9]*")'
 
@@ -83,12 +84,9 @@ def GenerateTestLog(test_name, chromedriver_path, chrome_path, log_dir):
       "--log-path=%s" % log_dir,
       "--filter=%s" % ("*" + test_name)
   ]
-  # We hide output from run_py_tests.py, since it is very confusing
-  # to try to interpret the test-within-a-test in the log otherwise.
-  with open(os.devnull, "w") as dev_null:
-    result = subprocess.call(args, stdout=dev_null)
-    if result != 0:
-      raise RuntimeError("run_py_tests.py could not be run or failed.")
+  result = subprocess.call(args)
+  if result != 0:
+    raise RuntimeError("run_py_tests.py could not be run or failed.")
 
 
 class ChromeDriverClientReplayTest(unittest.TestCase):
@@ -203,9 +201,6 @@ class ChromeDriverClientReplayTest(unittest.TestCase):
   def testIFrameWithExtensionsSource(self):
     self.runTest(self.GetFunctionName())
 
-  def testSendingTabKeyMovesToNextInputElement(self):
-    self.runTest(self.GetFunctionName())
-
   def testUnexpectedAlertBehaviour(self):
     self.runTest(self.GetFunctionName())
 
@@ -244,10 +239,9 @@ class ChromeDriverClientReplayTest(unittest.TestCase):
 
 
 def GetNegativeFilter(chrome_version):
-  """Construct the appropriate negative test filter for the chrome |version|."""
-  if chrome_version in _VERSION_SPECIFIC_NEGATIVE_FILTER:
-    negative_filter = _VERSION_SPECIFIC_NEGATIVE_FILTER[chrome_version]
-    return "*-" + ":__main__.".join([""] + negative_filter)
+  """Construct the appropriate negative test filter for the chrome ."""
+  if _NEGATIVE_FILTER:
+    return "*-" + ":__main__.".join([""] + _NEGATIVE_FILTER)
   return "*"
 
 
@@ -257,9 +251,6 @@ def main():
   parser.add_option(
       "", "--output-log-path",
       help="Output verbose server logs to this file")
-  parser.add_option(
-      "", "--chrome-version", default="HEAD",
-      help="Version of Chrome. Default is 'HEAD'.")
   parser.add_option(
       "", "--filter", type="string", default="*",
       help="Filter for specifying what tests to run, \"*\" will run all,"
@@ -284,7 +275,7 @@ def main():
 
   all_tests_suite = unittest.defaultTestLoader.loadTestsFromModule(
       sys.modules[__name__])
-  test_filter = (GetNegativeFilter(_OPTIONS.chrome_version)
+  test_filter = (GetNegativeFilter()
                  if not _OPTIONS.filter else _OPTIONS.filter)
 
   tests = unittest_util.FilterTestSuite(all_tests_suite, test_filter)

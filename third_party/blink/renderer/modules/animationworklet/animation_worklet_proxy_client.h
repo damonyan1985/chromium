@@ -26,7 +26,7 @@ class WorkletGlobalScope;
 // This is constructed on the main thread but it is used in the worklet backing
 // thread.
 class MODULES_EXPORT AnimationWorkletProxyClient
-    : public GarbageCollectedFinalized<AnimationWorkletProxyClient>,
+    : public GarbageCollected<AnimationWorkletProxyClient>,
       public Supplement<WorkerClients>,
       public AnimationWorkletMutator {
   USING_GARBAGE_COLLECTED_MIXIN(AnimationWorkletProxyClient);
@@ -34,7 +34,7 @@ class MODULES_EXPORT AnimationWorkletProxyClient
 
  public:
   static const char kSupplementName[];
-  static const wtf_size_t kNumStatelessGlobalScopes;
+  static const int8_t kNumStatelessGlobalScopes;
 
   // This client is hooked to the given |mutatee|, on the given
   // |mutatee_runner|.
@@ -62,18 +62,17 @@ class MODULES_EXPORT AnimationWorkletProxyClient
   static AnimationWorkletProxyClient* From(WorkerClients*);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(AnimationWorkletGlobalScopeTest, SelectGlobalScope);
+  friend class AnimationWorkletProxyClientTest;
+  FRIEND_TEST_ALL_PREFIXES(AnimationWorkletProxyClientTest,
+                           AnimationWorkletProxyClientConstruction);
+  FRIEND_TEST_ALL_PREFIXES(AnimationWorkletProxyClientTest,
+                           RegisteredAnimatorNameShouldSyncOnce);
 
-  // Separate global scope selectors are used instead of overriding
-  // Worklet::SelectGlobalScope since two different selection mechanisms are
-  // required in order to support statefulness and enforce statelessness
-  // depending on the animators.
-  // The stateless global scope periodically switches in order to enforce
-  // stateless behavior. Prior state is lost on each switch to global scope.
-  AnimationWorkletGlobalScope* SelectStatelessGlobalScope();
-  // The stateful global scope remains fixed to preserve state between mutate
-  // calls.
-  AnimationWorkletGlobalScope* SelectStatefulGlobalScope();
+  // The global scope periodically switches in order to enforce stateless
+  // behavior. For stateless animators, prior state is lost on each switch to
+  // global scope. For stateful animators, prior state is transferred to the new
+  // global scope.
+  AnimationWorkletGlobalScope* SelectGlobalScopeAndUpdateAnimatorsIfNecessary();
 
   const int worklet_id_;
 
@@ -89,11 +88,12 @@ class MODULES_EXPORT AnimationWorkletProxyClient
   WTF::Vector<MutatorItem> mutator_items_;
 
   Vector<CrossThreadPersistent<AnimationWorkletGlobalScope>> global_scopes_;
+  HashMap<String, int8_t> registered_animators_;
 
   enum RunState { kUninitialized, kWorking, kDisposed } state_;
 
   int next_global_scope_switch_countdown_;
-  wtf_size_t current_stateless_global_scope_index_;
+  wtf_size_t current_global_scope_index_;
 };
 
 void MODULES_EXPORT

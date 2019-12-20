@@ -17,12 +17,12 @@
 namespace extensions {
 
 class PasswordsPrivateRecordPasswordsPageAccessInSettingsFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   PasswordsPrivateRecordPasswordsPageAccessInSettingsFunction() {}
   DECLARE_EXTENSION_FUNCTION(
       "passwordsPrivate.recordPasswordsPageAccessInSettings",
-      PASSWORDSPRIVATE_RECORDPASSWORDSPAGEACCESSINSETTINGS);
+      PASSWORDSPRIVATE_RECORDPASSWORDSPAGEACCESSINSETTINGS)
 
  protected:
   ~PasswordsPrivateRecordPasswordsPageAccessInSettingsFunction() override;
@@ -35,12 +35,11 @@ class PasswordsPrivateRecordPasswordsPageAccessInSettingsFunction
       PasswordsPrivateRecordPasswordsPageAccessInSettingsFunction);
 };
 
-class PasswordsPrivateChangeSavedPasswordFunction
-    : public UIThreadExtensionFunction {
+class PasswordsPrivateChangeSavedPasswordFunction : public ExtensionFunction {
  public:
   PasswordsPrivateChangeSavedPasswordFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.changeSavedPassword",
-                             PASSWORDSPRIVATE_CHANGESAVEDPASSWORD);
+                             PASSWORDSPRIVATE_CHANGESAVEDPASSWORD)
 
  protected:
   ~PasswordsPrivateChangeSavedPasswordFunction() override;
@@ -52,12 +51,11 @@ class PasswordsPrivateChangeSavedPasswordFunction
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateChangeSavedPasswordFunction);
 };
 
-class PasswordsPrivateRemoveSavedPasswordFunction :
-    public UIThreadExtensionFunction {
+class PasswordsPrivateRemoveSavedPasswordFunction : public ExtensionFunction {
  public:
   PasswordsPrivateRemoveSavedPasswordFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.removeSavedPassword",
-                             PASSWORDSPRIVATE_REMOVESAVEDPASSWORD);
+                             PASSWORDSPRIVATE_REMOVESAVEDPASSWORD)
 
  protected:
   ~PasswordsPrivateRemoveSavedPasswordFunction() override;
@@ -69,12 +67,12 @@ class PasswordsPrivateRemoveSavedPasswordFunction :
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateRemoveSavedPasswordFunction);
 };
 
-class PasswordsPrivateRemovePasswordExceptionFunction :
-    public UIThreadExtensionFunction {
+class PasswordsPrivateRemovePasswordExceptionFunction
+    : public ExtensionFunction {
  public:
   PasswordsPrivateRemovePasswordExceptionFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.removePasswordException",
-                             PASSWORDSPRIVATE_REMOVEPASSWORDEXCEPTION);
+                             PASSWORDSPRIVATE_REMOVEPASSWORDEXCEPTION)
 
  protected:
   ~PasswordsPrivateRemovePasswordExceptionFunction() override;
@@ -87,12 +85,12 @@ class PasswordsPrivateRemovePasswordExceptionFunction :
 };
 
 class PasswordsPrivateUndoRemoveSavedPasswordOrExceptionFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   PasswordsPrivateUndoRemoveSavedPasswordOrExceptionFunction() {}
   DECLARE_EXTENSION_FUNCTION(
       "passwordsPrivate.undoRemoveSavedPasswordOrException",
-      PASSWORDSPRIVATE_UNDOREMOVESAVEDPASSWORDOREXCEPTION);
+      PASSWORDSPRIVATE_UNDOREMOVESAVEDPASSWORDOREXCEPTION)
 
  protected:
   ~PasswordsPrivateUndoRemoveSavedPasswordOrExceptionFunction() override;
@@ -105,12 +103,12 @@ class PasswordsPrivateUndoRemoveSavedPasswordOrExceptionFunction
       PasswordsPrivateUndoRemoveSavedPasswordOrExceptionFunction);
 };
 
-class PasswordsPrivateRequestPlaintextPasswordFunction :
-    public UIThreadExtensionFunction {
+class PasswordsPrivateRequestPlaintextPasswordFunction
+    : public ExtensionFunction {
  public:
   PasswordsPrivateRequestPlaintextPasswordFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.requestPlaintextPassword",
-                             PASSWORDSPRIVATE_REQUESTPLAINTEXTPASSWORD);
+                             PASSWORDSPRIVATE_REQUESTPLAINTEXTPASSWORD)
 
  protected:
   ~PasswordsPrivateRequestPlaintextPasswordFunction() override;
@@ -124,12 +122,11 @@ class PasswordsPrivateRequestPlaintextPasswordFunction :
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateRequestPlaintextPasswordFunction);
 };
 
-class PasswordsPrivateGetSavedPasswordListFunction
-    : public UIThreadExtensionFunction {
+class PasswordsPrivateGetSavedPasswordListFunction : public ExtensionFunction {
  public:
   PasswordsPrivateGetSavedPasswordListFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.getSavedPasswordList",
-                             PASSWORDSPRIVATE_GETSAVEDPASSWORDLIST);
+                             PASSWORDSPRIVATE_GETSAVEDPASSWORDLIST)
 
  protected:
   ~PasswordsPrivateGetSavedPasswordListFunction() override;
@@ -145,11 +142,11 @@ class PasswordsPrivateGetSavedPasswordListFunction
 };
 
 class PasswordsPrivateGetPasswordExceptionListFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   PasswordsPrivateGetPasswordExceptionListFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.getPasswordExceptionList",
-                             PASSWORDSPRIVATE_GETPASSWORDEXCEPTIONLIST);
+                             PASSWORDSPRIVATE_GETPASSWORDEXCEPTIONLIST)
 
  protected:
   ~PasswordsPrivateGetPasswordExceptionListFunction() override;
@@ -164,12 +161,11 @@ class PasswordsPrivateGetPasswordExceptionListFunction
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateGetPasswordExceptionListFunction);
 };
 
-class PasswordsPrivateImportPasswordsFunction
-    : public UIThreadExtensionFunction {
+class PasswordsPrivateImportPasswordsFunction : public ExtensionFunction {
  public:
   PasswordsPrivateImportPasswordsFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.importPasswords",
-                             PASSWORDSPRIVATE_IMPORTPASSWORDS);
+                             PASSWORDSPRIVATE_IMPORTPASSWORDS)
 
  protected:
   ~PasswordsPrivateImportPasswordsFunction() override;
@@ -181,12 +177,11 @@ class PasswordsPrivateImportPasswordsFunction
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateImportPasswordsFunction);
 };
 
-class PasswordsPrivateExportPasswordsFunction
-    : public UIThreadExtensionFunction {
+class PasswordsPrivateExportPasswordsFunction : public ExtensionFunction {
  public:
   PasswordsPrivateExportPasswordsFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.exportPasswords",
-                             PASSWORDSPRIVATE_EXPORTPASSWORDS);
+                             PASSWORDSPRIVATE_EXPORTPASSWORDS)
 
  protected:
   ~PasswordsPrivateExportPasswordsFunction() override;
@@ -200,12 +195,11 @@ class PasswordsPrivateExportPasswordsFunction
   DISALLOW_COPY_AND_ASSIGN(PasswordsPrivateExportPasswordsFunction);
 };
 
-class PasswordsPrivateCancelExportPasswordsFunction
-    : public UIThreadExtensionFunction {
+class PasswordsPrivateCancelExportPasswordsFunction : public ExtensionFunction {
  public:
   PasswordsPrivateCancelExportPasswordsFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.cancelExportPasswords",
-                             PASSWORDSPRIVATE_CANCELEXPORTPASSWORDS);
+                             PASSWORDSPRIVATE_CANCELEXPORTPASSWORDS)
 
  protected:
   ~PasswordsPrivateCancelExportPasswordsFunction() override;
@@ -218,11 +212,11 @@ class PasswordsPrivateCancelExportPasswordsFunction
 };
 
 class PasswordsPrivateRequestExportProgressStatusFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   PasswordsPrivateRequestExportProgressStatusFunction() {}
   DECLARE_EXTENSION_FUNCTION("passwordsPrivate.requestExportProgressStatus",
-                             PASSWORDSPRIVATE_REQUESTEXPORTPROGRESSSTATUS);
+                             PASSWORDSPRIVATE_REQUESTEXPORTPROGRESSSTATUS)
 
  protected:
   ~PasswordsPrivateRequestExportProgressStatusFunction() override;

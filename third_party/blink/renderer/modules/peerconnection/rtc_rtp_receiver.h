@@ -5,21 +5,21 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_RTP_RECEIVER_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_RTC_RTP_RECEIVER_H_
 
-#include <map>
-
+#include "base/optional.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_rtc_rtp_receiver.h"
-#include "third_party/blink/public/platform/web_rtc_rtp_source.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_contributing_source.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_receive_parameters.h"
 #include "third_party/blink/renderer/modules/peerconnection/rtc_rtp_synchronization_source.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
+#include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_receiver_platform.h"
+#include "third_party/blink/renderer/platform/peerconnection/rtc_rtp_source.h"
 
 namespace blink {
 class RTCDtlsTransport;
@@ -34,7 +34,7 @@ class RTCRtpReceiver final : public ScriptWrappable {
  public:
   // Takes ownership of the receiver.
   RTCRtpReceiver(RTCPeerConnection*,
-                 std::unique_ptr<WebRTCRtpReceiver>,
+                 std::unique_ptr<RTCRtpReceiverPlatform>,
                  MediaStreamTrack*,
                  MediaStreamVector);
 
@@ -42,16 +42,19 @@ class RTCRtpReceiver final : public ScriptWrappable {
 
   MediaStreamTrack* track() const;
   RTCDtlsTransport* transport();
-  RTCDtlsTransport* rtcp_transport();
+  RTCDtlsTransport* rtcpTransport();
+  double playoutDelayHint(bool&, ExceptionState&);
+  void setPlayoutDelayHint(double, bool, ExceptionState&);
   RTCRtpReceiveParameters* getParameters();
   HeapVector<Member<RTCRtpSynchronizationSource>> getSynchronizationSources();
   HeapVector<Member<RTCRtpContributingSource>> getContributingSources();
   ScriptPromise getStats(ScriptState*);
 
-  const WebRTCRtpReceiver& web_receiver() const;
+  RTCRtpReceiverPlatform* platform_receiver();
   MediaStreamVector streams() const;
   void set_streams(MediaStreamVector streams);
   void set_transceiver(RTCRtpTransceiver*);
+  void set_transport(RTCDtlsTransport*);
   void UpdateSourcesIfNeeded();
 
   void Trace(blink::Visitor*) override;
@@ -60,15 +63,21 @@ class RTCRtpReceiver final : public ScriptWrappable {
   Member<RTCPeerConnection> pc_;
   void SetContributingSourcesNeedsUpdating();
 
-  std::unique_ptr<WebRTCRtpReceiver> receiver_;
+  std::unique_ptr<RTCRtpReceiverPlatform> receiver_;
   Member<MediaStreamTrack> track_;
+  Member<RTCDtlsTransport> transport_;
   MediaStreamVector streams_;
 
   // The current SSRCs and CSRCs. getSynchronizationSources() returns the SSRCs
   // and getContributingSources() returns the CSRCs.
-  WebVector<std::unique_ptr<WebRTCRtpSource>> web_sources_;
+  Vector<std::unique_ptr<RTCRtpSource>> web_sources_;
   bool web_sources_needs_updating_ = true;
   Member<RTCRtpTransceiver> transceiver_;
+
+  // Hint to the WebRTC Jitter Buffer about desired playout delay. Actual
+  // observed delay may differ depending on the congestion control. |nullopt|
+  // means default value must be used.
+  base::Optional<double> playout_delay_hint_;
 };
 
 }  // namespace blink

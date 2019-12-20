@@ -13,9 +13,13 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/writable_shared_memory_region.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/unguessable_token.h"
 #include "base/win/object_watcher.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
@@ -55,9 +59,8 @@ std::string GetObsoleteServiceProcessAutoRunKey() {
 class ServiceProcessTerminateMonitor
     : public base::win::ObjectWatcher::Delegate {
  public:
-  explicit ServiceProcessTerminateMonitor(const base::Closure& terminate_task)
-      : terminate_task_(terminate_task) {
-  }
+  explicit ServiceProcessTerminateMonitor(base::OnceClosure terminate_task)
+      : terminate_task_(std::move(terminate_task)) {}
   void Start() {
     base::string16 event_name = GetServiceProcessTerminateEventName();
     DCHECK(event_name.length() <= MAX_PATH);
@@ -67,16 +70,14 @@ class ServiceProcessTerminateMonitor
 
   // base::ObjectWatcher::Delegate implementation.
   void OnObjectSignaled(HANDLE object) override {
-    if (!terminate_task_.is_null()) {
-      terminate_task_.Run();
-      terminate_task_.Reset();
-    }
+    if (!terminate_task_.is_null())
+      std::move(terminate_task_).Run();
   }
 
  private:
   base::win::ScopedHandle terminate_event_;
   base::win::ObjectWatcher watcher_;
-  base::Closure terminate_task_;
+  base::OnceClosure terminate_task_;
 };
 
 }  // namespace
@@ -98,6 +99,88 @@ bool ForceServiceProcessShutdown(const std::string& version,
   if (!terminate_event.IsValid())
     return false;
   SetEvent(terminate_event.Get());
+  return true;
+}
+
+// static
+base::WritableSharedMemoryRegion
+ServiceProcessState::CreateServiceProcessDataRegion(size_t size) {
+  // Check maximum accounting for overflow.
+  if (size > static_cast<size_t>(std::numeric_limits<int>::max()))
+    return {};
+
+  base::string16 name = base::ASCIIToUTF16(GetServiceProcessSharedMemName());
+
+  SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, FALSE};
+  HANDLE raw_handle =
+      CreateFileMapping(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE, 0,
+                        static_cast<DWORD>(size), base::as_wcstr(name));
+  if (!raw_handle) {
+    auto error = GetLastError();
+    DLOG(ERROR) << "Cannot create named mapping " << name << ": " << error;
+    return {};
+  }
+  base::win::ScopedHandle handle(raw_handle);
+
+  base::WritableSharedMemoryRegion writable_region =
+      base::WritableSharedMemoryRegion::Deserialize(
+          base::subtle::PlatformSharedMemoryRegion::Take(
+              std::move(handle),
+              base::subtle::PlatformSharedMemoryRegion::Mode::kWritable, size,
+              base::UnguessableToken::Create()));
+  if (!writable_region.IsValid()) {
+    DLOG(ERROR) << "Cannot deserialize file mapping";
+    return {};
+  }
+  return writable_region;
+}
+
+// static
+base::ReadOnlySharedMemoryMapping
+ServiceProcessState::OpenServiceProcessDataMapping(size_t size) {
+  DWORD access = FILE_MAP_READ | SECTION_QUERY;
+  base::string16 name = base::ASCIIToUTF16(GetServiceProcessSharedMemName());
+  HANDLE raw_handle = OpenFileMapping(access, false, base::as_wcstr(name));
+  if (!raw_handle) {
+    auto err = GetLastError();
+    DLOG(ERROR) << "OpenFileMapping failed for " << name << " / "
+                << GetServiceProcessSharedMemName() << " / " << err;
+    return {};
+  }
+
+  // The region is writable for this user, so the handle is converted to a
+  // WritableSharedMemoryMapping which is then downgraded to read-only for the
+  // mapping.
+  base::WritableSharedMemoryRegion writable_region =
+      base::WritableSharedMemoryRegion::Deserialize(
+          base::subtle::PlatformSharedMemoryRegion::Take(
+              base::win::ScopedHandle(raw_handle),
+              base::subtle::PlatformSharedMemoryRegion::Mode::kWritable, size,
+              base::UnguessableToken::Create()));
+  if (!writable_region.IsValid()) {
+    DLOG(ERROR) << "Unable to deserialize raw file mapping handle to "
+                << "WritableSharedMemoryRegion";
+    return {};
+  }
+  base::ReadOnlySharedMemoryRegion readonly_region =
+      base::WritableSharedMemoryRegion::ConvertToReadOnly(
+          std::move(writable_region));
+  if (!readonly_region.IsValid()) {
+    DLOG(ERROR) << "Unable to convert to read-only region";
+    return {};
+  }
+  base::ReadOnlySharedMemoryMapping mapping = readonly_region.Map();
+  if (!mapping.IsValid()) {
+    DLOG(ERROR) << "Unable to map region";
+    return {};
+  }
+  // The region will be closed on return, leaving on the mapping.
+  return mapping;
+}
+
+// static
+bool ServiceProcessState::DeleteServiceProcessDataRegion() {
+  // intentionally empty -- there is nothing for us to do on Windows.
   return true;
 }
 
@@ -139,15 +222,16 @@ bool ServiceProcessState::TakeSingletonLock() {
 
 bool ServiceProcessState::SignalReady(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    const base::Closure& terminate_task) {
+    base::OnceClosure terminate_task) {
   DCHECK(state_);
   DCHECK(state_->ready_event.IsValid());
   if (!SetEvent(state_->ready_event.Get())) {
     return false;
   }
   if (!terminate_task.is_null()) {
-    state_->terminate_monitor.reset(
-        new ServiceProcessTerminateMonitor(terminate_task));
+    state_->terminate_monitor =
+        std::make_unique<ServiceProcessTerminateMonitor>(
+            std::move(terminate_task));
     state_->terminate_monitor->Start();
   }
   return true;

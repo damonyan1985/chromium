@@ -6,14 +6,6 @@
  * @fileoverview
  * 'settings-reset-page' is the settings page containing reset
  * settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-reset-page prefs="{{prefs}}">
- *      </settings-reset-page>
- *      ... other pages ...
- *    </iron-animated-pages>
  */
 Polymer({
   is: 'settings-reset-page',
@@ -23,17 +15,6 @@ Polymer({
   properties: {
     /** Preferences state. */
     prefs: Object,
-
-    // <if expr="chromeos">
-    /** @private */
-    showPowerwashDialog_: Boolean,
-    // </if>
-
-    /** @private */
-    allowPowerwash_: {
-      type: Boolean,
-      value: cr.isChromeOS ? loadTimeData.getBoolean('allowPowerwash') : false
-    },
 
     // <if expr="_google_chrome and is_win">
     /** @private */
@@ -80,23 +61,6 @@ Polymer({
     cr.ui.focusWithoutInk(assert(this.$.resetProfile));
   },
 
-  // <if expr="chromeos">
-  /**
-   * @param {!Event} e
-   * @private
-   */
-  onShowPowerwashDialog_: function(e) {
-    e.preventDefault();
-    this.showPowerwashDialog_ = true;
-  },
-
-  /** @private */
-  onPowerwashDialogClose_: function() {
-    this.showPowerwashDialog_ = false;
-    cr.ui.focusWithoutInk(assert(this.$.powerwash));
-  },
-  // </if>
-
   // <if expr="_google_chrome and is_win">
   /** @private */
   onChromeCleanupTap_: function() {
@@ -108,5 +72,4 @@ Polymer({
     settings.navigateTo(settings.routes.INCOMPATIBLE_APPLICATIONS);
   },
   // </if>
-
 });

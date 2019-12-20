@@ -4,15 +4,14 @@
 
 package org.chromium.chrome.browser.partnercustomizations;
 
-import android.content.SharedPreferences;
 import android.text.TextUtils;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.ntp.NewTabPage;
-import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
+import org.chromium.chrome.browser.util.UrlConstants;
 
 /**
  * Provides information regarding homepage enabled states and URI.
@@ -31,17 +30,13 @@ public class HomepageManager {
         void onHomepageStateUpdated();
     }
 
-    private static final String PREF_HOMEPAGE_ENABLED = "homepage";
-    private static final String PREF_HOMEPAGE_CUSTOM_URI = "homepage_custom_uri";
-    private static final String PREF_HOMEPAGE_USE_DEFAULT_URI = "homepage_partner_enabled";
-
     private static HomepageManager sInstance;
 
-    private final SharedPreferences mSharedPreferences;
+    private final SharedPreferencesManager mSharedPreferencesManager;
     private final ObserverList<HomepageStateListener> mHomepageStateListeners;
 
     private HomepageManager() {
-        mSharedPreferences = ContextUtils.getAppSharedPreferences();
+        mSharedPreferencesManager = SharedPreferencesManager.getInstance();
         mHomepageStateListeners = new ObserverList<>();
     }
 
@@ -83,11 +78,7 @@ public class HomepageManager {
      * @return Whether or not homepage is enabled.
      */
     public static boolean isHomepageEnabled() {
-        if (PartnerBrowserCustomizations.isHomepageProviderAvailableAndEnabled()
-                || FeatureUtilities.isHomePageButtonForceEnabled()) {
-            return getInstance().getPrefHomepageEnabled();
-        }
-        return false;
+        return getInstance().getPrefHomepageEnabled();
     }
 
     /**
@@ -96,14 +87,6 @@ public class HomepageManager {
     public static boolean shouldCloseAppWithZeroTabs() {
         return HomepageManager.isHomepageEnabled()
                 && !NewTabPage.isNTPUrl(HomepageManager.getHomepageUri());
-    }
-
-    /**
-     * @return Whether or not homepage setting should be shown.
-     */
-    public static boolean shouldShowHomepageSetting() {
-        return PartnerBrowserCustomizations.isHomepageProviderAvailableAndEnabled()
-                || FeatureUtilities.isHomePageButtonForceEnabled();
     }
 
     /**
@@ -136,16 +119,14 @@ public class HomepageManager {
      * @see #isHomepageEnabled
      */
     public boolean getPrefHomepageEnabled() {
-        return mSharedPreferences.getBoolean(PREF_HOMEPAGE_ENABLED, true);
+        return mSharedPreferencesManager.readBoolean(ChromePreferenceKeys.HOMEPAGE_ENABLED, true);
     }
 
     /**
      * Sets the user preference for whether the homepage is enabled.
      */
     public void setPrefHomepageEnabled(boolean enabled) {
-        SharedPreferences.Editor sharedPreferencesEditor = mSharedPreferences.edit();
-        sharedPreferencesEditor.putBoolean(PREF_HOMEPAGE_ENABLED, enabled);
-        sharedPreferencesEditor.apply();
+        mSharedPreferencesManager.writeBoolean(ChromePreferenceKeys.HOMEPAGE_ENABLED, enabled);
         RecordHistogram.recordBooleanHistogram(
                 "Settings.ShowHomeButtonPreferenceStateChanged", enabled);
         RecordHistogram.recordBooleanHistogram("Settings.ShowHomeButtonPreferenceState", enabled);
@@ -156,23 +137,22 @@ public class HomepageManager {
      * @return User specified homepage custom URI string.
      */
     public String getPrefHomepageCustomUri() {
-        return mSharedPreferences.getString(PREF_HOMEPAGE_CUSTOM_URI, "");
+        return mSharedPreferencesManager.readString(ChromePreferenceKeys.HOMEPAGE_CUSTOM_URI, "");
     }
 
     /**
      * Sets custom homepage URI
      */
     public void setPrefHomepageCustomUri(String customUri) {
-        SharedPreferences.Editor sharedPreferencesEditor = mSharedPreferences.edit();
-        sharedPreferencesEditor.putString(PREF_HOMEPAGE_CUSTOM_URI, customUri);
-        sharedPreferencesEditor.apply();
+        mSharedPreferencesManager.writeString(ChromePreferenceKeys.HOMEPAGE_CUSTOM_URI, customUri);
     }
 
     /**
      * @return Whether the homepage URL is the default value.
      */
     public boolean getPrefHomepageUseDefaultUri() {
-        return mSharedPreferences.getBoolean(PREF_HOMEPAGE_USE_DEFAULT_URI, true);
+        return mSharedPreferencesManager.readBoolean(
+                ChromePreferenceKeys.HOMEPAGE_USE_DEFAULT_URI, true);
     }
 
     /**
@@ -180,8 +160,7 @@ public class HomepageManager {
      */
     public void setPrefHomepageUseDefaultUri(boolean useDefaultUri) {
         RecordHistogram.recordBooleanHistogram("Settings.HomePageIsCustomized", !useDefaultUri);
-        SharedPreferences.Editor sharedPreferencesEditor = mSharedPreferences.edit();
-        sharedPreferencesEditor.putBoolean(PREF_HOMEPAGE_USE_DEFAULT_URI, useDefaultUri);
-        sharedPreferencesEditor.apply();
+        mSharedPreferencesManager.writeBoolean(
+                ChromePreferenceKeys.HOMEPAGE_USE_DEFAULT_URI, useDefaultUri);
     }
 }

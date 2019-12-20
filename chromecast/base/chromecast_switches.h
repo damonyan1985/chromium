@@ -59,6 +59,7 @@ extern const char kAlsaVolumeElementName[];
 extern const char kAudioOutputChannels[];
 extern const char kAudioOutputSampleRate[];
 extern const char kMaxOutputVolumeDba1m[];
+extern const char kMixerEnableDynamicChannelCount[];
 extern const char kMixerSourceAudioReadyThresholdMs[];
 extern const char kMixerSourceInputQueueMs[];
 
@@ -90,6 +91,8 @@ extern const char kCastAppBackgroundColor[];
 extern const char kMixerServiceEndpoint[];
 extern const char kCastMemoryPressureCriticalFraction[];
 extern const char kCastMemoryPressureModerateFraction[];
+
+extern const char kDisableMojoRenderer[];
 
 }  // namespace switches
 

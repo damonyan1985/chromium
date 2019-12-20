@@ -7,15 +7,13 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-class ContentSecurityPolicy;
-
-class CORE_EXPORT CSPDirective
-    : public GarbageCollectedFinalized<CSPDirective> {
+class CORE_EXPORT CSPDirective : public GarbageCollected<CSPDirective> {
  public:
   CSPDirective(const String& name,
                const String& value,

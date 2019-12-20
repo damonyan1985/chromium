@@ -97,8 +97,8 @@ void PPAPITestBase::InfoBarObserver::OnInfoBarAdded(
   // InfoBarContainer) may still need to access it.  Instead, post a task to
   // do all necessary infobar manipulation as soon as this call stack returns.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&InfoBarObserver::VerifyInfoBarState, base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&InfoBarObserver::VerifyInfoBarState,
+                                base::Unretained(this)));
 }
 
 void PPAPITestBase::InfoBarObserver::OnManagerShuttingDown(
@@ -151,7 +151,7 @@ void PPAPITestBase::SetUpCommandLine(base::CommandLine* command_line) {
 void PPAPITestBase::SetUpOnMainThread() {
   // Always allow access to the PPAPI broker.
   HostContentSettingsMapFactory::GetForProfile(browser()->profile())
-      ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_PPAPI_BROKER,
+      ->SetDefaultContentSetting(ContentSettingsType::PPAPI_BROKER,
                                  CONTENT_SETTING_ALLOW);
 }
 

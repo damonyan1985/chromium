@@ -11,7 +11,7 @@
 #include "third_party/blink/renderer/core/fetch/bytes_consumer_tee.h"
 #include "third_party/blink/renderer/core/fetch/readable_stream_bytes_consumer.h"
 #include "third_party/blink/renderer/core/streams/readable_stream.h"
-#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_wrapper.h"
+#include "third_party/blink/renderer/core/streams/readable_stream_default_controller_with_script_scope.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_typed_array.h"
 #include "third_party/blink/renderer/platform/bindings/exception_code.h"
@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -27,7 +28,7 @@
 namespace blink {
 
 class BodyStreamBuffer::LoaderClient final
-    : public GarbageCollectedFinalized<LoaderClient>,
+    : public GarbageCollected<LoaderClient>,
       public ContextLifecycleObserver,
       public FetchDataLoader::Client {
   USING_GARBAGE_COLLECTED_MIXIN(LoaderClient);
@@ -98,24 +99,51 @@ class BodyStreamBuffer::LoaderClient final
   DISALLOW_COPY_AND_ASSIGN(LoaderClient);
 };
 
-BodyStreamBuffer::BodyStreamBuffer(ScriptState* script_state,
+// Use a Create() method to split construction from initialisation.
+// Initialisation may result in nested calls to ContextDestroyed() and so is not
+// safe to do during construction.
+
+// static
+BodyStreamBuffer* BodyStreamBuffer::Create(ScriptState* script_state,
+                                           BytesConsumer* consumer,
+                                           AbortSignal* signal) {
+  auto* buffer = MakeGarbageCollected<BodyStreamBuffer>(PassKey(), script_state,
+                                                        consumer, signal);
+  buffer->Init();
+  return buffer;
+}
+
+BodyStreamBuffer::BodyStreamBuffer(PassKey,
+                                   ScriptState* script_state,
                                    BytesConsumer* consumer,
                                    AbortSignal* signal)
     : UnderlyingSourceBase(script_state),
       script_state_(script_state),
       consumer_(consumer),
       signal_(signal),
-      made_from_readable_stream_(false) {
+      made_from_readable_stream_(false) {}
+
+void BodyStreamBuffer::Init() {
+  DCHECK(consumer_);
+
   stream_ =
       ReadableStream::CreateWithCountQueueingStrategy(script_state_, this, 0);
   stream_broken_ = !stream_;
 
+  // ContextDestroyed() can be called inside the ReadableStream constructor when
+  // a worker thread is being terminated. See https://crbug.com/1007162 for
+  // details. If consumer_ is null, assume that this happened and this object
+  // will never actually be used, and so it is fine to skip the rest of
+  // initialisation.
+  if (!consumer_)
+    return;
+
   consumer_->SetClient(this);
-  if (signal) {
-    if (signal->aborted()) {
+  if (signal_) {
+    if (signal_->aborted()) {
       Abort();
     } else {
-      signal->AddAlgorithm(
+      signal_->AddAlgorithm(
           WTF::Bind(&BodyStreamBuffer::Abort, WrapWeakPersistent(this)));
     }
   }
@@ -243,10 +271,8 @@ void BodyStreamBuffer::Tee(BodyStreamBuffer** branch1,
   }
   BytesConsumerTee(ExecutionContext::From(script_state_), handle, &dest1,
                    &dest2);
-  *branch1 =
-      MakeGarbageCollected<BodyStreamBuffer>(script_state_, dest1, signal_);
-  *branch2 =
-      MakeGarbageCollected<BodyStreamBuffer>(script_state_, dest2, signal_);
+  *branch1 = BodyStreamBuffer::Create(script_state_, dest1, signal_);
+  *branch2 = BodyStreamBuffer::Create(script_state_, dest2, signal_);
 }
 
 ScriptPromise BodyStreamBuffer::pull(ScriptState* script_state) {
@@ -294,9 +320,7 @@ void BodyStreamBuffer::OnStateChange() {
 }
 
 bool BodyStreamBuffer::HasPendingActivity() const {
-  if (loader_)
-    return true;
-  return UnderlyingSourceBase::HasPendingActivity();
+  return loader_;
 }
 
 void BodyStreamBuffer::ContextDestroyed(ExecutionContext* destroyed_context) {
@@ -349,7 +373,7 @@ void BodyStreamBuffer::CloseAndLockAndDisturb(ExceptionState& exception_state) {
     return;
   }
 
-  if (stream_->IsInternalStreamMissing()) {
+  if (stream_->IsBroken()) {
     stream_broken_ = true;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -393,7 +417,8 @@ void BodyStreamBuffer::Abort() {
     DCHECK(!consumer_);
     return;
   }
-  Controller()->GetError(DOMException::Create(DOMExceptionCode::kAbortError));
+  Controller()->Error(
+      MakeGarbageCollected<DOMException>(DOMExceptionCode::kAbortError));
   CancelConsumer();
 }
 
@@ -408,7 +433,7 @@ void BodyStreamBuffer::Close() {
 void BodyStreamBuffer::GetError() {
   {
     ScriptState::Scope scope(script_state_);
-    Controller()->GetError(V8ThrowException::CreateTypeError(
+    Controller()->Error(V8ThrowException::CreateTypeError(
         script_state_->GetIsolate(), "network error"));
   }
   CancelConsumer();
@@ -513,20 +538,13 @@ BytesConsumer* BodyStreamBuffer::ReleaseHandle(
 
   if (made_from_readable_stream_) {
     ScriptState::Scope scope(script_state_);
-    // We need to have |reader| alive by some means (as noted in
-    // ReadableStreamDataConsumerHandle). Based on the following facts:
-    //  - This function is used only from Tee and StartLoading.
-    //  - This branch cannot be taken when called from Tee.
-    //  - StartLoading makes HasPendingActivity return true while loading.
-    //  - ReadableStream holds a reference to |reader| inside JS.
-    // we don't need to keep the reader explicitly.
-    ScriptValue reader = stream_->getReader(script_state_, exception_state);
+    auto* consumer = MakeGarbageCollected<ReadableStreamBytesConsumer>(
+        script_state_, stream_, exception_state);
     if (exception_state.HadException()) {
       stream_broken_ = true;
       return nullptr;
     }
-    return MakeGarbageCollected<ReadableStreamBytesConsumer>(script_state_,
-                                                             reader);
+    return consumer;
   }
   // We need to call these before calling CloseAndLockAndDisturb.
   const base::Optional<bool> is_closed = IsStreamClosed(exception_state);

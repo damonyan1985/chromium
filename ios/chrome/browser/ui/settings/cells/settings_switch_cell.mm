@@ -7,6 +7,8 @@
 #import "ios/chrome/browser/ui/settings/cells/settings_cells_constants.h"
 #include "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -18,9 +20,6 @@
 namespace {
 // Padding used between the icon and the text labels.
 const CGFloat kIconTrailingPadding = 12;
-
-// Padding used on the top and bottom edges of the cell.
-const CGFloat kVerticalPadding = 16;
 
 // Size of the icon image.
 const CGFloat kIconImageSize = 28;
@@ -67,23 +66,21 @@ const CGFloat kIconImageSize = 28;
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     _textLabel.adjustsFontForContentSizeCategory = YES;
-    _textLabel.textColor = [UIColor blackColor];
+    _textLabel.textColor = UIColor.cr_labelColor;
     _textLabel.numberOfLines = 0;
     [self.contentView addSubview:_textLabel];
 
     _detailTextLabel = [[UILabel alloc] init];
     _detailTextLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _detailTextLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
     _detailTextLabel.adjustsFontForContentSizeCategory = YES;
-    _detailTextLabel.textColor =
-        UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
+    _detailTextLabel.textColor = UIColor.cr_secondaryLabelColor;
     _detailTextLabel.numberOfLines = 0;
     [self.contentView addSubview:_detailTextLabel];
 
     _switchView = [[UISwitch alloc] initWithFrame:CGRectZero];
     _switchView.translatesAutoresizingMaskIntoConstraints = NO;
-    _switchView.onTintColor = UIColorFromRGB(kTableViewSwitchTintColor);
     [_switchView
         setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh + 1
                                         forAxis:
@@ -116,13 +113,13 @@ const CGFloat kIconImageSize = 28;
     _accessibilityConstraints = @[
       [_switchView.topAnchor
           constraintEqualToAnchor:textLayoutGuide.bottomAnchor
-                         constant:kVerticalPadding],
+                         constant:kTableViewLargeVerticalSpacing],
       [_switchView.leadingAnchor
           constraintEqualToAnchor:self.contentView.leadingAnchor
                          constant:kTableViewHorizontalSpacing],
       [_switchView.bottomAnchor
           constraintEqualToAnchor:self.contentView.bottomAnchor
-                         constant:-kVerticalPadding],
+                         constant:-kTableViewLargeVerticalSpacing],
       [textLayoutGuide.trailingAnchor
           constraintLessThanOrEqualToAnchor:self.contentView.trailingAnchor
                                    constant:-kTableViewHorizontalSpacing],
@@ -163,15 +160,14 @@ const CGFloat kIconImageSize = 28;
     }
 
     AddOptionalVerticalPadding(self.contentView, textLayoutGuide,
-                               kVerticalPadding);
+                               kTableViewOneLabelCellVerticalSpacing);
   }
   return self;
 }
 
 + (UIColor*)defaultTextColorForState:(UIControlState)state {
-  return (state & UIControlStateDisabled)
-             ? UIColorFromRGB(kSettingsCellsDetailTextColor)
-             : [UIColor blackColor];
+  return (state & UIControlStateDisabled) ? UIColor.cr_secondaryLabelColor
+                                          : UIColor.cr_labelColor;
 }
 
 - (void)setIconImage:(UIImage*)image {
@@ -255,6 +251,14 @@ const CGFloat kIconImageSize = 28;
   } else {
     return l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
   }
+}
+
+- (UIAccessibilityTraits)accessibilityTraits {
+  UIAccessibilityTraits accessibilityTraits = super.accessibilityTraits;
+  if (!self.switchView.isEnabled) {
+    accessibilityTraits |= UIAccessibilityTraitNotEnabled;
+  }
+  return accessibilityTraits;
 }
 
 @end

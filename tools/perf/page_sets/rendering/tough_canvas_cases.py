@@ -29,7 +29,7 @@ class ToughCanvasPage(rendering_story.RenderingStory):
 
   def RunPageInteractions(self, action_runner):
     with action_runner.CreateInteraction('CanvasAnimation'):
-      action_runner.Wait(5)
+      action_runner.Wait(10)
 
 
 class MicrosoftFirefliesPage(ToughCanvasPage):
@@ -46,6 +46,8 @@ class GeoAPIsPage(ToughCanvasPage):
 class RunwayPage(ToughCanvasPage):
   BASE_NAME = 'runway'
   URL = 'http://runway.countlessprojects.com/prototype/performance_test.html'
+  YEAR = '2019'
+  TAGS = ToughCanvasPage.TAGS + [story_tags.REPRESENTATIVE_WIN_DESKTOP]
 
 
 class MicrosoftFishIETankPage(ToughCanvasPage):
@@ -88,6 +90,7 @@ class CraftyMindPage(ToughCanvasPage):
 class ChipTunePage(ToughCanvasPage):
   BASE_NAME = 'chip_tune'
   URL = 'http://www.chiptune.com/starfield/starfield.html'
+  TAGS = ToughCanvasPage.TAGS + [story_tags.REPRESENTATIVE_MAC_DESKTOP]
 
 
 class JarroDoversonPage(ToughCanvasPage):
@@ -167,6 +170,7 @@ class CanvasAnimationNoClearPage(ToughCanvasPage):
 class CanvasToBlobPage(ToughCanvasPage):
   BASE_NAME = 'canvas_to_blob'
   URL = 'file://../tough_canvas_cases/canvas_toBlob.html'
+  TAGS = ToughCanvasPage.TAGS + [story_tags.REPRESENTATIVE_WIN_DESKTOP]
 
 
 class ManyImagesPage(ToughCanvasPage):
@@ -192,6 +196,7 @@ class PutGetImageDataPage(ToughCanvasPage):
 class FillShapesPage(ToughCanvasPage):
   BASE_NAME = 'fill_shapes'
   URL = 'file://../tough_canvas_cases/rendering_throughput/fill_shapes.html'
+  TAGS = ToughCanvasPage.TAGS + [story_tags.REPRESENTATIVE_MAC_DESKTOP]
 
 
 class StrokeShapesPage(ToughCanvasPage):

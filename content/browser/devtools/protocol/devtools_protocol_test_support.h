@@ -31,12 +31,12 @@ class DevToolsProtocolTest : public ContentBrowserTest,
  protected:
   // WebContentsDelegate methods:
   bool DidAddMessageToConsole(WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
 
-  blink::WebSecurityStyle GetSecurityStyle(
+  blink::SecurityStyle GetSecurityStyle(
       content::WebContents* web_contents,
       content::SecurityStyleExplanations* security_style_explanations) override;
 
@@ -129,7 +129,7 @@ class DevToolsProtocolTest : public ContentBrowserTest,
  private:
   void RunLoopUpdatingQuitClosure();
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) override;
+                               base::span<const uint8_t> message) override;
 
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
 

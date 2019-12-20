@@ -10,19 +10,17 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/managed_ui.h"
-#include "chrome/grit/generated_resources.h"
+#include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
 policy::PolicyService* GetProfilePolicyService(Profile* profile) {
-  auto* profile_connector =
-      policy::ProfilePolicyConnectorFactory::GetForBrowserContext(profile);
+  auto* profile_connector = profile->GetProfilePolicyConnector();
   return profile_connector->policy_service();
 }
 
@@ -45,7 +43,9 @@ void ManagedUIHandler::InitializeInternal(content::WebUI* web_ui,
 }
 
 ManagedUIHandler::ManagedUIHandler(Profile* profile)
-    : profile_(profile), managed_(chrome::ShouldDisplayManagedUi(profile_)) {}
+    : profile_(profile), managed_(chrome::ShouldDisplayManagedUi(profile_)) {
+  pref_registrar_.Init(profile_->GetPrefs());
+}
 
 ManagedUIHandler::~ManagedUIHandler() {
   RemoveObservers();
@@ -86,6 +86,10 @@ void ManagedUIHandler::AddObservers() {
     auto domain = static_cast<policy::PolicyDomain>(i);
     policy_service->AddObserver(domain, this);
   }
+
+  pref_registrar_.Add(prefs::kSupervisedUserId,
+                      base::BindRepeating(&ManagedUIHandler::NotifyIfChanged,
+                                          base::Unretained(this)));
 }
 
 void ManagedUIHandler::RemoveObservers() {
@@ -99,14 +103,19 @@ void ManagedUIHandler::RemoveObservers() {
     auto domain = static_cast<policy::PolicyDomain>(i);
     policy_service->RemoveObserver(domain, this);
   }
+
+  pref_registrar_.RemoveAll();
 }
 
 std::unique_ptr<base::DictionaryValue> ManagedUIHandler::GetDataSourceUpdate()
     const {
   auto update = std::make_unique<base::DictionaryValue>();
-  update->SetKey(
-      "managedByOrg",
-      base::Value(l10n_util::GetStringUTF8(IDS_MANAGED_BY_ORG_WITH_HYPERLINK)));
+  update->SetKey("browserManagedByOrg",
+                 base::Value(chrome::GetManagedUiWebUILabel(profile_)));
+#if defined(OS_CHROMEOS)
+  update->SetKey("deviceManagedByOrg",
+                 base::Value(chrome::GetDeviceManagedUiWebUILabel(profile_)));
+#endif
   update->SetKey("isManaged", base::Value(managed_));
   return update;
 }

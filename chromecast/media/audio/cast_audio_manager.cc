@@ -12,11 +12,15 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "build/build_config.h"
+#include "chromecast/media/audio/audio_buildflags.h"
 #include "chromecast/media/audio/cast_audio_mixer.h"
 #include "chromecast/media/audio/cast_audio_output_stream.h"
+#include "chromecast/media/audio/mixer_service/constants.h"
 #include "chromecast/media/cma/backend/cma_backend_factory.h"
 #include "chromecast/public/cast_media_shlib.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
+#include "media/audio/audio_device_description.h"
+
 #if defined(OS_ANDROID)
 #include "media/audio/android/audio_track_output_stream.h"
 #endif  // defined(OS_ANDROID)
@@ -26,11 +30,13 @@ namespace {
 const int kDefaultSampleRate = 48000;
 
 // Define bounds for the output buffer size (in frames).
-// Note: These values are copied from AudioManagerPulse implementation.
 // TODO(alokp): Query the preferred value from media backend.
-static const int kMinimumOutputBufferSize = 512;
-static const int kMaximumOutputBufferSize = 8192;
-static const int kDefaultOutputBufferSize = 2048;
+static const int kMinimumOutputBufferSize =
+    BUILDFLAG(MINIMUM_OUTPUT_BUFFER_SIZE_IN_FRAMES);
+static const int kMaximumOutputBufferSize =
+    BUILDFLAG(MAXIMUM_OUTPUT_BUFFER_SIZE_IN_FRAMES);
+static const int kDefaultOutputBufferSize =
+    BUILDFLAG(DEFAULT_OUTPUT_BUFFER_SIZE_IN_FRAMES);
 
 // TODO(jyw): Query the preferred value from media backend.
 static const int kDefaultInputBufferSize = 1024;
@@ -47,7 +53,7 @@ CastAudioManager::CastAudioManager(
     GetSessionIdCallback get_session_id_callback,
     scoped_refptr<base::SingleThreadTaskRunner> browser_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
-    service_manager::Connector* connector,
+    mojo::PendingRemote<chromecast::mojom::ServiceConnector> connector,
     bool use_mixer)
     : CastAudioManager(std::move(audio_thread),
                        audio_log_factory,
@@ -55,7 +61,7 @@ CastAudioManager::CastAudioManager(
                        std::move(get_session_id_callback),
                        std::move(browser_task_runner),
                        std::move(media_task_runner),
-                       connector,
+                       std::move(connector),
                        use_mixer,
                        false) {}
 
@@ -66,7 +72,7 @@ CastAudioManager::CastAudioManager(
     GetSessionIdCallback get_session_id_callback,
     scoped_refptr<base::SingleThreadTaskRunner> browser_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
-    service_manager::Connector* connector,
+    mojo::PendingRemote<chromecast::mojom::ServiceConnector> connector,
     bool use_mixer,
     bool force_use_cma_backend_for_output)
     : AudioManagerBase(std::move(audio_thread), audio_log_factory),
@@ -74,13 +80,13 @@ CastAudioManager::CastAudioManager(
       get_session_id_callback_(std::move(get_session_id_callback)),
       browser_task_runner_(std::move(browser_task_runner)),
       media_task_runner_(std::move(media_task_runner)),
-      browser_connector_(connector),
+      pending_connector_(std::move(connector)),
       force_use_cma_backend_for_output_(force_use_cma_backend_for_output),
       weak_factory_(this) {
   DCHECK(browser_task_runner_->BelongsToCurrentThread());
   DCHECK(backend_factory_getter_);
   DCHECK(get_session_id_callback_);
-  DCHECK(browser_connector_);
+  DCHECK(pending_connector_);
   weak_this_ = weak_factory_.GetWeakPtr();
   if (use_mixer)
     mixer_ = std::make_unique<CastAudioMixer>(this);
@@ -164,7 +170,7 @@ std::string CastAudioManager::GetSessionId(std::string audio_group_id) {
     return new CastAudioOutputStream(
         this, GetConnector(), params,
         ::media::AudioDeviceDescription::kDefaultDeviceId,
-        GetMixerServiceConnectionFactoryForOutputStream(params));
+        UseMixerOutputStream(params));
   }
 }
 
@@ -174,10 +180,12 @@ std::string CastAudioManager::GetSessionId(std::string audio_group_id) {
     const ::media::AudioManager::LogCallback& log_callback) {
   DCHECK_EQ(::media::AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
 
-  // If |mixer_| exists, return a mixing stream. If used, the mixing stream
-  // will use the default device_id, not |device_id_or_group_id|
-  if (mixer_) {
-    DCHECK(device_id_or_group_id.empty());
+  // For non-default device IDs, we always want to use CastAudioOutputStream
+  // to allow features like redirection. For default device ID, if |mixer_|
+  // exists, return a mixing stream. If used, the mixing stream will always use
+  // the default device_id.
+  if (::media::AudioDeviceDescription::IsDefaultDevice(device_id_or_group_id) &&
+      mixer_) {
     return mixer_->MakeStream(params);
   } else {
     return new CastAudioOutputStream(
@@ -185,7 +193,7 @@ std::string CastAudioManager::GetSessionId(std::string audio_group_id) {
         device_id_or_group_id.empty()
             ? ::media::AudioDeviceDescription::kDefaultDeviceId
             : device_id_or_group_id,
-        GetMixerServiceConnectionFactoryForOutputStream(params));
+        UseMixerOutputStream(params));
   }
 }
 
@@ -252,44 +260,37 @@ std::string CastAudioManager::GetSessionId(std::string audio_group_id) {
   mixer_output_stream_.reset(new CastAudioOutputStream(
       this, GetConnector(), params,
       ::media::AudioDeviceDescription::kDefaultDeviceId,
-      GetMixerServiceConnectionFactoryForOutputStream(params)));
+      UseMixerOutputStream(params)));
   return mixer_output_stream_.get();
 }
 
-void CastAudioManager::SetConnectorForTesting(
-    std::unique_ptr<service_manager::Connector> connector) {
-  connector_ = std::move(connector);
-}
-
-service_manager::Connector* CastAudioManager::GetConnector() {
+chromecast::mojom::ServiceConnector* CastAudioManager::GetConnector() {
   if (!connector_) {
-    service_manager::mojom::ConnectorRequest request;
-    connector_ = service_manager::Connector::Create(&request);
-    browser_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&CastAudioManager::BindConnectorRequest,
-                                  weak_this_, std::move(request)));
+    DCHECK(pending_connector_);
+    connector_.Bind(std::move(pending_connector_));
   }
   return connector_.get();
 }
 
-void CastAudioManager::BindConnectorRequest(
-    service_manager::mojom::ConnectorRequest request) {
-  browser_connector_->BindConnectorRequest(std::move(request));
-}
-
-MixerServiceConnectionFactory*
-CastAudioManager::GetMixerServiceConnectionFactoryForOutputStream(
+bool CastAudioManager::UseMixerOutputStream(
     const ::media::AudioParameters& params) {
   bool use_cma_backend =
       (params.effects() & ::media::AudioParameters::MULTIZONE) ||
-      !CastMediaShlib::AddDirectAudioSource ||
-      force_use_cma_backend_for_output_;
+      !mixer_service::HaveFullMixer() || force_use_cma_backend_for_output_;
 
-  if (use_cma_backend)
-    return nullptr;
-  else
-    return &mixer_service_connection_factory_;
+  return !use_cma_backend;
 }
+
+#if defined(OS_ANDROID)
+::media::AudioOutputStream* CastAudioManager::MakeAudioOutputStreamProxy(
+    const ::media::AudioParameters& params,
+    const std::string& device_id) {
+  // Override to use MakeAudioOutputStream to prevent the audio output stream
+  // from closing during pause/stop.
+  return MakeAudioOutputStream(params, device_id,
+                               /*log_callback, not used*/ base::DoNothing());
+}
+#endif  // defined(OS_ANDROID)
 
 }  // namespace media
 }  // namespace chromecast

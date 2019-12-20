@@ -146,9 +146,9 @@ class DestructiveScriptTest : public ExecuteScriptApiTest,
   bool RunSubtest(const std::string& test_host) {
     return RunExtensionSubtest(
         "executescript/destructive",
-        "test.html?" + test_host +
-        "#bucketcount=" + base::IntToString(kDestructiveScriptTestBucketCount) +
-        "&bucketindex=" + base::IntToString(GetParam()));
+        "test.html?" + test_host + "#bucketcount=" +
+            base::NumberToString(kDestructiveScriptTestBucketCount) +
+            "&bucketindex=" + base::NumberToString(GetParam()));
   }
 };
 
@@ -163,7 +163,7 @@ IN_PROC_BROWSER_TEST_P(DestructiveScriptTest, MicrotaskRemoval) {
 }
 
 // Removes the frame at the frame's first scheduled macrotask.
-IN_PROC_BROWSER_TEST_P(DestructiveScriptTest, MacrotaskRemoval) {
+IN_PROC_BROWSER_TEST_P(DestructiveScriptTest, DISABLED_MacrotaskRemoval) {
   ASSERT_TRUE(RunSubtest("macrotask")) << message_;
 }
 

@@ -15,7 +15,6 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "services/resource_coordinator/public/cpp/resource_coordinator_features.h"
 
 namespace resource_coordinator {
 
@@ -120,7 +119,7 @@ TabLoadTracker::TabLoadTracker() = default;
 
 void TabLoadTracker::StartTracking(content::WebContents* web_contents) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!base::ContainsKey(tabs_, web_contents));
+  DCHECK(!base::Contains(tabs_, web_contents));
 
   LoadingState loading_state = DetermineLoadingState(web_contents);
 
@@ -128,7 +127,7 @@ void TabLoadTracker::StartTracking(content::WebContents* web_contents) {
   // documented in TransitionState.
   WebContentsData data;
   data.loading_state = loading_state;
-  if (data.loading_state == LOADING)
+  if (web_contents->IsLoadingToDifferentDocument())
     data.did_start_loading_seen = true;
   data.is_ui_tab = IsUiTab(web_contents);
   tabs_.insert(std::make_pair(web_contents, data));
@@ -166,11 +165,22 @@ void TabLoadTracker::DidStartLoading(content::WebContents* web_contents) {
     return;
   auto it = tabs_.find(web_contents);
   DCHECK(it != tabs_.end());
+
   if (it->second.loading_state == LOADING) {
+    // A load starts but the page has not become idle since the previous load.
     DCHECK(it->second.did_start_loading_seen);
     return;
   }
   it->second.did_start_loading_seen = true;
+
+  // A load in a non-visible WebContents can be deferred by a NavigationThrottle
+  // until DidReceiveResponse(). Therefore, wait until DidReceiveResponse() to
+  // transition a hidden WebContents to LOADING. However, transition to LOADING
+  // immediately for a visible WebContents, to ensure that policies that depend
+  // on LoadingState are applied as soon as possible.
+  if (web_contents->GetVisibility() == content::Visibility::VISIBLE) {
+    TransitionState(it, LOADING, true);
+  }
 }
 
 void TabLoadTracker::DidReceiveResponse(content::WebContents* web_contents) {
@@ -181,20 +191,13 @@ void TabLoadTracker::DidReceiveResponse(content::WebContents* web_contents) {
     DCHECK(it->second.did_start_loading_seen);
     return;
   }
-  // A transition to loading requires both DidStartLoading (navigation
-  // committed) and DidReceiveResponse (data has been trasmitted over the
-  // network) events to occur. This is because NavigationThrottles can block
-  // actual network requests, but not the rest of the state machinery.
-  if (!it->second.did_start_loading_seen)
-    return;
-  TransitionState(it, LOADING, true);
-}
 
-void TabLoadTracker::DidStopLoading(content::WebContents* web_contents) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (resource_coordinator::IsPageAlmostIdleSignalEnabled())
+  if (!it->second.did_start_loading_seen) {
+    // Response is received after the page has become idle.
     return;
-  MaybeTransitionToLoaded(web_contents);
+  }
+
+  TransitionState(it, LOADING, true);
 }
 
 void TabLoadTracker::DidFailLoad(content::WebContents* web_contents) {
@@ -229,11 +232,12 @@ void TabLoadTracker::RenderProcessGone(content::WebContents* web_contents,
 
 void TabLoadTracker::OnPageAlmostIdle(content::WebContents* web_contents) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(resource_coordinator::IsPageAlmostIdleSignalEnabled());
   // TabManager::ResourceCoordinatorSignalObserver filters late notifications
   // so here we can assume the event pertains to a live web_contents and
-  // its most recent navigation.
-  DCHECK(base::ContainsKey(tabs_, web_contents));
+  // its most recent navigation. However, the graph tracks contents that aren't
+  // tracked by this object.
+  if (!base::Contains(tabs_, web_contents))
+    return;
 
   MaybeTransitionToLoaded(web_contents);
 }
@@ -244,7 +248,8 @@ TabLoadTracker::LoadingState TabLoadTracker::DetermineLoadingState(
   // loading. Start from the assumption that it is UNLOADED.
   LoadingState loading_state = UNLOADED;
   if (web_contents->IsLoadingToDifferentDocument() &&
-      !web_contents->IsWaitingForResponse()) {
+      (web_contents->GetVisibility() == content::Visibility::VISIBLE ||
+       !web_contents->IsWaitingForResponse())) {
     loading_state = LOADING;
   } else {
     // Determine if the WebContents is already loaded. A loaded WebContents has

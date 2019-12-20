@@ -14,10 +14,8 @@
 
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/translate/translate_service.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -35,21 +33,17 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
-#include "mojo/public/cpp/bindings/binding.h"
 #include "url/gurl.h"
 
 FakePageImpl::FakePageImpl()
-    : called_translate_(false),
-      called_revert_translation_(false),
-      binding_(this) {}
-FakePageImpl::~FakePageImpl(){};
+    : called_translate_(false), called_revert_translation_(false) {}
+FakePageImpl::~FakePageImpl() {}
 
-translate::mojom::PagePtr FakePageImpl::BindToNewPagePtr() {
-  binding_.Close();
+mojo::PendingRemote<translate::mojom::Page>
+FakePageImpl::BindToNewPageRemote() {
+  receiver_.reset();
   translate_callback_pending_.Reset();
-  translate::mojom::PagePtr page;
-  binding_.Bind(mojo::MakeRequest(&page));
-  return page;
+  return receiver_.BindNewPipeAndPassRemote();
 }
 
 // translate::mojom::Page implementation.

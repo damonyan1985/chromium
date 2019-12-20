@@ -43,7 +43,7 @@
 namespace blink {
 
 class CORE_EXPORT CSSSelectorWatch final
-    : public GarbageCollectedFinalized<CSSSelectorWatch>,
+    : public GarbageCollected<CSSSelectorWatch>,
       public Supplement<Document> {
   USING_GARBAGE_COLLECTED_MIXIN(CSSSelectorWatch);
 
@@ -74,7 +74,7 @@ class CORE_EXPORT CSSSelectorWatch final
   // Maps a CSS selector string with a -webkit-callback property to the number
   // of matching ComputedStyle objects in this document.
   HashCountedSet<String> matching_callback_selectors_;
-  // Selectors are relative to m_matchingCallbackSelectors's contents at
+  // Selectors are relative to |matching_callback_selectors_|'s contents at
   // the previous call to selectorMatchChanged.
   HashSet<String> added_selectors_;
   HashSet<String> removed_selectors_;

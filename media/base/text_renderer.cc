@@ -25,8 +25,7 @@ TextRenderer::TextRenderer(
     : task_runner_(task_runner),
       add_text_track_cb_(add_text_track_cb),
       state_(kUninitialized),
-      pending_read_count_(0),
-      weak_factory_(this) {}
+      pending_read_count_(0) {}
 
 TextRenderer::~TextRenderer() {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -35,7 +34,7 @@ TextRenderer::~TextRenderer() {
     std::move(pause_cb_).Run();
 }
 
-void TextRenderer::Initialize(const base::Closure& ended_cb) {
+void TextRenderer::Initialize(const base::RepeatingClosure& ended_cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(ended_cb);
   DCHECK_EQ(kUninitialized, state_)  << "state_ " << state_;
@@ -104,12 +103,11 @@ void TextRenderer::AddTextStream(DemuxerStream* text_stream,
   DCHECK(pending_eos_set_.find(text_stream) ==
          pending_eos_set_.end());
 
-  AddTextTrackDoneCB done_cb =
-      BindToCurrentLoop(base::Bind(&TextRenderer::OnAddTextTrackDone,
-                                   weak_factory_.GetWeakPtr(),
-                                   text_stream));
+  AddTextTrackDoneCB done_cb = BindToCurrentLoop(
+      base::BindOnce(&TextRenderer::OnAddTextTrackDone,
+                     weak_factory_.GetWeakPtr(), text_stream));
 
-  add_text_track_cb_.Run(config, done_cb);
+  add_text_track_cb_.Run(config, std::move(done_cb));
 }
 
 void TextRenderer::RemoveTextStream(DemuxerStream* text_stream) {
@@ -174,7 +172,7 @@ void TextRenderer::BufferReady(DemuxerStream* stream,
   }
 
   if (input->end_of_stream()) {
-    CueReady(stream, NULL);
+    CueReady(stream, nullptr);
     return;
   }
 
@@ -312,8 +310,8 @@ void TextRenderer::Read(
   state->read_state = TextTrackState::kReadPending;
   ++pending_read_count_;
 
-  text_stream->Read(base::Bind(
-      &TextRenderer::BufferReady, weak_factory_.GetWeakPtr(), text_stream));
+  text_stream->Read(base::BindOnce(&TextRenderer::BufferReady,
+                                   weak_factory_.GetWeakPtr(), text_stream));
 }
 
 TextRenderer::TextTrackState::TextTrackState(std::unique_ptr<TextTrack> tt)

@@ -30,7 +30,8 @@ class POLICY_EXPORT DesktopCloudPolicyStore : public UserCloudPolicyStoreBase {
       const base::FilePath& policy_file,
       const base::FilePath& key_file,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner,
-      PolicyScope policy_scope);
+      PolicyScope policy_scope,
+      PolicySource policy_source);
   ~DesktopCloudPolicyStore() override;
 
   // Loads policy immediately on the current thread. Virtual for mocks.
@@ -59,7 +60,7 @@ class POLICY_EXPORT DesktopCloudPolicyStore : public UserCloudPolicyStoreBase {
       std::unique_ptr<enterprise_management::PolicyFetchResponse> policy,
       std::unique_ptr<enterprise_management::PolicySigningKey> key,
       bool validate_in_background,
-      const UserCloudPolicyValidator::CompletionCallback& callback) = 0;
+      UserCloudPolicyValidator::CompletionCallback callback) = 0;
 
   // Validate the |cached_key| with the |owning_domain|.
   void ValidateKeyAndSignature(
@@ -90,7 +91,7 @@ class POLICY_EXPORT DesktopCloudPolicyStore : public UserCloudPolicyStoreBase {
   base::FilePath key_path_;
 
   // WeakPtrFactory used to create callbacks for validating and storing policy.
-  base::WeakPtrFactory<DesktopCloudPolicyStore> weak_factory_;
+  base::WeakPtrFactory<DesktopCloudPolicyStore> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DesktopCloudPolicyStore);
 };
@@ -131,7 +132,7 @@ class POLICY_EXPORT UserCloudPolicyStore : public DesktopCloudPolicyStore {
       std::unique_ptr<enterprise_management::PolicyFetchResponse> policy,
       std::unique_ptr<enterprise_management::PolicySigningKey> key,
       bool validate_in_background,
-      const UserCloudPolicyValidator::CompletionCallback& callback) override;
+      UserCloudPolicyValidator::CompletionCallback callback) override;
 
   // The account id from signin for validation of the policy.
   AccountId account_id_;

@@ -11,23 +11,37 @@ namespace features {
 
 // Enables audio service sandbox.
 // (Only causes an effect when feature kAudioServiceOutOfProcess is enabled.)
-const base::Feature kAudioServiceSandbox{"AudioServiceSandbox",
-                                         base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kAudioServiceSandbox {
+  "AudioServiceSandbox",
+#if defined(OS_WIN) || defined(OS_MACOSX)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif  // defined(OS_WIN) || defined(OS_MACOSX)
+};
 
 // Enables network service sandbox.
 // (Only causes an effect when feature kNetworkService is enabled.)
-const base::Feature kNetworkServiceSandbox{"NetworkServiceSandbox",
-                                           base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kNetworkServiceSandbox {
+  "NetworkServiceSandbox",
+#if defined(OS_MACOSX)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
 
 #if defined(OS_WIN)
 // Emergency "off switch" for new Windows sandbox security mitigation,
 // sandbox::MITIGATION_EXTENSION_POINT_DISABLE.
 const base::Feature kWinSboxDisableExtensionPoints{
     "WinSboxDisableExtensionPoint", base::FEATURE_ENABLED_BY_DEFAULT};
-
-// Controls whether the isolated XR service is sandboxed.
-const base::Feature kXRSandbox{"XRSandbox", base::FEATURE_DISABLED_BY_DEFAULT};
 #endif  // defined(OS_WIN)
+
+#if !defined(OS_ANDROID)
+// Controls whether the isolated XR service is sandboxed.
+const base::Feature kXRSandbox{"XRSandbox", base::FEATURE_ENABLED_BY_DEFAULT};
+#endif  // !defined(OS_ANDROID)
 
 }  // namespace features
 }  // namespace service_manager

@@ -60,6 +60,10 @@ class StartupTabProvider {
   // applications exist.
   virtual StartupTabs GetPostCrashTabs(
       bool has_incompatible_applications) const = 0;
+
+  // Returns tabs related to the extension checkup promo (if applicable).
+  virtual StartupTabs GetExtensionCheckupTabs(
+      bool serve_extensions_page) const = 0;
 };
 
 class StartupTabProviderImpl : public StartupTabProvider {
@@ -69,15 +73,8 @@ class StartupTabProviderImpl : public StartupTabProvider {
     bool has_seen_welcome_page = false;
     bool is_signin_allowed = false;
     bool is_signed_in = false;
-    bool is_signin_in_progress = false;
     bool is_supervised_user = false;
     bool is_force_signin_enabled = false;
-  };
-
-  struct Win10OnboardingTabsParams {
-    bool has_seen_win10_promo = false;
-    bool set_default_browser_allowed = false;
-    bool is_default_browser = false;
   };
 
   StartupTabProviderImpl() = default;
@@ -95,30 +92,12 @@ class StartupTabProviderImpl : public StartupTabProvider {
   // Returns true if the standard welcome page should be shown in a tab. This
   // should only be used following a positive result from CanShowWelcome.
   static bool ShouldShowWelcomeForOnboarding(bool has_seen_welcome_page,
-                                             bool is_signed_in,
-                                             bool is_signin_in_progress);
+                                             bool is_signed_in);
 
   // Determines which tabs should be shown according to onboarding/first
   // run policy.
   static StartupTabs GetStandardOnboardingTabsForState(
       const StandardOnboardingTabsParams& params);
-
-#if defined(OS_WIN)
-  // returns true if showing the Windows 10 welcome page is permissible.
-  static bool CanShowWin10Welcome(bool set_default_browser_allowed,
-                                  bool is_supervised_user);
-
-  // Returns true if the Windows 10 welcome page should be shown in a tab. This
-  // should only be used following a positive result from CanShowWin10Welcome.
-  static bool ShouldShowWin10WelcomeForOnboarding(bool has_seen_win10_promo,
-                                                  bool is_default_browser);
-
-  // Determines which tabs should be shown according to onboarding/first run
-  // policy, including promo content specific to Windows 10.
-  static StartupTabs GetWin10OnboardingTabsForState(
-      const StandardOnboardingTabsParams& standard_params,
-      const Win10OnboardingTabsParams& win10_params);
-#endif  // defined(OS_WIN)
 
   // Processes first run URLs specified in Master Preferences file, replacing
   // any "magic word" URL hosts with appropriate URLs.
@@ -154,24 +133,20 @@ class StartupTabProviderImpl : public StartupTabProvider {
   static StartupTabs GetPostCrashTabsForState(
       bool has_incompatible_applications);
 
+  // Determines if the extensions page should be shown.
+  static StartupTabs GetExtensionCheckupTabsForState(
+      bool serve_extensions_page);
+
   // Gets the URL for the Welcome page. If |use_later_run_variant| is true, a
   // URL parameter will be appended so as to access the variant page used when
   // onboarding occurs after the first Chrome execution (e.g., when creating an
   // additional profile).
+  // TODO(hcarmona): it might be possible to deprecate use_later_run_variant.
   static GURL GetWelcomePageUrl(bool use_later_run_variant);
 
-#if defined(OS_WIN)
-  // Gets the URL for the Windows 10 Welcome page. If |use_later_run_variant| is
-  // true, a URL parameter will be appended so as to access the variant page
-  // used when onboarding occurs after the first Chrome execution.
-  static GURL GetWin10WelcomePageUrl(bool use_later_run_variant);
-
-#if defined(GOOGLE_CHROME_BUILD)
-  // Gets the URL for the Incompatible Applications subpage of the Chrome
-  // settings.
-  static GURL GetIncompatibleApplicationsUrl();
-#endif  // defined(GOOGLE_CHROME_BUILD)
-#endif  // defined(OS_WIN)
+  // In branded Windows builds, adds the URL for the Incompatible Applications
+  // subpage of the Chrome settings.
+  static void AddIncompatibleApplicationsUrl(StartupTabs* tabs);
 
   // Gets the URL for the page which offers to reset the user's profile
   // settings.
@@ -193,6 +168,8 @@ class StartupTabProviderImpl : public StartupTabProvider {
                                 Profile* profile) const override;
   StartupTabs GetPostCrashTabs(
       bool has_incompatible_applications) const override;
+  StartupTabs GetExtensionCheckupTabs(
+      bool serve_extensions_page) const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(StartupTabProviderImpl);

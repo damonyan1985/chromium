@@ -13,9 +13,11 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/strings/string_piece.h"
 #include "base/version.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/printing/printer_configuration.h"
+#include "chromeos/printing/usb_printer_id.h"
 
 namespace network {
 namespace mojom {
@@ -58,9 +60,9 @@ struct CHROMEOS_EXPORT PrinterSearchData {
   // Set of MIME types supported by this printer.
   std::vector<std::string> supported_document_formats;
 
-  // Stripped from IEEE1284 signaling method(from the device ID key 'CMD').
-  // Details a set of languages this printer understands.
-  std::vector<std::string> usb_command_set;
+  // Representation of IEEE1284 standard printing device ID.
+  // Contains a set of languages this printer understands.
+  UsbPrinterId printer_id;
 };
 
 // PpdProvider is responsible for mapping printer descriptions to
@@ -149,14 +151,24 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   using ResolvePrintersCallback =
       base::OnceCallback<void(CallbackResultCode, const ResolvedPrintersList&)>;
 
-  // Result of a ResolvePpdReference call.  If the result code is
-  // SUCCESS, then the second argument contains the a PpdReference
-  // that we have high confidence can be used to obtain a driver for
-  // the printer.  NOT_FOUND means we couldn't confidently figure out
-  // a driver for the printer.
+  // Result of a ResolvePpdReference call.  If the result code is SUCCESS, then
+  // the second argument contains the a PpdReference that we have high
+  // confidence can be used to obtain a driver for the printer.  NOT_FOUND means
+  // we couldn't confidently figure out a driver for the printer.  If we got
+  // NOT_FOUND from a USB printer, we may have been able to determine the
+  // manufacturer name which is the third argument.
   using ResolvePpdReferenceCallback =
       base::OnceCallback<void(CallbackResultCode,
-                              const Printer::PpdReference&)>;
+                              const Printer::PpdReference& ref,
+                              const std::string& manufacturer)>;
+
+  // Result of a ResolvePpdLicense call. If |result| is SUCCESS, then
+  // |license_name| will be used to indicate the license associated with the
+  // requested PPD. If |license_name| is empty, then the requested PPD does not
+  // require a license.
+  using ResolvePpdLicenseCallback =
+      base::OnceCallback<void(CallbackResultCode result,
+                              const std::string& license_name)>;
 
   // Result of a ReverseLookup call.  If the result code is SUCCESS, then
   // |manufactuer| and |model| contain the strings that could have generated
@@ -201,6 +213,16 @@ class CHROMEOS_EXPORT PpdProvider : public base::RefCounted<PpdProvider> {
   // |cb| will be called on the invoking thread, and will be sequenced.
   virtual void ResolvePpd(const Printer::PpdReference& reference,
                           ResolvePpdCallback cb) = 0;
+
+  // Retrieves the name of the PPD license associated with the given printer
+  // |effective_make_and_model|. If the name of the retrieved license is empty,
+  // then the PPD does not require a license. If |effective_make_and_model| is
+  // already present in the cache, then |cb| will fire immediately. Otherwise,
+  // the PpdIndex will be fetched in order to retrieve the associated license.
+  //
+  // |cb| will be called on the invoking thread, and will be sequenced.
+  virtual void ResolvePpdLicense(base::StringPiece effective_make_and_model,
+                                 ResolvePpdLicenseCallback cb) = 0;
 
   // For a given PpdReference, retrieve the make and model strings used to
   // construct that reference.

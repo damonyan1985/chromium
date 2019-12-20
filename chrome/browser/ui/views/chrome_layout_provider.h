@@ -63,9 +63,16 @@ enum ChromeDistanceMetric {
   DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH,
   // Width of larger modal dialogs that require extra width.
   DISTANCE_LARGE_MODAL_DIALOG_PREFERRED_WIDTH,
+  // Width of a bubble attached to the tabstrip.
+  DISTANCE_BUBBLE_TABSTRIP_PREFERRED_WIDTH,
   // Width of a bubble unless the content is too wide to make that
   // feasible.
   DISTANCE_BUBBLE_PREFERRED_WIDTH,
+  // Width of a bubble that appears mid-screen (like a standalone dialog)
+  // instead of being anchored.
+  DISTANCE_STANDALONE_BUBBLE_PREFERRED_WIDTH,
+  // Horizontal spacing between value and description in the row.
+  DISTANCE_BETWEEN_PRIMARY_AND_SECONDARY_LABELS_HORIZONTAL
 };
 
 class ChromeLayoutProvider : public views::LayoutProvider {
@@ -81,6 +88,8 @@ class ChromeLayoutProvider : public views::LayoutProvider {
   int GetDistanceMetric(int metric) const override;
   int GetSnappedDialogWidth(int min_width) const override;
   const views::TypographyProvider& GetTypographyProvider() const override;
+  gfx::ShadowValues MakeShadowValues(int elevation,
+                                     SkColor color) const override;
 
   // Returns the alignment used for control labels in a GridLayout; for example,
   // in this GridLayout:
@@ -90,10 +99,6 @@ class ChromeLayoutProvider : public views::LayoutProvider {
   //   ---------------------------
   // This value controls the alignment used for "Label 1" and "Label 2".
   virtual views::GridLayout::Alignment GetControlLabelGridAlignment() const;
-
-  // Returns whether to use extra padding on dialogs. If this is false, content
-  // Views for dialogs should not insert extra padding at their own edges.
-  virtual bool UseExtraDialogPadding() const;
 
   // Returns whether to show the icon next to the title text on a dialog.
   virtual bool ShouldShowWindowIcon() const;

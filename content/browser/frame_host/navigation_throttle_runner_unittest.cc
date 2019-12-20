@@ -60,7 +60,7 @@ class NavigationThrottleRunnerTest : public RenderViewHostTestHarness,
 
   void SetUp() override {
     RenderViewHostTestHarness::SetUp();
-    runner_ = std::make_unique<NavigationThrottleRunner>(this, &handle_);
+    runner_ = std::make_unique<NavigationThrottleRunner>(this);
   }
 
   void Resume() { runner_->CallResumeForTesting(); }
@@ -256,7 +256,7 @@ TEST_P(NavigationThrottleRunnerTestWithEvent,
   EXPECT_FALSE(was_delegate_notified());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AllEvents,
     NavigationThrottleRunnerTestWithEvent,
     ::testing::Values(NavigationThrottleRunner::Event::WillStartRequest,
@@ -368,7 +368,7 @@ TEST_P(NavigationThrottleRunnerTestWithEventAndAction, ProceedThenCancel) {
   EXPECT_EQ(event(), observer_last_event());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AllEvents,
     NavigationThrottleRunnerTestWithEventAndAction,
     ::testing::Combine(
@@ -447,7 +447,7 @@ TEST_P(NavigationThrottleRunnerTestWithEventAndError, CustomNetError) {
   CheckNotified(test_throttle);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AllEvents,
     NavigationThrottleRunnerTestWithEventAndError,
     ::testing::Combine(

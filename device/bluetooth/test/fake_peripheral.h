@@ -81,7 +81,6 @@ class FakePeripheral : public device::BluetoothDevice {
   bool IsGattConnected() const override;
   bool IsConnectable() const override;
   bool IsConnecting() const override;
-  UUIDSet GetUUIDs() const override;
   bool ExpectingPinCode() const override;
   bool ExpectingPasskey() const override;
   bool ExpectingConfirmation() const override;
@@ -90,8 +89,8 @@ class FakePeripheral : public device::BluetoothDevice {
                             const base::Closure& callback,
                             const ErrorCallback& error_callback) override;
   void Connect(PairingDelegate* pairing_delegate,
-               const base::Closure& callback,
-               const ConnectErrorCallback& error_callback) override;
+               base::OnceClosure callback,
+               ConnectErrorCallback error_callback) override;
   void SetPinCode(const std::string& pincode) override;
   void SetPasskey(uint32_t passkey) override;
   void ConfirmPairing() override;
@@ -109,9 +108,8 @@ class FakePeripheral : public device::BluetoothDevice {
       const device::BluetoothUUID& uuid,
       const ConnectToServiceCallback& callback,
       const ConnectToServiceErrorCallback& error_callback) override;
-  void CreateGattConnection(
-      const GattConnectionCallback& callback,
-      const ConnectErrorCallback& error_callback) override;
+  void CreateGattConnection(GattConnectionCallback callback,
+                            ConnectErrorCallback error_callback) override;
   bool IsGattServicesDiscoveryComplete() const override;
 #if defined(OS_CHROMEOS)
   void ExecuteWrite(const base::Closure& callback,
@@ -130,7 +128,6 @@ class FakePeripheral : public device::BluetoothDevice {
 
   const std::string address_;
   base::Optional<std::string> name_;
-  UUIDSet service_uuids_;
   // True when the system has connected to the device outside of the Bluetooth
   // interface e.g. the user connected to the device through system settings.
   bool system_connected_;
@@ -155,7 +152,7 @@ class FakePeripheral : public device::BluetoothDevice {
 
   // Mutable because IsGattServicesDiscoveryComplete needs to post a task but
   // is const.
-  mutable base::WeakPtrFactory<FakePeripheral> weak_ptr_factory_;
+  mutable base::WeakPtrFactory<FakePeripheral> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakePeripheral);
 };

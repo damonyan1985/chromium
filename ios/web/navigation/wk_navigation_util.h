@@ -18,6 +18,7 @@
 #ifndef IOS_WEB_NAVIGATION_WK_NAVIGATION_UTIL_H_
 #define IOS_WEB_NAVIGATION_WK_NAVIGATION_UTIL_H_
 
+#import <Foundation/Foundation.h>
 #include <memory>
 #include <vector>
 
@@ -39,8 +40,12 @@ extern const char kRestoreSessionSessionHashPrefix[];
 // URL fragment prefix used to encode target URL in a restore_session.html URL.
 extern const char kRestoreSessionTargetUrlHashPrefix[];
 
+// The "Referer" [sic] HTTP header.
+extern NSString* const kReferrerHeaderName;
+
 // Returns true if |url| is a placeholder URL or restore_session.html URL.
 bool IsWKInternalUrl(const GURL& url);
+bool IsWKInternalUrl(NSURL* url);
 
 // Returns true if |url| is an app specific url or an about:// scheme
 // non-placeholder url.
@@ -50,16 +55,20 @@ bool URLNeedsUserAgentType(const GURL& url);
 // This is used in unit tests.
 GURL GetRestoreSessionBaseUrl();
 
-// Creates a restore_session.html URL with the provided session history encoded
-// in the URL fragment, such that when this URL is loaded in the web view,
-// recreates all the history entries in |items| and the current loaded item is
-// the entry at |last_committed_item_index|.
-GURL CreateRestoreSessionUrl(
+// Creates a restore_session.html |url| with the provided session
+// history encoded in the URL fragment, such that when this URL is loaded in the
+// web view, recreates all the history entries in |items| and the current loaded
+// item is the entry at |last_committed_item_index|.  Sets |first_index| to the
+// new beginning of items.
+void CreateRestoreSessionUrl(
     int last_committed_item_index,
-    const std::vector<std::unique_ptr<NavigationItem>>& items);
+    const std::vector<std::unique_ptr<NavigationItem>>& items,
+    GURL* url,
+    int* first_index);
 
 // Returns true if the base URL of |url| is restore_session.html.
 bool IsRestoreSessionUrl(const GURL& url);
+bool IsRestoreSessionUrl(NSURL* url);
 
 // Creates a restore_session.html URL that encodes the specified |target_url| in
 // the URL fragment with a "targetUrl=" prefix. When this URL is loaded in the
@@ -77,6 +86,7 @@ bool ExtractTargetURL(const GURL& restore_session_url, GURL* target_url);
 
 // Returns true if |URL| is a placeholder navigation URL.
 bool IsPlaceholderUrl(const GURL& url);
+bool IsPlaceholderUrl(NSURL* url);
 
 // Creates the URL for the placeholder navigation required for Native View and
 // WebUI URLs.

@@ -17,12 +17,9 @@
 class Browser;
 
 namespace extensions {
+struct ActionInfo;
 class Command;
 class Extension;
-}
-
-namespace gfx {
-class Point;
 }
 
 // Provides feedback to the user upon successful installation of an
@@ -88,7 +85,6 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   // BubbleDelegate:
   std::unique_ptr<BubbleUi> BuildBubbleUi() override;
   bool ShouldClose(BubbleCloseReason reason) const override;
-  std::string GetName() const override;
   const content::RenderFrameHost* OwningFrame() const override;
 
   // Returns false if the bubble could not be shown immediately, because of an
@@ -96,33 +92,31 @@ class ExtensionInstalledBubble : public BubbleDelegate {
   // TODO(hcarmona): Detect animation in a platform-agnostic manner.
   bool ShouldShow();
 
-  // Returns the anchor point in screen coordinates. Used when there is no
-  // anchor view.
-  gfx::Point GetAnchorPoint(gfx::NativeWindow window) const;
-
   // Returns the string describing how to use the new extension.
   base::string16 GetHowToUseDescription() const;
 
-  // Handle initialization with the extension.
-  void Initialize();
-
  private:
+  ExtensionInstalledBubble(scoped_refptr<const extensions::Extension> extension,
+                           Browser* browser,
+                           const SkBitmap& icon,
+                           const extensions::ActionInfo* action_info);
+
   // It's possible for an extension to be programmatically uninstalled
   // underneath us, so don't let the extension object go away until the bubble
   // is hidden.
-  scoped_refptr<const extensions::Extension> extension_;
+  const scoped_refptr<const extensions::Extension> extension_;
   Browser* const browser_;
   const SkBitmap icon_;
-  BubbleType type_;
-
-  // A bitmask containing the various options of bubble sections to show.
-  int options_;
-
-  // The location where the bubble should be anchored.
-  AnchorPosition anchor_position_;
+  const BubbleType type_;
 
   // The command to execute the extension action, if one exists.
-  std::unique_ptr<extensions::Command> action_command_;
+  const std::unique_ptr<extensions::Command> action_command_;
+
+  // A bitmask containing the various options of bubble sections to show.
+  const int options_;
+
+  // The location where the bubble should be anchored.
+  const AnchorPosition anchor_position_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstalledBubble);
 };

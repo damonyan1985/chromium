@@ -42,13 +42,17 @@ class CONTENT_EXPORT MediaSessionUmaHelper {
     SeekBackward = 7,
     SeekForward = 8,
     SkipAd = 9,
-    kMaxValue = SkipAd,
+    Stop = 10,
+    SeekTo = 11,
+    ScrubTo = 12,
+    kMaxValue = ScrubTo,
   };
 
   MediaSessionUmaHelper();
   ~MediaSessionUmaHelper();
 
-  static void RecordMediaSessionUserAction(MediaSessionUserAction action);
+  static void RecordMediaSessionUserAction(MediaSessionUserAction action,
+                                           bool focused);
 
   void RecordSessionSuspended(MediaSessionSuspendedSource source) const;
 

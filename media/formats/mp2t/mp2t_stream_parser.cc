@@ -427,34 +427,41 @@ std::unique_ptr<EsParser> Mp2tStreamParser::CreateMpeg1AudioParser(
 bool Mp2tStreamParser::ShouldForceEncryptedParser() {
   // If we expect to handle encrypted data later in the stream, then force the
   // use of the encrypted parser variant so that the initial configuration
-  // reflects the intended encryption scheme (even if the initial segment itself
+  // reflects the intended encryption mode (even if the initial segment itself
   // is not encrypted).
-  return initial_scheme_.is_encrypted();
+  return initial_encryption_scheme_ != EncryptionScheme::kUnencrypted;
 }
 
 std::unique_ptr<EsParser> Mp2tStreamParser::CreateEncryptedH264Parser(
-    int pes_pid) {
+    int pes_pid,
+    bool emit_clear_buffers) {
   auto on_video_config_changed = base::Bind(
       &Mp2tStreamParser::OnVideoConfigChanged, base::Unretained(this), pes_pid);
   auto on_emit_video_buffer = base::Bind(&Mp2tStreamParser::OnEmitVideoBuffer,
                                          base::Unretained(this), pes_pid);
   auto get_decrypt_config =
-      base::Bind(&Mp2tStreamParser::GetDecryptConfig, base::Unretained(this));
+      emit_clear_buffers ? EsParser::GetDecryptConfigCB()
+                         : base::Bind(&Mp2tStreamParser::GetDecryptConfig,
+                                      base::Unretained(this));
   return std::make_unique<EsParserH264>(
-      on_video_config_changed, on_emit_video_buffer, true, get_decrypt_config);
+      on_video_config_changed, on_emit_video_buffer, initial_encryption_scheme_,
+      get_decrypt_config);
 }
 
 std::unique_ptr<EsParser> Mp2tStreamParser::CreateEncryptedAacParser(
-    int pes_pid) {
+    int pes_pid,
+    bool emit_clear_buffers) {
   auto on_audio_config_changed = base::Bind(
       &Mp2tStreamParser::OnAudioConfigChanged, base::Unretained(this), pes_pid);
   auto on_emit_audio_buffer = base::Bind(&Mp2tStreamParser::OnEmitAudioBuffer,
                                          base::Unretained(this), pes_pid);
   auto get_decrypt_config =
-      base::Bind(&Mp2tStreamParser::GetDecryptConfig, base::Unretained(this));
+      emit_clear_buffers ? EsParser::GetDecryptConfigCB()
+                         : base::Bind(&Mp2tStreamParser::GetDecryptConfig,
+                                      base::Unretained(this));
   return std::make_unique<EsParserAdts>(
-      on_audio_config_changed, on_emit_audio_buffer, get_decrypt_config, true,
-      sbr_in_mimetype_);
+      on_audio_config_changed, on_emit_audio_buffer, get_decrypt_config,
+      initial_encryption_scheme_, sbr_in_mimetype_);
 }
 #endif
 
@@ -478,7 +485,8 @@ void Mp2tStreamParser::RegisterPes(int pes_pid,
       is_audio = false;
 #if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
       if (ShouldForceEncryptedParser()) {
-        es_parser = CreateEncryptedH264Parser(pes_pid);
+        es_parser =
+            CreateEncryptedH264Parser(pes_pid, true /* emit_clear_buffers */);
         break;
       }
 #endif
@@ -488,7 +496,8 @@ void Mp2tStreamParser::RegisterPes(int pes_pid,
     case kStreamTypeAAC:
 #if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
       if (ShouldForceEncryptedParser()) {
-        es_parser = CreateEncryptedAacParser(pes_pid);
+        es_parser =
+            CreateEncryptedAacParser(pes_pid, true /* emit_clear_buffers */);
         break;
       }
 #endif
@@ -505,7 +514,8 @@ void Mp2tStreamParser::RegisterPes(int pes_pid,
       if (descriptors.HasPrivateDataIndicator(
               kSampleAESPrivateDataIndicatorAVC)) {
         is_audio = false;
-        es_parser = CreateEncryptedH264Parser(pes_pid);
+        es_parser =
+            CreateEncryptedH264Parser(pes_pid, false /* emit_clear_buffers */);
       } else {
         VLOG(2) << "HLS: stream_type in PMT indicates AVC with Sample-AES, but "
                 << "corresponding private data indicator is not present.";
@@ -515,7 +525,8 @@ void Mp2tStreamParser::RegisterPes(int pes_pid,
     case kStreamTypeAACWithSampleAES:
       if (descriptors.HasPrivateDataIndicator(
               kSampleAESPrivateDataIndicatorAAC)) {
-        es_parser = CreateEncryptedAacParser(pes_pid);
+        es_parser =
+            CreateEncryptedAacParser(pes_pid, false /* emit_clear_buffers */);
       } else {
         VLOG(2) << "HLS: stream_type in PMT indicates AAC with Sample-AES, but "
                 << "corresponding private data indicator is not present.";
@@ -658,12 +669,14 @@ std::unique_ptr<MediaTracks> GenerateMediaTrackInfo(
   // TODO(servolk): Implement proper sourcing of media track info as described
   // in crbug.com/590085
   if (audio_config.IsValidConfig()) {
-    media_tracks->AddAudioTrack(audio_config, kMp2tAudioTrackId, "main", "",
-                                "");
+    media_tracks->AddAudioTrack(audio_config, kMp2tAudioTrackId,
+                                MediaTrack::Kind("main"), MediaTrack::Label(""),
+                                MediaTrack::Language(""));
   }
   if (video_config.IsValidConfig()) {
-    media_tracks->AddVideoTrack(video_config, kMp2tVideoTrackId, "main", "",
-                                "");
+    media_tracks->AddVideoTrack(video_config, kMp2tVideoTrackId,
+                                MediaTrack::Kind("main"), MediaTrack::Label(""),
+                                MediaTrack::Language(""));
   }
   return media_tracks;
 }
@@ -829,9 +842,10 @@ bool Mp2tStreamParser::EmitRemainingBuffers() {
 #if BUILDFLAG(ENABLE_HLS_SAMPLE_AES)
 std::unique_ptr<PidState> Mp2tStreamParser::MakeCatPidState() {
   std::unique_ptr<TsSection> cat_section_parser(new TsSectionCat(
-      base::Bind(&Mp2tStreamParser::RegisterCencPids, base::Unretained(this)),
-      base::Bind(&Mp2tStreamParser::RegisterEncryptionScheme,
-                 base::Unretained(this))));
+      base::BindRepeating(&Mp2tStreamParser::RegisterCencPids,
+                          base::Unretained(this)),
+      base::BindRepeating(&Mp2tStreamParser::RegisterEncryptionScheme,
+                          base::Unretained(this))));
   std::unique_ptr<PidState> cat_pid_state(new PidState(
       TsSection::kPidCat, PidState::kPidCat, std::move(cat_section_parser)));
   cat_pid_state->Enable();
@@ -880,11 +894,10 @@ void Mp2tStreamParser::UnregisterCencPids() {
   }
 }
 
-void Mp2tStreamParser::RegisterEncryptionScheme(
-    const EncryptionScheme& scheme) {
+void Mp2tStreamParser::RegisterEncryptionScheme(EncryptionScheme scheme) {
   // We only need to record this for the initial decoder config.
   if (!is_initialized_) {
-    initial_scheme_ = scheme;
+    initial_encryption_scheme_ = scheme;
   }
   // Reset the DecryptConfig, so that unless and until a CENC-ECM (containing
   // key id and IV) is seen, media data will be considered unencrypted. This is
@@ -895,16 +908,16 @@ void Mp2tStreamParser::RegisterEncryptionScheme(
 void Mp2tStreamParser::RegisterNewKeyIdAndIv(const std::string& key_id,
                                              const std::string& iv) {
   if (!iv.empty()) {
-    switch (initial_scheme_.mode()) {
-      case EncryptionScheme::CIPHER_MODE_UNENCRYPTED:
+    switch (initial_encryption_scheme_) {
+      case EncryptionScheme::kUnencrypted:
         decrypt_config_.reset();
         break;
-      case EncryptionScheme::CIPHER_MODE_AES_CTR:
+      case EncryptionScheme::kCenc:
         decrypt_config_ = DecryptConfig::CreateCencConfig(key_id, iv, {});
         break;
-      case EncryptionScheme::CIPHER_MODE_AES_CBC:
-        decrypt_config_ = DecryptConfig::CreateCbcsConfig(
-            key_id, iv, {}, initial_scheme_.pattern());
+      case EncryptionScheme::kCbcs:
+        decrypt_config_ =
+            DecryptConfig::CreateCbcsConfig(key_id, iv, {}, base::nullopt);
         break;
     }
   }

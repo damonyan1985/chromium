@@ -305,8 +305,8 @@ DataObject* DataObject::Create(WebDragData data) {
         // This should never happen when dragging in.
         break;
       case WebDragData::Item::kStorageTypeFileSystemFile: {
-        // FIXME: The file system URL may refer a user visible file, see
-        // http://crbug.com/429077
+        // TODO(http://crbug.com/429077): The file system URL may refer a user
+        // visible file.
         has_file_system = true;
         FileMetadata file_metadata;
         file_metadata.length = item.file_system_file_size;
@@ -352,8 +352,7 @@ WebDragData DataObject::ToWebDragData() {
         item.binary_data_content_disposition = original_item->Title();
       } else if (original_item->IsFilename()) {
         Blob* blob = original_item->GetAsFile();
-        if (blob->IsFile()) {
-          File* file = ToFile(blob);
+        if (auto* file = DynamicTo<File>(blob)) {
           if (file->HasBackingFile()) {
             item.storage_type = WebDragData::Item::kStorageTypeFilename;
             item.filename_data = file->GetPath();
@@ -364,8 +363,8 @@ WebDragData DataObject::ToWebDragData() {
             item.file_system_file_size = file->size();
             item.file_system_id = original_item->FileSystemId();
           } else {
-            // FIXME: support dragging constructed Files across renderers, see
-            // http://crbug.com/394955
+            // TODO(http://crbug.com/394955): support dragging constructed Files
+            // across renderers.
             item.storage_type = WebDragData::Item::kStorageTypeString;
             item.string_type = "text/plain";
             item.string_data = file->name();

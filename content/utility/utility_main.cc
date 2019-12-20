@@ -5,10 +5,11 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/optional.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/hi_res_timer_manager.h"
 #include "build/build_config.h"
@@ -45,10 +46,10 @@ namespace content {
 
 // Mainline routine for running as the utility process.
 int UtilityMain(const MainFunctionParams& parameters) {
-  const base::MessageLoop::Type message_loop_type =
+  const base::MessagePumpType message_pump_type =
       parameters.command_line.HasSwitch(switches::kMessageLoopTypeUi)
-          ? base::MessageLoop::TYPE_UI
-          : base::MessageLoop::TYPE_DEFAULT;
+          ? base::MessagePumpType::UI
+          : base::MessagePumpType::DEFAULT;
 
 #if defined(OS_MACOSX)
   // On Mac, the TYPE_UI pump for the main thread is an NSApplication loop. In
@@ -57,14 +58,14 @@ int UtilityMain(const MainFunctionParams& parameters) {
   // TYPE_UI pump generally just need a NS/CFRunLoop to pump system work
   // sources, so choose that pump type instead. A NSRunLoop MessagePump is used
   // for TYPE_UI MessageLoops on non-main threads.
-  base::MessageLoop::InitMessagePumpForUIFactory(
+  base::MessagePump::OverrideMessagePumpForUIFactory(
       []() -> std::unique_ptr<base::MessagePump> {
         return std::make_unique<base::MessagePumpNSRunLoop>();
       });
 #endif
 
-  // The main message loop of the utility process.
-  base::MessageLoop main_message_loop(message_loop_type);
+  // The main task executor of the utility process.
+  base::SingleThreadTaskExecutor main_thread_task_executor(message_pump_type);
   base::PlatformThread::SetName("CrUtilityMain");
 
   if (parameters.command_line.HasSwitch(switches::kUtilityStartupDialog))
@@ -77,18 +78,18 @@ int UtilityMain(const MainFunctionParams& parameters) {
   auto sandbox_type =
       service_manager::SandboxTypeFromCommandLine(parameters.command_line);
   if (parameters.zygote_child ||
-      sandbox_type == service_manager::SANDBOX_TYPE_NETWORK ||
+      sandbox_type == service_manager::SandboxType::kNetwork ||
 #if defined(OS_CHROMEOS)
-      sandbox_type == service_manager::SANDBOX_TYPE_IME ||
+      sandbox_type == service_manager::SandboxType::kIme ||
 #endif  // OS_CHROMEOS
-      sandbox_type == service_manager::SANDBOX_TYPE_AUDIO) {
+      sandbox_type == service_manager::SandboxType::kAudio) {
     service_manager::SandboxLinux::PreSandboxHook pre_sandbox_hook;
-    if (sandbox_type == service_manager::SANDBOX_TYPE_NETWORK)
+    if (sandbox_type == service_manager::SandboxType::kNetwork)
       pre_sandbox_hook = base::BindOnce(&network::NetworkPreSandboxHook);
-    else if (sandbox_type == service_manager::SANDBOX_TYPE_AUDIO)
+    else if (sandbox_type == service_manager::SandboxType::kAudio)
       pre_sandbox_hook = base::BindOnce(&audio::AudioPreSandboxHook);
 #if defined(OS_CHROMEOS)
-    else if (sandbox_type == service_manager::SANDBOX_TYPE_IME)
+    else if (sandbox_type == service_manager::SandboxType::kIme)
       pre_sandbox_hook = base::BindOnce(&chromeos::ime::ImePreSandboxHook);
 #endif  // OS_CHROMEOS
 
@@ -118,7 +119,7 @@ int UtilityMain(const MainFunctionParams& parameters) {
   // base::HighResolutionTimerManager here for future possible usage of high
   // resolution timer in service utility process.
   base::Optional<base::HighResolutionTimerManager> hi_res_timer_manager;
-  if (base::PowerMonitor::Get()) {
+  if (base::PowerMonitor::IsInitialized()) {
     hi_res_timer_manager.emplace();
   }
 
@@ -126,7 +127,7 @@ int UtilityMain(const MainFunctionParams& parameters) {
   auto sandbox_type =
       service_manager::SandboxTypeFromCommandLine(parameters.command_line);
   if (!service_manager::IsUnsandboxedSandboxType(sandbox_type) &&
-      sandbox_type != service_manager::SANDBOX_TYPE_CDM) {
+      sandbox_type != service_manager::SandboxType::kCdm) {
     if (!g_utility_target_services)
       return false;
     char buffer;

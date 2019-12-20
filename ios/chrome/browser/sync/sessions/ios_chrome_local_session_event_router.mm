@@ -16,9 +16,9 @@
 #include "ios/chrome/browser/history/history_service_factory.h"
 #include "ios/chrome/browser/sync/glue/sync_start_util.h"
 #include "ios/chrome/browser/sync/ios_chrome_synced_tab_delegate.h"
-#include "ios/chrome/browser/tab_parenting_global_observer.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_list.h"
+#include "ios/chrome/browser/tabs/tab_parenting_global_observer.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -110,12 +110,6 @@ void IOSChromeLocalSessionEventRouter::WebStateDetachedAt(
     web::WebState* web_state,
     int index) {
   web_state->RemoveObserver(this);
-}
-
-void IOSChromeLocalSessionEventRouter::NavigationItemsPruned(
-    web::WebState* web_state,
-    size_t pruned_item_count) {
-  OnWebStateChange(web_state);
 }
 
 void IOSChromeLocalSessionEventRouter::TitleWasSet(web::WebState* web_state) {

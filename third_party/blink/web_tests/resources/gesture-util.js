@@ -30,14 +30,27 @@ function waitFor(condition, error_message = 'Reaches the maximum frames.') {
   });
 }
 
-// Returns a promise that resolves when the given condition holds for 100
-// animation frames or rejects if the condition changes to false within 100
+// Returns a promise that only gets resolved when the condition is met.
+function waitUntil(condition) {
+  return new Promise((resolve, reject) => {
+    function tick() {
+      if (condition())
+        resolve();
+      else
+        requestAnimationFrame(tick.bind(this));
+    }
+    tick();
+  });
+}
+
+// Returns a promise that resolves when the given condition holds for 10
+// animation frames or rejects if the condition changes to false within 10
 // animation frames.
 function conditionHolds(condition, error_message = 'Condition is not true anymore.') {
-  const MAX_FRAME = 100;
+  const MAX_FRAME = 10;
   return new Promise((resolve, reject) => {
     function tick(frames) {
-      // We requestAnimationFrame either for 100 frames or until condition is
+      // We requestAnimationFrame either for 10 frames or until condition is
       // violated.
       if (frames >= MAX_FRAME)
         resolve();
@@ -50,6 +63,8 @@ function conditionHolds(condition, error_message = 'Condition is not true anymor
   });
 }
 
+// TODO: Frames are animated every 1ms for testing. It may be better to have the
+// timeout based on time rather than frame count.
 function waitForAnimationEnd(getValue, max_frame, max_unchanged_frame) {
   const MAX_FRAME = max_frame;
   const MAX_UNCHANGED_FRAME = max_unchanged_frame;
@@ -76,22 +91,32 @@ function waitForAnimationEnd(getValue, max_frame, max_unchanged_frame) {
 
 // Enums for gesture_source_type parameters in gpuBenchmarking synthetic
 // gesture methods. Must match C++ side enums in synthetic_gesture_params.h
-const GestureSourceType = {
-  DEFAULT_INPUT: 0,
-  TOUCH_INPUT: 1,
-  MOUSE_INPUT: 2,
-  TOUCHPAD_INPUT:2,
-  PEN_INPUT: 3,
-  ToString: function(value) {
-    switch(value) {
-      case 0: return "DefaultInput";
-      case 1: return "Touchscreen";
-      case 2: return "MouseWheel/Touchpad";
-      case 3: return "Pen";
-      default: return "Invalid";
+const GestureSourceType = (function() {
+  var isDefined = (window.chrome && chrome.gpuBenchmarking);
+  return {
+    DEFAULT_INPUT: isDefined && chrome.gpuBenchmarking.DEFAULT_INPUT,
+    TOUCH_INPUT: isDefined && chrome.gpuBenchmarking.TOUCH_INPUT,
+    MOUSE_INPUT: isDefined && chrome.gpuBenchmarking.MOUSE_INPUT,
+    TOUCHPAD_INPUT: isDefined && chrome.gpuBenchmarking.TOUCHPAD_INPUT,
+    PEN_INPUT: isDefined && chrome.gpuBenchmarking.PEN_INPUT,
+    ToString: function(value) {
+      if (!isDefined)
+        return 'Synthetic gestures unavailable';
+      switch (value) {
+        case chrome.gpuBenchmarking.DEFAULT_INPUT:
+          return 'DefaultInput';
+        case chrome.gpuBenchmarking.TOUCH_INPUT:
+          return 'Touchscreen';
+        case chrome.gpuBenchmarking.MOUSE_INPUT:
+          return 'MouseWheel/Touchpad';
+        case chrome.gpuBenchmarking.PEN_INPUT:
+          return 'Pen';
+        default:
+          return 'Invalid';
+      }
     }
   }
-};
+})();
 
 // Use this for speed to make gestures (effectively) instant. That is, finish
 // entirely within one Begin|Update|End triplet. This is in physical
@@ -216,14 +241,14 @@ function mouseUpAt(xPosition, yPosition) {
 }
 
 // Simulate a mouse click on point.
-function mouseClickOn(x, y, button = 0 /* left */) {
+function mouseClickOn(x, y, button = 0 /* left */, keys = '') {
   return new Promise((resolve, reject) => {
     if (window.chrome && chrome.gpuBenchmarking) {
       let pointerActions = [{
         source: 'mouse',
         actions: [
           { 'name': 'pointerMove', 'x': x, 'y': y },
-          { 'name': 'pointerDown', 'x': x, 'y': y, 'button': button },
+          { 'name': 'pointerDown', 'x': x, 'y': y, 'button': button, 'keys': keys  },
           { 'name': 'pointerUp', 'button': button },
         ]
       }];
@@ -328,7 +353,7 @@ function touchTapOn(xPosition, yPosition) {
 
 function doubleTapAt(xPosition, yPosition) {
   // This comes from config constants in gesture_detector.cc.
-  const DOUBLE_TAP_MINIMUM_DURATION_S = 0.04;
+  const DOUBLE_TAP_MINIMUM_DURATION_MS = 40;
 
   return new Promise(function(resolve, reject) {
     if (!window.chrome || !chrome.gpuBenchmarking) {
@@ -341,7 +366,7 @@ function doubleTapAt(xPosition, yPosition) {
       actions: [
         { name: 'pointerDown', x: xPosition, y: yPosition },
         { name: 'pointerUp' },
-        { name: 'pause', duration: DOUBLE_TAP_MINIMUM_DURATION_S },
+        { name: 'pause', duration: DOUBLE_TAP_MINIMUM_DURATION_MS },
         { name: 'pointerDown', x: xPosition, y: yPosition },
         { name: 'pointerUp' }
       ]
@@ -351,4 +376,31 @@ function doubleTapAt(xPosition, yPosition) {
 
 function approx_equals(actual, expected, epsilon) {
   return actual >= expected - epsilon && actual <= expected + epsilon;
+}
+
+// Returns the given element's client rect center in an object with |x| and |y|
+// properties. Client rect being relative to the layout viewport. i.e. this will
+// not do what you thing if the page is pinch-zoomed.
+function elementCenter(element) {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2
+  };
+}
+
+// Waits for 'time' ms before resolving the promise.
+function waitForMs(time) {
+  return new Promise((resolve) => {
+    window.setTimeout(function() { resolve(); }, time);
+  });
+}
+
+// Requests an animation frame.
+function raf() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      resolve();
+    });
+  });
 }

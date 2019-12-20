@@ -66,6 +66,7 @@ class CORE_EXPORT HTMLFrameElementBase : public HTMLFrameOwnerElement {
 
  private:
   bool SupportsFocus() const final;
+  int DefaultTabIndex() const final;
   void SetFocused(bool, WebFocusType) final;
 
   bool IsURLAttribute(const Attribute&) const final;
@@ -87,11 +88,21 @@ class CORE_EXPORT HTMLFrameElementBase : public HTMLFrameOwnerElement {
   AtomicString frame_name_;
 };
 
-inline bool IsHTMLFrameElementBase(const HTMLElement& element) {
-  return IsHTMLFrameElement(element) || IsHTMLIFrameElement(element);
+template <>
+inline bool IsElementOfType<const HTMLFrameElementBase>(const Node& node) {
+  return IsA<HTMLFrameElementBase>(node);
 }
-
-DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLFrameElementBase);
+template <>
+struct DowncastTraits<HTMLFrameElementBase> {
+  static bool AllowFrom(const Node& node) {
+    auto* html_element = DynamicTo<HTMLElement>(node);
+    return html_element && AllowFrom(*html_element);
+  }
+  static bool AllowFrom(const HTMLElement& html_element) {
+    return IsA<HTMLFrameElement>(html_element) ||
+           IsA<HTMLIFrameElement>(html_element);
+  }
+};
 
 }  // namespace blink
 

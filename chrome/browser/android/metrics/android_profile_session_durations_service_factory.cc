@@ -50,8 +50,8 @@ AndroidProfileSessionDurationsServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   Profile* profile = Profile::FromBrowserContext(context);
   syncer::SyncService* sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile);
-  identity::IdentityManager* identity_manager =
+      ProfileSyncServiceFactory::GetForProfile(profile);
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   return new AndroidProfileSessionDurationsService(sync_service,
                                                    identity_manager);

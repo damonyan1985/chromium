@@ -5,9 +5,9 @@
 #include "third_party/blink/renderer/core/html/forms/internal_popup_menu.h"
 
 #include "build/build_config.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/public/platform/web_mouse_event.h"
 #include "third_party/blink/renderer/core/css/css_font_selector.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
@@ -16,6 +16,7 @@
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/html/forms/chooser_resource_loader.h"
 #include "third_party/blink/renderer/core/html/forms/html_opt_group_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
@@ -65,13 +66,6 @@ class PopupMenuCSSFontSelector : public CSSFontSelector,
   USING_GARBAGE_COLLECTED_MIXIN(PopupMenuCSSFontSelector);
 
  public:
-  static PopupMenuCSSFontSelector* Create(
-      Document* document,
-      CSSFontSelector* owner_font_selector) {
-    return MakeGarbageCollected<PopupMenuCSSFontSelector>(document,
-                                                          owner_font_selector);
-  }
-
   PopupMenuCSSFontSelector(Document*, CSSFontSelector*);
   ~PopupMenuCSSFontSelector() override;
 
@@ -132,9 +126,12 @@ class InternalPopupMenu::ItemIterationContext {
     // <select> background color. On Linux, that makes the <option>
     // background color very dark, so by default, try to use a lighter
     // background color for <option>s.
-    if (LayoutTheme::GetTheme().SystemColor(CSSValueButtonface) ==
-        background_color_)
-      background_color_ = LayoutTheme::GetTheme().SystemColor(CSSValueMenu);
+    if (LayoutTheme::GetTheme().SystemColor(CSSValueID::kButtonface,
+                                            style.UsedColorScheme()) ==
+        background_color_) {
+      background_color_ = LayoutTheme::GetTheme().SystemColor(
+          CSSValueID::kMenu, style.UsedColorScheme());
+    }
 #endif
   }
 
@@ -207,11 +204,6 @@ class InternalPopupMenu::ItemIterationContext {
 
 // ----------------------------------------------------------------
 
-InternalPopupMenu* InternalPopupMenu::Create(ChromeClient* chrome_client,
-                                             HTMLSelectElement& owner_element) {
-  return MakeGarbageCollected<InternalPopupMenu>(chrome_client, owner_element);
-}
-
 InternalPopupMenu::InternalPopupMenu(ChromeClient* chrome_client,
                                      HTMLSelectElement& owner_element)
     : chrome_client_(chrome_client),
@@ -231,15 +223,20 @@ void InternalPopupMenu::Trace(Visitor* visitor) {
 
 void InternalPopupMenu::WriteDocument(SharedBuffer* data) {
   HTMLSelectElement& owner_element = *owner_element_;
+  // When writing the document, we ensure the ComputedStyle of the select
+  // element's items (see AddElementStyle). This requires a style-clean tree.
+  // See Element::EnsureComputedStyle for further explanation.
+  owner_element.GetDocument().UpdateStyleAndLayoutTree();
   IntRect anchor_rect_in_screen = chrome_client_->ViewportToScreen(
       owner_element.VisibleBoundsInVisualViewport(),
       owner_element.GetDocument().View());
 
-  float scale_factor = chrome_client_->WindowToViewportScalar(1.f);
+  float scale_factor = chrome_client_->WindowToViewportScalar(
+      owner_element.GetDocument().GetFrame(), 1.f);
   PagePopupClient::AddString(
       "<!DOCTYPE html><head><meta charset='UTF-8'><style>\n", data);
-  data->Append(Platform::Current()->GetDataResource("pickerCommon.css"));
-  data->Append(Platform::Current()->GetDataResource("listPicker.css"));
+  data->Append(ChooserResourceLoader::GetPickerCommonStyleSheet());
+  data->Append(ChooserResourceLoader::GetListPickerStyleSheet());
   if (!RuntimeEnabledFeatures::ForceTallerSelectPopupEnabled())
     PagePopupClient::AddString("@media (any-pointer:coarse) {", data);
   int padding = static_cast<int>(roundf(4 * scale_factor));
@@ -272,13 +269,13 @@ void InternalPopupMenu::WriteDocument(SharedBuffer* data) {
   const HeapVector<Member<HTMLElement>>& items = owner_element.GetListItems();
   for (; context.list_index_ < items.size(); ++context.list_index_) {
     Element& child = *items[context.list_index_];
-    if (!IsHTMLOptGroupElement(child.parentNode()))
+    if (!IsA<HTMLOptGroupElement>(child.parentNode()))
       context.FinishGroupIfNecessary();
-    if (auto* option = ToHTMLOptionElementOrNull(child))
+    if (auto* option = DynamicTo<HTMLOptionElement>(child))
       AddOption(context, *option);
-    else if (auto* optgroup = ToHTMLOptGroupElementOrNull(child))
+    else if (auto* optgroup = DynamicTo<HTMLOptGroupElement>(child))
       AddOptGroup(context, *optgroup);
-    else if (auto* hr = ToHTMLHRElementOrNull(child))
+    else if (auto* hr = DynamicTo<HTMLHRElement>(child))
       AddSeparator(context, *hr);
   }
   context.FinishGroupIfNecessary();
@@ -294,8 +291,9 @@ void InternalPopupMenu::WriteDocument(SharedBuffer* data) {
                      : owner_element.ClientPaddingLeft().ToDouble(),
               data);
   PagePopupClient::AddString("};\n", data);
-  data->Append(Platform::Current()->GetDataResource("pickerCommon.js"));
-  data->Append(Platform::Current()->GetDataResource("listPicker.js"));
+  data->Append(ChooserResourceLoader::GetPickerCommonJS());
+  data->Append(ChooserResourceLoader::GetListPickerJS());
+
   PagePopupClient::AddString("</script></body>\n", data);
 }
 
@@ -339,7 +337,7 @@ void InternalPopupMenu::AddElementStyle(ItemIterationContext& context,
   }
   // Our UA stylesheet has font-weight:normal for OPTION.
   if (NormalWeightValue() != font_description.Weight()) {
-    AddProperty("fontWeight", String::Number(font_description.Weight()), data);
+    AddProperty("fontWeight", font_description.Weight().ToString(), data);
   }
   if (base_font.Family() != font_description.Family()) {
     PagePopupClient::AddString("fontFamily: [\n", data);
@@ -415,8 +413,9 @@ void InternalPopupMenu::AddSeparator(ItemIterationContext& context,
 
 void InternalPopupMenu::SelectFontsFromOwnerDocument(Document& document) {
   Document& owner_document = OwnerElement().GetDocument();
-  document.GetStyleEngine().SetFontSelector(PopupMenuCSSFontSelector::Create(
-      &document, owner_document.GetStyleEngine().GetFontSelector()));
+  document.GetStyleEngine().SetFontSelector(
+      MakeGarbageCollected<PopupMenuCSSFontSelector>(
+          &document, owner_document.GetStyleEngine().GetFontSelector()));
 }
 
 void InternalPopupMenu::SetValueAndClosePopup(int num_value,
@@ -474,6 +473,10 @@ void InternalPopupMenu::DidClosePopup() {
 
 Element& InternalPopupMenu::OwnerElement() {
   return *owner_element_;
+}
+
+ChromeClient& InternalPopupMenu::GetChromeClient() {
+  return *chrome_client_;
 }
 
 Locale& InternalPopupMenu::GetLocale() {
@@ -536,13 +539,13 @@ void InternalPopupMenu::Update() {
   const HeapVector<Member<HTMLElement>>& items = owner_element_->GetListItems();
   for (; context.list_index_ < items.size(); ++context.list_index_) {
     Element& child = *items[context.list_index_];
-    if (!IsHTMLOptGroupElement(child.parentNode()))
+    if (!IsA<HTMLOptGroupElement>(child.parentNode()))
       context.FinishGroupIfNecessary();
-    if (auto* option = ToHTMLOptionElementOrNull(child))
+    if (auto* option = DynamicTo<HTMLOptionElement>(child))
       AddOption(context, *option);
-    else if (auto* optgroup = ToHTMLOptGroupElementOrNull(child))
+    else if (auto* optgroup = DynamicTo<HTMLOptGroupElement>(child))
       AddOptGroup(context, *optgroup);
-    else if (auto* hr = ToHTMLHRElementOrNull(child))
+    else if (auto* hr = DynamicTo<HTMLHRElement>(child))
       AddSeparator(context, *hr);
   }
   context.FinishGroupIfNecessary();

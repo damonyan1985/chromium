@@ -10,7 +10,6 @@
 #import "ios/chrome/browser/ui/table_view/cells/table_view_item.h"
 
 @class BookmarkTextFieldItem;
-@protocol TextFieldStyling;
 
 // Delegates the cell's text field's events.
 @protocol BookmarkTextFieldItemDelegate<UITextFieldDelegate>
@@ -34,7 +33,7 @@
 
 @end
 
-@interface BookmarkTextFieldCell : UITableViewCell
+@interface BookmarkTextFieldCell : TableViewCell
 
 // Label to display the type of content |self.textField| is displaying.
 @property(nonatomic, strong) UILabel* titleLabel;

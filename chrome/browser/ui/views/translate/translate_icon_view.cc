@@ -22,7 +22,7 @@ TranslateIconView::TranslateIconView(CommandUpdater* command_updater,
                                      PageActionIconView::Delegate* delegate)
     : PageActionIconView(command_updater, IDC_TRANSLATE_PAGE, delegate) {
   DCHECK(delegate);
-  set_id(VIEW_ID_TRANSLATE_BUTTON);
+  SetID(VIEW_ID_TRANSLATE_BUTTON);
 }
 
 TranslateIconView::~TranslateIconView() {}
@@ -31,11 +31,10 @@ views::BubbleDialogDelegateView* TranslateIconView::GetBubble() const {
   return TranslateBubbleView::GetCurrentBubble();
 }
 
-bool TranslateIconView::Update() {
+void TranslateIconView::UpdateImpl() {
   if (!GetWebContents())
-    return false;
+    return;
 
-  const bool was_visible = visible();
   const translate::LanguageState& language_state =
       ChromeTranslateClient::FromWebContents(GetWebContents())
           ->GetLanguageState();
@@ -46,8 +45,6 @@ bool TranslateIconView::Update() {
   SetVisible(enabled);
   if (!enabled)
     TranslateBubbleView::CloseCurrentBubble();
-
-  return was_visible != visible();
 }
 
 void TranslateIconView::OnExecuting(

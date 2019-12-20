@@ -13,7 +13,7 @@
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/models/list_selection_model.h"
 
@@ -61,9 +61,9 @@ class ActiveTabTrackerTest : public ::testing::Test {
   base::SimpleTestTickClock* clock() { return &clock_; }
 
  private:
-  // A |TestBrowserThreadBundle| is needed for creating and using
+  // A |BrowserTaskEnvironment| is needed for creating and using
   // |WebContents|es in a unit test.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfile> profile_;
   base::SimpleTestTickClock clock_;
 };
@@ -80,7 +80,7 @@ TEST_F(ActiveTabTrackerTest, NotifiesOnActiveTabClosed) {
   AddTab(&model);
   clock()->Advance(kTimeStep);
 
-  model.ActivateTabAt(0, true);
+  model.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   clock()->Advance(kTimeStep);
 
@@ -102,12 +102,12 @@ TEST_F(ActiveTabTrackerTest, UpdatesTimes) {
 
   AddTab(&model);
   AddTab(&model);
-  model.ActivateTabAt(0, true);
+  model.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   clock()->Advance(kTimeStep);
 
-  model.ActivateTabAt(1, true);
-  model.ActivateTabAt(0, true);
+  model.ActivateTabAt(1, {TabStripModel::GestureType::kOther});
+  model.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   EXPECT_CALL(cb, Run(&model, base::TimeDelta())).Times(1);
   CloseTabAt(&model, 0);
@@ -127,7 +127,7 @@ TEST_F(ActiveTabTrackerTest, IgnoresInactiveTabs) {
 
   AddTab(&model);
   AddTab(&model);
-  model.ActivateTabAt(0, true);
+  model.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   EXPECT_CALL(cb, Run(_, _)).Times(0);
   CloseTabAt(&model, 1);
@@ -153,10 +153,10 @@ TEST_F(ActiveTabTrackerTest, TracksMultipleTabStripModels) {
   AddTab(&model_2);
 
   clock()->Advance(kTimeStep);
-  model_1.ActivateTabAt(0, true);
+  model_1.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   clock()->Advance(kTimeStep);
-  model_2.ActivateTabAt(0, true);
+  model_2.ActivateTabAt(0, {TabStripModel::GestureType::kOther});
 
   {
     InSequence seq;

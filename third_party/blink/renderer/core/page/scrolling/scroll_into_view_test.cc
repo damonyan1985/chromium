@@ -10,11 +10,15 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/frame/find_in_page.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/root_frame_viewport.h"
 #include "third_party/blink/renderer/core/frame/scroll_into_view_options.h"
 #include "third_party/blink/renderer/core/frame/scroll_to_options.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/page/scrolling/top_document_root_scroller_controller.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
@@ -46,18 +50,20 @@ TEST_F(ScrollIntoViewTest, InstantScroll) {
   ASSERT_EQ(Window().scrollY(), content->OffsetTop());
 }
 
-TEST_F(ScrollIntoViewTest, ScrollPaddingOnBodyViewportDefining) {
+TEST_F(ScrollIntoViewTest, ScrollPaddingOnDocumentElWhenBodyDefinesViewport) {
   v8::HandleScope HandleScope(v8::Isolate::GetCurrent());
   WebView().MainFrameWidget()->Resize(WebSize(300, 300));
   SimRequest request("https://example.com/test.html", "text/html");
   LoadURL("https://example.com/test.html");
   request.Complete(R"HTML(
       <style>
+      html {
+        scroll-padding: 10px;
+      }
       body {
         margin: 0px;
         height: 300px;
         overflow: scroll;
-        scroll-padding: 10px;
       }
       </style>
       <div id='space' style='height: 1000px'></div>
@@ -75,7 +81,8 @@ TEST_F(ScrollIntoViewTest, ScrollPaddingOnBodyViewportDefining) {
   ASSERT_EQ(Window().scrollY(), target->OffsetTop() - 10);
 }
 
-TEST_F(ScrollIntoViewTest, ScrollPaddingOnHtmlViewportDefining) {
+TEST_F(ScrollIntoViewTest,
+       ScrollPaddingOnDocumentElWhenDocumentElDefinesViewport) {
   v8::HandleScope HandleScope(v8::Isolate::GetCurrent());
   WebView().MainFrameWidget()->Resize(WebSize(300, 300));
   SimRequest request("https://example.com/test.html", "text/html");
@@ -104,7 +111,7 @@ TEST_F(ScrollIntoViewTest, ScrollPaddingOnHtmlViewportDefining) {
   ASSERT_EQ(Window().scrollY(), target->OffsetTop() - 10);
 }
 
-TEST_F(ScrollIntoViewTest, ScrollPaddingBodyOverflowHtmlViewportDefining) {
+TEST_F(ScrollIntoViewTest, ScrollPaddingOnBodyWhenDocumentElDefinesViewport) {
   v8::HandleScope HandleScope(v8::Isolate::GetCurrent());
   WebView().MainFrameWidget()->Resize(WebSize(300, 300));
   SimRequest request("https://example.com/test.html", "text/html");
@@ -167,7 +174,7 @@ TEST_F(ScrollIntoViewTest, SmoothScroll) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
 
   // Finish scrolling the container
   Compositor().BeginFrame(1);
@@ -203,7 +210,7 @@ TEST_F(ScrollIntoViewTest, NestedContainer) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
   ASSERT_EQ(container->scrollTop(), 0);
 
   // Finish scrolling the outer container
@@ -214,7 +221,7 @@ TEST_F(ScrollIntoViewTest, NestedContainer) {
   // Scrolling the inner container
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(container->scrollTop(), 299);
+  ASSERT_NEAR(container->scrollTop(), 299, 1);
 
   // Finish scrolling the inner container
   Compositor().BeginFrame(1);
@@ -257,14 +264,14 @@ TEST_F(ScrollIntoViewTest, NewScrollIntoViewAbortsCurrentAnimation) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
   ASSERT_EQ(container1->scrollTop(), 0);
 
   content2->scrollIntoView(arg);
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 61);
+  ASSERT_NEAR(Window().scrollY(), 61, 1);
   ASSERT_EQ(container1->scrollTop(), 0);  // container1 should not scroll.
 
   Compositor().BeginFrame(1);
@@ -274,7 +281,7 @@ TEST_F(ScrollIntoViewTest, NewScrollIntoViewAbortsCurrentAnimation) {
   // Scrolling content2 in container2
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(container2->scrollTop(), 300);
+  ASSERT_NEAR(container2->scrollTop(), 300, 1);
 
   // Finish all the animation to make sure there is no another animation queued
   // on container1.
@@ -316,7 +323,7 @@ TEST_F(ScrollIntoViewTest, ScrollWindowAbortsCurrentAnimation) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
   ASSERT_EQ(container->scrollTop(), 0);
 
   ScrollToOptions* window_option = ScrollToOptions::Create();
@@ -327,7 +334,7 @@ TEST_F(ScrollIntoViewTest, ScrollWindowAbortsCurrentAnimation) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 58);
+  ASSERT_NEAR(Window().scrollY(), 58, 1);
 
   Compositor().BeginFrame(1);
   ASSERT_EQ(Window().scrollY(), 0);
@@ -431,7 +438,7 @@ TEST_F(ScrollIntoViewTest, SmoothAndInstantInChain) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(container->scrollTop(), 299);
+  ASSERT_NEAR(container->scrollTop(), 299, 1);
 
   // Finish scrolling the container
   Compositor().BeginFrame(1);
@@ -445,8 +452,8 @@ TEST_F(ScrollIntoViewTest, SmoothAndInstantInChain) {
 TEST_F(ScrollIntoViewTest, SmoothScrollAnchor) {
   v8::HandleScope HandleScope(v8::Isolate::GetCurrent());
   WebView().MainFrameWidget()->Resize(WebSize(800, 600));
-  SimRequest request("https://example.com/test.html", "text/html");
-  LoadURL("https://example.com/test.html");
+  SimRequest request("https://example.com/test.html#link", "text/html");
+  LoadURL("https://example.com/test.html#link");
   request.Complete(R"HTML(
     <div id='container' style='height: 600px; overflow: scroll;
       scroll-behavior: smooth'>
@@ -458,17 +465,13 @@ TEST_F(ScrollIntoViewTest, SmoothScrollAnchor) {
 
   Element* content = GetDocument().getElementById("content");
   Element* container = GetDocument().getElementById("container");
-  KURL url(KURL(), "https://test.html/#link");
-  LocalFrameView* frame_view = GetDocument().View();
-  Compositor().BeginFrame();
   ASSERT_EQ(container->scrollTop(), 0);
 
-  frame_view->ProcessUrlFragment(url);
   // Scrolling the container
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(container->scrollTop(), 299);
+  ASSERT_NEAR(container->scrollTop(), 299, 1);
 
   // Finish scrolling the container
   Compositor().BeginFrame(1);
@@ -521,11 +524,88 @@ TEST_F(ScrollIntoViewTest, ApplyRootElementScrollBehaviorToViewport) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
 
   // Finish scrolling the container
   Compositor().BeginFrame(1);
   ASSERT_EQ(Window().scrollY(), content->OffsetTop());
+}
+
+// This test ensures the stop-at-layout viewport option works correctly when a
+// non-default root scroller is set as the layout viewport.
+TEST_F(ScrollIntoViewTest, StopAtLayoutViewportOption) {
+  v8::HandleScope HandleScope(v8::Isolate::GetCurrent());
+  WebView().MainFrameWidget()->Resize(WebSize(800, 600));
+  SimRequest request("https://example.com/test.html", "text/html");
+  LoadURL("https://example.com/test.html");
+  request.Complete(R"HTML(
+    <!DOCTYPE html>
+    <style>
+      body,html {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+      }
+      #inner {
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        margin-top: 1000px;
+      }
+      #target {
+        margin-top: 1000px;
+        margin-bottom: 1000px;
+        width: 100px;
+        height: 100px;
+      }
+    </style>
+    <div id='root'>
+      <div id='inner'>
+        <div id='target'></div>
+      <div>
+    </div>
+  )HTML");
+
+  Compositor().BeginFrame();
+
+  Element* root = GetDocument().getElementById("root");
+  Element* inner = GetDocument().getElementById("inner");
+
+  // Make sure the root scroller is set since that's what we're trying to test
+  // here.
+  {
+    TopDocumentRootScrollerController& rs_controller =
+        GetDocument().GetPage()->GlobalRootScrollerController();
+    ASSERT_EQ(root, rs_controller.GlobalRootScroller());
+  }
+
+  // Use ScrollRectToVisible on the #target element, specifying
+  // stop_at_main_frame_layout_viewport.
+  LayoutObject* target =
+      GetDocument().getElementById("target")->GetLayoutObject();
+  WebScrollIntoViewParams params(
+      ScrollAlignment::kAlignLeftAlways, ScrollAlignment::kAlignTopAlways,
+      kProgrammaticScroll, false, kScrollBehaviorInstant);
+  params.stop_at_main_frame_layout_viewport = true;
+  target->ScrollRectToVisible(PhysicalRect(target->AbsoluteBoundingBoxRect()),
+                              params);
+
+  ScrollableArea* root_scroller =
+      ToLayoutBox(root->GetLayoutObject())->GetScrollableArea();
+  ScrollableArea* inner_scroller =
+      ToLayoutBox(inner->GetLayoutObject())->GetScrollableArea();
+
+  // Only the inner scroller should have scrolled. The root_scroller shouldn't
+  // scroll because it is the layout viewport.
+  ASSERT_EQ(root_scroller,
+            &GetDocument().View()->GetRootFrameViewport()->LayoutViewport());
+  EXPECT_EQ(ScrollOffset(), root_scroller->GetScrollOffset());
+  EXPECT_EQ(ScrollOffset(0, 1000), inner_scroller->GetScrollOffset());
 }
 
 // This test passes if it doesn't crash/hit an ASAN check.
@@ -610,7 +690,7 @@ TEST_F(ScrollIntoViewTest, SmoothUserScrollNotAbortedByProgrammaticScrolls) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 299);
+  ASSERT_NEAR(Window().scrollY(), 299, 1);
 
   // ProgrammaticScroll that could interrupt the current smooth scroll.
   Window().scrollTo(0, 0);
@@ -645,7 +725,7 @@ TEST_F(ScrollIntoViewTest, LongDistanceSmoothScrollFinishedInThreeSeconds) {
   Compositor().BeginFrame();  // update run_state_.
   Compositor().BeginFrame();  // Set start_time = now.
   Compositor().BeginFrame(0.2);
-  ASSERT_EQ(Window().scrollY(), 864);
+  ASSERT_NEAR(Window().scrollY(), 864, 1);
 
   // Finish scrolling the container
   Compositor().BeginFrame(2.8);

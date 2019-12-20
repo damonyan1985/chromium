@@ -16,12 +16,9 @@
 #include "base/bind.h"
 #include "base/time/time.h"
 #include "chromeos/system/devicemode.h"
-#include "ui/base/class_property.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/display/display_layout.h"
 #include "ui/display/manager/display_manager.h"
-
-DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ScreenRotationAnimator*);
 
 namespace ash {
 
@@ -37,26 +34,20 @@ const int64_t kAfterDisplayChangeThrottleTimeoutMs = 500;
 const int64_t kCycleDisplayThrottleTimeoutMs = 4000;
 const int64_t kSetPrimaryDisplayThrottleTimeoutMs = 500;
 
-// A property key to store the ScreenRotationAnimator of the window; Used for
-// screen rotation.
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ash::ScreenRotationAnimator,
-                                   kScreenRotationAnimatorKey,
-                                   nullptr);
-
 bool g_disable_animator_for_test = false;
 
 display::DisplayPositionInUnifiedMatrix GetUnifiedModeShelfCellPosition() {
   const ShelfAlignment alignment =
       Shell::GetPrimaryRootWindowController()->shelf()->alignment();
   switch (alignment) {
-    case SHELF_ALIGNMENT_BOTTOM:
-    case SHELF_ALIGNMENT_BOTTOM_LOCKED:
+    case ShelfAlignment::kBottom:
+    case ShelfAlignment::kBottomLocked:
       return display::DisplayPositionInUnifiedMatrix::kBottomLeft;
 
-    case SHELF_ALIGNMENT_LEFT:
+    case ShelfAlignment::kLeft:
       return display::DisplayPositionInUnifiedMatrix::kTopLeft;
 
-    case SHELF_ALIGNMENT_RIGHT:
+    case ShelfAlignment::kRight:
       return display::DisplayPositionInUnifiedMatrix::kTopRight;
   }
 
@@ -92,8 +83,7 @@ DisplayConfigurationController::DisplayConfigurationController(
     display::DisplayManager* display_manager,
     WindowTreeHostManager* window_tree_host_manager)
     : display_manager_(display_manager),
-      window_tree_host_manager_(window_tree_host_manager),
-      weak_ptr_factory_(this) {
+      window_tree_host_manager_(window_tree_host_manager) {
   window_tree_host_manager_->AddObserver(this);
   if (chromeos::IsRunningAsSystemCompositor())
     limiter_.reset(new DisplayChangeLimiter);
@@ -109,8 +99,8 @@ void DisplayConfigurationController::SetDisplayLayout(
     std::unique_ptr<display::DisplayLayout> layout) {
   if (display_animator_) {
     display_animator_->StartFadeOutAnimation(
-        base::Bind(&DisplayConfigurationController::SetDisplayLayoutImpl,
-                   weak_ptr_factory_.GetWeakPtr(), base::Passed(&layout)));
+        base::BindOnce(&DisplayConfigurationController::SetDisplayLayoutImpl,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(layout)));
   } else {
     SetDisplayLayoutImpl(std::move(layout));
   }
@@ -121,7 +111,7 @@ void DisplayConfigurationController::SetUnifiedDesktopLayoutMatrix(
   DCHECK(display_manager_->IsInUnifiedMode());
 
   if (display_animator_) {
-    display_animator_->StartFadeOutAnimation(base::Bind(
+    display_animator_->StartFadeOutAnimation(base::BindOnce(
         &DisplayConfigurationController::SetUnifiedDesktopLayoutMatrixImpl,
         weak_ptr_factory_.GetWeakPtr(), matrix));
   } else {
@@ -138,8 +128,8 @@ void DisplayConfigurationController::SetMirrorMode(bool mirror, bool throttle) {
   SetThrottleTimeout(kCycleDisplayThrottleTimeoutMs);
   if (display_animator_) {
     display_animator_->StartFadeOutAnimation(
-        base::Bind(&DisplayConfigurationController::SetMirrorModeImpl,
-                   weak_ptr_factory_.GetWeakPtr(), mirror));
+        base::BindOnce(&DisplayConfigurationController::SetMirrorModeImpl,
+                       weak_ptr_factory_.GetWeakPtr(), mirror));
   } else {
     SetMirrorModeImpl(mirror);
   }
@@ -186,8 +176,8 @@ void DisplayConfigurationController::SetPrimaryDisplayId(int64_t display_id,
   SetThrottleTimeout(kSetPrimaryDisplayThrottleTimeoutMs);
   if (display_animator_) {
     display_animator_->StartFadeOutAnimation(
-        base::Bind(&DisplayConfigurationController::SetPrimaryDisplayIdImpl,
-                   weak_ptr_factory_.GetWeakPtr(), display_id));
+        base::BindOnce(&DisplayConfigurationController::SetPrimaryDisplayIdImpl,
+                       weak_ptr_factory_.GetWeakPtr(), display_id));
   } else {
     SetPrimaryDisplayIdImpl(display_id);
   }
@@ -214,13 +204,6 @@ void DisplayConfigurationController::SetAnimatorForTest(bool enable) {
     display_animator_.reset();
   else if (!display_animator_ && enable)
     display_animator_.reset(new DisplayAnimator());
-}
-
-void DisplayConfigurationController::SetScreenRotationAnimatorForTest(
-    int64_t display_id,
-    std::unique_ptr<ScreenRotationAnimator> animator) {
-  aura::Window* root_window = Shell::GetRootWindowForDisplayId(display_id);
-  root_window->SetProperty(kScreenRotationAnimatorKey, animator.release());
 }
 
 // Private
@@ -267,13 +250,7 @@ ScreenRotationAnimator*
 DisplayConfigurationController::GetScreenRotationAnimatorForDisplay(
     int64_t display_id) {
   aura::Window* root_window = Shell::GetRootWindowForDisplayId(display_id);
-  ScreenRotationAnimator* animator =
-      root_window->GetProperty(kScreenRotationAnimatorKey);
-  if (!animator) {
-    animator = new ScreenRotationAnimator(root_window);
-    root_window->SetProperty(kScreenRotationAnimatorKey, animator);
-  }
-  return animator;
+  return ScreenRotationAnimator::GetForRootWindow(root_window);
 }
 
 }  // namespace ash

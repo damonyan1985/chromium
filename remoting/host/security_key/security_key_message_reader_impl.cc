@@ -11,7 +11,7 @@
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -22,10 +22,9 @@ namespace remoting {
 SecurityKeyMessageReaderImpl::SecurityKeyMessageReaderImpl(
     base::File input_file)
     : read_stream_(std::move(input_file)),
-      reader_thread_("SecurityKeyMessageReaderImpl"),
-      weak_factory_(this) {
+      reader_thread_("SecurityKeyMessageReaderImpl") {
   base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  options.message_pump_type = base::MessagePumpType::IO;
   reader_thread_.StartWithOptions(options);
 
   read_task_runner_ = reader_thread_.task_runner();
@@ -51,8 +50,8 @@ void SecurityKeyMessageReaderImpl::Start(
   // base::Unretained is safe since this class owns the thread running this task
   // which will be destroyed before this instance is.
   read_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SecurityKeyMessageReaderImpl::ReadMessage,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&SecurityKeyMessageReaderImpl::ReadMessage,
+                                base::Unretained(this)));
 }
 
 void SecurityKeyMessageReaderImpl::ReadMessage() {
@@ -93,8 +92,8 @@ void SecurityKeyMessageReaderImpl::ReadMessage() {
     // Notify callback of the new message received.
     main_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&SecurityKeyMessageReaderImpl::InvokeMessageCallback,
-                   weak_factory_.GetWeakPtr(), base::Passed(&message)));
+        base::BindOnce(&SecurityKeyMessageReaderImpl::InvokeMessageCallback,
+                       weak_factory_.GetWeakPtr(), std::move(message)));
   }
 }
 
@@ -126,8 +125,9 @@ void SecurityKeyMessageReaderImpl::NotifyError() {
   DCHECK(read_task_runner_->RunsTasksInCurrentSequence());
 
   main_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SecurityKeyMessageReaderImpl::InvokeErrorCallback,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE,
+      base::BindOnce(&SecurityKeyMessageReaderImpl::InvokeErrorCallback,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void SecurityKeyMessageReaderImpl::InvokeMessageCallback(

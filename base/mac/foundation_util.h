@@ -5,6 +5,7 @@
 #ifndef BASE_MAC_FOUNDATION_UTIL_H_
 #define BASE_MAC_FOUNDATION_UTIL_H_
 
+#include <AvailabilityMacros.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 #include <string>
@@ -52,7 +53,9 @@ typedef CR_FORWARD_ENUM(unsigned int, NSSearchPathDirectory);
 typedef unsigned int NSSearchPathDomainMask;
 #endif
 
-#if defined(OS_IOS)
+#if defined(OS_IOS) ||                  \
+    (defined(MAC_OS_X_VERSION_10_15) && \
+     MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_15)
 typedef struct CF_BRIDGED_TYPE(id) __SecCertificate* SecCertificateRef;
 typedef struct CF_BRIDGED_TYPE(id) __SecKey* SecKeyRef;
 typedef struct CF_BRIDGED_TYPE(id) __SecPolicy* SecPolicyRef;
@@ -157,25 +160,6 @@ TYPE_NAME_FOR_CF_TYPE_DECL(SecPolicy);
 // Retain/release calls for memory management in C++.
 BASE_EXPORT void NSObjectRetain(void* obj);
 BASE_EXPORT void NSObjectRelease(void* obj);
-
-// CFTypeRefToNSObjectAutorelease transfers ownership of a Core Foundation
-// object (one derived from CFTypeRef) to the Foundation memory management
-// system.  In a traditional managed-memory environment, cf_object is
-// autoreleased and returned as an NSObject.  In a garbage-collected
-// environment, cf_object is marked as eligible for garbage collection.
-//
-// This function should only be used to convert a concrete CFTypeRef type to
-// its equivalent "toll-free bridged" NSObject subclass, for example,
-// converting a CFStringRef to NSString.
-//
-// By calling this function, callers relinquish any ownership claim to
-// cf_object.  In a managed-memory environment, the object's ownership will be
-// managed by the innermost NSAutoreleasePool, so after this function returns,
-// callers should not assume that cf_object is valid any longer than the
-// returned NSObject.
-//
-// Returns an id, typed here for C++'s sake as a void*.
-BASE_EXPORT void* CFTypeRefToNSObjectAutorelease(CFTypeRef cf_object);
 
 // Returns the base bundle ID, which can be set by SetBaseBundleID but
 // defaults to a reasonable string. This never returns NULL. BaseBundleID
@@ -285,12 +269,12 @@ T CFCast(const CFTypeRef& cf_val);
 template<typename T>
 T CFCastStrict(const CFTypeRef& cf_val);
 
-#define CF_CAST_DECL(TypeCF) \
-template<> BASE_EXPORT TypeCF##Ref \
-CFCast<TypeCF##Ref>(const CFTypeRef& cf_val);\
-\
-template<> BASE_EXPORT TypeCF##Ref \
-CFCastStrict<TypeCF##Ref>(const CFTypeRef& cf_val);
+#define CF_CAST_DECL(TypeCF)                                            \
+  template <>                                                           \
+  BASE_EXPORT TypeCF##Ref CFCast<TypeCF##Ref>(const CFTypeRef& cf_val); \
+                                                                        \
+  template <>                                                           \
+  BASE_EXPORT TypeCF##Ref CFCastStrict<TypeCF##Ref>(const CFTypeRef& cf_val)
 
 CF_CAST_DECL(CFArray);
 CF_CAST_DECL(CFBag);
@@ -380,6 +364,9 @@ T GetValueFromDictionary(CFDictionaryRef dict, CFStringRef key) {
   return value_specific;
 }
 
+// Converts |path| to an autoreleased NSURL. Returns nil if |path| is empty.
+BASE_EXPORT NSURL* FilePathToNSURL(const FilePath& path);
+
 // Converts |path| to an autoreleased NSString. Returns nil if |path| is empty.
 BASE_EXPORT NSString* FilePathToNSString(const FilePath& path);
 
@@ -413,5 +400,18 @@ BASE_EXPORT extern std::ostream& operator<<(std::ostream& o,
                                             const CFErrorRef err);
 BASE_EXPORT extern std::ostream& operator<<(std::ostream& o,
                                             const CFStringRef str);
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, CFRange);
+
+#if defined(__OBJC__)
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, id);
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, NSRange);
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, SEL);
+
+#if !defined(OS_IOS)
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, NSPoint);
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, NSRect);
+BASE_EXPORT extern std::ostream& operator<<(std::ostream& o, NSSize);
+#endif
+#endif
 
 #endif  // BASE_MAC_FOUNDATION_UTIL_H_

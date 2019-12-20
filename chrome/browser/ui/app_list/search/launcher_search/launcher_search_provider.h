@@ -51,10 +51,12 @@ class LauncherSearchProvider : public SearchProvider {
   // The timestamp of the last query.
   base::Time last_query_time_;
 
+  base::TimeTicks query_start_time_;
+
   // The reference to profile to get LauncherSearchProvider service.
   Profile* profile_;
 
-  base::WeakPtrFactory<LauncherSearchProvider> weak_ptr_factory_;
+  base::WeakPtrFactory<LauncherSearchProvider> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(LauncherSearchProvider);
 };

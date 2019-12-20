@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.payments;
 
 import android.support.test.filters.MediumTest;
 
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -21,8 +22,8 @@ import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
 import org.chromium.chrome.browser.payments.PaymentRequestTestRule.MainActivityStartCallback;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.ui.test.util.DisableAnimationsTestRule;
 
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -32,13 +33,16 @@ import java.util.concurrent.TimeoutException;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class PaymentRequestCanMakePaymentGooglePayTest implements MainActivityStartCallback {
+    // Disable animations to reduce flakiness.
+    @ClassRule
+    public static DisableAnimationsTestRule sNoAnimationsRule = new DisableAnimationsTestRule();
+
     @Rule
     public PaymentRequestTestRule mPaymentRequestTestRule =
             new PaymentRequestTestRule("payment_request_can_make_payment_query_test.html", this);
 
     @Override
-    public void onMainActivityStarted()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void onMainActivityStarted() throws TimeoutException {
         // The user has a valid server credit card with a billing address on file. This is
         // sufficient for canMakePayment() to return true.
         AutofillTestHelper helper = new AutofillTestHelper();
@@ -56,10 +60,13 @@ public class PaymentRequestCanMakePaymentGooglePayTest implements MainActivitySt
     @Feature({"Payments"})
     @CommandLineFlags.
     Add("enable-features=" + ChromeFeatureList.WEB_PAYMENTS_RETURN_GOOGLE_PAY_IN_BASIC_CARD)
-    public void testGooglePayServerCardsAllowed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testGooglePayServerCardsAllowed() throws TimeoutException {
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(
                 mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
+
+        mPaymentRequestTestRule.clickNodeAndWait("hasEnrolledInstrument",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
         mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
     }
 
@@ -68,10 +75,13 @@ public class PaymentRequestCanMakePaymentGooglePayTest implements MainActivitySt
     @Feature({"Payments"})
     @CommandLineFlags.
     Add("disable-features=" + ChromeFeatureList.WEB_PAYMENTS_RETURN_GOOGLE_PAY_IN_BASIC_CARD)
-    public void testGooglePayServerCardsNotAllowed()
-            throws InterruptedException, ExecutionException, TimeoutException {
+    public void testGooglePayServerCardsNotAllowed() throws TimeoutException {
         mPaymentRequestTestRule.openPageAndClickBuyAndWait(
                 mPaymentRequestTestRule.getCanMakePaymentQueryResponded());
+        mPaymentRequestTestRule.expectResultContains(new String[] {"true"});
+
+        mPaymentRequestTestRule.clickNodeAndWait("hasEnrolledInstrument",
+                mPaymentRequestTestRule.getHasEnrolledInstrumentQueryResponded());
         mPaymentRequestTestRule.expectResultContains(new String[] {"false"});
     }
 }

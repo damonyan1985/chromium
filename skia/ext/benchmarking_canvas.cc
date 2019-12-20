@@ -145,30 +145,12 @@ std::unique_ptr<base::Value> AsValue(const SkColorFilter& filter) {
   }
 
   SkScalar color_matrix[20];
-  if (filter.asColorMatrix(color_matrix)) {
+  if (filter.asAColorMatrix(color_matrix)) {
     std::unique_ptr<base::ListValue> color_matrix_val(new base::ListValue());
     for (unsigned i = 0; i < 20; ++i)
       color_matrix_val->Append(AsValue(color_matrix[i]));
 
     val->Set("color_matrix", std::move(color_matrix_val));
-  }
-
-  SkColor color;
-  SkBlendMode mode;
-  if (filter.asColorMode(&color, &mode)) {
-    std::unique_ptr<base::DictionaryValue> color_mode_val(
-        new base::DictionaryValue());
-    color_mode_val->Set("color", AsValue(color));
-    color_mode_val->Set("mode", AsValue(mode));
-
-    val->Set("color_mode", std::move(color_mode_val));
-  }
-
-  if (filter.asComponentTable(nullptr)) {
-    std::unique_ptr<base::DictionaryValue> component_table_val(
-        new base::DictionaryValue());
-    // use this as a marker for now
-    val->Set("component_table", std::move(component_table_val));
   }
 
   return std::move(val);
@@ -285,14 +267,16 @@ std::unique_ptr<base::Value> AsValue(const SkPath& path) {
 
   static const char* gFillStrings[] =
       { "winding", "even-odd", "inverse-winding", "inverse-even-odd" };
-  DCHECK_LT(static_cast<size_t>(path.getFillType()),
-      SK_ARRAY_COUNT(gFillStrings));
-  val->SetString("fill-type", gFillStrings[path.getFillType()]);
+  size_t index = static_cast<size_t>(path.getFillType());
+  DCHECK_LT(index, SK_ARRAY_COUNT(gFillStrings));
+  val->SetString("fill-type", gFillStrings[index]);
 
   static const char* gConvexityStrings[] = { "Unknown", "Convex", "Concave" };
-  DCHECK_LT(static_cast<size_t>(path.getConvexity()),
-      SK_ARRAY_COUNT(gConvexityStrings));
-  val->SetString("convexity", gConvexityStrings[path.getConvexity()]);
+  DCHECK_LT(static_cast<size_t>(path.getConvexityType()),
+            SK_ARRAY_COUNT(gConvexityStrings));
+  val->SetString(
+      "convexity",
+      gConvexityStrings[static_cast<size_t>(path.getConvexityType())]);
 
   val->SetBoolean("is-rect", path.isRect(nullptr));
   val->Set("bounds", AsValue(path.getBounds()));
@@ -315,23 +299,23 @@ std::unique_ptr<base::Value> AsValue(const SkPath& path) {
   SkPath::Iter iter(const_cast<SkPath&>(path), false);
   SkPoint points[4];
 
-  for(SkPath::Verb verb = iter.next(points, false);
-      verb != SkPath::kDone_Verb; verb = iter.next(points, false)) {
-      DCHECK_LT(static_cast<size_t>(verb), SK_ARRAY_COUNT(gVerbStrings));
+  for (SkPath::Verb verb = iter.next(points); verb != SkPath::kDone_Verb;
+       verb = iter.next(points)) {
+    DCHECK_LT(static_cast<size_t>(verb), SK_ARRAY_COUNT(gVerbStrings));
 
-      std::unique_ptr<base::DictionaryValue> verb_val(
-          new base::DictionaryValue());
-      std::unique_ptr<base::ListValue> pts_val(new base::ListValue());
+    std::unique_ptr<base::DictionaryValue> verb_val(
+        new base::DictionaryValue());
+    std::unique_ptr<base::ListValue> pts_val(new base::ListValue());
 
-      for (int i = 0; i < gPtsPerVerb[verb]; ++i)
-        pts_val->Append(AsValue(points[i + gPtOffsetPerVerb[verb]]));
+    for (int i = 0; i < gPtsPerVerb[verb]; ++i)
+      pts_val->Append(AsValue(points[i + gPtOffsetPerVerb[verb]]));
 
-      verb_val->Set(gVerbStrings[verb], std::move(pts_val));
+    verb_val->Set(gVerbStrings[verb], std::move(pts_val));
 
-      if (SkPath::kConic_Verb == verb)
-        verb_val->Set("weight", AsValue(iter.conicWeight()));
+    if (SkPath::kConic_Verb == verb)
+      verb_val->Set("weight", AsValue(iter.conicWeight()));
 
-      verbs_val->Append(std::move(verb_val));
+    verbs_val->Append(std::move(verb_val));
   }
   val->Set("verbs", std::move(verbs_val));
 

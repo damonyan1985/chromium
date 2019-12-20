@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/app_list/app_list_model_updater.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/ui/app_list/chrome_app_list_item.h"
 #include "chrome/browser/ui/app_list/page_break_constants.h"
 #include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
@@ -23,7 +25,6 @@
 #include "components/sync/model/sync_error_factory.h"
 #include "components/sync/model/sync_error_factory_mock.h"
 #include "components/sync/protocol/sync.pb.h"
-#include "extensions/browser/extension_system.h"
 #include "extensions/common/constants.h"
 
 using crx_file::id_util::GenerateId;
@@ -212,10 +213,6 @@ class AppListSyncableServiceTest : public AppListTestBase {
     TestingBrowserProcess::GetGlobal()->SetProfileManager(
         new ProfileManagerWithoutInit(temp_dir_.GetPath()));
 
-    extensions::ExtensionSystem* extension_system =
-        extensions::ExtensionSystem::Get(profile_.get());
-    DCHECK(extension_system);
-
     model_updater_factory_scope_ = std::make_unique<
         app_list::AppListSyncableService::ScopedModelUpdaterFactoryForTest>(
         base::Bind([]() -> std::unique_ptr<AppListModelUpdater> {
@@ -223,8 +220,7 @@ class AppListSyncableServiceTest : public AppListTestBase {
         }));
 
     app_list_syncable_service_ =
-        std::make_unique<app_list::AppListSyncableService>(profile_.get(),
-                                                           extension_system);
+        std::make_unique<app_list::AppListSyncableService>(profile_.get());
     content::RunAllTasksUntilIdle();
 
     model_updater_test_api_ =
@@ -263,6 +259,15 @@ class AppListSyncableServiceTest : public AppListTestBase {
     content::RunAllTasksUntilIdle();
   }
 
+  void InstallExtension(extensions::Extension* extension) {
+    const syncer::StringOrdinal& page_ordinal =
+        syncer::StringOrdinal::CreateInitialOrdinal();
+    service()->OnExtensionInstalled(extension, page_ordinal,
+                                    extensions::kInstallFlagNone);
+    // Allow async callbacks to run.
+    base::RunLoop().RunUntilIdle();
+  }
+
  private:
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<AppListModelUpdater::TestApi> model_updater_test_api_;
@@ -280,7 +285,7 @@ TEST_F(AppListSyncableServiceTest, OEMFolderForConflictingPos) {
   scoped_refptr<extensions::Extension> store =
       MakeApp("webstore", web_store_app_id,
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT);
-  service_->AddExtension(store.get());
+  InstallExtension(store.get());
 
   // Create some app. Note its id should be greater than web store app id in
   // order to move app in case of conflicting pos after web store app.
@@ -288,7 +293,7 @@ TEST_F(AppListSyncableServiceTest, OEMFolderForConflictingPos) {
   scoped_refptr<extensions::Extension> some_app =
       MakeApp(kSomeAppName, some_app_id,
               extensions ::Extension::WAS_INSTALLED_BY_DEFAULT);
-  service_->AddExtension(some_app.get());
+  InstallExtension(some_app.get());
 
   ChromeAppListItem* web_store_item =
       model_updater()->FindItem(web_store_app_id);
@@ -305,7 +310,7 @@ TEST_F(AppListSyncableServiceTest, OEMFolderForConflictingPos) {
   const std::string oem_app_id = CreateNextAppId(some_app_id);
   scoped_refptr<extensions::Extension> oem_app = MakeApp(
       kOemAppName, oem_app_id, extensions::Extension::WAS_INSTALLED_BY_OEM);
-  service_->AddExtension(oem_app.get());
+  InstallExtension(oem_app.get());
 
   size_t web_store_app_index;
   size_t some_app_index;
@@ -323,12 +328,13 @@ TEST_F(AppListSyncableServiceTest, OEMFolderForConflictingPos) {
   EXPECT_EQ(oem_folder->folder_id(), "");
 }
 
-// Verifies that OEM item changes parent when sync change says this.
+// Verifies that OEM item preserves parent and doesn't change parent in case
+// sync change says this.
 TEST_F(AppListSyncableServiceTest, OEMItemIgnoreSyncParent) {
   const std::string oem_app_id = CreateNextAppId(extensions::kWebStoreAppId);
   scoped_refptr<extensions::Extension> oem_app = MakeApp(
       kOemAppName, oem_app_id, extensions::Extension::WAS_INSTALLED_BY_OEM);
-  service_->AddExtension(oem_app.get());
+  InstallExtension(oem_app.get());
 
   // OEM item is not top level element.
   ChromeAppListItem* oem_app_item = model_updater()->FindItem(oem_app_id);
@@ -348,7 +354,7 @@ TEST_F(AppListSyncableServiceTest, OEMItemIgnoreSyncParent) {
   content::RunAllTasksUntilIdle();
 
   // Parent folder is not changed.
-  EXPECT_EQ(std::string(), oem_app_item->folder_id());
+  EXPECT_EQ(ash::kOemFolderId, oem_app_item->folder_id());
 }
 
 // Verifies that non-OEM item is not moved to OEM folder by sync.
@@ -356,7 +362,7 @@ TEST_F(AppListSyncableServiceTest, NonOEMItemIgnoreSyncToOEMFolder) {
   const std::string app_id = CreateNextAppId(extensions::kWebStoreAppId);
   scoped_refptr<extensions::Extension> app = MakeApp(
       kSomeAppName, app_id, extensions::Extension::WAS_INSTALLED_BY_DEFAULT);
-  service_->AddExtension(app.get());
+  InstallExtension(app.get());
 
   ChromeAppListItem* app_item = model_updater()->FindItem(app_id);
   ASSERT_TRUE(app_item);
@@ -416,7 +422,20 @@ TEST_F(AppListSyncableServiceTest, InitialMerge) {
   EXPECT_FALSE(GetSyncItem(app_list::kDefaultPageBreak1));
 }
 
-TEST_F(AppListSyncableServiceTest, ExistingDefaultPageBreak) {
+class AppListInternalAppSyncableServiceTest
+    : public AppListSyncableServiceTest {
+ public:
+  AppListInternalAppSyncableServiceTest() {
+    // Disable System Web Apps so the Settings Internal App is still installed.
+    scoped_feature_list_.InitAndDisableFeature(features::kSystemWebApps);
+  }
+  ~AppListInternalAppSyncableServiceTest() override = default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(AppListInternalAppSyncableServiceTest, ExistingDefaultPageBreak) {
   // Non-first time users have items in their remote sync data.
   syncer::SyncDataList sync_list;
   sync_list.push_back(CreateAppRemoteData(
@@ -442,7 +461,7 @@ TEST_F(AppListSyncableServiceTest, ExistingDefaultPageBreak) {
             page_break_sync_item->item_pin_ordinal.ToDebugString());
 }
 
-TEST_F(AppListSyncableServiceTest, DefaultPageBreakFirstTimeUser) {
+TEST_F(AppListInternalAppSyncableServiceTest, DefaultPageBreakFirstTimeUser) {
   // Empty sync list simulates a first time user.
   syncer::SyncDataList sync_list;
 
@@ -457,20 +476,20 @@ TEST_F(AppListSyncableServiceTest, DefaultPageBreakFirstTimeUser) {
   EXPECT_EQ(page_break_sync_item->item_type,
             sync_pb::AppListSpecifics::TYPE_PAGE_BREAK);
 
-  // Since internal apps are added by default, we'll use the camera and the
-  // settings apps to test the ordering.
-  auto* settings_app_sync_item = GetSyncItem(app_list::kInternalAppIdSettings);
-  auto* camera_app_sync_item = GetSyncItem(app_list::kInternalAppIdCamera);
+  // Since internal apps are added by default, we'll use the settings apps to
+  // test the ordering.
+  auto* settings_app_sync_item = GetSyncItem(ash::kInternalAppIdSettings);
+  auto* hosted_app_sync_item = GetSyncItem(kHostedAppId);
   ASSERT_TRUE(settings_app_sync_item);
-  ASSERT_TRUE(camera_app_sync_item);
+  ASSERT_TRUE(hosted_app_sync_item);
 
-  // The default page break should be between the camera app, and the settings
-  // app; i.e. the camera app is in the first page, and the settings app is in
+  // The default page break should be between the hosted app, and the settings
+  // app; i.e. the hosted app is in the first page, and the settings app is in
   // the second page.
   EXPECT_TRUE(page_break_sync_item->item_ordinal.LessThan(
       settings_app_sync_item->item_ordinal));
   EXPECT_TRUE(page_break_sync_item->item_ordinal.GreaterThan(
-      camera_app_sync_item->item_ordinal));
+      hosted_app_sync_item->item_ordinal));
 }
 
 TEST_F(AppListSyncableServiceTest, InitialMerge_BadData) {
@@ -771,13 +790,13 @@ TEST_F(AppListSyncableServiceTest, FirstAvailablePosition) {
 
   // Populate the first page with items and leave 1 empty slot at the end.
   const int max_items_in_first_page =
-      app_list::AppListConfig::instance().GetMaxNumOfItemsPerPage(0);
+      ash::AppListConfig::instance().GetMaxNumOfItemsPerPage(0);
   syncer::StringOrdinal last_app_position =
       syncer::StringOrdinal::CreateInitialOrdinal();
   for (int i = 0; i < max_items_in_first_page - 1; ++i) {
     std::unique_ptr<ChromeAppListItem> item =
         std::make_unique<ChromeAppListItem>(
-            profile_.get(), GenerateId("item_id" + base::IntToString(i)),
+            profile_.get(), GenerateId("item_id" + base::NumberToString(i)),
             model_updater());
     item->SetPosition(last_app_position);
     model_updater()->AddItem(std::move(item));
@@ -803,7 +822,7 @@ TEST_F(AppListSyncableServiceTest, FirstAvailablePosition) {
   std::unique_ptr<ChromeAppListItem> app_item =
       std::make_unique<ChromeAppListItem>(
           profile_.get(),
-          GenerateId("item_id" + base::IntToString(max_items_in_first_page)),
+          GenerateId("item_id" + base::NumberToString(max_items_in_first_page)),
           model_updater());
   app_item->SetPosition(last_app_position.CreateBetween(page_break_position));
   model_updater()->AddItem(std::move(app_item));
@@ -819,13 +838,13 @@ TEST_F(AppListSyncableServiceTest, FirstAvailablePositionNotExist) {
 
   // Populate the first page with items and leave 1 empty slot at the end.
   const int max_items_in_first_page =
-      app_list::AppListConfig::instance().GetMaxNumOfItemsPerPage(0);
+      ash::AppListConfig::instance().GetMaxNumOfItemsPerPage(0);
   syncer::StringOrdinal last_app_position =
       syncer::StringOrdinal::CreateInitialOrdinal();
   for (int i = 0; i < max_items_in_first_page - 1; ++i) {
     std::unique_ptr<ChromeAppListItem> item =
         std::make_unique<ChromeAppListItem>(
-            profile_.get(), GenerateId("item_id" + base::IntToString(i)),
+            profile_.get(), GenerateId("item_id" + base::NumberToString(i)),
             model_updater());
     item->SetPosition(last_app_position);
     model_updater()->AddItem(std::move(item));
@@ -852,13 +871,13 @@ TEST_F(AppListSyncableServiceTest, TransferItem) {
   scoped_refptr<extensions::Extension> webstore =
       MakeApp(kSomeAppName, extensions::kWebStoreAppId,
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT);
-  service_->AddExtension(webstore.get());
+  InstallExtension(webstore.get());
 
   // Chrome is an existing app to transfer attributes to.
   scoped_refptr<extensions::Extension> chrome =
       MakeApp(kSomeAppName, extension_misc::kChromeAppId,
               extensions::Extension::WAS_INSTALLED_BY_DEFAULT);
-  service_->AddExtension(chrome.get());
+  InstallExtension(chrome.get());
 
   // Youtube is a future app to be installed.
   scoped_refptr<extensions::Extension> youtube =
@@ -906,7 +925,7 @@ TEST_F(AppListSyncableServiceTest, TransferItem) {
   EXPECT_FALSE(GetSyncItem(extension_misc::kYoutubeAppId));
   // Attributes transfer from non-existing app fails.
   EXPECT_FALSE(app_list_syncable_service()->TransferItemAttributes(
-      extension_misc::kCameraAppId, extension_misc::kYoutubeAppId));
+      extension_misc::kCameraAppDevId, extension_misc::kYoutubeAppId));
 
   // Now Chrome app attributes match Webstore app.
   EXPECT_TRUE(AreAllAppAtributesEqualInAppList(webstore_item, chrome_item));
@@ -914,7 +933,7 @@ TEST_F(AppListSyncableServiceTest, TransferItem) {
       AreAllAppAtributesEqualInSync(webstore_sync_item, chrome_sync_item));
 
   // Install Youtube now.
-  service_->AddExtension(youtube.get());
+  InstallExtension(youtube.get());
 
   const app_list::AppListSyncableService::SyncItem* youtube_sync_item =
       GetSyncItem(extension_misc::kYoutubeAppId);
@@ -922,13 +941,6 @@ TEST_F(AppListSyncableServiceTest, TransferItem) {
       model_updater()->FindItem(extension_misc::kYoutubeAppId);
   ASSERT_TRUE(youtube_item);
   ASSERT_TRUE(youtube_sync_item);
-
-  // Note, attributes are not transferred inline for pending app.
-  EXPECT_TRUE(AreAllAppAtributesNotEqualInAppList(webstore_item, youtube_item));
-  EXPECT_TRUE(
-      AreAllAppAtributesNotEqualInSync(webstore_sync_item, youtube_sync_item));
-
-  content::RunAllTasksUntilIdle();
 
   EXPECT_TRUE(AreAllAppAtributesEqualInAppList(webstore_item, youtube_item));
   EXPECT_TRUE(

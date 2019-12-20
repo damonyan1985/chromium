@@ -2,13 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ios/web/public/network_context_owner.h"
+#include "ios/web/public/init/network_context_owner.h"
+
+#include <string>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
-#include "ios/web/public/web_task_traits.h"
+#include "ios/web/public/test/web_task_environment.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_util.h"
@@ -22,7 +26,7 @@ class NetworkContextOwnerTest : public PlatformTest {
   NetworkContextOwnerTest()
       : saw_connection_error_(false),
         context_getter_(base::MakeRefCounted<net::TestURLRequestContextGetter>(
-            base::CreateSingleThreadTaskRunnerWithTraits({WebThread::IO}))) {}
+            base::CreateSingleThreadTaskRunner({WebThread::IO}))) {}
 
   ~NetworkContextOwnerTest() override {
     // Tests should cleanup after themselves.
@@ -31,16 +35,16 @@ class NetworkContextOwnerTest : public PlatformTest {
 
   void WatchForErrors() {
     ASSERT_TRUE(network_context_.is_bound());
-    network_context_.set_connection_error_handler(base::BindOnce(
+    network_context_.set_disconnect_handler(base::BindOnce(
         &NetworkContextOwnerTest::SawError, base::Unretained(this)));
   }
 
   void SawError() { saw_connection_error_ = true; }
 
   bool saw_connection_error_;
-  TestWebThreadBundle test_web_thread_bundle_;
+  WebTaskEnvironment task_environment_;
   scoped_refptr<net::TestURLRequestContextGetter> context_getter_;
-  network::mojom::NetworkContextPtr network_context_;
+  mojo::Remote<network::mojom::NetworkContext> network_context_;
   std::unique_ptr<NetworkContextOwner> network_context_owner_;
 };
 
@@ -49,14 +53,16 @@ class NetworkContextOwnerTest : public PlatformTest {
 TEST_F(NetworkContextOwnerTest, Basic) {
   EXPECT_FALSE(network_context_.is_bound());
   network_context_owner_ = std::make_unique<NetworkContextOwner>(
-      context_getter_.get(), &network_context_);
+      context_getter_.get(),
+      /*cors_exempt_header_list=*/std::vector<std::string>(),
+      &network_context_);
   EXPECT_TRUE(network_context_.is_bound());
   WatchForErrors();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(saw_connection_error_);
 
-  web::WebThread::DeleteSoon(web::WebThread::IO, FROM_HERE,
-                             network_context_owner_.release());
+  base::DeleteSoon(FROM_HERE, {web::WebThread::IO},
+                   network_context_owner_.release());
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(saw_connection_error_);  // other end gone
 }
@@ -66,13 +72,15 @@ TEST_F(NetworkContextOwnerTest, Basic) {
 TEST_F(NetworkContextOwnerTest, ShutdownHandling) {
   EXPECT_FALSE(network_context_.is_bound());
   network_context_owner_ = std::make_unique<NetworkContextOwner>(
-      context_getter_.get(), &network_context_);
+      context_getter_.get(),
+      /*cors_exempt_header_list=*/std::vector<std::string>(),
+      &network_context_);
   EXPECT_TRUE(network_context_.is_bound());
   WatchForErrors();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(saw_connection_error_);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {web::WebThread::IO},
       base::BindOnce(
           &net::TestURLRequestContextGetter::NotifyContextShuttingDown,
@@ -81,8 +89,8 @@ TEST_F(NetworkContextOwnerTest, ShutdownHandling) {
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(saw_connection_error_);  // other end gone post-shutdown.
 
-  web::WebThread::DeleteSoon(web::WebThread::IO, FROM_HERE,
-                             network_context_owner_.release());
+  base::DeleteSoon(FROM_HERE, {web::WebThread::IO},
+                   network_context_owner_.release());
 }
 
 }  // namespace web

@@ -44,8 +44,8 @@ class SynchronousLoadObserver {
     web_contents_->GetDevToolsTarget()->AttachClient(devtools_client_.get());
     load_observer_.reset(new LoadObserver(
         devtools_client_.get(),
-        base::Bind(&HeadlessBrowserTest::FinishAsynchronousTest,
-                   base::Unretained(browser_test))));
+        base::BindOnce(&HeadlessBrowserTest::FinishAsynchronousTest,
+                       base::Unretained(browser_test))));
   }
 
   ~SynchronousLoadObserver() {
@@ -214,9 +214,9 @@ std::unique_ptr<runtime::EvaluateResult> HeadlessBrowserTest::EvaluateScript(
 }
 
 void HeadlessBrowserTest::RunAsynchronousTest() {
-  base::MessageLoopCurrent::ScopedNestableTaskAllower nestable_allower;
   EXPECT_FALSE(run_loop_);
-  run_loop_ = std::make_unique<base::RunLoop>();
+  run_loop_ = std::make_unique<base::RunLoop>(
+      base::RunLoop::Type::kNestableTasksAllowed);
   PreRunAsynchronousTest();
   run_loop_->Run();
   PostRunAsynchronousTest();

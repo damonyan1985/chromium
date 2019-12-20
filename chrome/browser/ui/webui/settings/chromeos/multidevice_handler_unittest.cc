@@ -124,7 +124,7 @@ class MultideviceHandlerTest : public testing::Test {
     fake_android_sms_app_manager_ =
         std::make_unique<android_sms::FakeAndroidSmsAppManager>();
 
-    prefs_.reset(new TestingPrefServiceSimple());
+    prefs_ = std::make_unique<TestingPrefServiceSimple>();
 
     handler_ = std::make_unique<TestMultideviceHandler>(
         prefs_.get(), fake_multidevice_setup_client_.get(),
@@ -382,9 +382,9 @@ TEST_F(MultideviceHandlerTest, RemoveHostDevice) {
 
 TEST_F(MultideviceHandlerTest, GetAndroidSmsInfo) {
   // Check that getAndroidSmsInfo returns correct value.
-  CallGetAndroidSmsInfo(
-      false /* expected_enabled */,
-      android_sms::GetAndroidMessagesURL() /* expected_url */);
+  CallGetAndroidSmsInfo(false /* expected_enabled */,
+                        android_sms::GetAndroidMessagesURL(
+                            true /* use_install_url */) /* expected_url */);
 
   // Change messages feature state and assert that the change
   // callback is fired.
@@ -401,20 +401,22 @@ TEST_F(MultideviceHandlerTest, GetAndroidSmsInfo) {
   EXPECT_EQ("settings.onAndroidSmsInfoChange", call_data_1.arg1()->GetString());
 
   // Check that getAndroidSmsInfo returns update value.
-  CallGetAndroidSmsInfo(
-      true /* enabled */,
-      android_sms::GetAndroidMessagesURL() /* expected_url */);
+  CallGetAndroidSmsInfo(true /* enabled */, android_sms::GetAndroidMessagesURL(
+                                                true) /* expected_url */);
 
   // Now, update the installed URL. This should have resulted in another call.
   fake_android_sms_app_manager()->SetInstalledAppUrl(
-      android_sms::GetAndroidMessagesURLOld());
+      android_sms::GetAndroidMessagesURL(true /* use_install_url */,
+                                         android_sms::PwaDomain::kStaging));
   const content::TestWebUI::CallData& call_data_2 =
       CallDataAtIndex(call_data_count_before_call + 4);
   EXPECT_EQ("cr.webUIListenerCallback", call_data_2.function_name());
   EXPECT_EQ("settings.onAndroidSmsInfoChange", call_data_2.arg1()->GetString());
   CallGetAndroidSmsInfo(
       true /* enabled */,
-      android_sms::GetAndroidMessagesURLOld() /* expected_url */);
+      android_sms::GetAndroidMessagesURL(
+          true /* use_install_url */,
+          android_sms::PwaDomain::kStaging) /* expected_url */);
 }
 
 }  // namespace settings

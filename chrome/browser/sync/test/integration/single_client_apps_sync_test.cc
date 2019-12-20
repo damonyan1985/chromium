@@ -4,11 +4,14 @@
 
 #include "base/macros.h"
 #include "chrome/browser/sync/test/integration/apps_helper.h"
-#include "chrome/browser/sync/test/integration/feature_toggler.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/driver/profile_sync_service.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/sync/test/integration/os_sync_test.h"
+#include "chromeos/constants/chromeos_features.h"
+#endif
 
 namespace {
 
@@ -16,10 +19,9 @@ using apps_helper::AllProfilesHaveSameApps;
 using apps_helper::InstallApp;
 using apps_helper::InstallPlatformApp;
 
-class SingleClientAppsSyncTest : public FeatureToggler, public SyncTest {
+class SingleClientAppsSyncTest : public SyncTest {
  public:
-  SingleClientAppsSyncTest()
-      : FeatureToggler(switches::kSyncPseudoUSSApps), SyncTest(SINGLE_CLIENT) {}
+  SingleClientAppsSyncTest() : SyncTest(SINGLE_CLIENT) {}
 
   ~SingleClientAppsSyncTest() override {}
 
@@ -27,12 +29,21 @@ class SingleClientAppsSyncTest : public FeatureToggler, public SyncTest {
   DISALLOW_COPY_AND_ASSIGN(SingleClientAppsSyncTest);
 };
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, StartWithNoApps) {
+// crbug.com/1001437
+#if defined(ADDRESS_SANITIZER)
+#define MAYBE_InstallSomePlatformApps DISABLED_InstallSomePlatformApps
+#define MAYBE_InstallSomeApps DISABLED_InstallSomeApps
+#else
+#define MAYBE_InstallSomePlatformApps InstallSomePlatformApps
+#define MAYBE_InstallSomeApps InstallSomeApps
+#endif
+
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithNoApps) {
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, StartWithSomeLegacyApps) {
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomeLegacyApps) {
   ASSERT_TRUE(SetupClients());
 
   const int kNumApps = 5;
@@ -45,7 +56,7 @@ IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, StartWithSomeLegacyApps) {
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, StartWithSomePlatformApps) {
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, StartWithSomePlatformApps) {
   ASSERT_TRUE(SetupClients());
 
   const int kNumApps = 5;
@@ -58,7 +69,7 @@ IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, StartWithSomePlatformApps) {
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomeLegacyApps) {
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, InstallSomeLegacyApps) {
   ASSERT_TRUE(SetupSync());
 
   const int kNumApps = 5;
@@ -71,7 +82,8 @@ IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomeLegacyApps) {
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomePlatformApps) {
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest,
+                       MAYBE_InstallSomePlatformApps) {
   ASSERT_TRUE(SetupSync());
 
   const int kNumApps = 5;
@@ -84,7 +96,7 @@ IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomePlatformApps) {
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomeApps) {
+IN_PROC_BROWSER_TEST_F(SingleClientAppsSyncTest, MAYBE_InstallSomeApps) {
   ASSERT_TRUE(SetupSync());
 
   int i = 0;
@@ -105,8 +117,28 @@ IN_PROC_BROWSER_TEST_P(SingleClientAppsSyncTest, InstallSomeApps) {
   ASSERT_TRUE(AllProfilesHaveSameApps());
 }
 
-INSTANTIATE_TEST_SUITE_P(USS,
-                         SingleClientAppsSyncTest,
-                         ::testing::Values(false, true));
+#if defined(OS_CHROMEOS)
+// Tests for SplitSettingsSync.
+class SingleClientAppsOsSyncTest : public OsSyncTest {
+ public:
+  SingleClientAppsOsSyncTest() : OsSyncTest(SINGLE_CLIENT) {}
+  ~SingleClientAppsOsSyncTest() override = default;
+};
+
+IN_PROC_BROWSER_TEST_F(SingleClientAppsOsSyncTest,
+                       DisablingOsSyncFeatureDisablesDataType) {
+  ASSERT_TRUE(chromeos::features::IsSplitSettingsSyncEnabled());
+  ASSERT_TRUE(SetupSync());
+  syncer::SyncService* service = GetSyncService(0);
+  syncer::SyncUserSettings* settings = service->GetUserSettings();
+
+  EXPECT_TRUE(settings->IsOsSyncFeatureEnabled());
+  EXPECT_TRUE(service->GetActiveDataTypes().Has(syncer::APPS));
+
+  settings->SetOsSyncFeatureEnabled(false);
+  EXPECT_FALSE(settings->IsOsSyncFeatureEnabled());
+  EXPECT_FALSE(service->GetActiveDataTypes().Has(syncer::APPS));
+}
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace

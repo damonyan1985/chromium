@@ -20,6 +20,8 @@ Polymer({
   properties: {
     pageTitle: String,
 
+    titleIcon: String,
+
     learnMoreUrl: String,
 
     /** Setting a |searchLabel| will enable search. */
@@ -35,6 +37,15 @@ Polymer({
     showSpinner: {
       type: Boolean,
       value: false,
+    },
+
+    /**
+     * Title (i.e., tooltip) to be displayed on the spinner. If |showSpinner| is
+     * false, this field has no effect.
+     */
+    spinnerTitle: {
+      type: String,
+      value: '',
     },
 
     /**
@@ -64,7 +75,7 @@ Polymer({
 
   /** @override */
   attached: function() {
-    if (!!this.searchLabel) {
+    if (this.searchLabel) {
       // |searchLabel| should not change dynamically.
       this.listen(this, 'clear-subpage-search', 'onClearSubpageSearch_');
     }
@@ -72,7 +83,7 @@ Polymer({
 
   /** @override */
   detached: function() {
-    if (!!this.searchLabel) {
+    if (this.searchLabel) {
       // |searchLabel| should not change dynamically.
       this.unlisten(this, 'clear-subpage-search', 'onClearSubpageSearch_');
     }

@@ -10,10 +10,8 @@
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
-#include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
-#include "chrome/browser/chromeos/login/screens/network_screen_view.h"
-#include "chrome/browser/chromeos/login/screens/screen_exit_code.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
+#include "chrome/browser/ui/webui/chromeos/login/network_screen_handler.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/network/network_handler.h"
@@ -35,15 +33,15 @@ namespace chromeos {
 // static
 NetworkScreen* NetworkScreen::Get(ScreenManager* manager) {
   return static_cast<NetworkScreen*>(
-      manager->GetScreen(OobeScreen::SCREEN_OOBE_NETWORK));
+      manager->GetScreen(NetworkScreenView::kScreenId));
 }
 
-NetworkScreen::NetworkScreen(BaseScreenDelegate* base_screen_delegate,
-                             NetworkScreenView* view)
-    : BaseScreen(base_screen_delegate, OobeScreen::SCREEN_OOBE_NETWORK),
+NetworkScreen::NetworkScreen(NetworkScreenView* view,
+                             const ScreenExitCallback& exit_callback)
+    : BaseScreen(NetworkScreenView::kScreenId),
       view_(view),
-      network_state_helper_(std::make_unique<login::NetworkStateHelper>()),
-      weak_ptr_factory_(this) {
+      exit_callback_(exit_callback),
+      network_state_helper_(std::make_unique<login::NetworkStateHelper>()) {
   if (view_)
     view_->Bind(this);
 }
@@ -135,7 +133,7 @@ void NetworkScreen::NotifyOnConnection() {
   // TODO(nkostylev): Check network connectivity.
   UnsubscribeNetworkNotification();
   connection_timer_.Stop();
-  Finish(ScreenExitCode::NETWORK_CONNECTED);
+  exit_callback_.Run(Result::CONNECTED);
 }
 
 void NetworkScreen::OnConnectionTimeout() {
@@ -201,7 +199,7 @@ void NetworkScreen::WaitForConnection(const base::string16& network_id) {
 void NetworkScreen::OnBackButtonClicked() {
   if (view_)
     view_->ClearErrors();
-  Finish(ScreenExitCode::NETWORK_BACK);
+  exit_callback_.Run(Result::BACK);
 }
 
 void NetworkScreen::OnContinueButtonClicked() {
@@ -227,7 +225,7 @@ void NetworkScreen::OnOfflineDemoModeSetupSelected() {
   DCHECK(DemoSetupController::IsOobeDemoSetupFlowInProgress());
   if (view_)
     view_->ClearErrors();
-  Finish(ScreenExitCode::NETWORK_OFFLINE_DEMO_SETUP);
+  exit_callback_.Run(Result::OFFLINE_DEMO_SETUP);
 }
 
 }  // namespace chromeos

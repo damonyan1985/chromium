@@ -14,6 +14,7 @@
 
 #include "base/bind.h"
 #include "base/containers/stack.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/test/test_timeouts.h"
@@ -24,6 +25,7 @@
 #include "content/browser/frame_host/render_frame_host_delegate.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
 #include "content/browser/renderer_host/delegated_frame_host.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_visual_properties.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -409,19 +411,17 @@ void ShowWidgetMessageFilter::Reset() {
 
 void ShowWidgetMessageFilter::OnShowWidget(int route_id,
                                            const gfx::Rect& initial_rect) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&ShowWidgetMessageFilter::OnShowWidgetOnUI, this, route_id,
-                     initial_rect));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&ShowWidgetMessageFilter::OnShowWidgetOnUI,
+                                this, route_id, initial_rect));
 }
 
 #if defined(OS_MACOSX) || defined(OS_ANDROID)
 void ShowWidgetMessageFilter::OnShowPopup(
     const FrameHostMsg_ShowPopup_Params& params) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&ShowWidgetMessageFilter::OnShowWidgetOnUI, this,
-                 MSG_ROUTING_NONE, params.bounds));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&ShowWidgetMessageFilter::OnShowWidgetOnUI,
+                                this, MSG_ROUTING_NONE, params.bounds));
 }
 #endif
 
@@ -432,13 +432,118 @@ void ShowWidgetMessageFilter::OnShowWidgetOnUI(int route_id,
   message_loop_runner_->Quit();
 }
 
-SwapoutACKMessageFilter::SwapoutACKMessageFilter()
-    : BrowserMessageFilter(FrameMsgStart) {}
+DropMessageFilter::DropMessageFilter(uint32_t message_class,
+                                     uint32_t drop_message_id)
+    : BrowserMessageFilter(message_class), drop_message_id_(drop_message_id) {}
 
-SwapoutACKMessageFilter::~SwapoutACKMessageFilter() {}
+DropMessageFilter::~DropMessageFilter() = default;
 
-bool SwapoutACKMessageFilter::OnMessageReceived(const IPC::Message& message) {
-  return message.type() == FrameHostMsg_SwapOut_ACK::ID;
+bool DropMessageFilter::OnMessageReceived(const IPC::Message& message) {
+  return message.type() == drop_message_id_;
+}
+
+ObserveMessageFilter::ObserveMessageFilter(uint32_t message_class,
+                                           uint32_t watch_message_id)
+    : BrowserMessageFilter(message_class),
+      watch_message_id_(watch_message_id) {}
+
+ObserveMessageFilter::~ObserveMessageFilter() = default;
+
+void ObserveMessageFilter::Wait() {
+  base::RunLoop loop;
+  quit_closure_ = loop.QuitClosure();
+  loop.Run();
+}
+
+bool ObserveMessageFilter::OnMessageReceived(const IPC::Message& message) {
+  if (message.type() == watch_message_id_) {
+    // Exit the Wait() method if it's being used, but in a fresh stack once the
+    // message is actually handled.
+    if (quit_closure_ && !received_) {
+      base::PostTask(FROM_HERE,
+                     base::BindOnce(&ObserveMessageFilter::QuitWait, this));
+    }
+    received_ = true;
+  }
+  return false;
+}
+
+void ObserveMessageFilter::QuitWait() {
+  std::move(quit_closure_).Run();
+}
+
+UnresponsiveRendererObserver::UnresponsiveRendererObserver(
+    WebContents* web_contents)
+    : WebContentsObserver(web_contents) {}
+
+UnresponsiveRendererObserver::~UnresponsiveRendererObserver() = default;
+
+RenderProcessHost* UnresponsiveRendererObserver::Wait(base::TimeDelta timeout) {
+  if (!captured_render_process_host_) {
+    base::OneShotTimer timer;
+    timer.Start(FROM_HERE, timeout, run_loop_.QuitClosure());
+    run_loop_.Run();
+    timer.Stop();
+  }
+  return captured_render_process_host_;
+}
+
+void UnresponsiveRendererObserver::OnRendererUnresponsive(
+    RenderProcessHost* render_process_host) {
+  captured_render_process_host_ = render_process_host;
+  run_loop_.Quit();
+}
+
+BeforeUnloadBlockingDelegate::BeforeUnloadBlockingDelegate(
+    WebContentsImpl* web_contents)
+    : web_contents_(web_contents) {
+  web_contents_->SetDelegate(this);
+}
+
+BeforeUnloadBlockingDelegate::~BeforeUnloadBlockingDelegate() {
+  if (!callback_.is_null())
+    std::move(callback_).Run(true, base::string16());
+
+  web_contents_->SetDelegate(nullptr);
+  web_contents_->SetJavaScriptDialogManagerForTesting(nullptr);
+}
+
+void BeforeUnloadBlockingDelegate::Wait() {
+  run_loop_->Run();
+  run_loop_ = std::make_unique<base::RunLoop>();
+}
+
+JavaScriptDialogManager*
+BeforeUnloadBlockingDelegate::GetJavaScriptDialogManager(WebContents* source) {
+  return this;
+}
+
+void BeforeUnloadBlockingDelegate::RunJavaScriptDialog(
+    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
+    JavaScriptDialogType dialog_type,
+    const base::string16& message_text,
+    const base::string16& default_prompt_text,
+    DialogClosedCallback callback,
+    bool* did_suppress_message) {
+  NOTREACHED();
+}
+
+void BeforeUnloadBlockingDelegate::RunBeforeUnloadDialog(
+    WebContents* web_contents,
+    RenderFrameHost* render_frame_host,
+    bool is_reload,
+    DialogClosedCallback callback) {
+  callback_ = std::move(callback);
+  run_loop_->Quit();
+}
+
+bool BeforeUnloadBlockingDelegate::HandleJavaScriptDialog(
+    WebContents* web_contents,
+    bool accept,
+    const base::string16* prompt_override) {
+  NOTREACHED();
+  return true;
 }
 
 }  // namespace content

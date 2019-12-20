@@ -6,8 +6,7 @@
 
 #include <utility>
 
-#include "ash/new_window_controller.h"
-#include "ash/shell.h"
+#include "ash/public/cpp/new_window_delegate.h"
 #include "base/bind.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
@@ -18,9 +17,9 @@
 
 namespace ash {
 namespace {
-constexpr const char* kUrlSchemes[] = {url::kFileScheme, url::kFtpScheme,
-                                       url::kHttpScheme, url::kHttpsScheme,
-                                       url::kMailToScheme};
+constexpr const char* kUrlSchemes[] = {url::kDataScheme,  url::kFileScheme,
+                                       url::kFtpScheme,   url::kHttpScheme,
+                                       url::kHttpsScheme, url::kMailToScheme};
 
 // Called from ExportedObject when OpenUrl() is exported as a D-Bus method or
 // failed to be exported.
@@ -35,8 +34,7 @@ void OnExported(const std::string& interface_name,
 }  // namespace
 
 UrlHandlerServiceProvider::UrlHandlerServiceProvider()
-    : allowed_url_schemes_(std::cbegin(kUrlSchemes), std::cend(kUrlSchemes)),
-      weak_ptr_factory_(this) {}
+    : allowed_url_schemes_(std::cbegin(kUrlSchemes), std::cend(kUrlSchemes)) {}
 
 UrlHandlerServiceProvider::~UrlHandlerServiceProvider() = default;
 
@@ -50,6 +48,11 @@ void UrlHandlerServiceProvider::Start(
       base::BindRepeating(&OnExported));
 }
 
+bool UrlHandlerServiceProvider::UrlAllowed(const GURL& gurl) const {
+  return gurl.is_valid() &&
+         allowed_url_schemes_.find(gurl.scheme()) != allowed_url_schemes_.end();
+}
+
 void UrlHandlerServiceProvider::OpenUrl(
     dbus::MethodCall* method_call,
     dbus::ExportedObject::ResponseSender response_sender) {
@@ -57,22 +60,23 @@ void UrlHandlerServiceProvider::OpenUrl(
   std::string url;
   if (!reader.PopString(&url)) {
     LOG(ERROR) << "Method call lacks URL: " << method_call->ToString();
-    response_sender.Run(dbus::ErrorResponse::FromMethodCall(
-        method_call, DBUS_ERROR_INVALID_ARGS, "No URL string arg"));
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(
+            method_call, DBUS_ERROR_INVALID_ARGS, "No URL string arg"));
     return;
   }
 
   const GURL gurl(url);
-  if (!gurl.is_valid() ||
-      allowed_url_schemes_.find(gurl.scheme()) == allowed_url_schemes_.end()) {
-    response_sender.Run(dbus::ErrorResponse::FromMethodCall(
-        method_call, DBUS_ERROR_FAILED, "Invalid URL"));
+  if (!UrlAllowed(gurl)) {
+    std::move(response_sender)
+        .Run(dbus::ErrorResponse::FromMethodCall(method_call, DBUS_ERROR_FAILED,
+                                                 "Invalid URL"));
     return;
   }
 
-  ash::Shell::Get()->new_window_controller()->NewTabWithUrl(
+  NewWindowDelegate::GetInstance()->NewTabWithUrl(
       gurl, false /* from_user_interaction */);
-  response_sender.Run(dbus::Response::FromMethodCall(method_call));
+  std::move(response_sender).Run(dbus::Response::FromMethodCall(method_call));
 }
 
 }  // namespace ash

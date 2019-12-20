@@ -4,31 +4,28 @@
 
 #include "third_party/blink/renderer/modules/animationworklet/animation_worklet_global_scope.h"
 
+#include "base/synchronization/waitable_event.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_url_request.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_module.h"
+#include "third_party/blink/renderer/bindings/core/v8/module_record.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_source_code.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_cache_options.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/inspector/worker_devtools_params.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
 #include "third_party/blink/renderer/core/script/script.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
 #include "third_party/blink/renderer/core/workers/worklet_module_responses_map.h"
 #include "third_party/blink/renderer/modules/animationworklet/animation_worklet.h"
 #include "third_party/blink/renderer/modules/animationworklet/animation_worklet_proxy_client.h"
 #include "third_party/blink/renderer/modules/animationworklet/animator.h"
 #include "third_party/blink/renderer/modules/animationworklet/animator_definition.h"
-#include "third_party/blink/renderer/modules/worklet/animation_and_paint_worklet_thread.h"
+#include "third_party/blink/renderer/modules/worklet/worklet_thread_test_common.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
-#include "third_party/blink/renderer/platform/waitable_event.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
 
 #include <memory>
@@ -44,7 +41,7 @@ class MockAnimationWorkletProxyClient : public AnimationWorkletProxyClient {
   void AddGlobalScope(WorkletGlobalScope*) override {
     did_add_global_scope_ = true;
   }
-  void SynchronizeAnimatorName(const String&) override{};
+  void SynchronizeAnimatorName(const String&) override {}
   bool did_add_global_scope() { return did_add_global_scope_; }
 
  private:
@@ -62,6 +59,12 @@ std::unique_ptr<AnimationWorkletOutput> ProxyClientMutate(
   return output;
 }
 
+std::unique_ptr<WorkletAnimationEffectTimings> CreateEffectTimings() {
+  auto timings = base::MakeRefCounted<base::RefCountedData<Vector<Timing>>>();
+  timings->data.push_back(Timing());
+  return std::make_unique<WorkletAnimationEffectTimings>(std::move(timings));
+}
+
 }  // namespace
 
 class AnimationWorkletGlobalScopeTest : public PageTestBase {
@@ -70,54 +73,24 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
 
   void SetUp() override {
     PageTestBase::SetUp(IntSize());
-    Document* document = &GetDocument();
-    document->SetURL(KURL("https://example.com/"));
-    document->UpdateSecurityOrigin(SecurityOrigin::Create(document->Url()));
+    NavigateTo(KURL("https://example.com/"));
     reporting_proxy_ = std::make_unique<WorkerReportingProxy>();
   }
 
-  std::unique_ptr<AnimationAndPaintWorkletThread>
-  CreateAnimationAndPaintWorkletThread(
-      AnimationWorkletProxyClient* proxy_client) {
-    std::unique_ptr<AnimationAndPaintWorkletThread> thread =
-        AnimationAndPaintWorkletThread::CreateForAnimationWorklet(
-            *reporting_proxy_);
-
-    WorkerClients* clients = WorkerClients::Create();
-    if (proxy_client)
-      ProvideAnimationWorkletProxyClientTo(clients, proxy_client);
-
-    Document* document = &GetDocument();
-    thread->Start(
-        std::make_unique<GlobalScopeCreationParams>(
-            document->Url(), mojom::ScriptType::kModule,
-            OffMainThreadWorkerScriptFetchOption::kEnabled,
-            document->UserAgent(), nullptr /* web_worker_fetch_context */,
-            Vector<CSPHeaderAndType>(), document->GetReferrerPolicy(),
-            document->GetSecurityOrigin(), document->IsSecureContext(),
-            document->GetHttpsState(), clients, document->AddressSpace(),
-            OriginTrialContext::GetTokens(document).get(),
-            base::UnguessableToken::Create(), nullptr /* worker_settings */,
-            kV8CacheOptionsDefault,
-            MakeGarbageCollected<WorkletModuleResponsesMap>()),
-        base::nullopt, std::make_unique<WorkerDevToolsParams>(),
-        ParentExecutionContextTaskRunners::Create());
-    return thread;
-  }
-
-  using TestCalback = void (AnimationWorkletGlobalScopeTest::*)(WorkerThread*,
-                                                                WaitableEvent*);
+  using TestCalback = void (
+      AnimationWorkletGlobalScopeTest::*)(WorkerThread*, base::WaitableEvent*);
   // Create a new animation worklet and run the callback task on it. Terminate
   // the worklet once the task completion is signaled.
   void RunTestOnWorkletThread(TestCalback callback) {
     std::unique_ptr<WorkerThread> worklet =
-        CreateAnimationAndPaintWorkletThread(nullptr);
-    WaitableEvent waitable_event;
+        CreateThreadAndProvideAnimationWorkletProxyClient(
+            &GetDocument(), reporting_proxy_.get());
+    base::WaitableEvent waitable_event;
     PostCrossThreadTask(
         *worklet->GetTaskRunner(TaskType::kInternalTest), FROM_HERE,
-        CrossThreadBind(callback, CrossThreadUnretained(this),
-                        CrossThreadUnretained(worklet.get()),
-                        CrossThreadUnretained(&waitable_event)));
+        CrossThreadBindOnce(callback, CrossThreadUnretained(this),
+                            CrossThreadUnretained(worklet.get()),
+                            CrossThreadUnretained(&waitable_event)));
     waitable_event.Wait();
 
     worklet->Terminate();
@@ -126,7 +99,7 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
 
   void RunScriptOnWorklet(String source_code,
                           WorkerThread* thread,
-                          WaitableEvent* waitable_event) {
+                          base::WaitableEvent* waitable_event) {
     ASSERT_TRUE(thread->IsCurrentThread());
     auto* global_scope = To<AnimationWorkletGlobalScope>(thread->GlobalScope());
     ScriptState* script_state =
@@ -135,12 +108,13 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     v8::Isolate* isolate = script_state->GetIsolate();
     ASSERT_TRUE(isolate);
     ScriptState::Scope scope(script_state);
-    ASSERT_TRUE(EvaluateScriptModule(global_scope, source_code));
+    ASSERT_TRUE(global_scope->ScriptController()->Evaluate(
+        ScriptSourceCode(source_code), SanitizeScriptErrors::kDoNotSanitize));
     waitable_event->Signal();
   }
 
   void RunBasicParsingTestOnWorklet(WorkerThread* thread,
-                                    WaitableEvent* waitable_event) {
+                                    base::WaitableEvent* waitable_event) {
     ASSERT_TRUE(thread->IsCurrentThread());
     auto* global_scope = To<AnimationWorkletGlobalScope>(thread->GlobalScope());
     ScriptState* script_state =
@@ -161,21 +135,20 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
               animate () {}
             });
           )JS";
-      ASSERT_TRUE(EvaluateScriptModule(global_scope, source_code));
+      ASSERT_TRUE(global_scope->ScriptController()->Evaluate(
+          ScriptSourceCode(source_code), SanitizeScriptErrors::kDoNotSanitize));
 
       AnimatorDefinition* definition =
           global_scope->FindDefinitionForTest("test");
       ASSERT_TRUE(definition);
-
-      EXPECT_TRUE(definition->ConstructorLocal(isolate)->IsFunction());
-      EXPECT_TRUE(definition->AnimateLocal(isolate)->IsFunction());
     }
 
     {
       // registerAnimator() with a null class definition should fail to define
       // an animator.
       String source_code = "registerAnimator('null', null);";
-      ASSERT_FALSE(EvaluateScriptModule(global_scope, source_code));
+      ASSERT_FALSE(global_scope->ScriptController()->Evaluate(
+          ScriptSourceCode(source_code), SanitizeScriptErrors::kDoNotSanitize));
       EXPECT_FALSE(global_scope->FindDefinitionForTest("null"));
     }
 
@@ -184,8 +157,9 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     waitable_event->Signal();
   }
 
-  void RunConstructAndAnimateTestOnWorklet(WorkerThread* thread,
-                                           WaitableEvent* waitable_event) {
+  void RunConstructAndAnimateTestOnWorklet(
+      WorkerThread* thread,
+      base::WaitableEvent* waitable_event) {
     ASSERT_TRUE(thread->IsCurrentThread());
     auto* global_scope = To<AnimationWorkletGlobalScope>(thread->GlobalScope());
     ScriptState* script_state =
@@ -213,7 +187,8 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
               }
             });
         )JS";
-    ASSERT_TRUE(EvaluateScriptModule(global_scope, source_code));
+    ASSERT_TRUE(global_scope->ScriptController()->Evaluate(
+        ScriptSourceCode(source_code), SanitizeScriptErrors::kDoNotSanitize));
 
     ScriptValue constructed_before =
         global_scope->ScriptController()->EvaluateAndReturnValueForTest(
@@ -233,8 +208,10 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     // worklet to create and animate an animator.
     cc::WorkletAnimationId animation_id = {1, 1};
     AnimationWorkletInput state;
-    state.added_and_updated_animations.emplace_back(animation_id, "test", 5000,
-                                                    nullptr, 1);
+    std::unique_ptr<WorkletAnimationEffectTimings> effect_timings =
+        CreateEffectTimings();
+    state.added_and_updated_animations.emplace_back(
+        animation_id, "test", 5000, nullptr, std::move(effect_timings));
 
     std::unique_ptr<AnimationWorkletOutput> output =
         ProxyClientMutate(state, global_scope);
@@ -257,8 +234,56 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     waitable_event->Signal();
   }
 
+  void RunStateExistenceTestOnWorklet(WorkerThread* thread,
+                                      base::WaitableEvent* waitable_event) {
+    ASSERT_TRUE(thread->IsCurrentThread());
+    auto* global_scope = To<AnimationWorkletGlobalScope>(thread->GlobalScope());
+    ScriptState* script_state =
+        global_scope->ScriptController()->GetScriptState();
+    ASSERT_TRUE(script_state);
+    v8::Isolate* isolate = script_state->GetIsolate();
+    ASSERT_TRUE(isolate);
+
+    ScriptState::Scope scope(script_state);
+
+    String source_code =
+        R"JS(
+            class Stateful {
+              animate () {}
+              state () {}
+            }
+
+            class Stateless {
+              animate () {}
+            }
+
+            class Foo {
+              animate () {}
+            }
+            Foo.prototype.state = function() {};
+
+            registerAnimator('stateful_animator', Stateful);
+            registerAnimator('stateless_animator', Stateless);
+            registerAnimator('foo', Foo);
+        )JS";
+    ASSERT_TRUE(global_scope->ScriptController()->Evaluate(
+        ScriptSourceCode(source_code), SanitizeScriptErrors::kDoNotSanitize));
+
+    AnimatorDefinition* first_definition =
+        global_scope->FindDefinitionForTest("stateful_animator");
+    EXPECT_TRUE(first_definition->IsStateful());
+    AnimatorDefinition* second_definition =
+        global_scope->FindDefinitionForTest("stateless_animator");
+    EXPECT_FALSE(second_definition->IsStateful());
+    AnimatorDefinition* third_definition =
+        global_scope->FindDefinitionForTest("foo");
+    EXPECT_TRUE(third_definition->IsStateful());
+
+    waitable_event->Signal();
+  }
+
   void RunAnimateOutputTestOnWorklet(WorkerThread* thread,
-                                     WaitableEvent* waitable_event) {
+                                     base::WaitableEvent* waitable_event) {
     AnimationWorkletGlobalScope* global_scope =
         static_cast<AnimationWorkletGlobalScope*>(thread->GlobalScope());
     ASSERT_TRUE(global_scope);
@@ -285,15 +310,17 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     // worklet to create and animate an animator.
     cc::WorkletAnimationId animation_id = {1, 1};
     AnimationWorkletInput state;
-    state.added_and_updated_animations.emplace_back(animation_id, "test", 5000,
-                                                    nullptr, 1);
+    std::unique_ptr<WorkletAnimationEffectTimings> effect_timings =
+        CreateEffectTimings();
+    state.added_and_updated_animations.emplace_back(
+        animation_id, "test", 5000, nullptr, std::move(effect_timings));
 
     std::unique_ptr<AnimationWorkletOutput> output =
         ProxyClientMutate(state, global_scope);
 
     EXPECT_EQ(output->animations.size(), 1ul);
     EXPECT_EQ(output->animations[0].local_times[0],
-              WTF::TimeDelta::FromMillisecondsD(123));
+              base::TimeDelta::FromMillisecondsD(123));
 
     waitable_event->Signal();
   }
@@ -301,8 +328,9 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
   // This test verifies that an animator instance is not created if
   // MutatorInputState does not have an animation in
   // added_and_updated_animations.
-  void RunAnimatorInstanceCreationTestOnWorklet(WorkerThread* thread,
-                                                WaitableEvent* waitable_event) {
+  void RunAnimatorInstanceCreationTestOnWorklet(
+      WorkerThread* thread,
+      base::WaitableEvent* waitable_event) {
     AnimationWorkletGlobalScope* global_scope =
         static_cast<AnimationWorkletGlobalScope*>(thread->GlobalScope());
     ASSERT_TRUE(global_scope);
@@ -344,8 +372,10 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     output = ProxyClientMutate(state, global_scope);
     EXPECT_EQ(global_scope->GetAnimatorsSizeForTest(), 0u);
 
+    std::unique_ptr<WorkletAnimationEffectTimings> effect_timings =
+        CreateEffectTimings();
     state.added_and_updated_animations.push_back(
-        {animation_id, "test", 5000, nullptr, 1});
+        {animation_id, "test", 5000, nullptr, std::move(effect_timings)});
     EXPECT_EQ(state.added_and_updated_animations.size(), 1u);
 
     output = ProxyClientMutate(state, global_scope);
@@ -355,8 +385,9 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
 
   // This test verifies that an animator instance is created and removed
   // properly.
-  void RunAnimatorInstanceUpdateTestOnWorklet(WorkerThread* thread,
-                                              WaitableEvent* waitable_event) {
+  void RunAnimatorInstanceUpdateTestOnWorklet(
+      WorkerThread* thread,
+      base::WaitableEvent* waitable_event) {
     AnimationWorkletGlobalScope* global_scope =
         static_cast<AnimationWorkletGlobalScope*>(thread->GlobalScope());
     ASSERT_TRUE(global_scope);
@@ -383,8 +414,10 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
 
     cc::WorkletAnimationId animation_id = {1, 1};
     AnimationWorkletInput state;
+    std::unique_ptr<WorkletAnimationEffectTimings> effect_timings =
+        CreateEffectTimings();
     state.added_and_updated_animations.push_back(
-        {animation_id, "test", 5000, nullptr, 1});
+        {animation_id, "test", 5000, nullptr, std::move(effect_timings)});
     EXPECT_EQ(state.added_and_updated_animations.size(), 1u);
 
     std::unique_ptr<AnimationWorkletOutput> output =
@@ -410,33 +443,6 @@ class AnimationWorkletGlobalScopeTest : public PageTestBase {
     waitable_event->Signal();
   }
 
-  void AddGlobalScopeForTesting(WorkerThread* thread,
-                                AnimationWorkletProxyClient* proxy_client,
-                                WaitableEvent* waitable_event) {
-    proxy_client->AddGlobalScopeForTesting(
-        To<WorkletGlobalScope>(thread->GlobalScope()));
-    waitable_event->Signal();
-  }
-
- private:
-  // Returns false when a script evaluation error happens.
-  bool EvaluateScriptModule(AnimationWorkletGlobalScope* global_scope,
-                            const String& source_code) {
-    ScriptState* script_state =
-        global_scope->ScriptController()->GetScriptState();
-    EXPECT_TRUE(script_state);
-    const KURL js_url("https://example.com/worklet.js");
-    ScriptModule module = ScriptModule::Compile(
-        script_state->GetIsolate(), source_code, js_url, js_url,
-        ScriptFetchOptions(), TextPosition::MinimumPosition(),
-        ASSERT_NO_EXCEPTION);
-    EXPECT_FALSE(module.IsNull());
-    ScriptValue exception = module.Instantiate(script_state);
-    EXPECT_TRUE(exception.IsEmpty());
-    ScriptValue value = module.Evaluate(script_state);
-    return value.IsEmpty();
-  }
-
   std::unique_ptr<WorkerReportingProxy> reporting_proxy_;
 };
 
@@ -448,6 +454,11 @@ TEST_F(AnimationWorkletGlobalScopeTest, BasicParsing) {
 TEST_F(AnimationWorkletGlobalScopeTest, ConstructAndAnimate) {
   RunTestOnWorkletThread(
       &AnimationWorkletGlobalScopeTest::RunConstructAndAnimateTestOnWorklet);
+}
+
+TEST_F(AnimationWorkletGlobalScopeTest, StateExistence) {
+  RunTestOnWorkletThread(
+      &AnimationWorkletGlobalScopeTest::RunStateExistenceTestOnWorklet);
 }
 
 TEST_F(AnimationWorkletGlobalScopeTest, AnimationOutput) {
@@ -470,12 +481,13 @@ TEST_F(AnimationWorkletGlobalScopeTest,
   MockAnimationWorkletProxyClient* proxy_client =
       MakeGarbageCollected<MockAnimationWorkletProxyClient>();
   std::unique_ptr<WorkerThread> worklet =
-      CreateAnimationAndPaintWorkletThread(proxy_client);
+      CreateThreadAndProvideAnimationWorkletProxyClient(
+          &GetDocument(), reporting_proxy_.get(), proxy_client);
   // Animation worklet global scope (AWGS) should not register itself upon
   // creation.
   EXPECT_FALSE(proxy_client->did_add_global_scope());
 
-  WaitableEvent waitable_event;
+  base::WaitableEvent waitable_event;
   String source_code =
       R"JS(
         registerAnimator('test', class {
@@ -485,11 +497,11 @@ TEST_F(AnimationWorkletGlobalScopeTest,
       )JS";
   PostCrossThreadTask(
       *worklet->GetTaskRunner(TaskType::kInternalTest), FROM_HERE,
-      CrossThreadBind(&AnimationWorkletGlobalScopeTest::RunScriptOnWorklet,
-                      CrossThreadUnretained(this),
-                      Passed(std::move(source_code)),
-                      CrossThreadUnretained(worklet.get()),
-                      CrossThreadUnretained(&waitable_event)));
+      CrossThreadBindOnce(&AnimationWorkletGlobalScopeTest::RunScriptOnWorklet,
+                          CrossThreadUnretained(this),
+                          Passed(std::move(source_code)),
+                          CrossThreadUnretained(worklet.get()),
+                          CrossThreadUnretained(&waitable_event)));
   waitable_event.Wait();
 
   // AWGS should register itself first time an animator is registered with it.
@@ -497,80 +509,6 @@ TEST_F(AnimationWorkletGlobalScopeTest,
 
   worklet->Terminate();
   worklet->WaitForShutdownForTesting();
-}
-
-TEST_F(AnimationWorkletGlobalScopeTest, SelectGlobalScope) {
-  AnimationWorkletProxyClient* proxy_client =
-      MakeGarbageCollected<MockAnimationWorkletProxyClient>();
-
-  // Global scopes must be created on worker threads.
-  std::unique_ptr<WorkerThread> first_worklet =
-      CreateAnimationAndPaintWorkletThread(proxy_client);
-  std::unique_ptr<WorkerThread> second_worklet =
-      CreateAnimationAndPaintWorkletThread(proxy_client);
-
-  ASSERT_NE(first_worklet, second_worklet);
-
-  // Register global scopes with proxy client. This step must be performed on
-  // the worker threads.
-  WaitableEvent waitable_event;
-  PostCrossThreadTask(
-      *first_worklet->GetTaskRunner(TaskType::kInternalTest), FROM_HERE,
-      CrossThreadBind(
-          &AnimationWorkletGlobalScopeTest::AddGlobalScopeForTesting,
-          CrossThreadUnretained(this),
-          CrossThreadUnretained(first_worklet.get()),
-          CrossThreadPersistent<AnimationWorkletProxyClient>(proxy_client),
-          CrossThreadUnretained(&waitable_event)));
-  waitable_event.Wait();
-
-  waitable_event.Reset();
-  PostCrossThreadTask(
-      *second_worklet->GetTaskRunner(TaskType::kInternalTest), FROM_HERE,
-      CrossThreadBind(
-          &AnimationWorkletGlobalScopeTest::AddGlobalScopeForTesting,
-          CrossThreadUnretained(this),
-          CrossThreadUnretained(second_worklet.get()),
-          CrossThreadPersistent<AnimationWorkletProxyClient>(proxy_client),
-          CrossThreadUnretained(&waitable_event)));
-  waitable_event.Wait();
-
-  AnimationWorkletGlobalScope* stateful_global_scope =
-      proxy_client->global_scopes_[0];
-  AnimationWorkletGlobalScope* first_stateless_global_scope =
-      proxy_client->global_scopes_[0];
-  AnimationWorkletGlobalScope* second_stateless_global_scope =
-      proxy_client->global_scopes_[1];
-
-  // Initialize switch countdown to 1, to force a switch in the stateless
-  // global scope on the second call.
-  proxy_client->next_global_scope_switch_countdown_ = 1;
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            first_stateless_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            second_stateless_global_scope);
-
-  // Increase countdown and verify that the switchover adjusts as expected.
-  proxy_client->next_global_scope_switch_countdown_ = 3;
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            second_stateless_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            second_stateless_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            second_stateless_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatefulGlobalScope(), stateful_global_scope);
-  EXPECT_EQ(proxy_client->SelectStatelessGlobalScope(),
-            first_stateless_global_scope);
-
-  first_worklet->Terminate();
-  first_worklet->WaitForShutdownForTesting();
-  second_worklet->Terminate();
-  second_worklet->WaitForShutdownForTesting();
 }
 
 }  // namespace blink

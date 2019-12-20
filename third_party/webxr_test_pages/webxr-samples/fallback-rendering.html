@@ -36,6 +36,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     <!--The polyfill is not needed for browser that have native API support,
         but is linked by these samples for wider compatibility.-->
     <!--script src='https://cdn.jsdelivr.net/npm/webxr-polyfill@latest/build/webxr-polyfill.js'></script-->
+    <script src='js/xrray-polyfill.js' type='module'></script>
     <script src='js/webxr-polyfill.js'></script>
 
     <script src='js/webxr-button.js'></script>
@@ -47,7 +48,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         <p>
           This sample demonstrates a way to fallback to rendering the scene when
           WebXR isn't available.
-          <a class="back" href="./">Back</a>
+          <a class="back" href="./index.html">Back</a>
         </p>
       </details>
     </header>
@@ -73,8 +74,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       let gl = null;
       let renderer = null;
       let scene = new Scene();
-      scene.addNode(new Gltf2Node({url: 'media/gltf/space/space.gltf'}));
-      scene.addNode(new SkyboxNode({url: 'media/textures/milky-way-4k.png'}));
+      scene.addNode(new Gltf2Node({url: '../media/gltf/space/space.gltf'}));
+      scene.addNode(new SkyboxNode({url: '../media/textures/milky-way-4k.png'}));
 
       let projectionMatrix = mat4.create();
       let viewMatrix = mat4.create();
@@ -82,23 +83,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       function initXR() {
         xrButton = new XRDeviceButton({
           onRequestSession: onRequestSession,
-          onEndSession: onEndSession
+          onEndSession: onEndSession,
+          supportedSessionTypes: ['immersive-vr']
         });
         document.querySelector('header').appendChild(xrButton.domElement);
 
         if (navigator.xr) {
-          navigator.xr.supportsSessionMode('immersive-vr').then(() => {
-            xrButton.enabled = true;
+          requestInlineSession()
+          .then((session) => {
+            gl.canvas.addEventListener('touchend', () => {
+              session.end().then(() => {
+                requestInlineSession({ optionalFeatures: ['local'] });
+              }, { once: true });
+            })
           });
-
-          let outputCanvas = document.createElement('canvas');
-          let ctx = outputCanvas.getContext('xrpresent');
-
-          navigator.xr.requestSession({ outputContext: ctx })
-              .then((session) => {
-                document.body.appendChild(outputCanvas);
-                onSessionStarted(session);
-              });
         } else {
           // If navigator.xr isn't present in the browser then we need to use
           // the fallback rendering path.
@@ -150,15 +148,19 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       }
 
       function onRequestSession() {
-        let mirrorCanvas = document.createElement('canvas');
-        let ctx = mirrorCanvas.getContext('xrpresent');
-        mirrorCanvas.setAttribute('id', 'mirror-canvas');
-        document.body.appendChild(mirrorCanvas);
-
-        navigator.xr.requestSession({ mode: 'immersive-vr', outputContext: ctx }).then((session) => {
+        navigator.xr.requestSession('immersive-vr').then((session) => {
+          session.mode = 'immersive-vr';
           xrButton.setSession(session);
           onSessionStarted(session);
         });
+      }
+
+      function requestInlineSession(options) {
+        return navigator.xr.requestSession('inline', options)
+          .then((session) => {
+            session.mode = 'inline';
+            return onSessionStarted(session);
+          });
       }
 
       function onSessionStarted(session) {
@@ -166,9 +168,21 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         initGL();
 
-        session.baseLayer = new XRWebGLLayer(session, gl);
+        session.updateRenderState({
+            baseLayer: new XRWebGLLayer(session, gl)
+        });
 
-        session.requestReferenceSpace({ type: 'stationary', subtype: 'eye-level' }).then((refSpace) => {
+        session.requestReferenceSpace('local').then((refSpace) => {
+          return refSpace;
+        }, (e) => {
+          if (!session.mode.startsWith('immersive')) {
+            // If we're in inline mode, our underlying platform may not support
+            // the stationary reference space, but an identity space is guaranteed.
+            return session.requestReferenceSpace('viewer');
+          } else {
+            throw e;
+          }
+        }).then((refSpace) => {
           if (session.mode.startsWith('immersive')) {
             xrImmersiveRefSpace = refSpace;
           } else {
@@ -176,6 +190,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           }
           session.requestAnimationFrame(onXRFrame);
         });
+
+        return session;
       }
 
       function onEndSession(session) {
@@ -184,7 +200,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
       function onSessionEnded(event) {
         if (event.session.mode.startsWith('immersive')) {
-          document.body.removeChild(document.querySelector('#mirror-canvas'));
           xrButton.setSession(null);
         }
       }
@@ -201,15 +216,15 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         scene.startFrame();
 
         if (pose) {
-          gl.bindFramebuffer(gl.FRAMEBUFFER, session.baseLayer.framebuffer);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, session.renderState.baseLayer.framebuffer);
           gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
           for (let view of pose.views) {
-            let viewport = session.baseLayer.getViewport(view);
+            let viewport = session.renderState.baseLayer.getViewport(view);
             gl.viewport(viewport.x, viewport.y,
                         viewport.width, viewport.height);
 
-            scene.draw(view.projectionMatrix, view.viewMatrix);
+            scene.draw(view.projectionMatrix, view.transform.inverse.matrix);
           }
         }
 
@@ -229,7 +244,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         // only when we resize for efficency.
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        // We're drawing with our own projection and view matrix now, and we 
+        // We're drawing with our own projection and view matrix now, and we
         // don't have a list of view to loop through, but otherwise all of the
         // WebGL drawing logic is exactly the same.
         scene.draw(projectionMatrix, viewMatrix);

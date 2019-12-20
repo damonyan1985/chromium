@@ -8,6 +8,8 @@
 #import <Foundation/Foundation.h>
 
 @protocol ApplicationCommands;
+@protocol BrowserCommands;
+@protocol BrowsingDataCommands;
 
 // TODO(crbug.com/894800): This protocol is added to have a common interface
 // between the SettingsRootViewControllers for table views and collections.
@@ -15,7 +17,9 @@
 @protocol SettingsRootViewControlling
 
 // The dispatcher used by this ViewController.
-@property(nonatomic, weak) id<ApplicationCommands> dispatcher;
+@property(nonatomic, weak)
+    id<ApplicationCommands, BrowserCommands, BrowsingDataCommands>
+        dispatcher;
 
 @end
 

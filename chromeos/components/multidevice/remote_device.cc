@@ -18,18 +18,30 @@ std::string RemoteDevice::GenerateDeviceId(const std::string& public_key) {
   return device_id;
 }
 
+// static
+std::string RemoteDevice::DerivePublicKey(const std::string& device_id) {
+  std::string public_key;
+  if (base::Base64Decode(device_id, &public_key))
+    return public_key;
+  return std::string();
+}
+
 RemoteDevice::RemoteDevice() : last_update_time_millis(0L) {}
 
 RemoteDevice::RemoteDevice(
-    const std::string& user_id,
+    const std::string& user_email,
+    const std::string& instance_id,
     const std::string& name,
+    const std::string& pii_free_name,
     const std::string& public_key,
     const std::string& persistent_symmetric_key,
     int64_t last_update_time_millis,
     const std::map<SoftwareFeature, SoftwareFeatureState>& software_features,
     const std::vector<BeaconSeed>& beacon_seeds)
-    : user_id(user_id),
+    : user_email(user_email),
+      instance_id(instance_id),
       name(name),
+      pii_free_name(pii_free_name),
       public_key(public_key),
       persistent_symmetric_key(persistent_symmetric_key),
       last_update_time_millis(last_update_time_millis),
@@ -45,7 +57,8 @@ std::string RemoteDevice::GetDeviceId() const {
 }
 
 bool RemoteDevice::operator==(const RemoteDevice& other) const {
-  return user_id == other.user_id && name == other.name &&
+  return user_email == other.user_email && instance_id == other.instance_id &&
+         name == other.name && pii_free_name == other.pii_free_name &&
          public_key == other.public_key &&
          persistent_symmetric_key == other.persistent_symmetric_key &&
          last_update_time_millis == other.last_update_time_millis &&
@@ -54,9 +67,16 @@ bool RemoteDevice::operator==(const RemoteDevice& other) const {
 }
 
 bool RemoteDevice::operator<(const RemoteDevice& other) const {
-  // |public_key| is the only field guaranteed to be set and is also unique to
-  // each RemoteDevice. However, since it can contain null bytes, use
-  // GetDeviceId(), which cannot contain null bytes, to compare devices.
+  // TODO(https://crbug.com/1019206): Only compare by Instance ID when v1
+  // DeviceSync is disabled since it is guaranteed to be set in v2 DeviceSync.
+
+  if (!instance_id.empty() || !other.instance_id.empty())
+    return instance_id.compare(other.instance_id) < 0;
+
+  // |public_key| can contain null bytes, so use GetDeviceId(), which cannot
+  // contain null bytes, to compare devices.
+  // Note: Devices that do not have an Instance ID are v1 DeviceSync devices,
+  // which should have a public key.
   return GetDeviceId().compare(other.GetDeviceId()) < 0;
 }
 

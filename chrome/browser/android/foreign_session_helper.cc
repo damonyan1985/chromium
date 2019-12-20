@@ -9,6 +9,7 @@
 
 #include "base/android/jni_string.h"
 #include "base/bind.h"
+#include "chrome/android/chrome_jni_headers/ForeignSessionHelper_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile_android.h"
@@ -19,16 +20,15 @@
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/session_sync_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/ForeignSessionHelper_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
@@ -165,34 +165,27 @@ ForeignSessionHelper::ForeignSessionHelper(Profile* profile)
 ForeignSessionHelper::~ForeignSessionHelper() {
 }
 
-void ForeignSessionHelper::Destroy(JNIEnv* env,
-                                   const JavaParamRef<jobject>& obj) {
+void ForeignSessionHelper::Destroy(JNIEnv* env) {
   delete this;
 }
 
-jboolean ForeignSessionHelper::IsTabSyncEnabled(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+jboolean ForeignSessionHelper::IsTabSyncEnabled(JNIEnv* env) {
   sync_sessions::SessionSyncService* service =
       SessionSyncServiceFactory::GetInstance()->GetForProfile(profile_);
   return service && service->GetOpenTabsUIDelegate();
 }
 
-void ForeignSessionHelper::TriggerSessionSync(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  browser_sync::ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
+void ForeignSessionHelper::TriggerSessionSync(JNIEnv* env) {
+  syncer::SyncService* service =
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (!service)
     return;
 
-  const syncer::ModelTypeSet types(syncer::SESSIONS);
-  service->TriggerRefresh(types);
+  service->TriggerRefresh({syncer::SESSIONS});
 }
 
 void ForeignSessionHelper::SetOnForeignSessionCallback(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& callback) {
   callback_.Reset(env, callback);
 }
@@ -207,7 +200,6 @@ void ForeignSessionHelper::FireForeignSessionCallback() {
 
 jboolean ForeignSessionHelper::GetForeignSessions(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& result) {
   OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate(profile_);
   if (!open_tabs)
@@ -255,7 +247,6 @@ jboolean ForeignSessionHelper::GetForeignSessions(
 
 jboolean ForeignSessionHelper::OpenForeignSessionTab(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_tab,
     const JavaParamRef<jstring>& session_tag,
     jint session_tab_id,
@@ -298,7 +289,6 @@ jboolean ForeignSessionHelper::OpenForeignSessionTab(
 
 void ForeignSessionHelper::DeleteForeignSession(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jstring>& session_tag) {
   OpenTabsUIDelegate* open_tabs = GetOpenTabsUIDelegate(profile_);
   if (open_tabs)
@@ -307,10 +297,9 @@ void ForeignSessionHelper::DeleteForeignSession(
 
 void ForeignSessionHelper::SetInvalidationsForSessionsEnabled(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     jboolean enabled) {
-  browser_sync::ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
+  syncer::SyncService* service =
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (!service)
     return;
 

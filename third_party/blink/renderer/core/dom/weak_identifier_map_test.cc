@@ -11,7 +11,7 @@ namespace blink {
 
 class WeakIdentifierMapTest : public ::testing::Test {
  public:
-  class TestClass final : public GarbageCollectedFinalized<TestClass> {
+  class TestClass final : public GarbageCollected<TestClass> {
    public:
     virtual void Trace(Visitor*) {}
   };
@@ -22,14 +22,13 @@ class WeakIdentifierMapTest : public ::testing::Test {
   void TearDown() override;
 
   void CollectGarbage() {
-    ThreadState::Current()->CollectGarbage(
-        BlinkGC::kNoHeapPointersOnStack, BlinkGC::kAtomicMarking,
-        BlinkGC::kEagerSweeping, BlinkGC::GCReason::kForcedGC);
+    ThreadState::Current()->CollectAllGarbageForTesting(
+        BlinkGC::kNoHeapPointersOnStack);
   }
 };
 
 DECLARE_WEAK_IDENTIFIER_MAP(WeakIdentifierMapTest::TestClass);
-DEFINE_WEAK_IDENTIFIER_MAP(WeakIdentifierMapTest::TestClass);
+DEFINE_WEAK_IDENTIFIER_MAP(WeakIdentifierMapTest::TestClass)
 
 void WeakIdentifierMapTest::SetUp() {
   EXPECT_EQ(0u, TestMap::GetSizeForTesting());

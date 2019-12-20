@@ -23,7 +23,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.BaseSwitches;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.process_launcher.ChildConnectionAllocator;
@@ -35,6 +34,7 @@ import org.chromium.content_public.browser.test.ChildProcessAllocatorSettings;
 import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_shell_apk.ChildProcessLauncherTestHelperService;
 import org.chromium.content_shell_apk.ChildProcessLauncherTestUtils;
 
@@ -58,8 +58,8 @@ public class ChildProcessLauncherHelperTest {
     private static final int BLOCK_UNTIL_SETUP = 2;
 
     @Before
-    public void setUp() throws Exception {
-        LibraryLoader.getInstance().ensureInitialized(LibraryProcessType.PROCESS_CHILD);
+    public void setUp() {
+        LibraryLoader.getInstance().ensureInitialized();
     }
 
     /**
@@ -149,7 +149,9 @@ public class ChildProcessLauncherHelperTest {
 
         // Launch a service from this process. Since slot 0 is already bound by the Helper, it
         // will fail to start and the ChildProcessLauncher will retry and use the slot 1.
-        ChildProcessCreationParamsImpl.set(context.getPackageName(), false /* isExternalService */,
+        ChildProcessCreationParamsImpl.set(context.getPackageName(),
+                null /* privilegedServicesName */, context.getPackageName(),
+                null /* sandboxedServicesName */, false /* isExternalService */,
                 LibraryProcessType.PROCESS_CHILD, true /* bindToCallerCheck */,
                 false /* ignoreVisibilityForImportance */);
         ChildProcessLauncherHelperImpl launcher =
@@ -160,8 +162,9 @@ public class ChildProcessLauncherHelperTest {
         Assert.assertEquals(
                 1, ChildProcessLauncherTestUtils.getConnectionServiceNumber(retryConnection));
 
-        ChildConnectionAllocator connectionAllocator =
-                launcher.getChildConnectionAllocatorForTesting();
+        ChildConnectionAllocator.FixedSizeAllocatorImpl connectionAllocator =
+                (ChildConnectionAllocator.FixedSizeAllocatorImpl)
+                        launcher.getChildConnectionAllocatorForTesting();
 
         // Check that only one connection is created.
         for (int i = 0; i < connectionAllocator.getNumberOfServices(); ++i) {
@@ -213,21 +216,17 @@ public class ChildProcessLauncherHelperTest {
                 0, ChildProcessLauncherTestUtils.getConnectionServiceNumber(connection));
     }
 
-    private static void warmUpOnUiThreadBlocking(final Context context) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                ChildProcessLauncherHelperImpl.warmUp(context);
-            }
-        });
-        ChildProcessConnection connection = getWarmUpConnection();
+    private static void warmUpOnUiThreadBlocking(final Context context, boolean sandboxed) {
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { ChildProcessLauncherHelperImpl.warmUp(context, sandboxed); });
+        ChildProcessConnection connection = getWarmUpConnection(sandboxed);
         Assert.assertNotNull(connection);
         blockUntilConnected(connection);
     }
 
     private void testWarmUpImpl() {
         Context context = InstrumentationRegistry.getTargetContext();
-        warmUpOnUiThreadBlocking(context);
+        warmUpOnUiThreadBlocking(context, true /* sandboxed */);
 
         Assert.assertEquals(1, getConnectedSandboxedServicesCount());
 
@@ -258,7 +257,9 @@ public class ChildProcessLauncherHelperTest {
     @Feature({"ProcessManagement"})
     public void testWarmUpWithBindToCaller() {
         Context context = InstrumentationRegistry.getTargetContext();
-        ChildProcessCreationParamsImpl.set(context.getPackageName(), false /* isExternalService */,
+        ChildProcessCreationParamsImpl.set(context.getPackageName(),
+                null /* privilegedServicesName */, context.getPackageName(),
+                null /* sandboxedServicesName */, false /* isExternalService */,
                 LibraryProcessType.PROCESS_CHILD, true /* bindToCallerCheck */,
                 false /* ignoreVisibilityForImportance */);
         testWarmUpImpl();
@@ -268,16 +269,16 @@ public class ChildProcessLauncherHelperTest {
     @Test
     @MediumTest
     @Feature({"ProcessManagement"})
-    public void testWarmUpProcessCrashBeforeUse() throws RemoteException {
+    public void testWarmUpProcessCrashBeforeUse() {
         Assert.assertEquals(0, getConnectedSandboxedServicesCount());
 
         Context context = InstrumentationRegistry.getTargetContext();
-        warmUpOnUiThreadBlocking(context);
+        warmUpOnUiThreadBlocking(context, true /* sandboxed */);
 
         Assert.assertEquals(1, getConnectedSandboxedServicesCount());
 
         // Crash the warm-up connection before it gets used.
-        ChildProcessConnection connection = getWarmUpConnection();
+        ChildProcessConnection connection = getWarmUpConnection(true /* sandboxed */);
         Assert.assertNotNull(connection);
         connection.crashServiceForTesting();
 
@@ -295,9 +296,9 @@ public class ChildProcessLauncherHelperTest {
     @Test
     @MediumTest
     @Feature({"ProcessManagement"})
-    public void testWarmUpProcessCrashAfterUse() throws RemoteException {
+    public void testWarmUpProcessCrashAfterUse() {
         Context context = InstrumentationRegistry.getTargetContext();
-        warmUpOnUiThreadBlocking(context);
+        warmUpOnUiThreadBlocking(context, true /* sandboxed */);
 
         Assert.assertEquals(1, getConnectedSandboxedServicesCount());
 
@@ -316,10 +317,32 @@ public class ChildProcessLauncherHelperTest {
         waitForConnectedSandboxedServicesCount(0);
     }
 
+    // Tests that the warm-up the previleged process connection.
     @Test
     @MediumTest
     @Feature({"ProcessManagement"})
-    public void testLauncherCleanup() throws RemoteException {
+    public void testWarmUpPrivilegedProcess() {
+        Assert.assertEquals(0, getConnectedServicesCount());
+
+        Context context = InstrumentationRegistry.getTargetContext();
+        warmUpOnUiThreadBlocking(context, false /* sandboxed */);
+
+        Assert.assertEquals(0, getConnectedSandboxedServicesCount());
+        Assert.assertEquals(1, getConnectedServicesCount());
+
+        // And subsequent process launches should work.
+        ChildProcessLauncherHelperImpl launcher =
+                startChildProcess(BLOCK_UNTIL_SETUP, true /* doSetupConnection */,
+                        false /* sandboxed */, true /* canUseWarmUpConnection */);
+        Assert.assertEquals(1, getConnectedServicesCount());
+        Assert.assertEquals(0, getConnectedSandboxedServicesCount());
+        Assert.assertNotNull(ChildProcessLauncherTestUtils.getConnection(launcher));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"ProcessManagement"})
+    public void testLauncherCleanup() {
         ChildProcessLauncherHelperImpl launcher =
                 startSandboxedChildProcess(BLOCK_UNTIL_SETUP, true /* doSetupConnection */);
         int pid = getPid(launcher);
@@ -341,6 +364,12 @@ public class ChildProcessLauncherHelperTest {
 
     private static ChildProcessLauncherHelperImpl startSandboxedChildProcess(
             int blockingPolicy, final boolean doSetupConnection) {
+        return startChildProcess(blockingPolicy, doSetupConnection, true /* sandboxed */,
+                true /* canUseWarmUpConnection */);
+    }
+
+    private static ChildProcessLauncherHelperImpl startChildProcess(int blockingPolicy,
+            final boolean doSetupConnection, boolean sandboxed, boolean canUseWarmUpConnection) {
         assert doSetupConnection || blockingPolicy != BLOCK_UNTIL_SETUP;
         ChildProcessLauncherHelperImpl launcher =
                 ChildProcessLauncherTestUtils.runOnLauncherAndGetResult(
@@ -348,8 +377,8 @@ public class ChildProcessLauncherHelperTest {
                             @Override
                             public ChildProcessLauncherHelperImpl call() {
                                 return ChildProcessLauncherHelperImpl.createAndStartForTesting(
-                                        sProcessWaitArguments, new FileDescriptorInfo[0],
-                                        true /* sandboxed */, null /* binderCallback */,
+                                        sProcessWaitArguments, new FileDescriptorInfo[0], sandboxed,
+                                        canUseWarmUpConnection, null /* binderCallback */,
                                         doSetupConnection);
                             }
                         });
@@ -392,6 +421,16 @@ public class ChildProcessLauncherHelperTest {
                         return getPid(launcher) != 0;
                     }
                 });
+    }
+
+    // Returns the number of all connection currently connected.
+    private static int getConnectedServicesCount() {
+        return ChildProcessLauncherTestUtils.runOnLauncherAndGetResult(new Callable<Integer>() {
+            @Override
+            public Integer call() {
+                return ChildProcessLauncherHelperImpl.getConnectedServicesCountForTesting();
+            }
+        });
     }
 
     // Returns the number of sandboxed connection currently connected,
@@ -463,12 +502,13 @@ public class ChildProcessLauncherHelperTest {
         });
     }
 
-    private static ChildProcessConnection getWarmUpConnection() {
+    private static ChildProcessConnection getWarmUpConnection(boolean sandboxed) {
         return ChildProcessLauncherTestUtils.runOnLauncherAndGetResult(
                 new Callable<ChildProcessConnection>() {
                     @Override
                     public ChildProcessConnection call() {
-                        return ChildProcessLauncherHelperImpl.getWarmUpConnectionForTesting();
+                        return ChildProcessLauncherHelperImpl.getWarmUpConnectionForTesting(
+                                sandboxed);
                     }
                 });
     }

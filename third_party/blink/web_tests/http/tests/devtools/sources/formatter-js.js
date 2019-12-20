@@ -9,12 +9,12 @@
   await TestRunner.addScriptTag('debugger/resources/obfuscated.js');
 
   var uiSourceCode = await TestRunner.waitForUISourceCode('obfuscated.js');
-  var formatData = await Sources.sourceFormatter.format(uiSourceCode);
-  var targetContent = await formatData.formattedSourceCode.requestContent();
+  var formatData = await Formatter.sourceFormatter.format(uiSourceCode);
+  var targetContent = (await formatData.formattedSourceCode.requestContent()).content;
 
   TestRunner.addResult(`Formatted:\n${targetContent}`);
 
-  var originalContent = await uiSourceCode.requestContent();
+  var originalContent = (await uiSourceCode.requestContent()).content;
   var text = new TextUtils.Text(originalContent);
   var positions = [];
   for (var offset = originalContent.indexOf('{'); offset >= 0; offset = originalContent.indexOf('{', offset + 1))
@@ -24,7 +24,7 @@
   TestRunner.addResult('Location mapping with formatted source:');
   dumpLocations(positions);
 
-  Sources.sourceFormatter.discardFormattedUISourceCode(formatData.formattedSourceCode);
+  Formatter.sourceFormatter.discardFormattedUISourceCode(formatData.formattedSourceCode);
 
   TestRunner.addResult('Location mapping without formatted source:');
   dumpLocations(positions);

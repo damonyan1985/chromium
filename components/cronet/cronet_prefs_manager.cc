@@ -14,6 +14,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/cronet/host_cache_persistence_manager.h"
 #include "components/prefs/json_pref_store.h"
@@ -21,7 +22,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
-#include "net/http/http_server_properties_manager.h"
+#include "net/http/http_server_properties.h"
 #include "net/nqe/network_qualities_prefs_manager.h"
 #include "net/url_request/url_request_context_builder.h"
 
@@ -69,9 +70,9 @@ void InitializeStorageDirectory(const base::FilePath& dir) {
     return;
   }
   // Delete old directory recursively and create a new directory.
-  // base::DeleteFile returns true if the directory does not exist, so it is
-  // fine if there is nothing on disk.
-  if (!(base::DeleteFile(dir, true) && base::CreateDirectory(dir))) {
+  // base::DeleteFileRecursively() returns true if the directory does not exist,
+  // so it is fine if there is nothing on disk.
+  if (!(base::DeleteFileRecursively(dir) && base::CreateDirectory(dir))) {
     DLOG(WARNING) << "Cannot purge directory.";
     return;
   }
@@ -98,9 +99,8 @@ void InitializeStorageDirectory(const base::FilePath& dir) {
   }
 }
 
-// Connects the HttpServerPropertiesManager's storage to the prefs.
-class PrefServiceAdapter
-    : public net::HttpServerPropertiesManager::PrefDelegate {
+// Connects the HttpServerProperties's storage to the prefs.
+class PrefServiceAdapter : public net::HttpServerProperties::PrefDelegate {
  public:
   explicit PrefServiceAdapter(PrefService* pref_service)
       : pref_service_(pref_service), path_(kHttpServerPropertiesPref) {
@@ -121,12 +121,11 @@ class PrefServiceAdapter
       pref_service_->CommitPendingWrite(std::move(callback));
   }
 
-  void StartListeningForUpdates(
-      const base::RepeatingClosure& callback) override {
-    pref_change_registrar_.Add(path_, callback);
+  void WaitForPrefLoad(base::OnceClosure callback) override {
     // Notify the pref manager that settings are already loaded, as a result
-    // of initializing the pref store synchornously.
-    base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+    // of initializing the pref store synchronously.
+    base::SequencedTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                     std::move(callback));
   }
 
  private:
@@ -142,9 +141,7 @@ class NetworkQualitiesPrefDelegateImpl
  public:
   // Caller must guarantee that |pref_service| outlives |this|.
   explicit NetworkQualitiesPrefDelegateImpl(PrefService* pref_service)
-      : pref_service_(pref_service),
-        lossy_prefs_writing_task_posted_(false),
-        weak_ptr_factory_(this) {
+      : pref_service_(pref_service), lossy_prefs_writing_task_posted_(false) {
     DCHECK(pref_service_);
   }
 
@@ -198,7 +195,8 @@ class NetworkQualitiesPrefDelegateImpl
 
   THREAD_CHECKER(thread_checker_);
 
-  base::WeakPtrFactory<NetworkQualitiesPrefDelegateImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<NetworkQualitiesPrefDelegateImpl> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(NetworkQualitiesPrefDelegateImpl);
 };
@@ -212,8 +210,7 @@ CronetPrefsManager::CronetPrefsManager(
     bool enable_network_quality_estimator,
     bool enable_host_cache_persistence,
     net::NetLog* net_log,
-    net::URLRequestContextBuilder* context_builder)
-    : http_server_properties_manager_(nullptr) {
+    net::URLRequestContextBuilder* context_builder) {
   DCHECK(network_task_runner->BelongsToCurrentThread());
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
@@ -240,8 +237,7 @@ CronetPrefsManager::CronetPrefsManager(
   PrefServiceFactory factory;
   factory.set_user_prefs(json_pref_store_);
   scoped_refptr<PrefRegistrySimple> registry(new PrefRegistrySimple());
-  registry->RegisterDictionaryPref(kHttpServerPropertiesPref,
-                                   std::make_unique<base::DictionaryValue>());
+  registry->RegisterDictionaryPref(kHttpServerPropertiesPref);
 
   if (enable_network_quality_estimator) {
     // Use lossy prefs to limit the overhead of reading/writing the prefs.
@@ -254,19 +250,13 @@ CronetPrefsManager::CronetPrefsManager(
   }
 
   {
-    SCOPED_UMA_HISTOGRAM_TIMER("Net.Cronet.PrefsInitTime");
     base::ScopedAllowBlocking allow_blocking;
     pref_service_ = factory.Create(registry.get());
   }
 
-  http_server_properties_manager_ = new net::HttpServerPropertiesManager(
-      std::make_unique<PrefServiceAdapter>(pref_service_.get()), net_log);
-
-  // Passes |http_server_properties_manager_| ownership to |context_builder|.
-  // The ownership will be subsequently passed to UrlRequestContext.
   context_builder->SetHttpServerProperties(
-      std::unique_ptr<net::HttpServerPropertiesManager>(
-          http_server_properties_manager_));
+      std::make_unique<net::HttpServerProperties>(
+          std::make_unique<PrefServiceAdapter>(pref_service_.get()), net_log));
 }
 
 CronetPrefsManager::~CronetPrefsManager() {

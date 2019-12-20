@@ -58,7 +58,9 @@ constexpr net::NetworkTrafficAnnotationTag kReporterTrafficAnnotation =
               "replaced with generic strings, but it is possible some metadata "
               "may contain personally identifiable information. This "
               "information is a subset of the information in "
-              "\"chrome_cleanup_report\"."
+              "\"chrome_cleanup_report\". The complete data specification is "
+              "at "
+              "https://cs.chromium.org/chromium/src/chrome/chrome_cleaner/logging/proto/reporter_logs.proto."
             destination: GOOGLE_OWNED_SERVICE
           }
           policy {
@@ -146,7 +148,7 @@ void ReporterLoggingService::Initialize(RegistryLogger* registry_logger) {
     // Set invariant environment / machine data.
     FoilReporterLogs_EnvironmentData* env_data =
         reporter_logs_.mutable_environment();
-    env_data->set_windows_version(base::win::GetVersion());
+    env_data->set_windows_version(static_cast<int>(base::win::GetVersion()));
     env_data->set_reporter_version(CHROME_CLEANER_VERSION_UTF8_STRING);
     if (version_string_succeeded)
       env_data->set_chrome_version(base::WideToUTF8(version_string));

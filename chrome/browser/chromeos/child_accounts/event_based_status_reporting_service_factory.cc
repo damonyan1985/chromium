@@ -4,8 +4,9 @@
 
 #include "chrome/browser/chromeos/child_accounts/event_based_status_reporting_service_factory.h"
 
-#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service_factory.h"
+#include "chrome/browser/chromeos/child_accounts/child_status_reporting_service_factory.h"
 #include "chrome/browser/chromeos/child_accounts/event_based_status_reporting_service.h"
+#include "chrome/browser/chromeos/child_accounts/screen_time_controller_factory.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs_factory.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 
@@ -31,8 +32,9 @@ EventBasedStatusReportingServiceFactory::
     : BrowserContextKeyedServiceFactory(
           "EventBasedStatusReportingServiceFactory",
           BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ConsumerStatusReportingServiceFactory::GetInstance());
+  DependsOn(ChildStatusReportingServiceFactory::GetInstance());
   DependsOn(ArcAppListPrefsFactory::GetInstance());
+  DependsOn(ScreenTimeControllerFactory::GetInstance());
 }
 
 EventBasedStatusReportingServiceFactory::

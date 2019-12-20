@@ -36,14 +36,14 @@
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "ios/public/provider/chrome/browser/omaha/omaha_service_provider.h"
 #include "ios/public/provider/chrome/browser/omaha/omaha_xml_writer.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
-#include "libxml/xmlwriter.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "net/base/backoff_entry.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/url_fetcher.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "third_party/libxml/chromium/xml_writer.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -71,50 +71,38 @@ NSString* const kRetryRequestIdKey = @"ChromeOmahaServiceRetryRequestId";
 
 class XmlWrapper : public OmahaXmlWriter {
  public:
-  XmlWrapper()
-      : buffer_(xmlBufferCreate()),
-        writer_(xmlNewTextWriterMemory(buffer_, /* compression */ 0)) {
-    DCHECK(buffer_);
-    DCHECK(writer_);
+  XmlWrapper() {
+    writer_.StartWriting();
+    writer_.StopIndenting();
   }
 
-  ~XmlWrapper() override {
-    xmlFreeTextWriter(writer_);
-    xmlBufferFree(buffer_);
-  }
+  ~XmlWrapper() override = default;
 
   void StartElement(const char* name) override {
     DCHECK(name);
-    int result = xmlTextWriterStartElement(
-        writer_, reinterpret_cast<const xmlChar*>(name));
-    DCHECK_GE(result, 0);
+    bool ok = writer_.StartElement(name);
+    DCHECK(ok);
   }
 
   void EndElement() override {
-    int result = xmlTextWriterEndElement(writer_);
-    DCHECK_GE(result, 0);
+    bool ok = writer_.EndElement();
+    DCHECK(ok);
   }
 
   void WriteAttribute(const char* name, const char* value) override {
     DCHECK(name);
-    int result = xmlTextWriterWriteAttribute(
-        writer_, reinterpret_cast<const xmlChar*>(name),
-        reinterpret_cast<const xmlChar*>(value));
-    DCHECK_GE(result, 0);
+    bool ok = writer_.AddAttribute(name, value);
+    DCHECK(ok);
   }
 
-  void Finalize() override {
-    int result = xmlTextWriterEndDocument(writer_);
-    DCHECK_GE(result, 0);
-  }
+  void Finalize() override { writer_.StopWriting(); }
 
   std::string GetContentAsString() override {
-    return std::string(reinterpret_cast<char*>(buffer_->content));
+    return writer_.GetWrittenString();
   }
 
  private:
-  xmlBufferPtr buffer_;
-  xmlTextWriterPtr writer_;
+  XmlWriter writer_;
 
   DISALLOW_COPY_AND_ASSIGN(XmlWrapper);
 };
@@ -125,16 +113,16 @@ class XmlWrapper : public OmahaXmlWriter {
 
 // XML parser for the server response.
 @interface ResponseParser : NSObject<NSXMLParserDelegate> {
-  BOOL hasError_;
-  BOOL responseIsParsed_;
-  BOOL appIsParsed_;
-  BOOL updateCheckIsParsed_;
-  BOOL urlIsParsed_;
-  BOOL manifestIsParsed_;
-  BOOL pingIsParsed_;
-  BOOL eventIsParsed_;
-  NSString* appId_;
-  std::unique_ptr<UpgradeRecommendedDetails> updateInformation_;
+  BOOL _hasError;
+  BOOL _responseIsParsed;
+  BOOL _appIsParsed;
+  BOOL _updateCheckIsParsed;
+  BOOL _urlIsParsed;
+  BOOL _manifestIsParsed;
+  BOOL _pingIsParsed;
+  BOOL _eventIsParsed;
+  NSString* _appId;
+  std::unique_ptr<UpgradeRecommendedDetails> _updateInformation;
 }
 
 // Initialization method. |appId| is the application id one expects to find in
@@ -154,7 +142,7 @@ class XmlWrapper : public OmahaXmlWriter {
 
 - (instancetype)initWithAppId:(NSString*)appId {
   if (self = [super init]) {
-    appId_ = appId;
+    _appId = appId;
   }
   return self;
 }
@@ -162,11 +150,11 @@ class XmlWrapper : public OmahaXmlWriter {
 - (BOOL)isCorrect {
   // A response should have either a ping ACK or an event ACK, depending on the
   // contents of the request.
-  return !hasError_ && (pingIsParsed_ || eventIsParsed_);
+  return !_hasError && (_pingIsParsed || _eventIsParsed);
 }
 
 - (UpgradeRecommendedDetails*)upgradeRecommendedDetails {
-  return updateInformation_.get();
+  return _updateInformation.get();
 }
 
 // This method is parsing a message with the following type:
@@ -203,7 +191,7 @@ class XmlWrapper : public OmahaXmlWriter {
        namespaceURI:(NSString*)namespaceURI
       qualifiedName:(NSString*)qualifiedName
          attributes:(NSDictionary*)attributeDict {
-  if (hasError_)
+  if (_hasError)
     return;
 
   // Array of uninteresting tags in the Omaha xml response.
@@ -212,79 +200,79 @@ class XmlWrapper : public OmahaXmlWriter {
   if ([ignoredTagNames containsObject:elementName])
     return;
 
-  if (!responseIsParsed_) {
+  if (!_responseIsParsed) {
     if ([elementName isEqualToString:@"response"] &&
         [[attributeDict valueForKey:@"protocol"] isEqualToString:@"3.0"] &&
         [[attributeDict valueForKey:@"server"] isEqualToString:@"prod"]) {
-      responseIsParsed_ = YES;
+      _responseIsParsed = YES;
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
-  } else if (!appIsParsed_) {
+  } else if (!_appIsParsed) {
     if ([elementName isEqualToString:@"app"] &&
         [[attributeDict valueForKey:@"status"] isEqualToString:@"ok"] &&
-        [[attributeDict valueForKey:@"appid"] isEqualToString:appId_]) {
-      appIsParsed_ = YES;
+        [[attributeDict valueForKey:@"appid"] isEqualToString:_appId]) {
+      _appIsParsed = YES;
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
-  } else if (!eventIsParsed_ && !updateCheckIsParsed_) {
+  } else if (!_eventIsParsed && !_updateCheckIsParsed) {
     if ([elementName isEqualToString:@"updatecheck"]) {
-      updateCheckIsParsed_ = YES;
+      _updateCheckIsParsed = YES;
       NSString* status = [attributeDict valueForKey:@"status"];
       if ([status isEqualToString:@"noupdate"]) {
         // No update is available on the Market, so we won't get a <url> or
         // <manifest> tag.
-        urlIsParsed_ = YES;
-        manifestIsParsed_ = YES;
+        _urlIsParsed = YES;
+        _manifestIsParsed = YES;
       } else if ([status isEqualToString:@"ok"]) {
-        updateInformation_ = std::make_unique<UpgradeRecommendedDetails>();
+        _updateInformation = std::make_unique<UpgradeRecommendedDetails>();
       } else {
-        hasError_ = YES;
+        _hasError = YES;
       }
     } else if ([elementName isEqualToString:@"event"]) {
       if ([[attributeDict valueForKey:@"status"] isEqualToString:@"ok"]) {
-        eventIsParsed_ = YES;
+        _eventIsParsed = YES;
       } else {
-        hasError_ = YES;
+        _hasError = YES;
       }
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
-  } else if (!urlIsParsed_) {
+  } else if (!_urlIsParsed) {
     if ([elementName isEqualToString:@"url"] &&
         [[attributeDict valueForKey:@"codebase"] length] > 0) {
-      urlIsParsed_ = YES;
-      DCHECK(updateInformation_);
+      _urlIsParsed = YES;
+      DCHECK(_updateInformation);
       NSString* url = [attributeDict valueForKey:@"codebase"];
       if ([[url substringFromIndex:([url length] - 1)] isEqualToString:@"/"])
         url = [url substringToIndex:([url length] - 1)];
-      updateInformation_.get()->upgrade_url =
+      _updateInformation.get()->upgrade_url =
           GURL(base::SysNSStringToUTF8(url));
-      if (!updateInformation_.get()->upgrade_url.is_valid())
-        hasError_ = YES;
+      if (!_updateInformation.get()->upgrade_url.is_valid())
+        _hasError = YES;
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
-  } else if (!manifestIsParsed_) {
+  } else if (!_manifestIsParsed) {
     if ([elementName isEqualToString:@"manifest"] &&
         [attributeDict valueForKey:@"version"]) {
-      manifestIsParsed_ = YES;
-      DCHECK(updateInformation_);
-      updateInformation_.get()->next_version =
+      _manifestIsParsed = YES;
+      DCHECK(_updateInformation);
+      _updateInformation.get()->next_version =
           base::SysNSStringToUTF8([attributeDict valueForKey:@"version"]);
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
-  } else if (!pingIsParsed_) {
+  } else if (!_pingIsParsed) {
     if ([elementName isEqualToString:@"ping"] &&
         [[attributeDict valueForKey:@"status"] isEqualToString:@"ok"]) {
-      pingIsParsed_ = YES;
+      _pingIsParsed = YES;
     } else {
-      hasError_ = YES;
+      _hasError = YES;
     }
   } else {
-    hasError_ = YES;
+    _hasError = YES;
   }
 }
 
@@ -297,20 +285,20 @@ OmahaService* OmahaService::GetInstance() {
 }
 
 // static
-void OmahaService::Start(std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-                             url_loader_factory_info,
+void OmahaService::Start(std::unique_ptr<network::PendingSharedURLLoaderFactory>
+                             pending_url_loader_factory,
                          const UpgradeRecommendedCallback& callback) {
-  DCHECK(url_loader_factory_info);
+  DCHECK(pending_url_loader_factory);
   DCHECK(!callback.is_null());
   OmahaService* result = GetInstance();
   result->set_upgrade_recommended_callback(callback);
   // This should only be called once.
-  DCHECK(!result->url_loader_factory_info_ || !result->url_loader_factory_);
-  result->url_loader_factory_info_ = std::move(url_loader_factory_info);
+  DCHECK(!result->pending_url_loader_factory_ || !result->url_loader_factory_);
+  result->pending_url_loader_factory_ = std::move(pending_url_loader_factory);
   result->locale_lang_ = GetApplicationContext()->GetApplicationLocale();
-  base::PostTaskWithTraits(FROM_HERE, {web::WebThread::IO},
-                           base::Bind(&OmahaService::SendOrScheduleNextPing,
-                                      base::Unretained(result)));
+  base::PostTask(FROM_HERE, {web::WebThread::IO},
+                 base::BindOnce(&OmahaService::SendOrScheduleNextPing,
+                                base::Unretained(result)));
 }
 
 OmahaService::OmahaService()
@@ -390,10 +378,9 @@ void OmahaService::Initialize() {
 // static
 void OmahaService::GetDebugInformation(
     const base::Callback<void(base::DictionaryValue*)> callback) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {web::WebThread::IO},
-      base::Bind(&OmahaService::GetDebugInformationOnIOThread,
-                 base::Unretained(GetInstance()), callback));
+  base::PostTask(FROM_HERE, {web::WebThread::IO},
+                 base::BindOnce(&OmahaService::GetDebugInformationOnIOThread,
+                                base::Unretained(GetInstance()), callback));
 }
 
 // static
@@ -536,13 +523,13 @@ void OmahaService::SendPing() {
   }
 
   // There are 2 situations here:
-  // 1) production code, where |url_loader_factory_info_| is used.
+  // 1) production code, where |pending_url_loader_factory_| is used.
   // 2) testing code, where the |url_loader_factory_| creation is triggered by
   // the test.
-  if (url_loader_factory_info_) {
+  if (pending_url_loader_factory_) {
     DCHECK(!url_loader_factory_);
     url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-        std::move(url_loader_factory_info_));
+        std::move(pending_url_loader_factory_));
   }
 
   DCHECK(url_loader_factory_);
@@ -550,8 +537,7 @@ void OmahaService::SendPing() {
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
   resource_request->method = "POST";
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   // If this is not the first try, notify the omaha server.
   if (number_of_tries_ && IsNextPingInstallRetry()) {
@@ -651,9 +637,8 @@ void OmahaService::OnURLLoadComplete(
   // Send notification for updates if needed.
   UpgradeRecommendedDetails* details = [delegate upgradeRecommendedDetails];
   if (details) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {web::WebThread::UI},
-        base::Bind(upgrade_recommended_callback_, *details));
+    base::PostTask(FROM_HERE, {web::WebThread::UI},
+                   base::BindOnce(upgrade_recommended_callback_, *details));
   }
 }
 
@@ -682,8 +667,8 @@ void OmahaService::GetDebugInformationOnIOThread(
                         (timer_.desired_run_time() - base::TimeTicks::Now())));
 
   // Sending the value to the callback.
-  base::PostTaskWithTraits(FROM_HERE, {web::WebThread::UI},
-                           base::Bind(callback, base::Owned(result.release())));
+  base::PostTask(FROM_HERE, {web::WebThread::UI},
+                 base::BindOnce(callback, base::Owned(result.release())));
 }
 
 bool OmahaService::IsNextPingInstallRetry() {

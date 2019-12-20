@@ -10,11 +10,11 @@
 #import "base/test/ios/wait_util.h"
 #import "ios/chrome/browser/web/chrome_web_client.h"
 #include "ios/chrome/browser/web/chrome_web_test.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
+#import "ios/web/public/js_messaging/web_frame.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/test/js_test_util.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
-#import "ios/web/public/web_state/web_frame.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state.h"
 #import "testing/gtest_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -40,6 +40,13 @@ class JsSuggestionManagerTest : public ChromeWebTest {
   NSString* GetActiveElementName() {
     return ExecuteJavaScript(@"document.activeElement.name");
   }
+  // Waits until the active element is |name|.
+  BOOL WaitUntilElementSelected(NSString* name) {
+    return base::test::ios::WaitUntilConditionOrTimeout(
+        base::test::ios::kWaitForJSCompletionTimeout, ^bool {
+          return [GetActiveElementName() isEqualToString:name];
+        });
+  }
   JsSuggestionManager* manager_;
 };
 
@@ -47,13 +54,11 @@ void JsSuggestionManagerTest::SetUp() {
   ChromeWebTest::SetUp();
   manager_ = [[JsSuggestionManager alloc]
       initWithReceiver:web_state()->GetJSInjectionReceiver()];
-  [manager_
-      setWebFramesManager:web::WebFramesManager::FromWebState(web_state())];
+  [manager_ setWebFramesManager:web_state()->GetWebFramesManager()];
 }
 
 NSString* JsSuggestionManagerTest::GetFrameIdForMainFrame() {
-  web::WebFramesManager* manager =
-      web::WebFramesManager::FromWebState(web_state());
+  web::WebFramesManager* manager = web_state()->GetWebFramesManager();
   return base::SysUTF8ToNSString(manager->GetMainWebFrame()->GetFrameId());
 }
 
@@ -230,7 +235,7 @@ TEST_F(JsSuggestionManagerTest, SequentialNavigation) {
   ExecuteJavaScript(@"document.getElementsByName('firstname')[0].focus()");
 
   [manager_ selectNextElementInFrameWithID:GetFrameIdForMainFrame()];
-  EXPECT_NSEQ(@"lastname", GetActiveElementName());
+  EXPECT_TRUE(WaitUntilElementSelected(@"lastname"));
   __block BOOL block_was_called = NO;
   [manager_
       fetchPreviousAndNextElementsPresenceInFrameWithID:GetFrameIdForMainFrame()
@@ -245,9 +250,9 @@ TEST_F(JsSuggestionManagerTest, SequentialNavigation) {
     return block_was_called;
   });
   [manager_ selectNextElementInFrameWithID:GetFrameIdForMainFrame()];
-  EXPECT_NSEQ(@"email", GetActiveElementName());
+  EXPECT_TRUE(WaitUntilElementSelected(@"email"));
   [manager_ selectPreviousElementInFrameWithID:GetFrameIdForMainFrame()];
-  EXPECT_NSEQ(@"lastname", GetActiveElementName());
+  EXPECT_TRUE(WaitUntilElementSelected(@"lastname"));
 }
 
 void JsSuggestionManagerTest::SequentialNavigationSkipCheck(NSString* attribute,
@@ -262,11 +267,10 @@ void JsSuggestionManagerTest::SequentialNavigationSkipCheck(NSString* attribute,
   ExecuteJavaScript(@"document.getElementsByName('firstname')[0].focus()");
   EXPECT_NSEQ(@"firstname", GetActiveElementName());
   [manager_ selectNextElementInFrameWithID:GetFrameIdForMainFrame()];
-  NSString* activeElementNameJS = GetActiveElementName();
   if (shouldSkip)
-    EXPECT_NSEQ(@"lastname", activeElementNameJS);
+    EXPECT_TRUE(WaitUntilElementSelected(@"lastname"));
   else
-    EXPECT_NSEQ(@"middlename", activeElementNameJS);
+    EXPECT_TRUE(WaitUntilElementSelected(@"middlename"));
 }
 
 TEST_F(JsSuggestionManagerTest, SequentialNavigationNoSkipText) {
@@ -360,6 +364,7 @@ class FetchPreviousAndNextExceptionTest : public JsSuggestionManagerTest {
             GetFrameIdForMainFrame()
                                         completionHandler:completionHandler];
     base::test::ios::WaitUntilCondition(^bool() {
+      base::RunLoop().RunUntilIdle();
       return block_was_called;
     });
   }

@@ -61,7 +61,7 @@ class FakeInputInjector : public InputInjector {
   std::vector<protocol::TouchEvent>* touch_events_ = nullptr;
   std::vector<protocol::ClipboardEvent>* clipboard_events_ = nullptr;
 
-  base::WeakPtrFactory<FakeInputInjector> weak_factory_;
+  base::WeakPtrFactory<FakeInputInjector> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeInputInjector);
 };
@@ -99,6 +99,9 @@ class FakeDesktopEnvironment : public DesktopEnvironment {
   std::unique_ptr<webrtc::DesktopCapturer> CreateVideoCapturer() override;
   std::unique_ptr<webrtc::MouseCursorMonitor> CreateMouseCursorMonitor()
       override;
+  std::unique_ptr<KeyboardLayoutMonitor> CreateKeyboardLayoutMonitor(
+      base::RepeatingCallback<void(const protocol::KeyboardLayout&)> callback)
+      override;
   std::unique_ptr<FileOperations> CreateFileOperations() override;
   std::string GetCapabilities() const override;
   void SetCapabilities(const std::string& capabilities) override;
@@ -118,7 +121,7 @@ class FakeDesktopEnvironment : public DesktopEnvironment {
 
   const DesktopEnvironmentOptions options_;
 
-  base::WeakPtrFactory<FakeDesktopEnvironment> weak_factory_;
+  base::WeakPtrFactory<FakeDesktopEnvironment> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeDesktopEnvironment);
 };

@@ -45,13 +45,14 @@ class WebDataServiceConsumer;
 class WEBDATA_EXPORT WebDatabaseService
     : public base::RefCountedDeleteOnSequence<WebDatabaseService> {
  public:
-  using ReadTask = base::Callback<std::unique_ptr<WDTypedResult>(WebDatabase*)>;
-  using WriteTask = base::Callback<WebDatabase::State(WebDatabase*)>;
+  using ReadTask =
+      base::OnceCallback<std::unique_ptr<WDTypedResult>(WebDatabase*)>;
+  using WriteTask = base::OnceCallback<WebDatabase::State(WebDatabase*)>;
 
   // Types for managing DB loading callbacks.
-  using DBLoadedCallback = base::Closure;
+  using DBLoadedCallback = base::OnceClosure;
   using DBLoadErrorCallback =
-      base::Callback<void(sql::InitStatus, const std::string&)>;
+      base::OnceCallback<void(sql::InitStatus, const std::string&)>;
 
   // WebDatabaseService lives on the UI sequence and posts tasks to the DB
   // sequence.  |path| points to the WebDatabase file.
@@ -79,13 +80,12 @@ class WEBDATA_EXPORT WebDatabaseService
   scoped_refptr<WebDatabaseBackend> GetBackend() const;
 
   // Schedule an update/write task on the DB sequence.
-  virtual void ScheduleDBTask(const base::Location& from_here,
-                              const WriteTask& task);
+  virtual void ScheduleDBTask(const base::Location& from_here, WriteTask task);
 
   // Schedule a read task on the DB sequence.
   virtual WebDataServiceBase::Handle ScheduleDBTaskWithResult(
       const base::Location& from_here,
-      const ReadTask& task,
+      ReadTask task,
       WebDataServiceConsumer* consumer);
 
   // Cancel an existing request for a task on the DB sequence.
@@ -98,16 +98,16 @@ class WEBDATA_EXPORT WebDatabaseService
   // (following a successful database load), then cleared.
   // Note: if the database load is already complete, then the callback will NOT
   // be stored or called.
-  void RegisterDBLoadedCallback(const DBLoadedCallback& callback);
+  void RegisterDBLoadedCallback(DBLoadedCallback callback);
 
   // Register a callback to be notified that the database has failed to load.
   // Multiple callbacks may be registered, and each will be called at most once
   // (following a database load failure), then cleared.
   // Note: if the database load is already complete, then the callback will NOT
   // be stored or called.
-  void RegisterDBErrorCallback(const DBLoadErrorCallback& callback);
+  void RegisterDBErrorCallback(DBLoadErrorCallback callback);
 
-  bool db_loaded() const { return db_loaded_; };
+  bool db_loaded() const { return db_loaded_; }
 
  private:
   class BackendDelegate;
@@ -141,7 +141,7 @@ class WEBDATA_EXPORT WebDatabaseService
   scoped_refptr<base::SingleThreadTaskRunner> db_task_runner_;
 
   // All vended weak pointers are invalidated in ShutdownDatabase().
-  base::WeakPtrFactory<WebDatabaseService> weak_ptr_factory_;
+  base::WeakPtrFactory<WebDatabaseService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebDatabaseService);
 };

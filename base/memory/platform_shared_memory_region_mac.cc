@@ -51,19 +51,6 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
   return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
 }
 
-// static
-PlatformSharedMemoryRegion
-PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
-    const SharedMemoryHandle& handle,
-    Mode mode) {
-  CHECK(mode == Mode::kReadOnly || mode == Mode::kUnsafe);
-  if (!handle.IsValid())
-    return {};
-
-  return Take(base::mac::ScopedMachSendRight(handle.GetMemoryObject()), mode,
-              handle.GetSize(), handle.GetGUID());
-}
-
 mach_port_t PlatformSharedMemoryRegion::GetPlatformHandle() const {
   return handle_.get();
 }
@@ -223,10 +210,11 @@ bool PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
   if (kr == KERN_SUCCESS) {
     kern_return_t kr_deallocate =
         mach_vm_deallocate(mach_task_self(), temp_addr, size);
-    MACH_DLOG_IF(ERROR, kr_deallocate != KERN_SUCCESS, kr_deallocate)
+    // TODO(crbug.com/838365): convert to DLOG when bug fixed.
+    MACH_LOG_IF(ERROR, kr_deallocate != KERN_SUCCESS, kr_deallocate)
         << "mach_vm_deallocate";
   } else if (kr != KERN_INVALID_RIGHT) {
-    MACH_DLOG(ERROR, kr) << "mach_vm_map";
+    MACH_LOG(ERROR, kr) << "mach_vm_map";
     return false;
   }
 
@@ -234,9 +222,10 @@ bool PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
   bool expected_read_only = mode == Mode::kReadOnly;
 
   if (is_read_only != expected_read_only) {
-    DLOG(ERROR) << "VM region has a wrong protection mask: it is"
-                << (is_read_only ? " " : " not ") << "read-only but it should"
-                << (expected_read_only ? " " : " not ") << "be";
+    // TODO(crbug.com/838365): convert to DLOG when bug fixed.
+    LOG(ERROR) << "VM region has a wrong protection mask: it is"
+               << (is_read_only ? " " : " not ") << "read-only but it should"
+               << (expected_read_only ? " " : " not ") << "be";
     return false;
   }
 

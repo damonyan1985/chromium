@@ -1,9 +1,11 @@
 # WebView Test Instructions
 
+[TOC]
+
 ## Android Instructions
 
 Please follow the instructions at
-[android_test_instructions.md](/docs/android_test_instructions.md).
+[android_test_instructions.md](/docs/testing/android_test_instructions.md).
 This guide is an extension with WebView-specific content.
 
 *** note
@@ -26,11 +28,43 @@ $ out/Default/bin/run_webview_instrumentation_test_apk # All tests
 $ out/Default/bin/run_webview_instrumentation_test_apk -f AwContentsTest#* # A particular test suite
 $ out/Default/bin/run_webview_instrumentation_test_apk -f AwContentsTest#testClearCacheInQuickSuccession # A single test
 $ out/Default/bin/run_webview_instrumentation_test_apk -f AwContentsTest#*Succession # Any glob pattern matching 1 or more tests
+
+# Print both Java and C++ log messages to the console (optional):
+$ adb logcat
 ```
 
 *** aside
 You can optionally use `ClassName.methodName` instead of `ClassName#methodName`;
 the chromium test runner understands either syntax.
+***
+
+### Java unittests
+
+These tests live under `//android_webview/junit/` and use Robolectric.
+
+*** promo
+**Tip:** Robolectric tests run on workstation and do not need a device or
+emulator. These generally run much faster than on-device tests.
+***
+
+```sh
+# Build
+$ autoninja -C out/Default android_webview_junit_tests
+
+# Run tests (any of these commands):
+$ out/Default/bin/run_android_webview_junit_tests # All tests
+$ out/Default/bin/run_android_webview_junit_tests -f *FindAddressTest#* # Same glob patterns work here
+
+# Print both Java and C++ log messages to the console (optional) by passing "-v"
+# to the test runner. Example:
+$ out/Default/bin/run_android_webview_unittests -v # All tests, including logs
+```
+
+*** note
+For junit tests, filter (`-f`) arguments require fully qualified class names
+(e.g. `org.chromium.android_webview.robolectric.FindAddressTest`), but replacing
+the package name with a glob wildcard (`*`), as in the example above, will work
+if the class name is unique.
 ***
 
 ### Native unittests
@@ -46,6 +80,9 @@ $ autoninja -C out/Default android_webview_unittests
 # Run tests (any of these commands):
 $ out/Default/bin/run_android_webview_unittests # All tests
 $ out/Default/bin/run_android_webview_unittests -f AndroidStreamReaderURLRequestJobTest.* # Same glob patterns work here
+
+# Print both Java and C++ log messages to the console (optional):
+$ adb logcat
 ```
 
 ### Layout tests and page cycler tests
@@ -64,6 +101,9 @@ $ autoninja -C out/Default system_webview_shell_layout_test_apk
 
 # Run layout tests (installs WebView shell):
 $ out/Default/bin/run_system_webview_shell_layout_test_apk
+
+# Print both Java and C++ log messages to the console (optional):
+$ adb logcat
 ```
 
 To run page cycler tests instead, use the `system_webview_shell_page_cycler_apk`
@@ -86,7 +126,7 @@ $ out/Default/bin/run_webview_instrumentation_test_apk \ # Any test runner
 ```sh
 $ out/Default/bin/run_webview_instrumentation_test_apk \ # Any test runner
     # Desired Features; see commandline-flags.md for more information
-    --enable-features="NetworkService,NetworkServiceInProcess" \
+    --enable-features="MyFeature,MyOtherFeature" \
     -f=AwContentsTest#testClearCacheInQuickSuccession
 ```
 
@@ -118,10 +158,15 @@ with:
 
 # Run pre-built WebView CTS tests:
 $ android_webview/tools/run_cts.py \
-    --apk-dir="$HOME/run-cts-apk-dir" \ # Any folder, to use as an optional cache
     --verbose \ # Optional
     -f=android.webkit.cts.WebViewTest#* # Supports similar test filters
+
+# Print both Java and C++ log messages to the console (optional):
+$ adb logcat
 ```
+
+To disable failing CTS tests, please see the cts_config
+[README](../tools/cts_config/README.md) file.
 
 If you'd like to edit these tests, see internal documentation at
 http://go/clank-webview for working with Android checkouts.

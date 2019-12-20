@@ -12,7 +12,7 @@
 #include "base/macros.h"
 #include "base/unguessable_token.h"
 #include "chromeos/components/drivefs/mojom/drivefs.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/system/invitation.h"
 
 namespace drivefs {
@@ -24,7 +24,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsBootstrapListener {
   virtual ~DriveFsBootstrapListener();
 
   const base::UnguessableToken& pending_token() const { return pending_token_; }
-  virtual mojom::DriveFsBootstrapPtr bootstrap();
+  virtual mojo::PendingRemote<mojom::DriveFsBootstrap> bootstrap();
   bool is_connected() const { return connected_; }
 
  protected:
@@ -35,7 +35,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsBootstrapListener {
   void AcceptMojoConnection(base::ScopedFD handle);
 
   mojo::OutgoingInvitation invitation_;
-  mojom::DriveFsBootstrapPtr bootstrap_;
+  mojo::PendingRemote<mojom::DriveFsBootstrap> bootstrap_;
 
   // The token passed to DriveFS as part of 'source path' used to match it to
   // this instance.
@@ -49,30 +49,17 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsBootstrapListener {
 // Establishes and holds mojo connection to DriveFS.
 class COMPONENT_EXPORT(DRIVEFS) DriveFsConnection {
  public:
-  DriveFsConnection(
-      std::unique_ptr<DriveFsBootstrapListener> bootstrap_listener,
-      mojom::DriveFsConfigurationPtr config,
-      mojom::DriveFsDelegate* delegate,
-      base::OnceClosure on_disconnected);
-  virtual ~DriveFsConnection();
+  DriveFsConnection() = default;
+  virtual ~DriveFsConnection() = default;
+  virtual base::UnguessableToken Connect(mojom::DriveFsDelegate* delegate,
+                                         base::OnceClosure on_disconnected) = 0;
+  virtual mojom::DriveFs& GetDriveFs() = 0;
 
-  const base::UnguessableToken& pending_token() const {
-    return bootstrap_listener_ ? bootstrap_listener_->pending_token()
-                               : base::UnguessableToken::Null();
-  }
-  mojom::DriveFs* drivefs_interface() const { return drivefs_.get(); }
+  static std::unique_ptr<DriveFsConnection> Create(
+      std::unique_ptr<DriveFsBootstrapListener> bootstrap_listener,
+      mojom::DriveFsConfigurationPtr config);
 
  private:
-  void CleanUp();
-  void OnMojoConnectionError();
-
-  std::unique_ptr<DriveFsBootstrapListener> bootstrap_listener_;
-
-  mojo::Binding<mojom::DriveFsDelegate> delegate_binding_;
-  mojom::DriveFsPtr drivefs_;
-
-  base::OnceClosure on_disconnected_;
-
   DISALLOW_COPY_AND_ASSIGN(DriveFsConnection);
 };
 

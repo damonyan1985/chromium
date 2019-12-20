@@ -8,14 +8,11 @@
 #include <memory>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "url/gurl.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace content {
 
@@ -72,12 +69,11 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
 
   // Call callback if command was not handled.
   using NotHandledCallback =
-      base::OnceCallback<void(std::unique_ptr<base::DictionaryValue>,
-                              const std::string&)>;
+      base::OnceCallback<void(base::span<const uint8_t>)>;
   virtual void HandleCommand(DevToolsAgentHost* agent_host,
                              DevToolsAgentHostClient* client,
-                             std::unique_ptr<base::DictionaryValue> command,
-                             const std::string& message,
+                             const std::string& method,
+                             base::span<const uint8_t> message,
                              NotHandledCallback callback);
 
   // Should return discovery page HTML that should list available tabs

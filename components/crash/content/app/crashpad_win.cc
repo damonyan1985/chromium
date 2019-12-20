@@ -16,6 +16,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "components/crash/content/app/crash_export_thunks.h"
 #include "components/crash/content/app/crash_reporter_client.h"
@@ -37,7 +38,7 @@ void GetPlatformCrashpadAnnotations(
       exe_file, &product_name, &version, &special_build, &channel_name);
   (*annotations)["prod"] = base::UTF16ToUTF8(product_name);
   (*annotations)["ver"] = base::UTF16ToUTF8(version);
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   // Empty means stable.
   const bool allow_empty_channel = true;
 #else
@@ -67,9 +68,10 @@ base::FilePath PlatformCrashpadInitialization(
   const char kPipeNameVar[] = "CHROME_CRASHPAD_PIPE_NAME";
   const char kServerUrlVar[] = "CHROME_CRASHPAD_SERVER_URL";
   std::unique_ptr<base::Environment> env(base::Environment::Create());
-  if (initial_client) {
-    CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
 
+  CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
+
+  if (initial_client) {
     base::string16 database_path_str;
     if (crash_reporter_client->GetCrashDumpLocation(&database_path_str))
       database_path = base::FilePath(database_path_str);
@@ -83,7 +85,7 @@ base::FilePath PlatformCrashpadInitialization(
     std::map<std::string, std::string> process_annotations;
     GetPlatformCrashpadAnnotations(&process_annotations);
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     std::string url = "https://clients2.google.com/cr/report";
 #else
     std::string url;
@@ -100,13 +102,6 @@ base::FilePath PlatformCrashpadInitialization(
                                 base::size(exe_file_path)));
 
       exe_file = base::FilePath(exe_file_path);
-    }
-
-    if (crash_reporter_client->GetShouldDumpLargerDumps()) {
-      const uint32_t kIndirectMemoryLimit = 4 * 1024 * 1024;
-      crashpad::CrashpadInfo::GetCrashpadInfo()
-          ->set_gather_indirectly_referenced_memory(
-              crashpad::TriState::kEnabled, kIndirectMemoryLimit);
     }
 
     // If the handler is embedded in the binary (e.g. chrome, setup), we
@@ -161,6 +156,13 @@ base::FilePath PlatformCrashpadInitialization(
     }
   }
 
+  if (crash_reporter_client->GetShouldDumpLargerDumps()) {
+    const uint32_t kIndirectMemoryLimit = 4 * 1024 * 1024;
+    crashpad::CrashpadInfo::GetCrashpadInfo()
+        ->set_gather_indirectly_referenced_memory(crashpad::TriState::kEnabled,
+                                                  kIndirectMemoryLimit);
+  }
+
   return database_path;
 }
 
@@ -171,86 +173,6 @@ NOINLINE DWORD WINAPI DumpProcessForHungInputThread(void* param) {
   DumpWithoutCrashing();
   return 0;
 }
-
-#if defined(ARCH_CPU_X86_64)
-
-static int CrashForExceptionInNonABICompliantCodeRange(
-    PEXCEPTION_RECORD ExceptionRecord,
-    ULONG64 EstablisherFrame,
-    PCONTEXT ContextRecord,
-    PDISPATCHER_CONTEXT DispatcherContext) {
-  EXCEPTION_POINTERS info = { ExceptionRecord, ContextRecord };
-  return CrashForException_ExportThunk(&info);
-}
-
-// See https://msdn.microsoft.com/en-us/library/ddssxxy8.aspx
-typedef struct _UNWIND_INFO {
-  unsigned char Version : 3;
-  unsigned char Flags : 5;
-  unsigned char SizeOfProlog;
-  unsigned char CountOfCodes;
-  unsigned char FrameRegister : 4;
-  unsigned char FrameOffset : 4;
-  ULONG ExceptionHandler;
-} UNWIND_INFO, *PUNWIND_INFO;
-
-struct ExceptionHandlerRecord {
-  RUNTIME_FUNCTION runtime_function;
-  UNWIND_INFO unwind_info;
-  unsigned char thunk[12];
-};
-
-void RegisterNonABICompliantCodeRangeImpl(void* start, size_t size_in_bytes) {
-  ExceptionHandlerRecord* record =
-      reinterpret_cast<ExceptionHandlerRecord*>(start);
-
-  // We assume that the first page of the code range is executable and
-  // committed and reserved for breakpad. What could possibly go wrong?
-
-  // All addresses are 32bit relative offsets to start.
-  record->runtime_function.BeginAddress = 0;
-  record->runtime_function.EndAddress =
-      base::checked_cast<DWORD>(size_in_bytes);
-  record->runtime_function.UnwindData =
-      offsetof(ExceptionHandlerRecord, unwind_info);
-
-  // Create unwind info that only specifies an exception handler.
-  record->unwind_info.Version = 1;
-  record->unwind_info.Flags = UNW_FLAG_EHANDLER;
-  record->unwind_info.SizeOfProlog = 0;
-  record->unwind_info.CountOfCodes = 0;
-  record->unwind_info.FrameRegister = 0;
-  record->unwind_info.FrameOffset = 0;
-  record->unwind_info.ExceptionHandler =
-      offsetof(ExceptionHandlerRecord, thunk);
-
-  // Hardcoded thunk.
-  // mov imm64, rax
-  record->thunk[0] = 0x48;
-  record->thunk[1] = 0xb8;
-  void* handler =
-      reinterpret_cast<void*>(&CrashForExceptionInNonABICompliantCodeRange);
-  memcpy(&record->thunk[2], &handler, 8);
-
-  // jmp rax
-  record->thunk[10] = 0xff;
-  record->thunk[11] = 0xe0;
-
-  // Protect reserved page against modifications.
-  DWORD old_protect;
-  CHECK(VirtualProtect(
-      start, sizeof(ExceptionHandlerRecord), PAGE_EXECUTE_READ, &old_protect));
-  CHECK(RtlAddFunctionTable(
-      &record->runtime_function, 1, reinterpret_cast<DWORD64>(start)));
-}
-
-void UnregisterNonABICompliantCodeRangeImpl(void* start) {
-  ExceptionHandlerRecord* record =
-      reinterpret_cast<ExceptionHandlerRecord*>(start);
-
-  CHECK(RtlDeleteFunctionTable(&record->runtime_function));
-}
-#endif  // ARCH_CPU_X86_64
 
 }  // namespace internal
 }  // namespace crash_reporter

@@ -35,7 +35,7 @@ policy::DeviceManagementService* GetDeviceManagementService() {
 
 // Returns the Device Account Id. Assumes that |profile| is the only Profile
 // on Chrome OS.
-std::string GetDeviceAccountId(Profile* profile) {
+CoreAccountId GetDeviceAccountId(Profile* profile) {
   const auto* const identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
 
@@ -56,8 +56,7 @@ ArcAndroidManagementChecker::ArcAndroidManagementChecker(Profile* profile,
           g_browser_process->system_network_context_manager()
               ->GetSharedURLLoaderFactory(),
           device_account_id_,
-          identity_manager_),
-      weak_ptr_factory_(this) {}
+          identity_manager_) {}
 
 ArcAndroidManagementChecker::~ArcAndroidManagementChecker() {
   identity_manager_->RemoveObserver(this);
@@ -98,7 +97,7 @@ void ArcAndroidManagementChecker::EnsureRefreshTokenLoaded() {
 }
 
 void ArcAndroidManagementChecker::OnRefreshTokenUpdatedForAccount(
-    const AccountInfo& account_info) {
+    const CoreAccountInfo& account_info) {
   if (account_info.account_id != device_account_id_)
     return;
   OnRefreshTokensLoaded();

@@ -66,9 +66,7 @@ SecureChannel::PendingMessage::PendingMessage(const std::string& feature,
 SecureChannel::PendingMessage::~PendingMessage() {}
 
 SecureChannel::SecureChannel(std::unique_ptr<Connection> connection)
-    : status_(Status::DISCONNECTED),
-      connection_(std::move(connection)),
-      weak_ptr_factory_(this) {
+    : status_(Status::DISCONNECTED), connection_(std::move(connection)) {
   connection_->AddObserver(this);
 }
 
@@ -248,7 +246,7 @@ void SecureChannel::Authenticate() {
   DCHECK(!authenticator_);
 
   authenticator_ = DeviceToDeviceAuthenticator::Factory::NewInstance(
-      connection_.get(), connection_->remote_device().user_id(),
+      connection_.get(),
       multidevice::SecureMessageDelegateImpl::Factory::NewInstance());
   authenticator_->Authenticate(base::Bind(
       &SecureChannel::OnAuthenticationResult, weak_ptr_factory_.GetWeakPtr()));

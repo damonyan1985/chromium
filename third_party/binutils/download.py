@@ -9,6 +9,7 @@
 TODO(mithro): Replace with generic download_and_extract tool.
 """
 
+from __future__ import print_function
 import argparse
 import os
 import platform
@@ -30,13 +31,13 @@ import detect_host_arch
 
 
 def ReadFile(filename):
-  with file(filename, 'r') as f:
+  with open(filename, 'r') as f:
     return f.read().strip()
 
 
 def WriteFile(filename, content):
   assert not os.path.exists(filename)
-  with file(filename, 'w') as f:
+  with open(filename, 'w') as f:
     f.write(content)
     f.write('\n')
 
@@ -48,7 +49,7 @@ def FetchAndExtract(arch):
 
   sha1file = tarball + '.sha1'
   if not os.path.exists(sha1file):
-    print "WARNING: No binutils found for your architecture (%s)!" % arch
+    print("WARNING: No binutils found for your architecture (%s)!" % arch)
     return 0
 
   checksum = ReadFile(sha1file)
@@ -62,7 +63,7 @@ def FetchAndExtract(arch):
     else:
       os.unlink(stampfile)
 
-  print "Downloading", tarball
+  print("Downloading", tarball)
   subprocess.check_call([
       'download_from_google_storage',
       '--no_resume',
@@ -77,7 +78,7 @@ def FetchAndExtract(arch):
   os.makedirs(outdir)
   assert os.path.exists(outdir)
 
-  print "Extracting", tarball
+  print("Extracting", tarball)
   subprocess.check_call(['tar', 'axf', tarball], cwd=outdir)
 
   for tool in BINUTILS_TOOLS:
@@ -111,7 +112,7 @@ def main(args):
     # Fetch the x64 toolchain as well for official bots with 64-bit kernels.
     return FetchAndExtract('x64')
 
-  print "Host architecture %s is not supported." % arch
+  print("Host architecture %s is not supported." % arch)
   return 1
 
 

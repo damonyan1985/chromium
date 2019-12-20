@@ -58,8 +58,8 @@
 */
 
 #include "pffft.h"
+#include <stdint.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <math.h>
 #include <assert.h>
 
@@ -75,11 +75,14 @@
 #  define NEVER_INLINE(return_type) return_type __attribute__ ((noinline))
 #  define RESTRICT __restrict
 #  define VLA_ARRAY_ON_STACK(type__, varname__, size__) type__ varname__[size__];
+#  define VLA_ARRAY_ON_STACK_FREE(varname__)
 #elif defined(COMPILER_MSVC)
+#include <malloc.h>
 #  define ALWAYS_INLINE(return_type) __forceinline return_type
 #  define NEVER_INLINE(return_type) __declspec(noinline) return_type
 #  define RESTRICT __restrict
-#  define VLA_ARRAY_ON_STACK(type__, varname__, size__) type__ *varname__ = (type__*)_alloca(size__ * sizeof(type__))
+#  define VLA_ARRAY_ON_STACK(type__, varname__, size__) type__ *varname__ = (type__*)_malloca(size__ * sizeof(type__))
+#  define VLA_ARRAY_ON_STACK_FREE(varname__) _freea(varname__)
 #endif
 
 
@@ -123,12 +126,12 @@ inline v4sf ld_ps1(const float *p) { v4sf v=vec_lde(0,p); return vec_splat(vec_p
     x3 = vec_mergel(y1, y3);                    \
   }
 #  define VSWAPHL(a,b) vec_perm(a,b, (vector unsigned char)(16,17,18,19,20,21,22,23,8,9,10,11,12,13,14,15))
-#  define VALIGNED(ptr) ((((long)(ptr)) & 0xF) == 0)
+#  define VALIGNED(ptr) ((((uintptr_t)(ptr)) & 0xF) == 0)
 
 /*
   SSE1 support macros
 */
-#elif !defined(PFFFT_SIMD_DISABLE) && (defined(__x86_64__) || defined(_M_X64) || defined(i386) || defined(_M_IX86))
+#elif !defined(PFFFT_SIMD_DISABLE) && (defined(__x86_64__) || defined(_M_X64) || defined(i386) || defined(__i386__) || defined(_M_IX86))
 
 #include <xmmintrin.h>
 typedef __m128 v4sf;
@@ -143,12 +146,12 @@ typedef __m128 v4sf;
 #  define UNINTERLEAVE2(in1, in2, out1, out2) { v4sf tmp__ = _mm_shuffle_ps(in1, in2, _MM_SHUFFLE(2,0,2,0)); out2 = _mm_shuffle_ps(in1, in2, _MM_SHUFFLE(3,1,3,1)); out1 = tmp__; }
 #  define VTRANSPOSE4(x0,x1,x2,x3) _MM_TRANSPOSE4_PS(x0,x1,x2,x3)
 #  define VSWAPHL(a,b) _mm_shuffle_ps(b, a, _MM_SHUFFLE(3,2,1,0))
-#  define VALIGNED(ptr) ((((long)(ptr)) & 0xF) == 0)
+#  define VALIGNED(ptr) ((((uintptr_t)(ptr)) & 0xF) == 0)
 
 /*
   ARM NEON support macros
 */
-#elif !defined(PFFFT_SIMD_DISABLE) && defined(__arm__) 
+#elif !defined(PFFFT_SIMD_DISABLE) && (defined(__arm__) || defined(__ARMEL__) || defined(__aarch64__) || defined(_M_ARM64))
 #  include <arm_neon.h>
 typedef float32x4_t v4sf;
 #  define SIMD_SZ 4
@@ -170,7 +173,7 @@ typedef float32x4_t v4sf;
 // marginally faster version
 //#  define VTRANSPOSE4(x0,x1,x2,x3) { asm("vtrn.32 %q0, %q1;\n vtrn.32 %q2,%q3\n vswp %f0,%e2\n vswp %f1,%e3" : "+w"(x0), "+w"(x1), "+w"(x2), "+w"(x3)::); }
 #  define VSWAPHL(a,b) vcombine_f32(vget_low_f32(b), vget_high_f32(a))
-#  define VALIGNED(ptr) ((((long)(ptr)) & 0x3) == 0)
+#  define VALIGNED(ptr) ((((uintptr_t)(ptr)) & 0x3) == 0)
 #else
 #  if !defined(PFFFT_SIMD_DISABLE)
 #    warning "building with simd disabled !\n";
@@ -188,7 +191,7 @@ typedef float v4sf;
 #  define VMADD(a,b,c) ((a)*(b)+(c))
 #  define VSUB(a,b) ((a)-(b))
 #  define LD_PS1(p) (p)
-#  define VALIGNED(ptr) ((((long)(ptr)) & 0x3) == 0)
+#  define VALIGNED(ptr) ((((uintptr_t)(ptr)) & 0x3) == 0)
 #endif
 
 // shortcuts for complex multiplcations
@@ -219,31 +222,24 @@ void validate_pffft_simd() {
   memcpy(a3.f, f+12, 4*sizeof(float));
 
   t = a0; u = a1; t.v = VZERO();
-  printf("VZERO=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]); assertv4(t, 0, 0, 0, 0);
+  assertv4(t, 0, 0, 0, 0);
   t.v = VADD(a1.v, a2.v);
-  printf("VADD(4:7,8:11)=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]); assertv4(t, 12, 14, 16, 18);
+  assertv4(t, 12, 14, 16, 18);
   t.v = VMUL(a1.v, a2.v);
-  printf("VMUL(4:7,8:11)=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]); assertv4(t, 32, 45, 60, 77);
+  assertv4(t, 32, 45, 60, 77);
   t.v = VMADD(a1.v, a2.v,a0.v);
-  printf("VMADD(4:7,8:11,0:3)=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]); assertv4(t, 32, 46, 62, 80);
+  assertv4(t, 32, 46, 62, 80);
 
   INTERLEAVE2(a1.v,a2.v,t.v,u.v);
-  printf("INTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3], u.f[0], u.f[1], u.f[2], u.f[3]);
   assertv4(t, 4, 8, 5, 9); assertv4(u, 6, 10, 7, 11);
   UNINTERLEAVE2(a1.v,a2.v,t.v,u.v);
-  printf("UNINTERLEAVE2(4:7,8:11)=[%2g %2g %2g %2g] [%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3], u.f[0], u.f[1], u.f[2], u.f[3]);
   assertv4(t, 4, 6, 8, 10); assertv4(u, 5, 7, 9, 11);
 
   t.v=LD_PS1(f[15]);
-  printf("LD_PS1(15)=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]);
   assertv4(t, 15, 15, 15, 15);
   t.v = VSWAPHL(a1.v, a2.v);
-  printf("VSWAPHL(4:7,8:11)=[%2g %2g %2g %2g]\n", t.f[0], t.f[1], t.f[2], t.f[3]);
   assertv4(t, 8, 9, 6, 7);
   VTRANSPOSE4(a0.v, a1.v, a2.v, a3.v);
-  printf("VTRANSPOSE4(0:3,4:7,8:11,12:15)=[%2g %2g %2g %2g] [%2g %2g %2g %2g] [%2g %2g %2g %2g] [%2g %2g %2g %2g]\n", 
-         a0.f[0], a0.f[1], a0.f[2], a0.f[3], a1.f[0], a1.f[1], a1.f[2], a1.f[3], 
-         a2.f[0], a2.f[1], a2.f[2], a2.f[3], a3.f[0], a3.f[1], a3.f[2], a3.f[3]); 
   assertv4(a0, 0, 4, 8, 12); assertv4(a1, 1, 5, 9, 13); assertv4(a2, 2, 6, 10, 14); assertv4(a3, 3, 7, 11, 15);
 }
 #endif //!PFFFT_SIMD_DISABLE
@@ -1670,6 +1666,8 @@ void pffft_transform_internal(PFFFT_Setup *setup, const float *finput, float *fo
     ib = !ib;
   }
   assert(buff[ib] == voutput);
+
+  VLA_ARRAY_ON_STACK_FREE(scratch_on_stack);
 }
 
 void pffft_zconvolve_accumulate(PFFFT_Setup *s, const float *a, const float *b, float *ab, float scaling) {
@@ -1847,6 +1845,8 @@ void pffft_transform_internal_nosimd(PFFFT_Setup *setup, const float *input, flo
     ib = !ib;
   }
   assert(buff[ib] == output);
+
+  VLA_ARRAY_ON_STACK_FREE(scratch_on_stack);
 }
 
 #define pffft_zconvolve_accumulate_nosimd pffft_zconvolve_accumulate

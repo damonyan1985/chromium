@@ -76,7 +76,7 @@ class GcpUsingChromeTest : public ::testing::Test {
     // correctly on Windows7 and causes all the tests to stall indefinetely.
     // Since GCPW is only targeted for Windows 10 currently, disable these
     // unit tests for now until the problem can be resolved.
-    // return base::win::GetVersion() >= base::win::VERSION_WIN10;
+    // return base::win::GetVersion() >= base::win::Version::WIN10;
   }
   std::unique_ptr<net::test_server::HttpResponse> GaiaHtmlResponseHandler(
       const net::test_server::HttpRequest& request);
@@ -101,6 +101,9 @@ GcpUsingChromeTest::GcpUsingChromeTest()
     : proxy_server_(net::SpawnedTestServer::TYPE_PROXY, base::FilePath()) {}
 
 void GcpUsingChromeTest::SetUp() {
+  if (!ShouldRunTestOnThisOS())
+    return;
+
   // Redirect connections to signin related pages to a handler that will
   // generate the needed headers and content to move the signin flow
   // forward automatically.
@@ -120,6 +123,9 @@ void GcpUsingChromeTest::SetUp() {
 }
 
 void GcpUsingChromeTest::TearDown() {
+  if (!ShouldRunTestOnThisOS())
+    return;
+
   EXPECT_TRUE(gaia_server_.ShutdownAndWaitUntilComplete());
   EXPECT_TRUE(google_apis_server_.ShutdownAndWaitUntilComplete());
   EXPECT_TRUE(proxy_server_.Stop());

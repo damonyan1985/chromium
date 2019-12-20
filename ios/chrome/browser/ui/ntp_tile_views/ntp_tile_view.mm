@@ -4,6 +4,9 @@
 
 #import "ios/chrome/browser/ui/ntp_tile_views/ntp_tile_view.h"
 
+#import "ios/chrome/browser/ui/util/dynamic_type_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -15,7 +18,6 @@ namespace {
 const NSInteger kLabelNumLines = 2;
 const CGFloat kSpaceIconTitle = 10;
 const CGFloat kIconSize = 56;
-const CGFloat kTitleAlpha = 0.54;
 const CGFloat kPreferredMaxWidth = 73;
 
 }  // namespace
@@ -26,8 +28,8 @@ const CGFloat kPreferredMaxWidth = 73;
   self = [super initWithFrame:frame];
   if (self) {
     _titleLabel = [[UILabel alloc] init];
-    _titleLabel.textColor = [UIColor colorWithWhite:0 alpha:kTitleAlpha];
-    _titleLabel.font = [UIFont systemFontOfSize:12];
+    _titleLabel.textColor = UIColor.cr_secondaryLabelColor;
+    _titleLabel.font = [self titleLabelFont];
     _titleLabel.textAlignment = NSTextAlignmentCenter;
     _titleLabel.preferredMaxLayoutWidth = kPreferredMaxWidth;
     _titleLabel.numberOfLines = kLabelNumLines;
@@ -42,7 +44,10 @@ const CGFloat kPreferredMaxWidth = 73;
     UIImageView* backgroundView =
         [[UIImageView alloc] initWithFrame:self.bounds];
     backgroundView.translatesAutoresizingMaskIntoConstraints = NO;
-    backgroundView.image = [[self class] backgroundImage];
+    UIImage* backgroundImage = [[UIImage imageNamed:@"ntp_most_visited_tile"]
+        imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    backgroundView.image = backgroundImage;
+    backgroundView.tintColor = [UIColor colorNamed:kGrey100Color];
     [self addSubview:backgroundView];
     [self addSubview:_imageContainerView];
 
@@ -66,8 +71,22 @@ const CGFloat kPreferredMaxWidth = 73;
   return self;
 }
 
-+ (UIImage*)backgroundImage {
-  return [UIImage imageNamed:@"ntp_most_visited_tile"];
+// Returns the font size for the location label.
+- (UIFont*)titleLabelFont {
+  return PreferredFontForTextStyleWithMaxCategory(
+      UIFontTextStyleCaption1,
+      self.traitCollection.preferredContentSizeCategory,
+      UIContentSizeCategoryAccessibilityLarge);
+}
+
+#pragma mark - UIView
+
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  if (previousTraitCollection.preferredContentSizeCategory !=
+      self.traitCollection.preferredContentSizeCategory) {
+    self.titleLabel.font = [self titleLabelFont];
+  }
 }
 
 @end

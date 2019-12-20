@@ -7,12 +7,19 @@
 
 // Utility functions for converting between DIP (device independent pixels) and
 // PX (physical pixels).
+//
+// "Supported scale factor" means a ui::ScaleFactor enum value (representing
+// one of a finite number of floating point values) returned by
+// ui::GetSupportedScaleFactor, defined in ui/base/layout.h.
 
-namespace apps {
+#include "ui/base/resource/scale_factor.h"
 
-int ConvertDipToPx(int dip);
-int ConvertPxToDip(int px);
+namespace apps_util {
 
-}  // namespace apps
+int ConvertDipToPx(int dip, bool quantize_to_supported_scale_factor);
+int ConvertPxToDip(int px, bool quantize_to_supported_scale_factor);
+ui::ScaleFactor GetPrimaryDisplayUIScaleFactor();
+
+}  // namespace apps_util
 
 #endif  // CHROME_BROWSER_APPS_APP_SERVICE_DIP_PX_UTIL_H_

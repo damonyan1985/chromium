@@ -31,7 +31,7 @@
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track_event.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/mediastream/media_stream_center.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
 
 namespace blink {
@@ -113,8 +113,8 @@ MediaStream::MediaStream(ExecutionContext* context,
   uint32_t number_of_audio_tracks = descriptor_->NumberOfAudioComponents();
   audio_tracks_.ReserveCapacity(number_of_audio_tracks);
   for (uint32_t i = 0; i < number_of_audio_tracks; i++) {
-    MediaStreamTrack* new_track =
-        MediaStreamTrack::Create(context, descriptor_->AudioComponent(i));
+    auto* new_track = MakeGarbageCollected<MediaStreamTrack>(
+        context, descriptor_->AudioComponent(i));
     new_track->RegisterMediaStream(this);
     audio_tracks_.push_back(new_track);
   }
@@ -122,8 +122,8 @@ MediaStream::MediaStream(ExecutionContext* context,
   uint32_t number_of_video_tracks = descriptor_->NumberOfVideoComponents();
   video_tracks_.ReserveCapacity(number_of_video_tracks);
   for (uint32_t i = 0; i < number_of_video_tracks; i++) {
-    MediaStreamTrack* new_track =
-        MediaStreamTrack::Create(context, descriptor_->VideoComponent(i));
+    auto* new_track = MakeGarbageCollected<MediaStreamTrack>(
+        context, descriptor_->VideoComponent(i));
     new_track->RegisterMediaStream(this);
     video_tracks_.push_back(new_track);
   }
@@ -185,8 +185,8 @@ MediaStream::MediaStream(ExecutionContext* context,
     video_components.push_back((*iter)->Component());
   }
 
-  descriptor_ =
-      MediaStreamDescriptor::Create(audio_components, video_components);
+  descriptor_ = MakeGarbageCollected<MediaStreamDescriptor>(audio_components,
+                                                            video_components);
   descriptor_->SetClient(this);
 
   audio_tracks_ = audio_tracks;
@@ -402,8 +402,8 @@ void MediaStream::AddTrackByComponentAndFireEvents(
   DCHECK(component);
   if (!GetExecutionContext())
     return;
-  MediaStreamTrack* track =
-      MediaStreamTrack::Create(GetExecutionContext(), component);
+  auto* track =
+      MakeGarbageCollected<MediaStreamTrack>(GetExecutionContext(), component);
   AddTrackAndFireEvents(track);
 }
 
@@ -438,8 +438,8 @@ void MediaStream::RemoveTrackByComponentAndFireEvents(
   MediaStreamTrack* track = (*tracks)[index];
   track->UnregisterMediaStream(this);
   tracks->EraseAt(index);
-  ScheduleDispatchEvent(
-      MediaStreamTrackEvent::Create(event_type_names::kRemovetrack, track));
+  ScheduleDispatchEvent(MakeGarbageCollected<MediaStreamTrackEvent>(
+      event_type_names::kRemovetrack, track));
 
   if (active() && EmptyOrOnlyEndedTracks()) {
     descriptor_->SetActive(false);
@@ -460,8 +460,8 @@ void MediaStream::AddTrackAndFireEvents(MediaStreamTrack* track) {
   track->RegisterMediaStream(this);
   descriptor_->AddComponent(track->Component());
 
-  ScheduleDispatchEvent(
-      MediaStreamTrackEvent::Create(event_type_names::kAddtrack, track));
+  ScheduleDispatchEvent(MakeGarbageCollected<MediaStreamTrackEvent>(
+      event_type_names::kAddtrack, track));
 
   if (!active() && !track->Ended()) {
     descriptor_->SetActive(true);
@@ -478,7 +478,7 @@ void MediaStream::ScheduleDispatchEvent(Event* event) {
   scheduled_events_.push_back(event);
 
   if (!scheduled_event_timer_.IsActive())
-    scheduled_event_timer_.StartOneShot(TimeDelta(), FROM_HERE);
+    scheduled_event_timer_.StartOneShot(base::TimeDelta(), FROM_HERE);
 }
 
 void MediaStream::ScheduledEventTimerFired(TimerBase*) {

@@ -24,6 +24,7 @@
 #include "google_apis/drive/drive_api_parser.h"
 #include "google_apis/drive/drive_api_url_generator.h"
 #include "google_apis/drive/drive_common_callbacks.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 
 namespace google_apis {
 
@@ -136,16 +137,13 @@ class DriveApiPartialFieldRequest : public UrlFetchRequestBase {
 template<class DataType>
 class DriveApiDataRequest : public DriveApiPartialFieldRequest {
  public:
-  typedef base::Callback<void(DriveApiErrorCode error,
-                              std::unique_ptr<DataType> data)>
-      Callback;
+  using Callback = base::OnceCallback<void(DriveApiErrorCode error,
+                                           std::unique_ptr<DataType> data)>;
 
   // |callback| is called when the request finishes either by success or by
   // failure. On success, a JSON Value object is passed. It must not be null.
-  DriveApiDataRequest(RequestSender* sender, const Callback& callback)
-      : DriveApiPartialFieldRequest(sender),
-        callback_(callback),
-        weak_ptr_factory_(this) {
+  DriveApiDataRequest(RequestSender* sender, Callback callback)
+      : DriveApiPartialFieldRequest(sender), callback_(std::move(callback)) {
     DCHECK(!callback_.is_null());
   }
   ~DriveApiDataRequest() override {}
@@ -153,7 +151,7 @@ class DriveApiDataRequest : public DriveApiPartialFieldRequest {
  protected:
   // UrlFetchRequestBase overrides.
   void ProcessURLFetchResults(
-      const network::ResourceResponseHead* response_head,
+      const network::mojom::URLResponseHead* response_head,
       base::FilePath response_file,
       std::string response_body) override {
     DriveApiErrorCode error = GetErrorCode();
@@ -175,7 +173,7 @@ class DriveApiDataRequest : public DriveApiPartialFieldRequest {
   }
 
   void RunCallbackOnPrematureFailure(DriveApiErrorCode error) override {
-    callback_.Run(error, std::unique_ptr<DataType>());
+    std::move(callback_).Run(error, std::unique_ptr<DataType>());
   }
 
  private:
@@ -189,15 +187,15 @@ class DriveApiDataRequest : public DriveApiPartialFieldRequest {
   void OnDataParsed(DriveApiErrorCode error, std::unique_ptr<DataType> value) {
     if (!value)
       error = DRIVE_PARSE_ERROR;
-    callback_.Run(error, std::move(value));
+    std::move(callback_).Run(error, std::move(value));
     OnProcessURLFetchResultsComplete();
   }
 
-  const Callback callback_;
+  Callback callback_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<DriveApiDataRequest> weak_ptr_factory_;
+  base::WeakPtrFactory<DriveApiDataRequest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DriveApiDataRequest);
 };
@@ -1156,12 +1154,12 @@ class SingleBatchableDelegateRequest : public UrlFetchRequestBase {
   GURL GetURL() const override;
   std::string GetRequestType() const override;
   std::vector<std::string> GetExtraRequestHeaders() const override;
-  void Prepare(const PrepareCallback& callback) override;
+  void Prepare(PrepareCallback callback) override;
   bool GetContentData(std::string* upload_content_type,
                       std::string* upload_content) override;
   void RunCallbackOnPrematureFailure(DriveApiErrorCode code) override;
   void ProcessURLFetchResults(
-      const network::ResourceResponseHead* response_head,
+      const network::mojom::URLResponseHead* response_head,
       base::FilePath response_file,
       std::string response_body) override;
   void OnUploadProgress(int64_t current, int64_t total);
@@ -1169,7 +1167,7 @@ class SingleBatchableDelegateRequest : public UrlFetchRequestBase {
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<SingleBatchableDelegateRequest> weak_ptr_factory_;
+  base::WeakPtrFactory<SingleBatchableDelegateRequest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SingleBatchableDelegateRequest);
 };
@@ -1216,7 +1214,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
   const DriveApiUrlGenerator& url_generator() const { return url_generator_; }
 
   // UrlFetchRequestBase overrides.
-  void Prepare(const PrepareCallback& callback) override;
+  void Prepare(PrepareCallback callback) override;
   void Cancel() override;
   GURL GetURL() const override;
   std::string GetRequestType() const override;
@@ -1224,7 +1222,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
   bool GetContentData(std::string* upload_content_type,
                       std::string* upload_content) override;
   void ProcessURLFetchResults(
-      const network::ResourceResponseHead* response_head,
+      const network::mojom::URLResponseHead* response_head,
       base::FilePath response_file,
       std::string response_body) override;
   void RunCallbackOnPrematureFailure(DriveApiErrorCode code) override;
@@ -1266,7 +1264,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<BatchUploadRequest> weak_ptr_factory_;
+  base::WeakPtrFactory<BatchUploadRequest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BatchUploadRequest);
 };

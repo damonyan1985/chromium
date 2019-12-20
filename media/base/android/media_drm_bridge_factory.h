@@ -42,7 +42,7 @@ class MEDIA_EXPORT MediaDrmBridgeFactory : public CdmFactory {
 
  private:
   // Callback for Initialize() on |storage_|.
-  void OnStorageInitialized();
+  void OnStorageInitialized(bool success);
 
   // Creates |media_drm_bridge_|, and call SetMediaCryptoReadyCB() to wait for
   // MediaCrypto to be ready.
@@ -72,7 +72,7 @@ class MEDIA_EXPORT MediaDrmBridgeFactory : public CdmFactory {
   std::unique_ptr<MediaDrmStorageBridge> storage_;
   scoped_refptr<MediaDrmBridge> media_drm_bridge_;
 
-  base::WeakPtrFactory<MediaDrmBridgeFactory> weak_factory_;
+  base::WeakPtrFactory<MediaDrmBridgeFactory> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaDrmBridgeFactory);
 };

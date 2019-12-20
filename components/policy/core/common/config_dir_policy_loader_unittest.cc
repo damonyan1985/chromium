@@ -21,6 +21,7 @@
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/strings/grit/components_strings.h"
 
 namespace policy {
 
@@ -154,7 +155,8 @@ void TestHarness::WriteConfigFile(const base::DictionaryValue& dict,
 
 std::string TestHarness::NextConfigFileName() {
   EXPECT_LE(next_policy_file_index_, 999);
-  return std::string("policy") + base::IntToString(next_policy_file_index_++);
+  return std::string("policy") +
+         base::NumberToString(next_policy_file_index_++);
 }
 
 // static
@@ -165,16 +167,14 @@ PolicyProviderTestHarness* TestHarness::Create() {
 }  // namespace
 
 // Instantiate abstract test case for basic policy reading tests.
-INSTANTIATE_TEST_CASE_P(
-    ConfigDirPolicyLoaderTest,
-    ConfigurationPolicyProviderTest,
-    testing::Values(TestHarness::Create));
+INSTANTIATE_TEST_SUITE_P(ConfigDirPolicyLoaderTest,
+                         ConfigurationPolicyProviderTest,
+                         testing::Values(TestHarness::Create));
 
 // Instantiate abstract test case for 3rd party policy reading tests.
-INSTANTIATE_TEST_CASE_P(
-    ConfigDir3rdPartyPolicyLoaderTest,
-    Configuration3rdPartyPolicyProviderTest,
-    testing::Values(TestHarness::Create));
+INSTANTIATE_TEST_SUITE_P(ConfigDir3rdPartyPolicyLoaderTest,
+                         Configuration3rdPartyPolicyProviderTest,
+                         testing::Values(TestHarness::Create));
 
 // Some tests that exercise special functionality in ConfigDirPolicyLoader.
 class ConfigDirPolicyLoaderTest : public PolicyTestBase {
@@ -190,9 +190,8 @@ class ConfigDirPolicyLoaderTest : public PolicyTestBase {
 // The preferences dictionary is expected to be empty when there are no files to
 // load.
 TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsEmpty) {
-  ConfigDirPolicyLoader loader(
-      scoped_task_environment_.GetMainThreadTaskRunner(), harness_.test_dir(),
-      POLICY_SCOPE_MACHINE);
+  ConfigDirPolicyLoader loader(task_environment_.GetMainThreadTaskRunner(),
+                               harness_.test_dir(), POLICY_SCOPE_MACHINE);
   std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   const PolicyBundle kEmptyBundle;
@@ -204,9 +203,8 @@ TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsEmpty) {
 TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsNonExistentDirectory) {
   base::FilePath non_existent_dir(
       harness_.test_dir().Append(FILE_PATH_LITERAL("not_there")));
-  ConfigDirPolicyLoader loader(
-      scoped_task_environment_.GetMainThreadTaskRunner(), non_existent_dir,
-      POLICY_SCOPE_MACHINE);
+  ConfigDirPolicyLoader loader(task_environment_.GetMainThreadTaskRunner(),
+                               non_existent_dir, POLICY_SCOPE_MACHINE);
   std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   const PolicyBundle kEmptyBundle;
@@ -223,16 +221,15 @@ TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsMergePrefs) {
   const char kHomepageLocation[] = "HomepageLocation";
   test_dict_bar.SetString(kHomepageLocation, "http://bar.com");
   for (unsigned int i = 1; i <= 4; ++i)
-    harness_.WriteConfigFile(test_dict_bar, base::UintToString(i));
+    harness_.WriteConfigFile(test_dict_bar, base::NumberToString(i));
   base::DictionaryValue test_dict_foo;
   test_dict_foo.SetString(kHomepageLocation, "http://foo.com");
   harness_.WriteConfigFile(test_dict_foo, "9");
   for (unsigned int i = 5; i <= 8; ++i)
-    harness_.WriteConfigFile(test_dict_bar, base::UintToString(i));
+    harness_.WriteConfigFile(test_dict_bar, base::NumberToString(i));
 
-  ConfigDirPolicyLoader loader(
-      scoped_task_environment_.GetMainThreadTaskRunner(), harness_.test_dir(),
-      POLICY_SCOPE_USER);
+  ConfigDirPolicyLoader loader(task_environment_.GetMainThreadTaskRunner(),
+                               harness_.test_dir(), POLICY_SCOPE_USER);
   std::unique_ptr<PolicyBundle> bundle(loader.Load());
   ASSERT_TRUE(bundle.get());
   PolicyBundle expected_bundle;
@@ -240,9 +237,19 @@ TEST_F(ConfigDirPolicyLoaderTest, ReadPrefsMergePrefs) {
       .LoadFrom(&test_dict_foo, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                 POLICY_SOURCE_PLATFORM);
   for (unsigned int i = 1; i <= 8; ++i) {
+    auto conflict_policy =
+        expected_bundle
+            .Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+            .Get(kHomepageLocation)
+            ->DeepCopy();
+    conflict_policy.conflicts.clear();
+    conflict_policy.value = std::make_unique<base::Value>("http://bar.com");
     expected_bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
         .GetMutable(kHomepageLocation)
-        ->AddError(kPolicyConfictDiffValue);
+        ->AddConflictingPolicy(std::move(conflict_policy));
+    expected_bundle.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+        .GetMutable(kHomepageLocation)
+        ->AddWarning(IDS_POLICY_CONFLICT_DIFF_VALUE);
   }
   EXPECT_TRUE(bundle->Equals(expected_bundle));
 }

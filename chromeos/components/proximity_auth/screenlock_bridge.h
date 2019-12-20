@@ -13,7 +13,7 @@
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
-#include "chromeos/components/proximity_auth/public/interfaces/auth_type.mojom.h"
+#include "chromeos/components/proximity_auth/public/mojom/auth_type.mojom.h"
 #include "components/account_id/account_id.h"
 
 namespace proximity_auth {
@@ -110,6 +110,8 @@ class ScreenlockBridge {
     virtual void HideUserPodCustomIcon(const AccountId& account_id) = 0;
 
     // (Re)enable lock screen UI.
+    // TODO(crbug.com/927498): Remove TestLockHandler dependency on this, and
+    // then remove this method.
     virtual void EnableInput() = 0;
 
     // Set the authentication type to be used on the lock screen.
@@ -176,7 +178,7 @@ class ScreenlockBridge {
   ScreenlockBridge();
   ~ScreenlockBridge();
 
-  LockHandler* lock_handler_;  // Not owned
+  LockHandler* lock_handler_ = nullptr;  // Not owned
 
   // The last focused user's id.
   AccountId focused_account_id_;

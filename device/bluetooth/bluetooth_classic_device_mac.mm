@@ -7,7 +7,7 @@
 #include <string>
 
 #include "base/bind.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -15,7 +15,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/time/time.h"
 #include "device/bluetooth/bluetooth_socket_mac.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 // Undocumented API for accessing the Bluetooth transmit power level.
 // Similar to the API defined here [ http://goo.gl/20Q5vE ].
@@ -202,10 +202,9 @@ void BluetoothClassicDeviceMac::SetConnectionLatency(
   NOTIMPLEMENTED();
 }
 
-void BluetoothClassicDeviceMac::Connect(
-    PairingDelegate* pairing_delegate,
-    const base::Closure& callback,
-    const ConnectErrorCallback& error_callback) {
+void BluetoothClassicDeviceMac::Connect(PairingDelegate* pairing_delegate,
+                                        base::OnceClosure callback,
+                                        ConnectErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 
@@ -245,7 +244,7 @@ void BluetoothClassicDeviceMac::ConnectToService(
     const ConnectToServiceCallback& callback,
     const ConnectToServiceErrorCallback& error_callback) {
   scoped_refptr<BluetoothSocketMac> socket = BluetoothSocketMac::CreateSocket();
-  socket->Connect(device_.get(), uuid, base::Bind(callback, socket),
+  socket->Connect(device_.get(), uuid, base::BindOnce(callback, socket),
                   error_callback);
 }
 
@@ -257,10 +256,10 @@ void BluetoothClassicDeviceMac::ConnectToServiceInsecurely(
 }
 
 void BluetoothClassicDeviceMac::CreateGattConnection(
-    const GattConnectionCallback& callback,
-    const ConnectErrorCallback& error_callback) {
+    GattConnectionCallback callback,
+    ConnectErrorCallback error_callback) {
   // TODO(armansito): Implement.
-  error_callback.Run(ERROR_UNSUPPORTED_DEVICE);
+  std::move(error_callback).Run(ERROR_UNSUPPORTED_DEVICE);
 }
 
 base::Time BluetoothClassicDeviceMac::GetLastUpdateTime() const {

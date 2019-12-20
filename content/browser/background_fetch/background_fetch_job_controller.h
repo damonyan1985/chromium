@@ -30,7 +30,8 @@ class BackgroundFetchDataManager;
 
 // The JobController will be responsible for coordinating communication with the
 // DownloadManager. It will get requests from the RequestManager and dispatch
-// them to the DownloadService. It lives entirely on the IO thread.
+// them to the DownloadService. It lives entirely on the service worker core
+// thread.
 //
 // Lifetime: It is created lazily only once a Background Fetch registration
 // starts downloading, and it is destroyed once no more communication with the
@@ -47,7 +48,11 @@ class CONTENT_EXPORT BackgroundFetchJobController
                               blink::mojom::BackgroundFetchFailureReason,
                               ErrorCallback)>;
   using ProgressCallback = base::RepeatingCallback<void(
-      const blink::mojom::BackgroundFetchRegistration&)>;
+      const std::string& unique_id,
+      const blink::mojom::BackgroundFetchRegistrationData&)>;
+  using RequestStartedCallback =
+      base::OnceCallback<void(const BackgroundFetchRegistrationId&,
+                              const BackgroundFetchRequestInfo*)>;
   using RequestFinishedCallback =
       base::OnceCallback<void(const BackgroundFetchRegistrationId&,
                               scoped_refptr<BackgroundFetchRequestInfo>)>;
@@ -80,9 +85,9 @@ class CONTENT_EXPORT BackgroundFetchJobController
   uint64_t GetInProgressDownloadedBytes();
   uint64_t GetInProgressUploadedBytes();
 
-  // Returns a blink::mojom::BackgroundFetchRegistrationPtr object
+  // Returns a blink::mojom::BackgroundFetchRegistrationDataPtr object
   // created with member fields.
-  blink::mojom::BackgroundFetchRegistrationPtr NewRegistration() const;
+  blink::mojom::BackgroundFetchRegistrationDataPtr NewRegistrationData() const;
 
   const BackgroundFetchRegistrationId& registration_id() const {
     return registration_id_;
@@ -90,17 +95,18 @@ class CONTENT_EXPORT BackgroundFetchJobController
 
   // BackgroundFetchDelegateProxy::Controller implementation:
   void DidStartRequest(
-      const scoped_refptr<BackgroundFetchRequestInfo>& request) override;
-  void DidUpdateRequest(
-      const scoped_refptr<BackgroundFetchRequestInfo>& request,
-      uint64_t bytes_uploaded,
-      uint64_t bytes_downloaded) override;
+      const std::string& guid,
+      std::unique_ptr<BackgroundFetchResponse> response) override;
+  void DidUpdateRequest(const std::string& guid,
+                        uint64_t bytes_uploaded,
+                        uint64_t bytes_downloaded) override;
   void DidCompleteRequest(
-      const scoped_refptr<BackgroundFetchRequestInfo>& request) override;
+      const std::string& guid,
+      std::unique_ptr<BackgroundFetchResult> result) override;
   void AbortFromDelegate(
       blink::mojom::BackgroundFetchFailureReason failure_reason) override;
   void GetUploadData(
-      const scoped_refptr<BackgroundFetchRequestInfo>& request,
+      const std::string& guid,
       BackgroundFetchDelegate::GetUploadDataCallback callback) override;
 
   // Aborts the fetch. |callback| will run with the result of marking the
@@ -109,8 +115,10 @@ class CONTENT_EXPORT BackgroundFetchJobController
              ErrorCallback callback);
 
   // Request processing.
-  void PopNextRequest(RequestFinishedCallback request_finished_callback);
+  void PopNextRequest(RequestStartedCallback request_started_callback,
+                      RequestFinishedCallback request_finished_callback);
   void DidPopNextRequest(
+      RequestStartedCallback request_started_callback,
       RequestFinishedCallback request_finished_callback,
       blink::mojom::BackgroundFetchError error,
       scoped_refptr<BackgroundFetchRequestInfo> request_info);
@@ -124,6 +132,11 @@ class CONTENT_EXPORT BackgroundFetchJobController
   int pending_downloads() const { return pending_downloads_; }
 
  private:
+  struct InProgressRequestBytes {
+    uint64_t uploaded = 0u;
+    uint64_t downloaded = 0u;
+  };
+
   // Called after the request is completely processed, and the next one can be
   // started.
   void DidMarkRequestAsComplete(blink::mojom::BackgroundFetchError error);
@@ -150,6 +163,13 @@ class CONTENT_EXPORT BackgroundFetchJobController
   // boundaries. It is owned by the BackgroundFetchContext.
   BackgroundFetchDelegateProxy* delegate_proxy_;
 
+  // A map from the download GUID to the active request.
+  std::map<std::string, scoped_refptr<BackgroundFetchRequestInfo>>
+      active_request_map_;
+
+  // A map from the download GUID to the in-progress bytes.
+  std::map<std::string, InProgressRequestBytes> active_bytes_map_;
+
   // The registration ID of the fetch this controller represents.
   BackgroundFetchRegistrationId registration_id_;
 
@@ -158,10 +178,6 @@ class CONTENT_EXPORT BackgroundFetchJobController
 
   // Icon for the represented background fetch registration.
   SkBitmap icon_;
-
-  // Number of bytes downloaded/uploaded for the active request.
-  uint64_t active_request_downloaded_bytes_ = 0u;
-  uint64_t active_request_uploaded_bytes_ = 0u;
 
   // Finished callback to invoke when the active request has finished mapped by
   // its download GUID.
@@ -197,7 +213,7 @@ class CONTENT_EXPORT BackgroundFetchJobController
   // Custom callback that runs after the controller is finished.
   FinishedCallback finished_callback_;
 
-  base::WeakPtrFactory<BackgroundFetchJobController> weak_ptr_factory_;
+  base::WeakPtrFactory<BackgroundFetchJobController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundFetchJobController);
 };

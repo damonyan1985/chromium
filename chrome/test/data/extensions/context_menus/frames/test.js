@@ -2,23 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-window.onload = function() {
-  function onclick(info, tab) {
-    chrome.test.sendMessage('pageUrl=' + info.pageUrl +
-        ', frameUrl=' + info.frameUrl +
-        ', frameId=' + info.frameId);
-  }
+
+chrome.contextMenus.onClicked.addListener(function(info, tab) {
+  chrome.test.sendMessage('pageUrl=' + info.pageUrl +
+      ', frameUrl=' + info.frameUrl +
+      ', frameId=' + info.frameId);
+});
+
+chrome.runtime.onInstalled.addListener(function(details) {
   chrome.contextMenus.create(
-      {'title':'Page item', contexts: ['page'], id: 'item1', onclick: onclick},
+      {title: 'Page item', contexts: ['page'], id: 'item1'},
       function() {
         if (!chrome.runtime.lastError) {
           chrome.contextMenus.create(
-          {"title":"Frame item", contexts: ["frame"]},
+              {title: 'Frame item', contexts: ['frame'], id: 'frame_item'},
           function() {
             if (!chrome.runtime.lastError) {
-              chrome.test.sendMessage("created items");
+              chrome.test.sendMessage('created items');
             }
           });
         }
-      });
-};
+      })});

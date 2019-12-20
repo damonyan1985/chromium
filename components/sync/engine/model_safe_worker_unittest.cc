@@ -19,10 +19,10 @@
 namespace syncer {
 namespace {
 
-syncer::WorkCallback ClosureToWorkCallback(base::Closure work) {
+syncer::WorkCallback ClosureToWorkCallback(base::OnceClosure work) {
   return base::BindOnce(
-      [](base::Closure work) {
-        work.Run();
+      [](base::OnceClosure work) {
+        std::move(work).Run();
         return syncer::SyncerError(syncer::SyncerError::SYNCER_OK);
       },
       std::move(work));
@@ -63,11 +63,12 @@ class ModelSafeWorkerTest : public ::testing::Test {
     sync_thread_.Start();
   }
 
-  void DoWorkAndWaitUntilDoneOnSyncThread(base::Closure work) {
+  void DoWorkAndWaitUntilDoneOnSyncThread(base::OnceClosure work) {
     sync_thread_.task_runner()->PostTask(
-        FROM_HERE, base::BindOnce(base::IgnoreResult(
-                                      &ModelSafeWorker::DoWorkAndWaitUntilDone),
-                                  worker_, ClosureToWorkCallback(work)));
+        FROM_HERE,
+        base::BindOnce(
+            base::IgnoreResult(&ModelSafeWorker::DoWorkAndWaitUntilDone),
+            worker_, ClosureToWorkCallback(std::move(work))));
     sync_thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&base::AtomicFlag::Set,
                                   base::Unretained(&sync_thread_unblocked_)));
@@ -87,13 +88,13 @@ TEST_F(ModelSafeWorkerTest, ModelSafeRoutingInfoToValue) {
   ModelSafeRoutingInfo routing_info;
   routing_info[BOOKMARKS] = GROUP_PASSIVE;
   routing_info[NIGORI] = GROUP_UI;
-  routing_info[PREFERENCES] = GROUP_DB;
+  routing_info[PASSWORDS] = GROUP_PASSWORD;
   routing_info[APPS] = GROUP_NON_BLOCKING;
   base::DictionaryValue expected_value;
   expected_value.SetString("Apps", "Group Non Blocking");
   expected_value.SetString("Bookmarks", "Group Passive");
   expected_value.SetString("Encryption Keys", "Group UI");
-  expected_value.SetString("Preferences", "Group DB");
+  expected_value.SetString("Passwords", "Group Password");
   std::unique_ptr<base::DictionaryValue> value(
       ModelSafeRoutingInfoToValue(routing_info));
   EXPECT_TRUE(value->Equals(&expected_value));
@@ -104,10 +105,10 @@ TEST_F(ModelSafeWorkerTest, ModelSafeRoutingInfoToString) {
   routing_info[APPS] = GROUP_NON_BLOCKING;
   routing_info[BOOKMARKS] = GROUP_PASSIVE;
   routing_info[NIGORI] = GROUP_UI;
-  routing_info[PREFERENCES] = GROUP_DB;
+  routing_info[PASSWORDS] = GROUP_PASSWORD;
   EXPECT_EQ(
       "{\"Apps\":\"Group Non Blocking\",\"Bookmarks\":\"Group Passive\","
-      "\"Encryption Keys\":\"Group UI\",\"Preferences\":\"Group DB\"}",
+      "\"Encryption Keys\":\"Group UI\",\"Passwords\":\"Group Password\"}",
       ModelSafeRoutingInfoToString(routing_info));
 }
 
@@ -115,14 +116,14 @@ TEST_F(ModelSafeWorkerTest, GetRoutingInfoTypes) {
   ModelSafeRoutingInfo routing_info;
   routing_info[BOOKMARKS] = GROUP_PASSIVE;
   routing_info[NIGORI] = GROUP_UI;
-  routing_info[PREFERENCES] = GROUP_DB;
-  const ModelTypeSet expected_types(BOOKMARKS, NIGORI, PREFERENCES);
+  routing_info[PASSWORDS] = GROUP_PASSWORD;
+  const ModelTypeSet expected_types(BOOKMARKS, NIGORI, PASSWORDS);
   EXPECT_EQ(expected_types, GetRoutingInfoTypes(routing_info));
 }
 
 TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDone) {
   bool did_work = false;
-  DoWorkAndWaitUntilDoneOnSyncThread(base::Bind(
+  DoWorkAndWaitUntilDoneOnSyncThread(base::BindOnce(
       [](bool* did_work) { *did_work = true; }, base::Unretained(&did_work)));
 
   EXPECT_FALSE(did_work);
@@ -141,7 +142,7 @@ TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDone) {
 
 TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDoneRequestStopBeforeRunWork) {
   bool did_work = false;
-  DoWorkAndWaitUntilDoneOnSyncThread(base::Bind(
+  DoWorkAndWaitUntilDoneOnSyncThread(base::BindOnce(
       [](bool* did_work) { *did_work = true; }, base::Unretained(&did_work)));
 
   EXPECT_FALSE(did_work);
@@ -164,7 +165,7 @@ TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDoneRequestStopBeforeRunWork) {
 
 TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDoneDeleteWorkBeforeRun) {
   bool did_work = false;
-  DoWorkAndWaitUntilDoneOnSyncThread(base::Bind(
+  DoWorkAndWaitUntilDoneOnSyncThread(base::BindOnce(
       [](bool* did_work) { *did_work = true; }, base::Unretained(&did_work)));
 
   EXPECT_FALSE(did_work);
@@ -184,7 +185,7 @@ TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDoneDeleteWorkBeforeRun) {
 
 TEST_F(ModelSafeWorkerTest, DoWorkAndWaitUntilDoneRequestStopDuringRunWork) {
   bool did_work = false;
-  DoWorkAndWaitUntilDoneOnSyncThread(base::Bind(
+  DoWorkAndWaitUntilDoneOnSyncThread(base::BindOnce(
       [](scoped_refptr<ModelSafeWorker> worker,
          base::AtomicFlag* sync_thread_unblocked, bool* did_work) {
         worker->RequestStop();

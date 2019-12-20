@@ -22,9 +22,10 @@ import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer
 import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer.OnReceivedErrorHelper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Map;
 
 /**
  * AwContentsClient subclass used for testing.
@@ -328,7 +329,7 @@ public class TestAwContentsClient extends NullContentsClient {
             return mIsDialog;
         }
 
-        public boolean getUserAgent() {
+        public boolean getIsUserGesture() {
             assert getCallCount() > 0;
             return mIsUserGesture;
         }
@@ -391,9 +392,33 @@ public class TestAwContentsClient extends NullContentsClient {
 
     @Override
     public boolean onConsoleMessage(AwConsoleMessage consoleMessage) {
-        if (TRACE) Log.i(TAG, "onConsoleMessage " + consoleMessage);
+        // Log unconditionally, because JavaScript errors also generate ConsoleMessages (and
+        // developers generally expect logcat to show such errors).
+        logConsoleMessage(consoleMessage);
         mAddMessageToConsoleHelper.notifyCalled(consoleMessage);
         return false;
+    }
+
+    private void logConsoleMessage(AwConsoleMessage consoleMessage) {
+        String formattedMessage = "[" + consoleMessage.sourceId() + ":"
+                + consoleMessage.lineNumber() + "] " + consoleMessage.message();
+        switch (consoleMessage.messageLevel()) {
+            case AwConsoleMessage.MESSAGE_LEVEL_TIP:
+            case AwConsoleMessage.MESSAGE_LEVEL_LOG:
+                Log.i(TAG, "onConsoleMessage " + formattedMessage);
+                break;
+            case AwConsoleMessage.MESSAGE_LEVEL_WARNING:
+                Log.w(TAG, "onConsoleMessage " + formattedMessage);
+                break;
+            case AwConsoleMessage.MESSAGE_LEVEL_ERROR:
+                Log.e(TAG, "onConsoleMessage " + formattedMessage);
+                break;
+            default:
+                // Should not be reached, but fall-through anyway.
+            case AwConsoleMessage.MESSAGE_LEVEL_DEBUG:
+                Log.d(TAG, "onConsoleMessage " + formattedMessage);
+                break;
+        }
     }
 
     /**
@@ -527,12 +552,20 @@ public class TestAwContentsClient extends NullContentsClient {
      */
     public static class ShouldInterceptRequestHelper extends CallbackHelper {
         private List<String> mShouldInterceptRequestUrls = new ArrayList<String>();
-        private ConcurrentHashMap<String, AwWebResourceResponse> mReturnValuesByUrls =
-                new ConcurrentHashMap<String, AwWebResourceResponse>();
-        private ConcurrentHashMap<String, AwWebResourceRequest> mRequestsByUrls =
-                new ConcurrentHashMap<String, AwWebResourceRequest>();
+        private Map<String, AwWebResourceResponse> mReturnValuesByUrls =
+                Collections.synchronizedMap(new HashMap<String, AwWebResourceResponse>());
+        private Map<String, AwWebResourceRequest> mRequestsByUrls =
+                Collections.synchronizedMap(new HashMap<String, AwWebResourceRequest>());
+        private Runnable mRunnableForFirstTimeCallback;
+        private boolean mRaiseExceptionWhenCalled;
         // This is read on another thread, so needs to be marked volatile.
         private volatile AwWebResourceResponse mShouldInterceptRequestReturnValue;
+        void setRaiseExceptionWhenCalled(boolean value) {
+            mRaiseExceptionWhenCalled = value;
+        }
+        boolean getRaiseExceptionWhenCalled() {
+            return mRaiseExceptionWhenCalled;
+        }
         void setReturnValue(AwWebResourceResponse value) {
             mShouldInterceptRequestReturnValue = value;
         }
@@ -556,7 +589,14 @@ public class TestAwContentsClient extends NullContentsClient {
         public void notifyCalled(AwWebResourceRequest request) {
             mShouldInterceptRequestUrls.add(request.url);
             mRequestsByUrls.put(request.url, request);
+            if (mRunnableForFirstTimeCallback != null) {
+                mRunnableForFirstTimeCallback.run();
+                mRunnableForFirstTimeCallback = null;
+            }
             notifyCalled();
+        }
+        public void runDuringFirstTimeCallback(Runnable r) {
+            mRunnableForFirstTimeCallback = r;
         }
     }
 
@@ -564,10 +604,11 @@ public class TestAwContentsClient extends NullContentsClient {
     public AwWebResourceResponse shouldInterceptRequest(AwWebResourceRequest request) {
         super.shouldInterceptRequest(request);
         if (TRACE) Log.i(TAG, "shouldInterceptRequest " + request.url);
-        AwWebResourceResponse returnValue =
-                mShouldInterceptRequestHelper.getReturnValue(request.url);
         mShouldInterceptRequestHelper.notifyCalled(request);
-        return returnValue;
+        if (mShouldInterceptRequestHelper.getRaiseExceptionWhenCalled()) {
+            throw new RuntimeException("Exception in ShouldInterceptRequestHelper");
+        }
+        return mShouldInterceptRequestHelper.getReturnValue(request.url);
     }
 
     /**

@@ -18,7 +18,20 @@ class ChromeShellDelegate : public ash::ShellDelegate {
   std::unique_ptr<ash::ScreenshotDelegate> CreateScreenshotDelegate() override;
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
   void OpenKeyboardShortcutHelpPage() const override;
-  ws::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
+  bool CanGoBack(gfx::NativeWindow window) const override;
+  void BindBluetoothSystemFactory(
+      mojo::PendingReceiver<device::mojom::BluetoothSystemFactory> receiver)
+      override;
+  void BindFingerprint(
+      mojo::PendingReceiver<device::mojom::Fingerprint> receiver) override;
+  void BindNavigableContentsFactory(
+      mojo::PendingReceiver<content::mojom::NavigableContentsFactory> receiver)
+      override;
+  void BindMultiDeviceSetup(
+      mojo::PendingReceiver<
+          chromeos::multidevice_setup::mojom::MultiDeviceSetup> receiver)
+      override;
+  media_session::mojom::MediaSessionService* GetMediaSessionService() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeShellDelegate);

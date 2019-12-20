@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_WEB_APPLICATIONS_TEST_TEST_SYSTEM_WEB_APP_MANAGER_H_
 #define CHROME_BROWSER_WEB_APPLICATIONS_TEST_TEST_SYSTEM_WEB_APP_MANAGER_H_
 
+#include <string>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/version.h"
 #include "chrome/browser/web_applications/system_web_app_manager.h"
 #include "url/gurl.h"
 
@@ -17,17 +19,26 @@ namespace web_app {
 
 class TestSystemWebAppManager : public SystemWebAppManager {
  public:
-  TestSystemWebAppManager(Profile* profile,
-                          PendingAppManager* pending_app_manager);
+  explicit TestSystemWebAppManager(Profile* profile);
   ~TestSystemWebAppManager() override;
 
-  void SetSystemApps(std::vector<GURL> system_apps);
+  void SetUpdatePolicy(SystemWebAppManager::UpdatePolicy policy);
 
-  // Overridden from SystemWebAppManager:
-  std::vector<GURL> CreateSystemWebApps() override;
+  void set_current_version(const base::Version& version) {
+    current_version_ = version;
+  }
+
+  void set_current_locale(const std::string& locale) {
+    current_locale_ = locale;
+  }
+
+  // SystemWebAppManager:
+  const base::Version& CurrentVersion() const override;
+  const std::string& CurrentLocale() const override;
 
  private:
-  std::vector<GURL> system_apps_;
+  base::Version current_version_{"0.0.0.0"};
+  std::string current_locale_;
 
   DISALLOW_COPY_AND_ASSIGN(TestSystemWebAppManager);
 };

@@ -31,7 +31,7 @@ import org.chromium.base.UserDataHost;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabImpl;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.test.util.SadTabRule;
 import org.chromium.components.bookmarks.BookmarkId;
@@ -50,7 +50,7 @@ public class OfflinePageUtilsUnitTest {
     @Mock
     private File mMockDataDirectory;
     @Mock
-    private Tab mTab;
+    private TabImpl mTab;
     @Mock
     private WebContents mWebContents;
     @Mock
@@ -62,7 +62,7 @@ public class OfflinePageUtilsUnitTest {
     public final SadTabRule mSadTabRule = new SadTabRule();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         MockitoAnnotations.initMocks(this);
         WrappedEnvironment.setDataDirectoryForTest(mMockDataDirectory);
 
@@ -86,10 +86,6 @@ public class OfflinePageUtilsUnitTest {
                 .when(mOfflinePageUtils)
                 .getOfflinePageBridge((Profile) isNull());
         OfflinePageUtils.setInstanceForTesting(mOfflinePageUtils);
-
-        // Setting the default value is required because unit tests don't load native code needed
-        // to normally call the respective getter.
-        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(true);
     }
 
     @Test
@@ -125,14 +121,6 @@ public class OfflinePageUtilsUnitTest {
                         any(OfflinePageBridge.SavePageCallback.class));
 
         BookmarkId bookmarkId = new BookmarkId(42, BookmarkType.NORMAL);
-        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(false);
-        OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
-        // Save page not called because offline bookmarks are disabled.
-        verify(mOfflinePageBridge, times(0))
-                .savePage(eq(mWebContents), any(ClientId.class),
-                        any(OfflinePageBridge.SavePageCallback.class));
-
-        OfflinePageBridge.setOfflineBookmarksEnabledForTesting(true);
         doReturn(true).when(mTab).isShowingErrorPage();
         OfflinePageUtils.saveBookmarkOffline(bookmarkId, mTab);
         // Save page not called because tab is showing an error page.

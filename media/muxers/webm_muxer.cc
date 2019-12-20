@@ -25,6 +25,7 @@ void WriteOpusHeader(const media::AudioParameters& params, uint8_t* header) {
   // Set Opus version.
   header[OPUS_EXTRADATA_VERSION_OFFSET] = 1;
   // Set channel count.
+  DCHECK_LE(params.channels(), 2);
   header[OPUS_EXTRADATA_CHANNELS_OFFSET] = params.channels();
   // Set pre-skip
   uint16_t skip = 0;
@@ -37,23 +38,7 @@ void WriteOpusHeader(const media::AudioParameters& params, uint8_t* header) {
   uint16_t gain = 0;
   memcpy(header + OPUS_EXTRADATA_GAIN_OFFSET, &gain, 2);
 
-  // Set channel mapping.
-  if (params.channels() > 2) {
-    // Also possible to have a multistream, not supported for now.
-    DCHECK_LE(params.channels(), OPUS_MAX_VORBIS_CHANNELS);
-    header[OPUS_EXTRADATA_CHANNEL_MAPPING_OFFSET] = 1;
-    // Assuming no coupled streams. This should actually be
-    // channels() - |coupled_streams|.
-    header[OPUS_EXTRADATA_NUM_STREAMS_OFFSET] = params.channels();
-    header[OPUS_EXTRADATA_NUM_COUPLED_OFFSET] = 0;
-    // Set the actual stream map.
-    for (int i = 0; i < params.channels(); ++i) {
-      header[OPUS_EXTRADATA_STREAM_MAP_OFFSET + i] =
-          kOpusVorbisChannelMap[params.channels() - 1][i];
-    }
-  } else {
-    header[OPUS_EXTRADATA_CHANNEL_MAPPING_OFFSET] = 0;
-  }
+  header[OPUS_EXTRADATA_CHANNEL_MAPPING_OFFSET] = 0;
 }
 
 static double GetFrameRate(const WebmMuxer::VideoParameters& params) {
@@ -85,25 +70,100 @@ static const char* MkvCodeIcForMediaVideoCodecId(VideoCodec video_codec) {
   }
 }
 
+base::Optional<mkvmuxer::Colour> ColorFromColorSpace(
+    const gfx::ColorSpace& color) {
+  using mkvmuxer::Colour;
+  using MatrixID = gfx::ColorSpace::MatrixID;
+  using RangeID = gfx::ColorSpace::RangeID;
+  using TransferID = gfx::ColorSpace::TransferID;
+  using PrimaryID = gfx::ColorSpace::PrimaryID;
+  Colour colour;
+  int matrix_coefficients;
+  switch (color.GetMatrixID()) {
+    case MatrixID::BT709:
+      matrix_coefficients = Colour::kBt709;
+      break;
+    case MatrixID::BT2020_NCL:
+      matrix_coefficients = Colour::kBt2020NonConstantLuminance;
+      break;
+    default:
+      return base::nullopt;
+  }
+  colour.set_matrix_coefficients(matrix_coefficients);
+  int range;
+  switch (color.GetRangeID()) {
+    case RangeID::LIMITED:
+      range = Colour::kBroadcastRange;
+      break;
+    case RangeID::FULL:
+      range = Colour::kFullRange;
+      break;
+    default:
+      return base::nullopt;
+  }
+  colour.set_range(range);
+  int transfer_characteristics;
+  switch (color.GetTransferID()) {
+    case TransferID::BT709:
+      transfer_characteristics = Colour::kIturBt709Tc;
+      break;
+    case TransferID::IEC61966_2_1:
+      transfer_characteristics = Colour::kIec6196621;
+      break;
+    case TransferID::SMPTEST2084:
+      transfer_characteristics = Colour::kSmpteSt2084;
+      break;
+    default:
+      return base::nullopt;
+  }
+  colour.set_transfer_characteristics(transfer_characteristics);
+  int primaries;
+  switch (color.GetPrimaryID()) {
+    case PrimaryID::BT709:
+      primaries = Colour::kIturBt709P;
+      break;
+    case PrimaryID::BT2020:
+      primaries = Colour::kIturBt2020;
+      break;
+    default:
+      return base::nullopt;
+  }
+  colour.set_primaries(primaries);
+  return colour;
+}
+
 }  // anonymous namespace
 
 WebmMuxer::VideoParameters::VideoParameters(
-    scoped_refptr<media::VideoFrame> frame) {
-  visible_rect_size = frame->visible_rect().size();
-  frame_rate = 0.0;
+    scoped_refptr<media::VideoFrame> frame)
+    : visible_rect_size(frame->visible_rect().size()),
+      frame_rate(0.0),
+      codec(kUnknownVideoCodec),
+      color_space(frame->ColorSpace()) {
   ignore_result(frame->metadata()->GetDouble(VideoFrameMetadata::FRAME_RATE,
                                              &frame_rate));
 }
 
+WebmMuxer::VideoParameters::VideoParameters(
+    gfx::Size visible_rect_size,
+    double frame_rate,
+    VideoCodec codec,
+    base::Optional<gfx::ColorSpace> color_space)
+    : visible_rect_size(visible_rect_size),
+      frame_rate(frame_rate),
+      codec(codec),
+      color_space(color_space) {}
+
+WebmMuxer::VideoParameters::VideoParameters(const VideoParameters&) = default;
+
 WebmMuxer::VideoParameters::~VideoParameters() = default;
 
-WebmMuxer::WebmMuxer(VideoCodec video_codec,
-                     AudioCodec audio_codec,
+WebmMuxer::WebmMuxer(AudioCodec audio_codec,
                      bool has_video,
                      bool has_audio,
                      const WriteDataCB& write_data_callback)
-    : video_codec_(video_codec),
-      audio_codec_(audio_codec),
+    : audio_codec_(audio_codec),
+      video_codec_(kUnknownVideoCodec),
       video_track_index_(0),
       audio_track_index_(0),
       has_video_(has_video),
@@ -113,9 +173,6 @@ WebmMuxer::WebmMuxer(VideoCodec video_codec,
       force_one_libwebm_error_(false) {
   DCHECK(has_video_ || has_audio_);
   DCHECK(!write_data_callback_.is_null());
-  DCHECK(video_codec == kCodecVP8 || video_codec == kCodecVP9 ||
-         video_codec == kCodecH264)
-      << " Unsupported video codec: " << GetCodecName(video_codec);
   DCHECK(audio_codec == kCodecOpus || audio_codec == kCodecPCM)
       << " Unsupported audio codec: " << GetCodecName(audio_codec);
 
@@ -139,14 +196,19 @@ WebmMuxer::~WebmMuxer() {
 }
 
 bool WebmMuxer::OnEncodedVideo(const VideoParameters& params,
-                               std::unique_ptr<std::string> encoded_data,
-                               std::unique_ptr<std::string> encoded_alpha,
+                               std::string encoded_data,
+                               std::string encoded_alpha,
                                base::TimeTicks timestamp,
                                bool is_key_frame) {
-  DVLOG(1) << __func__ << " - " << encoded_data->size() << "B";
+  DVLOG(1) << __func__ << " - " << encoded_data.size() << "B";
   DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(params.codec == kCodecVP8 || params.codec == kCodecVP9 ||
+         params.codec == kCodecH264)
+      << " Unsupported video codec: " << GetCodecName(params.codec);
+  DCHECK(video_codec_ == kUnknownVideoCodec || video_codec_ == params.codec)
+      << "Unsupported: codec switched, to: " << GetCodecName(params.codec);
 
-  if (encoded_data->size() == 0u) {
+  if (encoded_data.size() == 0u) {
     DLOG(WARNING) << __func__ << ": zero size encoded frame, skipping";
     // Some encoders give sporadic zero-size data, see https://crbug.com/716451.
     return true;
@@ -155,7 +217,9 @@ bool WebmMuxer::OnEncodedVideo(const VideoParameters& params,
   if (!video_track_index_) {
     // |track_index_|, cannot be zero (!), initialize WebmMuxer in that case.
     // http://www.matroska.org/technical/specs/index.html#Tracks
-    AddVideoTrack(params.visible_rect_size, GetFrameRate(params));
+    video_codec_ = params.codec;
+    AddVideoTrack(params.visible_rect_size, GetFrameRate(params),
+                  params.color_space);
     if (first_frame_timestamp_video_.is_null())
       first_frame_timestamp_video_ = timestamp;
   }
@@ -175,15 +239,14 @@ bool WebmMuxer::OnEncodedVideo(const VideoParameters& params,
   // Any saved encoded video frames must have been dumped in OnEncodedAudio();
   DCHECK(encoded_frames_queue_.empty());
 
-  return AddFrame(std::move(encoded_data), std::move(encoded_alpha),
-                  video_track_index_, timestamp - first_frame_timestamp_video_,
-                  is_key_frame);
+  return AddFrame(encoded_data, encoded_alpha, video_track_index_,
+                  timestamp - first_frame_timestamp_video_, is_key_frame);
 }
 
 bool WebmMuxer::OnEncodedAudio(const media::AudioParameters& params,
-                               std::unique_ptr<std::string> encoded_data,
+                               std::string encoded_data,
                                base::TimeTicks timestamp) {
-  DVLOG(2) << __func__ << " - " << encoded_data->size() << "B";
+  DVLOG(2) << __func__ << " - " << encoded_data.size() << "B";
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!audio_track_index_) {
@@ -202,19 +265,15 @@ bool WebmMuxer::OnEncodedAudio(const media::AudioParameters& params,
   // Dump all saved encoded video frames if any.
   while (!encoded_frames_queue_.empty()) {
     const bool res = AddFrame(
-        std::make_unique<std::string>(*encoded_frames_queue_.front()->data),
-        encoded_frames_queue_.front()->alpha_data
-            ? std::make_unique<std::string>(
-                  *encoded_frames_queue_.front()->alpha_data)
-            : nullptr,
-        video_track_index_,
+        encoded_frames_queue_.front()->data,
+        encoded_frames_queue_.front()->alpha_data, video_track_index_,
         encoded_frames_queue_.front()->timestamp - first_frame_timestamp_video_,
         encoded_frames_queue_.front()->is_keyframe);
     if (!res)
       return false;
     encoded_frames_queue_.pop_front();
   }
-  return AddFrame(std::move(encoded_data), nullptr, audio_track_index_,
+  return AddFrame(encoded_data, std::string(), audio_track_index_,
                   timestamp - first_frame_timestamp_audio_,
                   true /* is_key_frame -- always true for audio */);
 }
@@ -235,7 +294,10 @@ void WebmMuxer::Resume() {
   }
 }
 
-void WebmMuxer::AddVideoTrack(const gfx::Size& frame_size, double frame_rate) {
+void WebmMuxer::AddVideoTrack(
+    const gfx::Size& frame_size,
+    double frame_rate,
+    const base::Optional<gfx::ColorSpace>& color_space) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_EQ(0u, video_track_index_)
       << "WebmMuxer can only be initialized once.";
@@ -250,6 +312,11 @@ void WebmMuxer::AddVideoTrack(const gfx::Size& frame_size, double frame_rate) {
   mkvmuxer::VideoTrack* const video_track =
       reinterpret_cast<mkvmuxer::VideoTrack*>(
           segment_.GetTrackByNumber(video_track_index_));
+  if (color_space) {
+    auto colour = ColorFromColorSpace(*color_space);
+    if (colour)
+      video_track->SetColour(*colour);
+  }
   DCHECK(video_track);
   video_track->set_codec_id(MkvCodeIcForMediaVideoCodecId(video_codec_));
   DCHECK_EQ(0ull, video_track->crop_right());
@@ -293,6 +360,8 @@ void WebmMuxer::AddAudioTrack(const media::AudioParameters& params) {
   DCHECK(audio_track);
   DCHECK_EQ(params.sample_rate(), audio_track->sample_rate());
   DCHECK_EQ(params.channels(), static_cast<int>(audio_track->channels()));
+  DCHECK_LE(params.channels(), 2)
+      << "Only 1 or 2 channels supported, requested " << params.channels();
 
   // Audio data is always pcm_f32le.
   audio_track->set_bit_depth(32u);
@@ -343,8 +412,8 @@ void WebmMuxer::ElementStartNotify(mkvmuxer::uint64 element_id,
       << "Can't go back in a live WebM stream.";
 }
 
-bool WebmMuxer::AddFrame(std::unique_ptr<std::string> encoded_data,
-                         std::unique_ptr<std::string> encoded_alpha,
+bool WebmMuxer::AddFrame(const std::string& encoded_data,
+                         const std::string& encoded_alpha,
                          uint8_t track_index,
                          base::TimeDelta timestamp,
                          bool is_key_frame) {
@@ -361,32 +430,31 @@ bool WebmMuxer::AddFrame(std::unique_ptr<std::string> encoded_data,
     return false;
   }
 
-  DCHECK(encoded_data->data());
-  if (!encoded_alpha || encoded_alpha->empty()) {
+  DCHECK(encoded_data.data());
+  if (encoded_alpha.empty()) {
     return segment_.AddFrame(
-        reinterpret_cast<const uint8_t*>(encoded_data->data()),
-        encoded_data->size(), track_index,
+        reinterpret_cast<const uint8_t*>(encoded_data.data()),
+        encoded_data.size(), track_index,
         most_recent_timestamp_.InMicroseconds() *
             base::Time::kNanosecondsPerMicrosecond,
         is_key_frame);
   }
 
-  DCHECK(encoded_alpha->data());
+  DCHECK(encoded_alpha.data());
   return segment_.AddFrameWithAdditional(
-      reinterpret_cast<const uint8_t*>(encoded_data->data()),
-      encoded_data->size(),
-      reinterpret_cast<const uint8_t*>(encoded_alpha->data()),
-      encoded_alpha->size(), 1 /* add_id */, track_index,
+      reinterpret_cast<const uint8_t*>(encoded_data.data()),
+      encoded_data.size(),
+      reinterpret_cast<const uint8_t*>(encoded_alpha.data()),
+      encoded_alpha.size(), 1 /* add_id */, track_index,
       most_recent_timestamp_.InMicroseconds() *
           base::Time::kNanosecondsPerMicrosecond,
       is_key_frame);
 }
 
-WebmMuxer::EncodedVideoFrame::EncodedVideoFrame(
-    std::unique_ptr<std::string> data,
-    std::unique_ptr<std::string> alpha_data,
-    base::TimeTicks timestamp,
-    bool is_keyframe)
+WebmMuxer::EncodedVideoFrame::EncodedVideoFrame(std::string data,
+                                                std::string alpha_data,
+                                                base::TimeTicks timestamp,
+                                                bool is_keyframe)
     : data(std::move(data)),
       alpha_data(std::move(alpha_data)),
       timestamp(timestamp),

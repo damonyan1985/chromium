@@ -42,7 +42,7 @@
 #include "third_party/blink/renderer/modules/encryptedmedia/media_keys_policy.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/bindings/v8_throw_exception.h"
-#include "third_party/blink/renderer/platform/instance_counters.h"
+#include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/timer.h"
 
@@ -52,7 +52,7 @@ namespace blink {
 
 // A class holding a pending action.
 class MediaKeys::PendingAction final
-    : public GarbageCollectedFinalized<MediaKeys::PendingAction> {
+    : public GarbageCollected<MediaKeys::PendingAction> {
  public:
   enum class Type { kSetServerCertificate, kGetStatusForPolicy };
 
@@ -135,7 +135,7 @@ class SetCertificateResultPromise
   }
 
   void CompleteWithError(WebContentDecryptionModuleException exception_code,
-                         unsigned long system_code,
+                         uint32_t system_code,
                          const WebString& error_message) override {
     if (!IsValidToFulfillPromise())
       return;
@@ -199,14 +199,6 @@ class GetStatusForPolicyResultPromise
   // the promise is pending.
   Member<MediaKeys> media_keys_;
 };
-
-MediaKeys* MediaKeys::Create(
-    ExecutionContext* context,
-    const WebVector<WebEncryptedMediaSessionType>& supported_session_types,
-    std::unique_ptr<WebContentDecryptionModule> cdm) {
-  return MakeGarbageCollected<MediaKeys>(context, supported_session_types,
-                                         std::move(cdm));
-}
 
 MediaKeys::MediaKeys(
     ExecutionContext* context,
@@ -273,7 +265,8 @@ MediaKeySession* MediaKeys::createSession(ScriptState* script_state,
   //    follows:
   //    (Initialization is performed in the constructor.)
   // 4. Return session.
-  return MediaKeySession::Create(script_state, this, session_type);
+  return MakeGarbageCollected<MediaKeySession>(script_state, this,
+                                               session_type);
 }
 
 ScriptPromise MediaKeys::setServerCertificate(
@@ -291,7 +284,7 @@ ScriptPromise MediaKeys::setServerCertificate(
   //
   // 2. If serverCertificate is an empty array, return a promise rejected
   //    with a new a newly created TypeError.
-  if (!server_certificate.ByteLength()) {
+  if (!server_certificate.ByteLengthAsSizeT()) {
     return ScriptPromise::Reject(
         script_state, V8ThrowException::CreateTypeError(
                           script_state->GetIsolate(),
@@ -301,7 +294,7 @@ ScriptPromise MediaKeys::setServerCertificate(
   // 3. Let certificate be a copy of the contents of the serverCertificate
   //    parameter.
   DOMArrayBuffer* server_certificate_buffer = DOMArrayBuffer::Create(
-      server_certificate.Data(), server_certificate.ByteLength());
+      server_certificate.Data(), server_certificate.ByteLengthAsSizeT());
 
   // 4. Let promise be a new promise.
   SetCertificateResultPromise* result =
@@ -313,7 +306,7 @@ ScriptPromise MediaKeys::setServerCertificate(
   pending_actions_.push_back(PendingAction::CreatePendingSetServerCertificate(
       result, server_certificate_buffer));
   if (!timer_.IsActive())
-    timer_.StartOneShot(TimeDelta(), FROM_HERE);
+    timer_.StartOneShot(base::TimeDelta(), FROM_HERE);
 
   // 6. Return promise.
   return promise;
@@ -330,7 +323,7 @@ void MediaKeys::SetServerCertificateTask(
   // 5.2 Use the cdm to process certificate.
   cdm->SetServerCertificate(
       static_cast<unsigned char*>(server_certificate->Data()),
-      server_certificate->ByteLength(), result->Result());
+      server_certificate->ByteLengthAsSizeT(), result->Result());
 
   // 5.3 If any of the preceding steps failed, reject promise with a
   //     new DOMException whose name is the appropriate error name.
@@ -355,7 +348,7 @@ ScriptPromise MediaKeys::getStatusForPolicy(
   pending_actions_.push_back(
       PendingAction::CreatePendingGetStatusForPolicy(result, min_hdcp_version));
   if (!timer_.IsActive())
-    timer_.StartOneShot(TimeDelta(), FROM_HERE);
+    timer_.StartOneShot(base::TimeDelta(), FROM_HERE);
 
   // Return promise.
   return promise;

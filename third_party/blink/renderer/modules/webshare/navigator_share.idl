@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://wicg.github.io/web-share/
+// https://w3c.github.io/web-share/
 
 [
   ImplementedAs=NavigatorShare,
@@ -11,6 +11,6 @@
   [SecureContext, CallWith=ScriptState, MeasureAs=WebShareCanShare, RuntimeEnabled=WebShareV2]
   boolean canShare(optional ShareData data);
 
-  [SecureContext, CallWith=ScriptState, MeasureAs=WebShareShare]
+  [SecureContext, CallWith=ScriptState, RaisesException, MeasureAs=WebShareShare]
   Promise<void> share(optional ShareData data);
 };

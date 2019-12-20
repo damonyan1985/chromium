@@ -45,12 +45,12 @@ _ANDROID_M_MAJOR_VERSION=6
 
 def PrintUsage():
   """Print usage and exit with error."""
-  # pylint: disable-msg=C6310
   print
   print "  usage: " + sys.argv[0] + " [options] [FILE]"
   print
   print "  --symbols-dir=path"
-  print "       the path to a symbols dir, such as =/tmp/out/target/product/dream/symbols"
+  print "       the path to a symbols dir, such as"
+  print "       =/tmp/out/target/product/dream/symbols"
   print
   print "  --chrome-symbols-dir=path"
   print "       the path to a Chrome symbols dir (can be absolute or relative"
@@ -60,6 +60,10 @@ def PrintUsage():
   print "       the path to the build output directory, such as out/Debug."
   print "       Ignored if --chrome-symbols-dir is passed."
   print
+  print "  --apks-directory=path"
+  print "       Overrides the default apks directory. Useful if a bundle APKS"
+  print "       file has been unzipped into a temporary directory."
+  print
   print "  --packed-relocation-adjustments"
   print "  --no-packed-relocation-adjustments"
   print "       turn packed relocation adjustment on and off (default is off)"
@@ -67,7 +71,8 @@ def PrintUsage():
   print "       make no sense, try turning this feature on."
   print
   print "  --symbols-zip=path"
-  print "       the path to a symbols zip file, such as =dream-symbols-12345.zip"
+  print "       the path to a symbols zip file, such as"
+  print "       =dream-symbols-12345.zip"
   print
   print "  --more-info"
   print "  --less-info"
@@ -86,7 +91,8 @@ def PrintUsage():
   print "       component build."
   print
   print "  --verbose"
-  print "       enable extra logging, particularly for debugging failed symbolization"
+  print "       enable extra logging, particularly for debugging failed"
+  print "       symbolization"
   print
   print "  FILE should contain a stack trace in it somewhere"
   print "       the tool will find that and re-print it with"
@@ -94,7 +100,6 @@ def PrintUsage():
   print "       pass FILE, or if file is -, it reads from"
   print "       stdin."
   print
-  # pylint: enable-msg=C6310
   sys.exit(1)
 
 def UnzipSymbols(symbolfile, symdir=None):
@@ -139,23 +144,15 @@ def UnzipSymbols(symbolfile, symdir=None):
     return (symdir, symdir)
 
 
-def main(argv):
+def main(argv, test_symbolizer=None):
   try:
-    options, arguments = getopt.getopt(argv, "",
-                                       ["packed-relocation-adjustments",
-                                        "no-packed-relocation-adjustments",
-                                        "more-info",
-                                        "less-info",
-                                        "chrome-symbols-dir=",
-                                        "output-directory=",
-                                        "symbols-dir=",
-                                        "symbols-zip=",
-                                        "packed-lib=",
-                                        "arch=",
-                                        "fallback-monochrome",
-                                        "verbose",
-                                        "help"])
-  except getopt.GetoptError, unused_error:
+    options, arguments = getopt.getopt(argv, "", [
+        "packed-relocation-adjustments", "no-packed-relocation-adjustments",
+        "more-info", "less-info", "chrome-symbols-dir=", "output-directory=",
+        "apks-directory=", "symbols-dir=", "symbols-zip=", "packed-lib=",
+        "arch=", "fallback-monochrome", "verbose", "help"
+    ])
+  except getopt.GetoptError, _:
     PrintUsage()
 
   zip_arg = None
@@ -163,13 +160,14 @@ def main(argv):
   fallback_monochrome = False
   arch_defined = False
   packed_libs = []
+  apks_directory = None
   for option, value in options:
     if option == "--help":
       PrintUsage()
     elif option == "--symbols-dir":
-      symbol.SYMBOLS_DIR = os.path.expanduser(value)
+      symbol.SYMBOLS_DIR = os.path.abspath(os.path.expanduser(value))
     elif option == "--symbols-zip":
-      zip_arg = os.path.expanduser(value)
+      zip_arg = os.path.abspath(os.path.expanduser(value))
     elif option == "--arch":
       symbol.ARCH = value
       arch_defined = True
@@ -177,9 +175,11 @@ def main(argv):
       symbol.CHROME_SYMBOLS_DIR = os.path.join(constants.DIR_SOURCE_ROOT,
                                                value)
     elif option == "--output-directory":
-      constants.SetOutputDirectory(value)
+      constants.SetOutputDirectory(os.path.abspath(value))
+    elif option == "--apks-directory":
+      apks_directory = os.path.abspath(value)
     elif option == "--packed-lib":
-      packed_libs.append(os.path.expanduser(value))
+      packed_libs.append(os.path.abspath(os.path.expanduser(value)))
     elif option == "--more-info":
       more_info = True
     elif option == "--less-info":
@@ -216,7 +216,7 @@ def main(argv):
     with llvm_symbolizer.LLVMSymbolizer() as symbolizer:
       stack_core.StreamingConvertTrace(sys.stdin, {}, more_info,
                                        fallback_monochrome, arch_defined,
-                                       symbolizer)
+                                       symbolizer, apks_directory)
   else:
     print "Searching for native crashes in: " + os.path.realpath(arguments[0])
     f = open(arguments[0], "r")
@@ -240,8 +240,9 @@ def main(argv):
     with llvm_symbolizer.LLVMSymbolizer() as symbolizer:
       print ("Searching for Chrome symbols from within: "
              + ':'.join((os.path.normpath(d) for d in chrome_search_path)))
-      stack_core.ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome,
-                              arch_defined, symbolizer)
+      stack_core.ConvertTrace(lines, load_vaddrs, more_info,
+                              fallback_monochrome, arch_defined,
+                              test_symbolizer or symbolizer, apks_directory)
 
   if rootdir:
     # be a good citizen and clean up...os.rmdir and os.removedirs() don't work

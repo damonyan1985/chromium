@@ -28,7 +28,8 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
+import org.chromium.chrome.browser.background_task_scheduler.ChromeBackgroundTaskFactory;
+import org.chromium.chrome.browser.flags.FeatureUtilities;
 import org.chromium.components.background_task_scheduler.BackgroundTaskScheduler;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
 import org.chromium.components.background_task_scheduler.TaskIds;
@@ -55,9 +56,9 @@ public class DownloadResumptionSchedulerTest {
 
     @Before
     public void setUp() {
-        ChromePreferenceManager.getInstance().writeBoolean(
-                ChromePreferenceManager.DOWNLOAD_AUTO_RESUMPTION_IN_NATIVE_KEY, false);
+        FeatureUtilities.setDownloadAutoResumptionEnabledInNativeForTesting(false);
         BackgroundTaskSchedulerFactory.setSchedulerForTesting(mScheduler);
+        ChromeBackgroundTaskFactory.setAsDefault();
     }
 
     @After
@@ -201,11 +202,10 @@ public class DownloadResumptionSchedulerTest {
     private static void assertTaskIsDownloadResumptionTask(TaskInfo task, boolean meteredOk) {
         @NetworkType
         int expectedNetworkType =
-                meteredOk ? TaskInfo.NETWORK_TYPE_ANY : TaskInfo.NETWORK_TYPE_UNMETERED;
+                meteredOk ? TaskInfo.NetworkType.ANY : TaskInfo.NetworkType.UNMETERED;
 
         assertNotNull(task);
         assertEquals(TaskIds.DOWNLOAD_RESUMPTION_JOB_ID, task.getTaskId());
-        assertEquals(DownloadResumptionBackgroundTask.class, task.getBackgroundTaskClass());
         assertTrue(task.getExtras().isEmpty());
         assertEquals(expectedNetworkType, task.getRequiredNetworkType());
         assertFalse(task.requiresCharging());

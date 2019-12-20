@@ -5,7 +5,6 @@
 #include "chrome/browser/chrome_browser_main_android.h"
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/path_service.h"
 #include "base/task/post_task.h"
@@ -14,13 +13,13 @@
 #include "chrome/browser/android/preferences/clipboard_android.h"
 #include "chrome/browser/android/seccomp_support_detector.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "components/crash/content/browser/child_exit_observer_android.h"
 #include "components/crash/content/browser/child_process_crash_observer_android.h"
 #include "components/metrics/stability_metrics_helper.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/main_function_params.h"
-#include "net/android/network_change_notifier_factory_android.h"
 #include "net/base/network_change_notifier.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/resource/resource_bundle_android.h"
@@ -28,9 +27,8 @@
 
 ChromeBrowserMainPartsAndroid::ChromeBrowserMainPartsAndroid(
     const content::MainFunctionParams& parameters,
-    ChromeFeatureListCreator* chrome_feature_list_creator)
-    : ChromeBrowserMainParts(parameters,
-                             chrome_feature_list_creator) {}
+    StartupData* startup_data)
+    : ChromeBrowserMainParts(parameters, startup_data) {}
 
 ChromeBrowserMainPartsAndroid::~ChromeBrowserMainPartsAndroid() {
 }
@@ -66,33 +64,27 @@ void ChromeBrowserMainPartsAndroid::PostProfileInit() {
 int ChromeBrowserMainPartsAndroid::PreEarlyInitialization() {
   TRACE_EVENT0("startup",
     "ChromeBrowserMainPartsAndroid::PreEarlyInitialization")
-  net::NetworkChangeNotifier::SetFactory(
-      new net::NetworkChangeNotifierFactoryAndroid());
-
   content::Compositor::Initialize();
 
-  // Chrome on Android does not use default MessageLoop. It has its own
-  // Android specific MessageLoop.
-  DCHECK(!main_message_loop_.get());
-
-  // Create the MessageLoop if doesn't yet exist (and bind it to the native Java
-  // loop). This is a critical point in the startup process.
-  {
-    TRACE_EVENT0("startup",
-      "ChromeBrowserMainPartsAndroid::PreEarlyInitialization:CreateUiMsgLoop");
-    if (!base::MessageLoopCurrent::IsSet())
-      main_message_loop_ = std::make_unique<base::MessageLoopForUI>();
-  }
+  CHECK(base::MessageLoopCurrent::IsSet());
 
   return ChromeBrowserMainParts::PreEarlyInitialization();
+}
+
+void ChromeBrowserMainPartsAndroid::PostEarlyInitialization() {
+  profile_manager_android_.reset(new ProfileManagerAndroid());
+  g_browser_process->profile_manager()->AddObserver(
+      profile_manager_android_.get());
+  ChromeBrowserMainParts::PostEarlyInitialization();
 }
 
 void ChromeBrowserMainPartsAndroid::PostBrowserStart() {
   ChromeBrowserMainParts::PostBrowserStart();
 
-  base::PostDelayedTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-      base::Bind(&ReportSeccompSupport), base::TimeDelta::FromMinutes(1));
+  base::PostDelayedTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&ReportSeccompSupport), base::TimeDelta::FromMinutes(1));
 
   RegisterChromeJavaMojoInterfaces();
 }

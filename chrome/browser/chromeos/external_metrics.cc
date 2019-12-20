@@ -95,9 +95,9 @@ void ExternalMetrics::RecordActionUI(const std::string& action_string) {
 }
 
 void ExternalMetrics::RecordAction(const std::string& action) {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&ExternalMetrics::RecordActionUI, this, action));
+      base::BindOnce(&ExternalMetrics::RecordActionUI, this, action));
 }
 
 void ExternalMetrics::RecordCrashUI(const std::string& crash_kind) {
@@ -105,9 +105,9 @@ void ExternalMetrics::RecordCrashUI(const std::string& crash_kind) {
 }
 
 void ExternalMetrics::RecordCrash(const std::string& crash_kind) {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&ExternalMetrics::RecordCrashUI, this, crash_kind));
+      base::BindOnce(&ExternalMetrics::RecordCrashUI, this, crash_kind));
 }
 
 void ExternalMetrics::RecordHistogram(const metrics::MetricSample& sample) {
@@ -176,8 +176,9 @@ void ExternalMetrics::CollectEventsAndReschedule() {
 }
 
 void ExternalMetrics::ScheduleCollector() {
-  base::PostDelayedTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostDelayedTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&chromeos::ExternalMetrics::CollectEventsAndReschedule,
                      this),
       collection_interval_);

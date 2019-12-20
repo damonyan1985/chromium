@@ -11,16 +11,14 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/cast_messages.h"
-#include "components/net_log/chrome_net_log.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/service_manager_connection.h"
+#include "content/public/browser/device_service.h"
 #include "media/cast/net/cast_transport.h"
 #include "media/cast/net/udp_transport_impl.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/mojom/constants.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace {
 
@@ -107,14 +105,10 @@ class RtcpClient : public media::cast::RtcpObserver {
   DISALLOW_COPY_AND_ASSIGN(RtcpClient);
 };
 
-void CastBindConnectorRequest(
-    service_manager::mojom::ConnectorRequest connector_request) {
+void BindWakeLockProviderOnUIThread(
+    mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-
-  content::ServiceManagerConnection::GetForProcess()
-      ->GetConnector()
-      ->BindConnectorRequest(std::move(connector_request));
+  content::GetDeviceService().BindWakeLockProvider(std::move(receiver));
 }
 
 }  // namespace
@@ -122,7 +116,7 @@ void CastBindConnectorRequest(
 namespace cast {
 
 CastTransportHostFilter::CastTransportHostFilter()
-    : BrowserMessageFilter(CastMsgStart), weak_factory_(this) {}
+    : BrowserMessageFilter(CastMsgStart) {}
 
 CastTransportHostFilter::~CastTransportHostFilter() {}
 
@@ -175,8 +169,7 @@ void CastTransportHostFilter::OnNew(int32_t channel_id,
   }
 
   auto udp_transport = std::make_unique<media::cast::UdpTransportImpl>(
-      g_browser_process->net_log(), base::ThreadTaskRunnerHandle::Get(),
-      local_end_point, remote_end_point,
+      base::ThreadTaskRunnerHandle::Get(), local_end_point, remote_end_point,
       base::BindRepeating(&CastTransportHostFilter::OnStatusChanged,
                           weak_factory_.GetWeakPtr(), channel_id));
   udp_transport->SetUdpOptions(options);
@@ -404,30 +397,23 @@ device::mojom::WakeLock* CastTransportHostFilter::GetWakeLock() {
   if (wake_lock_)
     return wake_lock_.get();
 
-  device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
-
-  DCHECK(content::ServiceManagerConnection::GetForProcess());
-
-  service_manager::mojom::ConnectorRequest connector_request;
-  auto connector = service_manager::Connector::Create(&connector_request);
-  base::PostTaskWithTraits(
+  mojo::Remote<device::mojom::WakeLockProvider> wake_lock_provider;
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&CastBindConnectorRequest, std::move(connector_request)));
-
-  device::mojom::WakeLockProviderPtr wake_lock_provider;
-  connector->BindInterface(device::mojom::kServiceName,
-                           mojo::MakeRequest(&wake_lock_provider));
+      base::BindOnce(&BindWakeLockProviderOnUIThread,
+                     wake_lock_provider.BindNewPipeAndPassReceiver()));
   wake_lock_provider->GetWakeLockWithoutContext(
       device::mojom::WakeLockType::kPreventAppSuspension,
       device::mojom::WakeLockReason::kOther,
-      "Cast is streaming content to a remote receiver", std::move(request));
+      "Cast is streaming content to a remote receiver",
+      wake_lock_.BindNewPipeAndPassReceiver());
   return wake_lock_.get();
 }
 
 void CastTransportHostFilter::InitializeNoOpWakeLockForTesting() {
   // Initializes |wake_lock_| to make GetWakeLock() short-circuit out of its
   // own lazy initialization process.
-  mojo::MakeRequest(&wake_lock_);
+  ignore_result(wake_lock_.BindNewPipeAndPassReceiver());
 }
 
 }  // namespace cast

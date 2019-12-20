@@ -19,20 +19,22 @@
 #include "components/autofill/ios/form_util/form_activity_params.h"
 #import "components/autofill/ios/form_util/form_activity_tab_helper.h"
 #import "components/autofill/ios/form_util/test_form_activity_tab_helper.h"
-#import "ios/web/public/test/fakes/crw_test_js_injection_receiver.h"
+#import "ios/web/public/deprecated/crw_test_js_injection_receiver.h"
+#include "ios/web/public/js_messaging/web_frames_manager.h"
 #import "ios/web/public/test/fakes/fake_web_frame.h"
+#import "ios/web/public/test/fakes/fake_web_frames_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/public/test/scoped_testing_web_client.h"
+#include "ios/web/public/test/web_task_environment.h"
 #include "ios/web/public/web_client.h"
-#include "ios/web/public/web_state/web_frames_manager.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_suggestion_internal.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
 #import "ios/web_view/public/cwv_autofill_controller_delegate.h"
+#include "ios/web_view/test/test_with_locale_and_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
-#include "ui/base/l10n/l10n_util_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -52,16 +54,16 @@ NSString* const kTestFieldValue = @"FieldValue";
 
 }  // namespace
 
-class CWVAutofillControllerTest : public PlatformTest {
+class CWVAutofillControllerTest : public TestWithLocaleAndResources {
  protected:
-  CWVAutofillControllerTest() : browser_state_(/*off_the_record=*/false) {
-    web::SetWebClient(&web_client_);
-    l10n_util::OverrideLocaleWithCocoaLocale();
-
-    web_state_.SetBrowserState(&browser_state_);
+  CWVAutofillControllerTest()
+      : web_client_(std::make_unique<web::WebClient>()),
+        task_environment_(web::WebTaskEnvironment::IO_MAINLOOP),
+        browser_state_(/*off_the_record=*/false) {
+    test_web_state_.SetBrowserState(&browser_state_);
     CRWTestJSInjectionReceiver* injectionReceiver =
         [[CRWTestJSInjectionReceiver alloc] init];
-    web_state_.SetJSInjectionReceiver(injectionReceiver);
+    test_web_state_.SetJSInjectionReceiver(injectionReceiver);
 
     js_autofill_manager_ =
         [[FakeJSAutofillManager alloc] initWithReceiver:injectionReceiver];
@@ -69,22 +71,32 @@ class CWVAutofillControllerTest : public PlatformTest {
 
     autofill_agent_ =
         [[FakeAutofillAgent alloc] initWithPrefService:browser_state_.GetPrefs()
-                                              webState:&web_state_];
+                                              webState:&test_web_state_];
 
-    web_state_.CreateWebFramesManager();
+    auto frames_manager = std::make_unique<web::FakeWebFramesManager>();
+    fake_web_frames_manager_ = frames_manager.get();
+    test_web_state_.SetWebFramesManager(std::move(frames_manager));
+
     autofill_controller_ =
-        [[CWVAutofillController alloc] initWithWebState:&web_state_
+        [[CWVAutofillController alloc] initWithWebState:&test_web_state_
                                           autofillAgent:autofill_agent_
                                       JSAutofillManager:js_autofill_manager_
                                     JSSuggestionManager:js_suggestion_manager_];
     test_form_activity_tab_helper_ =
-        std::make_unique<autofill::TestFormActivityTabHelper>(&web_state_);
-  };
+        std::make_unique<autofill::TestFormActivityTabHelper>(&test_web_state_);
+  }
 
-  web::WebClient web_client_;
-  web::TestWebThreadBundle web_thread_bundle_;
+  void AddWebFrame(std::unique_ptr<web::WebFrame> frame) {
+    web::WebFrame* frame_ptr = frame.get();
+    fake_web_frames_manager_->AddWebFrame(std::move(frame));
+    test_web_state_.OnWebFrameDidBecomeAvailable(frame_ptr);
+  }
+
+  web::ScopedTestingWebClient web_client_;
+  web::WebTaskEnvironment task_environment_;
   ios_web_view::WebViewBrowserState browser_state_;
-  web::TestWebState web_state_;
+  web::TestWebState test_web_state_;
+  web::FakeWebFramesManager* fake_web_frames_manager_;
   CWVAutofillController* autofill_controller_;
   FakeAutofillAgent* autofill_agent_;
   FakeJSAutofillManager* js_autofill_manager_;
@@ -125,8 +137,8 @@ TEST_F(CWVAutofillControllerTest, FetchSuggestions) {
   }));
 }
 
-// Tests CWVAutofillController fills suggestion.
-TEST_F(CWVAutofillControllerTest, FillSuggestion) {
+// Tests CWVAutofillController accepts suggestion.
+TEST_F(CWVAutofillControllerTest, AcceptSuggestion) {
   FormSuggestion* form_suggestion =
       [FormSuggestion suggestionWithValue:kTestFieldValue
                        displayDescription:nil
@@ -138,15 +150,15 @@ TEST_F(CWVAutofillControllerTest, FillSuggestion) {
                                             fieldIdentifier:kTestFieldIdentifier
                                                     frameID:kTestFrameId
                                        isPasswordSuggestion:NO];
-  __block BOOL fill_completion_was_called = NO;
-  [autofill_controller_ fillSuggestion:suggestion
-                     completionHandler:^{
-                       fill_completion_was_called = YES;
-                     }];
+  __block BOOL accept_completion_was_called = NO;
+  [autofill_controller_ acceptSuggestion:suggestion
+                       completionHandler:^{
+                         accept_completion_was_called = YES;
+                       }];
 
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForActionTimeout, ^bool {
     base::RunLoop().RunUntilIdle();
-    return fill_completion_was_called;
+    return accept_completion_was_called;
   }));
   EXPECT_NSEQ(
       form_suggestion,
@@ -159,7 +171,7 @@ TEST_F(CWVAutofillControllerTest, FillSuggestion) {
 TEST_F(CWVAutofillControllerTest, ClearForm) {
   auto frame = std::make_unique<web::FakeWebFrame>(
       base::SysNSStringToUTF8(kTestFrameId), true, GURL::EmptyGURL());
-  web_state_.AddWebFrame(std::move(frame));
+  AddWebFrame(std::move(frame));
   __block BOOL clear_form_completion_was_called = NO;
   [autofill_controller_ clearFormWithName:kTestFormName
                           fieldIdentifier:kTestFieldIdentifier
@@ -219,13 +231,15 @@ TEST_F(CWVAutofillControllerTest, FocusCallback) {
                                   fieldType:@""
                                    formName:kTestFormName
                                     frameID:kTestFrameId
-                                      value:kTestFieldValue];
+                                      value:kTestFieldValue
+                              userInitiated:YES];
 
       autofill::FormActivityParams params;
       params.form_name = base::SysNSStringToUTF8(kTestFormName);
       params.field_identifier = base::SysNSStringToUTF8(kTestFieldIdentifier);
       params.value = base::SysNSStringToUTF8(kTestFieldValue);
       params.frame_id = base::SysNSStringToUTF8(kTestFrameId);
+      params.has_user_gesture = true;
       params.type = "focus";
       web::FakeWebFrame frame(base::SysNSStringToUTF8(kTestFrameId), true,
                               GURL::EmptyGURL());
@@ -248,7 +262,8 @@ TEST_F(CWVAutofillControllerTest, InputCallback) {
                                   fieldType:@""
                                    formName:kTestFormName
                                     frameID:kTestFrameId
-                                      value:kTestFieldValue];
+                                      value:kTestFieldValue
+                              userInitiated:YES];
 
       autofill::FormActivityParams params;
       params.form_name = base::SysNSStringToUTF8(kTestFormName);
@@ -256,6 +271,7 @@ TEST_F(CWVAutofillControllerTest, InputCallback) {
       params.value = base::SysNSStringToUTF8(kTestFieldValue);
       params.frame_id = base::SysNSStringToUTF8(kTestFrameId);
       params.type = "input";
+      params.has_user_gesture = true;
       web::FakeWebFrame frame(base::SysNSStringToUTF8(kTestFrameId), true,
                               GURL::EmptyGURL());
       test_form_activity_tab_helper_->FormActivityRegistered(&frame, params);
@@ -276,7 +292,8 @@ TEST_F(CWVAutofillControllerTest, BlurCallback) {
                                 fieldType:@""
                                  formName:kTestFormName
                                   frameID:kTestFrameId
-                                    value:kTestFieldValue];
+                                    value:kTestFieldValue
+                            userInitiated:YES];
 
     autofill::FormActivityParams params;
     params.form_name = base::SysNSStringToUTF8(kTestFormName);
@@ -284,6 +301,7 @@ TEST_F(CWVAutofillControllerTest, BlurCallback) {
     params.value = base::SysNSStringToUTF8(kTestFieldValue);
     params.frame_id = base::SysNSStringToUTF8(kTestFrameId);
     params.type = "blur";
+    params.has_user_gesture = true;
     web::FakeWebFrame frame(base::SysNSStringToUTF8(kTestFrameId), true,
                             GURL::EmptyGURL());
     test_form_activity_tab_helper_->FormActivityRegistered(&frame, params);
@@ -302,8 +320,8 @@ TEST_F(CWVAutofillControllerTest, SubmitCallback) {
   @autoreleasepool {
     [[delegate expect] autofillController:autofill_controller_
                     didSubmitFormWithName:kTestFormName
-                            userInitiated:YES
-                              isMainFrame:YES];
+                                  frameID:kTestFrameId
+                            userInitiated:YES];
     web::FakeWebFrame frame(base::SysNSStringToUTF8(kTestFrameId), true,
                             GURL::EmptyGURL());
     test_form_activity_tab_helper_->DocumentSubmitted(
@@ -314,36 +332,14 @@ TEST_F(CWVAutofillControllerTest, SubmitCallback) {
 
     [[delegate expect] autofillController:autofill_controller_
                     didSubmitFormWithName:kTestFormName
-                            userInitiated:NO
-                              isMainFrame:YES];
+                                  frameID:kTestFrameId
+                            userInitiated:NO];
 
     test_form_activity_tab_helper_->DocumentSubmitted(
         /*sender_frame*/ &frame, base::SysNSStringToUTF8(kTestFormName),
         /*form_data=*/"",
         /*user_initiated=*/false,
         /*is_main_frame=*/true);
-
-    [delegate verify];
-  }
-}
-
-// Tests CWVAutofillController delegate form insertion callback is invoked.
-TEST_F(CWVAutofillControllerTest, DidInsertFormElementsCallback) {
-  id delegate = OCMProtocolMock(@protocol(CWVAutofillControllerDelegate));
-  autofill_controller_.delegate = delegate;
-
-  // [delegate expect] returns an autoreleased object, but it must be destroyed
-  // before this test exits to avoid holding on to |autofill_controller_|.
-  @autoreleasepool {
-    [[delegate expect]
-        autofillControllerDidInsertFormElements:autofill_controller_];
-
-    autofill::FormActivityParams params;
-    params.frame_id = base::SysNSStringToUTF8(kTestFrameId);
-    params.type = "form_changed";
-    web::FakeWebFrame frame(base::SysNSStringToUTF8(kTestFrameId), true,
-                            GURL::EmptyGURL());
-    test_form_activity_tab_helper_->FormActivityRegistered(&frame, params);
 
     [delegate verify];
   }

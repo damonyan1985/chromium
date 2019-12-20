@@ -16,7 +16,7 @@
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/values.h"
 #include "media/base/cdm_callback_promise.h"
 #include "media/base/cdm_config.h"
@@ -59,7 +59,8 @@ MATCHER(NotEmpty, "") {
 }
 MATCHER(IsJSONDictionary, "") {
   std::string result(arg.begin(), arg.end());
-  std::unique_ptr<base::Value> root(base::JSONReader().ReadToValue(result));
+  std::unique_ptr<base::Value> root(
+      base::JSONReader().ReadToValueDeprecated(result));
   return (root.get() && root->type() == base::Value::Type::DICTIONARY);
 }
 MATCHER(IsNullTime, "") {
@@ -492,7 +493,7 @@ class AesDecryptorTest : public testing::TestWithParam<TestType> {
   }
 
   // Must be the first member to be initialized first and destroyed last.
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   StrictMock<MockCdmClient> cdm_client_;
   scoped_refptr<ContentDecryptionModule> cdm_;
@@ -1083,14 +1084,14 @@ TEST_P(AesDecryptorTest, RandomSessionIDs) {
   EXPECT_EQ(kNumIterations, seen_sessions.size());
 }
 
-INSTANTIATE_TEST_CASE_P(AesDecryptor,
-                        AesDecryptorTest,
-                        testing::Values(TestType::kAesDecryptor));
+INSTANTIATE_TEST_SUITE_P(AesDecryptor,
+                         AesDecryptorTest,
+                         testing::Values(TestType::kAesDecryptor));
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
-INSTANTIATE_TEST_CASE_P(CdmAdapter,
-                        AesDecryptorTest,
-                        testing::Values(TestType::kCdmAdapter));
+INSTANTIATE_TEST_SUITE_P(CdmAdapter,
+                         AesDecryptorTest,
+                         testing::Values(TestType::kCdmAdapter));
 #endif
 
 // TODO(jrummell): Once MojoCdm/MojoCdmService/MojoDecryptor/

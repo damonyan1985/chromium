@@ -62,19 +62,27 @@ WindowProxy::WindowProxy(v8::Isolate* isolate,
       lifecycle_(Lifecycle::kContextIsUninitialized) {}
 
 void WindowProxy::ClearForClose() {
-  DisposeContext(Lifecycle::kFrameIsDetached, kFrameWillNotBeReused);
+  DisposeContext(lifecycle_ == Lifecycle::kV8MemoryIsForciblyPurged
+                     ? Lifecycle::kFrameIsDetachedAndV8MemoryIsPurged
+                     : Lifecycle::kFrameIsDetached,
+                 kFrameWillNotBeReused,
+                 v8::Context::DetachedWindowReason::kDetachedWindowByClosing);
 }
 
 void WindowProxy::ClearForNavigation() {
-  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillBeReused);
+  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillBeReused,
+                 v8::Context::kDetachedWindowByNavigation);
 }
 
 void WindowProxy::ClearForSwap() {
-  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillNotBeReused);
+  // This happens on a navigation between local/remote source.
+  DisposeContext(Lifecycle::kGlobalObjectIsDetached, kFrameWillNotBeReused,
+                 v8::Context::kDetachedWindowByNavigation);
 }
 
 void WindowProxy::ClearForV8MemoryPurge() {
-  DisposeContext(Lifecycle::kForciblyPurgeV8Memory, kFrameWillNotBeReused);
+  DisposeContext(Lifecycle::kV8MemoryIsForciblyPurged, kFrameWillNotBeReused,
+                 v8::Context::kDetachedWindowByOtherReason);
 }
 
 v8::Local<v8::Object> WindowProxy::GlobalProxyIfNotDetached() {

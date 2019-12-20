@@ -16,13 +16,23 @@ class TextureImage : public gl::GLImage {
 
   gfx::Size GetSize() override { return size_; }
   unsigned GetInternalFormat() override { return GL_RGBA; }
+  unsigned GetDataType() override { return GL_UNSIGNED_BYTE; }
   BindOrCopy ShouldBindOrCopy() override { return BIND; }
   bool BindTexImage(unsigned target) override {
     glTexImage2D(target,
                  0,  // mip level
                  GetInternalFormat(), size_.width(), size_.height(),
                  0,  // border
-                 GetInternalFormat(), GL_UNSIGNED_BYTE, nullptr);
+                 GetDataFormat(), GetDataType(), nullptr);
+    return true;
+  }
+  bool BindTexImageWithInternalformat(unsigned target,
+                                      unsigned internal_format) override {
+    glTexImage2D(target,
+                 0,  // mip level
+                 GetInternalFormat(), size_.width(), size_.height(),
+                 0,  // border
+                 GetDataFormat(), GetDataType(), nullptr);
     return true;
   }
   void ReleaseTexImage(unsigned target) override {}

@@ -7,6 +7,7 @@
 #include "ios/chrome/browser/ui/collection_view/cells/collection_view_cell_constants.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -60,11 +61,9 @@ const CGFloat kVerticalSpacing = 16;
     _textLabel = [[UILabel alloc] init];
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _textLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
     _textLabel.numberOfLines = 0;
-    _textLabel.textColor =
-        UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
-    _textLabel.backgroundColor = [UIColor clearColor];
+    _textLabel.textColor = UIColor.cr_secondaryLabelColor;
     _textLabel.textAlignment = NSTextAlignmentCenter;
     [self.contentView addSubview:_textLabel];
 
@@ -75,10 +74,15 @@ const CGFloat kVerticalSpacing = 16;
         forControlEvents:UIControlEventTouchUpInside];
     [self.contentView addSubview:button];
 
+    NSLayoutConstraint* heightConstraint = [self.contentView.heightAnchor
+        constraintGreaterThanOrEqualToConstant:kChromeTableViewCellHeight];
+    // Don't set the priority to required to avoid clashing with the estimated
+    // height.
+    heightConstraint.priority = UILayoutPriorityRequired - 1;
+
     AddSameConstraints(button, self.contentView);
     [NSLayoutConstraint activateConstraints:@[
-      [self.contentView.heightAnchor constraintGreaterThanOrEqualToConstant:
-                                         kTableViewHeaderFooterViewHeight],
+      heightConstraint,
       [_textLabel.leadingAnchor
           constraintEqualToAnchor:self.contentView.leadingAnchor],
       [_textLabel.trailingAnchor

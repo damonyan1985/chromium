@@ -13,6 +13,7 @@ from __future__ import print_function
 
 import argparse
 import ast
+import collections
 import errno
 import json
 import os
@@ -36,11 +37,33 @@ sys.path = [os.path.join(CHROMIUM_SRC_DIR, 'build')] + sys.path
 
 import gn_helpers
 
+def PruneVirtualEnv():
+  # Set by VirtualEnv, no need to keep it.
+  os.environ.pop('VIRTUAL_ENV', None)
+
+  # Set by VPython, if scripts want it back they have to set it explicitly.
+  os.environ.pop('PYTHONNOUSERSITE', None)
+
+  # Look for "activate_this.py" in this path, which is installed by VirtualEnv.
+  # This mechanism is used by vpython as well to sanitize VirtualEnvs from
+  # $PATH.
+  os.environ['PATH'] = os.pathsep.join([
+    p for p in os.environ.get('PATH', '').split(os.pathsep)
+    if not os.path.isfile(os.path.join(p, 'activate_this.py'))
+  ])
+
 
 def main(args):
+  # Prune all evidence of VPython/VirtualEnv out of the environment. This means
+  # that we 'unwrap' vpython VirtualEnv path/env manipulation. Invocations of
+  # `python` from GN should never inherit the gn.py's own VirtualEnv. This also
+  # helps to ensure that generated ninja files do not reference python.exe from
+  # the VirtualEnv generated from depot_tools' own .vpython file (or lack
+  # thereof), but instead reference the default python from the PATH.
+  PruneVirtualEnv()
+
   mbw = MetaBuildWrapper()
   return mbw.Main(args)
-
 
 class MetaBuildWrapper(object):
   def __init__(self):
@@ -108,12 +131,18 @@ class MetaBuildWrapper(object):
       subp.add_argument('-v', '--verbose', action='store_true',
                         help='verbose logging')
 
-    parser = argparse.ArgumentParser(prog='mb')
+    parser = argparse.ArgumentParser(
+      prog='mb', description='mb (meta-build) is a python wrapper around GN. '
+                             'See the user guide in '
+                             '//tools/mb/docs/user_guide.md for detailed usage '
+                             'instructions.')
+
     subps = parser.add_subparsers()
 
     subp = subps.add_parser('analyze',
-                            help='analyze whether changes to a set of files '
-                                 'will cause a set of binaries to be rebuilt.')
+                            description='Analyze whether changes to a set of '
+                                        'files will cause a set of binaries to '
+                                        'be rebuilt.')
     AddCommonOptions(subp)
     subp.add_argument('path',
                       help='path build was generated into.')
@@ -123,11 +152,13 @@ class MetaBuildWrapper(object):
     subp.add_argument('output_path',
                       help='path to a file containing the output arguments '
                            'as a JSON object.')
+    subp.add_argument('--json-output',
+                      help='Write errors to json.output')
     subp.set_defaults(func=self.CmdAnalyze)
 
     subp = subps.add_parser('export',
-                            help='print out the expanded configuration for'
-                                 'each builder as a JSON object')
+                            description='Print out the expanded configuration '
+                            'for each builder as a JSON object.')
     subp.add_argument('-f', '--config-file', metavar='PATH',
                       default=self.default_config,
                       help='path to config file (default is %(default)s)')
@@ -136,27 +167,31 @@ class MetaBuildWrapper(object):
     subp.set_defaults(func=self.CmdExport)
 
     subp = subps.add_parser('gen',
-                            help='generate a new set of build files')
+                            description='Generate a new set of build files.')
     AddCommonOptions(subp)
     subp.add_argument('--swarming-targets-file',
-                      help='save runtime dependencies for targets listed '
-                           'in file.')
+                      help='generates runtime dependencies for targets listed '
+                           'in file as .isolate and .isolated.gen.json files. '
+                           'Targets should be listed by name, separated by '
+                           'newline.')
+    subp.add_argument('--json-output',
+                      help='Write errors to json.output')
     subp.add_argument('path',
                       help='path to generate build into')
     subp.set_defaults(func=self.CmdGen)
 
     subp = subps.add_parser('isolate-everything',
-                            help='generates a .isolate for all targets. '
-                                 'Requires that mb.py gen has already been '
-                                 'run.')
+                            description='Generates a .isolate for all targets. '
+                                        'Requires that mb.py gen has already '
+                                        'been run.')
     AddCommonOptions(subp)
     subp.set_defaults(func=self.CmdIsolateEverything)
     subp.add_argument('path',
                       help='path build was generated into')
 
     subp = subps.add_parser('isolate',
-                            help='generate the .isolate files for a given'
-                                 'binary')
+                            description='Generate the .isolate files for a '
+                                        'given binary.')
     AddCommonOptions(subp)
     subp.add_argument('--no-build', dest='build', default=True,
                       action='store_false',
@@ -170,16 +205,30 @@ class MetaBuildWrapper(object):
     subp.set_defaults(func=self.CmdIsolate)
 
     subp = subps.add_parser('lookup',
-                            help='look up the command for a given config or '
-                                 'builder')
+                            description='Look up the command for a given '
+                                        'config or builder.')
     AddCommonOptions(subp)
+    subp.add_argument('--quiet', default=False, action='store_true',
+                      help='Print out just the arguments, '
+                           'do not emulate the output of the gen subcommand.')
+    subp.add_argument('--recursive', default=False, action='store_true',
+                      help='Lookup arguments from imported files, '
+                           'implies --quiet')
     subp.set_defaults(func=self.CmdLookup)
 
+    subp = subps.add_parser('try',
+                            description='Try your change on a remote builder')
+    AddCommonOptions(subp)
+    subp.add_argument('target',
+                      help='ninja target to build and run')
+    subp.add_argument('--force', default=False, action='store_true',
+                      help='Force the job to run. Ignores local checkout state;'
+                      ' by default, the tool doesn\'t trigger jobs if there are'
+                      ' local changes which are not present on Gerrit.')
+    subp.set_defaults(func=self.CmdTry)
+
     subp = subps.add_parser(
-        'run',
-        help='build and run the isolated version of a '
-             'binary',
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+      'run', formatter_class=argparse.RawDescriptionHelpFormatter)
     subp.description = (
         'Build, isolate, and run the given binary with the command line\n'
         'listed in the isolate. You may pass extra arguments after the\n'
@@ -224,15 +273,15 @@ class MetaBuildWrapper(object):
     subp.set_defaults(func=self.CmdRun)
 
     subp = subps.add_parser('validate',
-                            help='validate the config file')
+                            description='Validate the config file.')
     subp.add_argument('-f', '--config-file', metavar='PATH',
                       default=self.default_config,
                       help='path to config file (default is %(default)s)')
     subp.set_defaults(func=self.CmdValidate)
 
     subp = subps.add_parser('zip',
-                            help='generate a .zip containing the files needed '
-                                 'for a given binary')
+                            description='Generate a .zip containing the files '
+                                        'needed for a given binary.')
     AddCommonOptions(subp)
     subp.add_argument('--no-build', dest='build', default=True,
                       action='store_false',
@@ -330,59 +379,132 @@ class MetaBuildWrapper(object):
 
   def CmdLookup(self):
     vals = self.Lookup()
-    cmd = self.GNCmd('gen', '_path_')
-    gn_args = self.GNArgs(vals)
-    self.Print('\nWriting """\\\n%s""" to _path_/args.gn.\n' % gn_args)
-    env = None
+    gn_args = self.GNArgs(vals, expand_imports=self.args.recursive)
+    if self.args.quiet or self.args.recursive:
+      self.Print(gn_args, end='')
+    else:
+      cmd = self.GNCmd('gen', '_path_')
+      self.Print('\nWriting """\\\n%s""" to _path_/args.gn.\n' % gn_args)
+      env = None
 
-    self.PrintCmd(cmd, env)
+      self.PrintCmd(cmd, env)
     return 0
+
+  def CmdTry(self):
+    ninja_target = self.args.target
+    if ninja_target.startswith('//'):
+      self.Print("Expected a ninja target like base_unittests, got %s" % (
+        ninja_target))
+      return 1
+
+    _, out, _ = self.Run(['git', 'cl', 'diff', '--stat'], force_verbose=False)
+    if out:
+      self.Print("Your checkout appears to local changes which are not uploaded"
+                 " to Gerrit. Changes must be committed and uploaded to Gerrit"
+                 " to be tested using this tool.")
+      if not self.args.force:
+        return 1
+
+    json_path = self.PathJoin(self.chromium_src_dir, 'out.json')
+    try:
+      ret, out, err = self.Run(
+        ['git', 'cl', 'issue', '--json=out.json'], force_verbose=False)
+      if ret != 0:
+        self.Print(
+          "Unable to fetch current issue. Output and error:\n%s\n%s" % (
+            out, err
+        ))
+        return ret
+      with open(json_path) as f:
+        issue_data = json.load(f)
+    finally:
+      if self.Exists(json_path):
+        os.unlink(json_path)
+
+    if not issue_data['issue']:
+      self.Print("Missing issue data. Upload your CL to Gerrit and try again.")
+      return 1
+
+    class LedException(Exception):
+      pass
+
+    def run_cmd(previous_res, cmd):
+      if self.args.verbose:
+        self.Print(('| ' if previous_res else '') + ' '.join(cmd))
+
+      res, out, err = self.Call(cmd, stdin=previous_res)
+      if res != 0:
+        self.Print("Err while running '%s'. Output:\n%s\nstderr:\n%s" % (
+          ' '.join(cmd), out, err))
+        raise LedException()
+      return out
+
+    try:
+      result = LedResult(None, run_cmd).then(
+        # TODO(martiniss): maybe don't always assume the bucket?
+        'led', 'get-builder', 'luci.chromium.try:%s' % self.args.builder).then(
+        'led', 'edit', '-r', 'chromium_trybot_experimental',
+          '-p', 'tests=["%s"]' % ninja_target).then(
+        'led', 'edit-system', '--tag=purpose:user-debug-mb-try').then(
+        'led', 'edit-cr-cl', issue_data['issue_url']).then(
+        'led', 'launch').result
+    except LedException:
+      self.Print("If this is an unexpected error message, please file a bug"
+                 " with https://goto.google.com/mb-try-bug")
+      raise
+
+    swarming_data = json.loads(result)['swarming']
+    self.Print("Launched task at https://%s/task?id=%s" % (
+      swarming_data['host_name'], swarming_data['task_id']))
 
   def CmdRun(self):
     vals = self.GetConfig()
     if not vals:
       return 1
     if self.args.build:
+      self.Print('')
       ret = self.Build(self.args.target)
       if ret:
         return ret
+
+    self.Print('')
     ret = self.RunGNIsolate(vals)
     if ret:
       return ret
 
+    self.Print('')
     if self.args.swarmed:
       return self._RunUnderSwarming(self.args.path, self.args.target)
     else:
       return self._RunLocallyIsolated(self.args.path, self.args.target)
 
   def CmdZip(self):
-      ret = self.CmdIsolate()
-      if ret:
-          return ret
+    ret = self.CmdIsolate()
+    if ret:
+      return ret
 
-      zip_dir = None
-      try:
-          zip_dir = self.TempDir()
-          remap_cmd = [
-            self.executable,
-            self.PathJoin(self.chromium_src_dir, 'tools', 'swarming_client',
-                          'isolate.py'),
-            'remap',
-            '--collapse_symlinks',
-            '-s', self.PathJoin(self.args.path, self.args.target + '.isolated'),
-            '-o', zip_dir
-          ]
-          self.Run(remap_cmd)
+    zip_dir = None
+    try:
+      zip_dir = self.TempDir()
+      remap_cmd = [
+          self.executable,
+          self.PathJoin(self.chromium_src_dir, 'tools', 'swarming_client',
+                        'isolate.py'), 'remap', '--collapse_symlinks', '-s',
+          self.PathJoin(self.args.path, self.args.target + '.isolated'), '-o',
+          zip_dir
+      ]
+      self.Run(remap_cmd)
 
-          zip_path = self.args.zip_path
-          with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as fp:
-              for root, _, files in os.walk(zip_dir):
-                  for filename in files:
-                      path = self.PathJoin(root, filename)
-                      fp.write(path, self.RelPath(path, zip_dir))
-      finally:
-          if zip_dir:
-              self.RemoveDirectory(zip_dir)
+      zip_path = self.args.zip_path
+      with zipfile.ZipFile(
+          zip_path, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as fp:
+        for root, _, files in os.walk(zip_dir):
+          for filename in files:
+            path = self.PathJoin(root, filename)
+            fp.write(path, self.RelPath(path, zip_dir))
+    finally:
+      if zip_dir:
+        self.RemoveDirectory(zip_dir)
 
   @staticmethod
   def _AddBaseSoftware(cmd):
@@ -391,17 +513,17 @@ class MetaBuildWrapper(object):
     # crbug.com/812428
 
     # Add in required base software. This should be kept in sync with the
-    # `swarming` recipe module in build.git. All references to `swarming_module`
-    # below are purely due to this.
+    # `chromium_swarming` recipe module in build.git. All references to
+    # `swarming_module` below are purely due to this.
     cipd_packages = [
       ('infra/python/cpython/${platform}',
-       'version:2.7.14.chromium14'),
+       'version:2.7.15.chromium14'),
       ('infra/tools/luci/logdog/butler/${platform}',
        'git_revision:e1abc57be62d198b5c2f487bfb2fa2d2eb0e867c'),
       ('infra/tools/luci/vpython-native/${platform}',
-       'git_revision:b6cdec8586c9f8d3d728b1bc0bd4331330ba66fc'),
+       'git_revision:e317c7d2c17d4c3460ee37524dfce4e1dee4306a'),
       ('infra/tools/luci/vpython/${platform}',
-       'git_revision:b6cdec8586c9f8d3d728b1bc0bd4331330ba66fc'),
+       'git_revision:e317c7d2c17d4c3460ee37524dfce4e1dee4306a'),
     ]
     for pkg, vers in cipd_packages:
       cmd.append('--cipd-package=.swarming_module:%s:%s' % (pkg, vers))
@@ -420,6 +542,9 @@ class MetaBuildWrapper(object):
     ])
 
   def _RunUnderSwarming(self, build_dir, target):
+    isolate_server = 'isolateserver.appspot.com'
+    namespace = 'default-gzip'
+    swarming_server = 'chromium-swarm.appspot.com'
     # TODO(dpranke): Look up the information for the target in
     # the //testing/buildbot.json file, if possible, so that we
     # can determine the isolate target, command line, and additional
@@ -434,12 +559,28 @@ class MetaBuildWrapper(object):
         self.executable,
         self.PathJoin('tools', 'swarming_client', 'isolate.py'),
         'archive',
-        '-s',
-        self.ToSrcRelPath('%s/%s.isolated' % (build_dir, target)),
-        '-I', 'isolateserver.appspot.com',
+        '-s', self.ToSrcRelPath('%s/%s.isolated' % (build_dir, target)),
+        '-I', isolate_server,
+        '--namespace', namespace,
       ]
-    ret, out, _ = self.Run(cmd, force_verbose=False)
+
+    # Talking to the isolateserver may fail because we're not logged in.
+    # We trap the command explicitly and rewrite the error output so that
+    # the error message is actually correct for a Chromium check out.
+    self.PrintCmd(cmd, env=None)
+    ret, out, err = self.Run(cmd, force_verbose=False)
     if ret:
+      self.Print('  -> returned %d' % ret)
+      if out:
+        self.Print(out, end='')
+      if err:
+        # The swarming client will return an exit code of 2 (via
+        # argparse.ArgumentParser.error()) and print a message to indicate
+        # that auth failed, so we have to parse the message to check.
+        if (ret == 2 and 'Please login to' in err):
+          err = err.replace(' auth.py', ' tools/swarming_client/auth.py')
+          self.Print(err, end='', file=sys.stderr)
+
       return ret
 
     isolated_hash = out.splitlines()[0].split()[0]
@@ -448,12 +589,15 @@ class MetaBuildWrapper(object):
         self.PathJoin('tools', 'swarming_client', 'swarming.py'),
           'run',
           '-s', isolated_hash,
-          '-I', 'isolateserver.appspot.com',
-          '-S', 'chromium-swarm.appspot.com',
+          '-I', isolate_server,
+          '--namespace', namespace,
+          '-S', swarming_server,
+          '--tags=purpose:user-debug-mb',
       ] + dimensions
     self._AddBaseSoftware(cmd)
     if self.args.extra_args:
       cmd += ['--'] + self.args.extra_args
+    self.Print('')
     ret, _, _ = self.Run(cmd, force_verbose=True, buffer_output=False)
     return ret
 
@@ -478,13 +622,13 @@ class MetaBuildWrapper(object):
     if self.platform == 'darwin':
       os_dim = ('os', 'Mac-10.13')
     elif self.platform.startswith('linux'):
-      os_dim = ('os', 'Ubuntu-14.04')
+      os_dim = ('os', 'Ubuntu-16.04')
     elif self.platform == 'win32':
       os_dim = ('os', 'Windows-10')
     else:
       raise MBErr('unrecognized platform string "%s"' % self.platform)
 
-    return [('pool', 'Chrome'),
+    return [('pool', 'chromium.tests'),
             ('cpu', 'x86-64'),
             os_dim]
 
@@ -547,7 +691,7 @@ class MetaBuildWrapper(object):
       if 'chromium' in self.masters:
         for builder in self.masters['chromium']:
           config = self.masters['chromium'][builder]
-          def RecurseMixins(current_mixin):
+          def RecurseMixins(builder, current_mixin):
             if current_mixin == 'chrome_with_codecs':
               errs.append('Public artifact builder "%s" can not contain the '
                           '"chrome_with_codecs" mixin.' % builder)
@@ -555,15 +699,43 @@ class MetaBuildWrapper(object):
             if not 'mixins' in self.mixins[current_mixin]:
               return
             for mixin in self.mixins[current_mixin]['mixins']:
-              RecurseMixins(mixin)
+              RecurseMixins(builder, mixin)
 
           for mixin in self.configs[config]:
-            RecurseMixins(mixin)
+            RecurseMixins(builder, mixin)
       else:
         errs.append('Missing "chromium" master. Please update this '
                     'proprietary codecs check with the name of the master '
                     'responsible for public build artifacts.')
 
+    # Check for duplicate configs. Evaluate all configs, and see if, when
+    # evaluated, differently named configs are the same.
+    evaled_to_source = collections.defaultdict(set)
+    for master, builders in self.masters.items():
+      for builder in builders:
+        config = self.masters[master][builder]
+        if not config:
+          continue
+
+        if isinstance(config, dict):
+          # Ignore for now
+          continue
+        elif config.startswith('//'):
+          args = config
+        else:
+          args = self.FlattenConfig(config)['gn_args']
+          if 'error' in args:
+            continue
+
+        evaled_to_source[args].add(config)
+
+    for v in evaled_to_source.values():
+      if len(v) != 1:
+        errs.append('Duplicate configs detected. When evaluated fully, the '
+                    'following configs are all equivalent: %s. Please '
+                    'consolidate these configs into only one unique name per '
+                    'configuration value.' % (
+                      ', '.join(sorted('%r' % val for val in v))))
     if errs:
       raise MBErr(('mb config file %s has problems:' % self.args.config_file) +
                     '\n  ' + '\n  '.join(errs))
@@ -740,8 +912,8 @@ class MetaBuildWrapper(object):
         vals['cros_passthrough'] = mixin_vals['cros_passthrough']
       if 'args_file' in mixin_vals:
         if vals['args_file']:
-            raise MBErr('args_file specified multiple times in mixins '
-                        'for %s on %s' % (self.args.builder, self.args.master))
+          raise MBErr('args_file specified multiple times in mixins '
+                      'for mixin %s' % m)
         vals['args_file'] = mixin_vals['args_file']
       if 'gn_args' in mixin_vals:
         if vals['gn_args']:
@@ -783,26 +955,31 @@ class MetaBuildWrapper(object):
       isolate_targets = set(contents.splitlines())
 
       isolate_map = self.ReadIsolateMap()
+      self.RemovePossiblyStaleRuntimeDepsFiles(vals, isolate_targets,
+                                               isolate_map, build_dir)
+
       err, labels = self.MapTargetsToLabels(isolate_map, isolate_targets)
       if err:
-          raise MBErr(err)
+        raise MBErr(err)
 
       gn_runtime_deps_path = self.ToAbsPath(build_dir, 'runtime_deps')
       self.WriteFile(gn_runtime_deps_path, '\n'.join(labels) + '\n')
       cmd.append('--runtime-deps-list-file=%s' % gn_runtime_deps_path)
 
-    ret, _, _ = self.Run(cmd)
+    ret, output, _ = self.Run(cmd)
     if ret:
-        # If `gn gen` failed, we should exit early rather than trying to
-        # generate isolates. Run() will have already logged any error output.
-        self.Print('GN gen failed: %d' % ret)
-        return ret
+      if self.args.json_output:
+        # write errors to json.output
+        self.WriteJSON({'output': output}, self.args.json_output)
+      # If `gn gen` failed, we should exit early rather than trying to
+      # generate isolates. Run() will have already logged any error output.
+      self.Print('GN gen failed: %d' % ret)
+      return ret
 
     if getattr(self.args, 'swarming_targets_file', None):
-      return self.GenerateIsolates(vals, isolate_targets, isolate_map,
-                                   build_dir)
+      ret = self.GenerateIsolates(vals, isolate_targets, isolate_map, build_dir)
 
-    return 0
+    return ret
 
   def RunGNGenAllIsolates(self, vals):
     """
@@ -817,10 +994,10 @@ class MetaBuildWrapper(object):
     ret, output, _ = self.Run(self.GNCmd('ls', build_dir),
                               force_verbose=False)
     if ret:
-        # If `gn ls` failed, we should exit early rather than trying to
-        # generate isolates.
-        self.Print('GN ls failed: %d' % ret)
-        return ret
+      # If `gn ls` failed, we should exit early rather than trying to
+      # generate isolates.
+      self.Print('GN ls failed: %d' % ret)
+      return ret
 
     # Create a reverse map from isolate label to isolate dict.
     isolate_map = self.ReadIsolateMap()
@@ -844,7 +1021,9 @@ class MetaBuildWrapper(object):
         isolate_targets.append(isolate_dict_map[target]['isolate_key'])
         runtime_deps.append(target)
 
-    # Now we need to run "gn gen" again with --runtime-deps-list-file
+    self.RemovePossiblyStaleRuntimeDepsFiles(vals, isolate_targets,
+                                             isolate_map, build_dir)
+
     gn_runtime_deps_path = self.ToAbsPath(build_dir, 'runtime_deps')
     self.WriteFile(gn_runtime_deps_path, '\n'.join(runtime_deps) + '\n')
     cmd = self.GNCmd('gen', build_dir)
@@ -852,6 +1031,35 @@ class MetaBuildWrapper(object):
     self.Run(cmd)
 
     return self.GenerateIsolates(vals, isolate_targets, isolate_map, build_dir)
+
+  def RemovePossiblyStaleRuntimeDepsFiles(self, vals, targets, isolate_map,
+                                          build_dir):
+    # TODO(crbug.com/932700): Because `gn gen --runtime-deps-list-file`
+    # puts the runtime_deps file in different locations based on the actual
+    # type of a target, we may end up with multiple possible runtime_deps
+    # files in a given build directory, where some of the entries might be
+    # stale (since we might be reusing an existing build directory).
+    #
+    # We need to be able to get the right one reliably; you might think
+    # we can just pick the newest file, but because GN won't update timestamps
+    # if the contents of the files change, an older runtime_deps
+    # file might actually be the one we should use over a newer one (see
+    # crbug.com/932387 for a more complete explanation and example).
+    #
+    # In order to avoid this, we need to delete any possible runtime_deps
+    # files *prior* to running GN. As long as the files aren't actually
+    # needed during the build, this hopefully will not cause unnecessary
+    # build work, and so it should be safe.
+    #
+    # Ultimately, we should just make sure we get the runtime_deps files
+    # in predictable locations so we don't have this issue at all, and
+    # that's what crbug.com/932700 is for.
+    possible_rpaths = self.PossibleRuntimeDepsPaths(vals, targets, isolate_map)
+    for rpaths in possible_rpaths.values():
+      for rpath in rpaths:
+        path = self.ToAbsPath(build_dir, rpath)
+        if self.Exists(path):
+          self.RemoveFile(path)
 
   def GenerateIsolates(self, vals, ninja_targets, isolate_map, build_dir):
     """
@@ -862,68 +1070,99 @@ class MetaBuildWrapper(object):
     This function assumes that a previous invocation of "mb.py gen" has
     generated runtime deps for all targets.
     """
+    possible_rpaths = self.PossibleRuntimeDepsPaths(vals, ninja_targets,
+                                                    isolate_map)
+
+    for target, rpaths in possible_rpaths.items():
+      # TODO(crbug.com/932700): We don't know where each .runtime_deps
+      # file might be, but assuming we called
+      # RemovePossiblyStaleRuntimeDepsFiles prior to calling `gn gen`,
+      # there should only be one file.
+      found_one = False
+      path_to_use = None
+      for r in rpaths:
+        path = self.ToAbsPath(build_dir, r)
+        if self.Exists(path):
+          if found_one:
+            raise MBErr('Found more than one of %s' % ', '.join(rpaths))
+          path_to_use = path
+          found_one = True
+
+      if not found_one:
+        raise MBErr('Did not find any of %s' % ', '.join(rpaths))
+
+      command, extra_files = self.GetIsolateCommand(target, vals)
+      runtime_deps = self.ReadFile(path_to_use).splitlines()
+
+      canonical_target = target.replace(':','_').replace('/','_')
+      ret = self.WriteIsolateFiles(build_dir, command, canonical_target,
+                                   runtime_deps, vals, extra_files)
+      if ret:
+        return ret
+    return 0
+
+  def PossibleRuntimeDepsPaths(self, vals, ninja_targets, isolate_map):
+    """Returns a map of targets to possible .runtime_deps paths.
+
+    Each ninja target maps on to a GN label, but depending on the type
+    of the GN target, `gn gen --runtime-deps-list-file` will write
+    the .runtime_deps files into different locations. Unfortunately, in
+    some cases we don't actually know which of multiple locations will
+    actually be used, so we return all plausible candidates.
+
+    The paths that are returned are relative to the build directory.
+    """
+
     android = 'target_os="android"' in vals['gn_args']
+    ios = 'target_os="ios"' in vals['gn_args']
     fuchsia = 'target_os="fuchsia"' in vals['gn_args']
     win = self.platform == 'win32' or 'target_os="win"' in vals['gn_args']
+    possible_runtime_deps_rpaths = {}
     for target in ninja_targets:
+      target_type = isolate_map[target]['type']
+      label = isolate_map[target]['label']
+      stamp_runtime_deps = 'obj/%s.stamp.runtime_deps' % label.replace(':', '/')
       # TODO(https://crbug.com/876065): 'official_tests' use
       # type='additional_compile_target' to isolate tests. This is not the
       # intended use for 'additional_compile_target'.
-      if (isolate_map[target]['type'] == 'additional_compile_target' and
+      if (target_type == 'additional_compile_target' and
           target != 'official_tests'):
         # By definition, additional_compile_targets are not tests, so we
         # shouldn't generate isolates for them.
-        self.Print('Cannot generate isolate for %s since it is an '
-                   'additional_compile_target.' % target)
-        return 1
+        raise MBErr('Cannot generate isolate for %s since it is an '
+                    'additional_compile_target.' % target)
+      elif fuchsia or ios or target_type == 'generated_script':
+        # iOS and Fuchsia targets end up as groups.
+        # generated_script targets are always actions.
+        rpaths = [stamp_runtime_deps]
       elif android:
         # Android targets may be either android_apk or executable. The former
         # will result in runtime_deps associated with the stamp file, while the
         # latter will result in runtime_deps associated with the executable.
         label = isolate_map[target]['label']
-        runtime_deps_targets = [
+        rpaths = [
             target + '.runtime_deps',
-            'obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
-      elif fuchsia:
-        # Only emit a runtime deps file for the group() target on Fuchsia.
-        label = isolate_map[target]['label']
-        runtime_deps_targets = [
-          'obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
-      elif (isolate_map[target]['type'] == 'script' or
-            isolate_map[target]['type'] == 'fuzzer' or
+            stamp_runtime_deps]
+      elif (target_type == 'script' or
             isolate_map[target].get('label_type') == 'group'):
         # For script targets, the build target is usually a group,
         # for which gn generates the runtime_deps next to the stamp file
         # for the label, which lives under the obj/ directory, but it may
         # also be an executable.
         label = isolate_map[target]['label']
-        runtime_deps_targets = [
-            'obj/%s.stamp.runtime_deps' % label.replace(':', '/')]
+        rpaths = [stamp_runtime_deps]
         if win:
-          runtime_deps_targets += [ target + '.exe.runtime_deps' ]
+          rpaths += [ target + '.exe.runtime_deps' ]
         else:
-          runtime_deps_targets += [ target + '.runtime_deps' ]
+          rpaths += [ target + '.runtime_deps' ]
       elif win:
-        runtime_deps_targets = [target + '.exe.runtime_deps']
+        rpaths = [target + '.exe.runtime_deps']
       else:
-        runtime_deps_targets = [target + '.runtime_deps']
+        rpaths = [target + '.runtime_deps']
 
-      for r in runtime_deps_targets:
-        runtime_deps_path = self.ToAbsPath(build_dir, r)
-        if self.Exists(runtime_deps_path):
-          break
-      else:
-        raise MBErr('did not generate any of %s' %
-                    ', '.join(runtime_deps_targets))
+      possible_runtime_deps_rpaths[target] = rpaths
 
-      command, extra_files = self.GetIsolateCommand(target, vals)
-      runtime_deps = self.ReadFile(runtime_deps_path).splitlines()
-
-      canonical_target = target.replace(':','_').replace('/','_')
-      self.WriteIsolateFiles(build_dir, command, canonical_target, runtime_deps,
-                             extra_files)
-
-    return 0
+    return possible_runtime_deps_rpaths
 
   def RunGNIsolate(self, vals):
     target = self.args.target
@@ -931,6 +1170,7 @@ class MetaBuildWrapper(object):
     err, labels = self.MapTargetsToLabels(isolate_map, [target])
     if err:
       raise MBErr(err)
+
     label = labels[0]
 
     build_dir = self.args.path
@@ -945,8 +1185,10 @@ class MetaBuildWrapper(object):
 
     runtime_deps = out.splitlines()
 
-    self.WriteIsolateFiles(build_dir, command, target, runtime_deps,
-                           extra_files)
+    ret = self.WriteIsolateFiles(build_dir, command, target, runtime_deps, vals,
+                                 extra_files)
+    if ret:
+      return ret
 
     ret, _, _ = self.Run([
         self.executable,
@@ -960,14 +1202,92 @@ class MetaBuildWrapper(object):
 
     return ret
 
-  def WriteIsolateFiles(self, build_dir, command, target, runtime_deps,
+  def WriteIsolateFiles(self, build_dir, command, target, runtime_deps, vals,
                         extra_files):
     isolate_path = self.ToAbsPath(build_dir, target + '.isolate')
+    files = sorted(set(runtime_deps + extra_files))
+
+    # Complain if any file is a directory that's inside the build directory,
+    # since that makes incremental builds incorrect. See
+    # https://crbug.com/912946
+    is_android = 'target_os="android"' in vals['gn_args']
+    is_cros = ('target_os="chromeos"' in vals['gn_args'] or
+               vals.get('cros_passthrough', False))
+    is_mac = self.platform == 'darwin'
+    is_msan = 'is_msan=true' in vals['gn_args']
+
+    err = ''
+    for f in files:
+      # Skip a few configs that need extra cleanup for now.
+      # TODO(https://crbug.com/912946): Fix everything on all platforms and
+      # enable check everywhere.
+      if is_android:
+        break
+
+      # Skip a few existing violations that need to be cleaned up. Each of
+      # these will lead to incorrect incremental builds if their directory
+      # contents change. Do not add to this list.
+      # TODO(https://crbug.com/912946): Remove this if statement.
+      if ((is_msan and f == 'instrumented_libraries_prebuilt/') or
+          f == 'mr_extension/' or # https://crbug.com/997947
+          f == 'locales/' or
+          f.startswith('nacl_test_data/') or
+          f.startswith('ppapi_nacl_tests_libs/') or
+          (is_cros and f in (  # https://crbug.com/1002509
+              'chromevox_test_data/',
+              'gen/ui/file_manager/file_manager/',
+              'resources/chromeos/',
+              'resources/chromeos/accessibility/autoclick/',
+              'resources/chromeos/accessibility/chromevox/',
+              'resources/chromeos/accessibility/select_to_speak/',
+              'test_data/chrome/browser/resources/chromeos/accessibility/'
+                  'autoclick/',
+              'test_data/chrome/browser/resources/chromeos/accessibility/'
+                  'chromevox/',
+              'test_data/chrome/browser/resources/chromeos/accessibility/'
+                  'select_to_speak/',
+          )) or
+          (is_mac and f in (  # https://crbug.com/1000667
+              'AlertNotificationService.xpc/',
+              'Chromium Framework.framework/',
+              'Chromium Helper.app/',
+              'Chromium.app/',
+              'Content Shell.app/',
+              'Google Chrome Framework.framework/',
+              'Google Chrome Helper (GPU).app/',
+              'Google Chrome Helper (Plugin).app/',
+              'Google Chrome Helper (Renderer).app/',
+              'Google Chrome Helper.app/',
+              'Google Chrome.app/',
+              'GoogleUpdate.app/',
+              'blink_deprecated_test_plugin.plugin/',
+              'blink_test_plugin.plugin/',
+              'corb_test_plugin.plugin/',
+              'obj/tools/grit/brotli_mac_asan_workaround/',
+              'power_saver_test_plugin.plugin/',
+              'ppapi_tests.plugin/',
+              'ui_unittests Framework.framework/',
+          ))):
+        continue
+
+      # This runs before the build, so we can't use isdir(f). But
+      # isolate.py luckily requires data directories to end with '/', so we
+      # can check for that.
+      if not f.startswith('../../') and f.endswith('/'):
+        # Don't use self.PathJoin() -- all involved paths consistently use
+        # forward slashes, so don't add one single backslash on Windows.
+        err += '\n' + build_dir + '/' +  f
+
+    if err:
+      self.Print('error: gn `data` items may not list generated directories; '
+                 'list files in directory instead for:' + err)
+      return 1
+
     self.WriteFile(isolate_path,
       pprint.pformat({
         'variables': {
           'command': command,
-          'files': sorted(runtime_deps + extra_files),
+          'files': files,
         }
       }) + '\n')
 
@@ -1020,7 +1340,7 @@ class MetaBuildWrapper(object):
     return [gn_path, subcommand, path] + list(args)
 
 
-  def GNArgs(self, vals):
+  def GNArgs(self, vals, expand_imports=False):
     if vals['cros_passthrough']:
       if not 'GN_ARGS' in os.environ:
         raise MBErr('MB is expecting GN_ARGS to be in the environment')
@@ -1044,33 +1364,43 @@ class MetaBuildWrapper(object):
     if android_version_name:
       gn_args += ' android_default_version_name="%s"' % android_version_name
 
-    # Canonicalize the arg string into a sorted, newline-separated list
-    # of key-value pairs, and de-dup the keys if need be so that only
-    # the last instance of each arg is listed.
-    gn_args = gn_helpers.ToGNString(gn_helpers.FromGNArgs(gn_args))
+    args_gn_lines = []
+    parsed_gn_args = {}
 
     # If we're using the Simple Chrome SDK, add a comment at the top that
     # points to the doc. This must happen after the gn_helpers.ToGNString()
     # call above since gn_helpers strips comments.
     if vals['cros_passthrough']:
-      simplechrome_comment = [
+      args_gn_lines.extend([
           '# These args are generated via the Simple Chrome SDK. See the link',
           '# below for more details:',
           '# https://chromium.googlesource.com/chromiumos/docs/+/master/simple_chrome_workflow.md',  # pylint: disable=line-too-long
-      ]
-      gn_args = '%s\n%s' % ('\n'.join(simplechrome_comment), gn_args)
+      ])
 
     args_file = vals.get('args_file', None)
     if args_file:
-      gn_args = ('import("%s")\n' % vals['args_file']) + gn_args
-    return gn_args
+      if expand_imports:
+        content = self.ReadFile(self.ToAbsPath(args_file))
+        parsed_gn_args = gn_helpers.FromGNArgs(content)
+      else:
+        args_gn_lines.append('import("%s")' % args_file)
+
+    # Canonicalize the arg string into a sorted, newline-separated list
+    # of key-value pairs, and de-dup the keys if need be so that only
+    # the last instance of each arg is listed.
+    parsed_gn_args.update(gn_helpers.FromGNArgs(gn_args))
+    args_gn_lines.append(gn_helpers.ToGNString(parsed_gn_args))
+
+    return '\n'.join(args_gn_lines)
 
   def GetIsolateCommand(self, target, vals):
     isolate_map = self.ReadIsolateMap()
 
     is_android = 'target_os="android"' in vals['gn_args']
-    is_simplechrome = vals.get('cros_passthrough', False)
     is_fuchsia = 'target_os="fuchsia"' in vals['gn_args']
+    is_cros = 'target_os="chromeos"' in vals['gn_args']
+    is_simplechrome = vals.get('cros_passthrough', False)
+    is_mac = self.platform == 'darwin'
     is_win = self.platform == 'win32' or 'target_os="win"' in vals['gn_args']
 
     # This should be true if tests with type='windowed_test_launcher' are
@@ -1086,15 +1416,23 @@ class MetaBuildWrapper(object):
     msan = 'is_msan=true' in vals['gn_args']
     tsan = 'is_tsan=true' in vals['gn_args']
     cfi_diag = 'use_cfi_diag=true' in vals['gn_args']
+    clang_coverage = 'use_clang_coverage=true' in vals['gn_args']
+    java_coverage = 'use_jacoco_coverage=true' in vals['gn_args']
 
     test_type = isolate_map[target]['type']
+    use_python3 = isolate_map[target].get('use_python3', False)
 
     executable = isolate_map[target].get('executable', target)
-    executable_suffix = '.exe' if is_win else ''
+    executable_suffix = isolate_map[target].get(
+        'executable_suffix', '.exe' if is_win else '')
 
-    cmdline = []
-    extra_files = [
-      '../../.vpython',
+    if use_python3:
+      cmdline = [ 'vpython3' ]
+      extra_files = [ '../../.vpython3' ]
+    else:
+      cmdline = [ 'vpython' ]
+      extra_files = [ '../../.vpython' ]
+    extra_files += [
       '../../testing/test_env.py',
     ]
 
@@ -1102,59 +1440,76 @@ class MetaBuildWrapper(object):
       self.WriteFailureAndRaise('We should not be isolating %s.' % target,
                                 output_path=None)
 
-    if test_type == 'fuzzer':
-      cmdline = [
-        '../../testing/test_env.py',
-        '../../tools/code_coverage/run_fuzz_target.py',
-        '--fuzzer', './' + target,
-        '--output-dir', '${ISOLATED_OUTDIR}',
-        '--timeout', '3600']
+    if test_type == 'generated_script':
+      script = isolate_map[target]['script']
+      if self.platform == 'win32':
+        script += '.bat'
+      cmdline += [
+          '../../testing/test_env.py',
+          script,
+      ]
     elif is_android and test_type != "script":
-      cmdline = [
+      if asan:
+        cmdline += [os.path.join('bin', 'run_with_asan'), '--']
+      cmdline += [
           '../../testing/test_env.py',
           '../../build/android/test_wrapper/logdog_wrapper.py',
           '--target', target,
           '--logdog-bin-cmd', '../../bin/logdog_butler',
           '--store-tombstones']
+      if clang_coverage or java_coverage:
+        cmdline += ['--coverage-dir', '${ISOLATED_OUTDIR}']
     elif is_fuchsia and test_type != 'script':
-      cmdline = [
+      cmdline += [
           '../../testing/test_env.py',
           os.path.join('bin', 'run_%s' % target),
           '--test-launcher-bot-mode',
+          '--system-log-file', '${ISOLATED_OUTDIR}/system_log'
       ]
     elif is_simplechrome and test_type != 'script':
-      cmdline = [
+      cmdline += [
           '../../testing/test_env.py',
           os.path.join('bin', 'run_%s' % target),
       ]
     elif use_xvfb and test_type == 'windowed_test_launcher':
       extra_files.append('../../testing/xvfb.py')
-      cmdline = [
-        '../../testing/xvfb.py',
-        './' + str(executable) + executable_suffix,
-        '--test-launcher-bot-mode',
-        '--asan=%d' % asan,
-        '--msan=%d' % msan,
-        '--tsan=%d' % tsan,
-        '--cfi-diag=%d' % cfi_diag,
+      cmdline += [
+          '../../testing/xvfb.py',
+          './' + str(executable) + executable_suffix,
+          '--test-launcher-bot-mode',
+          '--asan=%d' % asan,
+          # Enable lsan when asan is enabled except on Windows where LSAN isn't
+          # supported.
+          # TODO(https://crbug.com/948939): Enable on Mac once things pass.
+          # TODO(https://crbug.com/974478): Enable on ChromeOS once things pass.
+          '--lsan=%d' % (asan and not is_mac and not is_win and not is_cros),
+          '--msan=%d' % msan,
+          '--tsan=%d' % tsan,
+          '--cfi-diag=%d' % cfi_diag,
       ]
     elif test_type in ('windowed_test_launcher', 'console_test_launcher'):
-      cmdline = [
+      cmdline += [
           '../../testing/test_env.py',
           './' + str(executable) + executable_suffix,
           '--test-launcher-bot-mode',
           '--asan=%d' % asan,
+          # Enable lsan when asan is enabled except on Windows where LSAN isn't
+          # supported.
+          # TODO(https://crbug.com/948939): Enable on Mac once things pass.
+          # TODO(https://crbug.com/974478): Enable on ChromeOS once things pass.
+          '--lsan=%d' % (asan and not is_mac and not is_win and not is_cros),
           '--msan=%d' % msan,
           '--tsan=%d' % tsan,
           '--cfi-diag=%d' % cfi_diag,
       ]
     elif test_type == 'script':
-      cmdline = []
-      # If we're testing a CrOS simplechrome build, assume we need to launch a
-      # VM first. So prepend the command to run with the VM launcher.
-      # TODO(bpastene): Differentiate between CrOS VM and hardware tests.
+      # If we're testing a CrOS simplechrome build, assume we need to prepare a
+      # DUT for testing. So prepend the command to run with the test wrapper.
       if is_simplechrome:
-        cmdline = [os.path.join('bin', 'launch_cros_vm')]
+        cmdline = [
+            os.path.join('bin', 'cros_test_wrapper'),
+            '--logs-dir=${ISOLATED_OUTDIR}',
+        ]
       cmdline += [
           '../../testing/test_env.py',
           '../../' + self.ToSrcRelPath(isolate_map[target]['script'])
@@ -1166,11 +1521,6 @@ class MetaBuildWrapper(object):
     else:
       self.WriteFailureAndRaise('No command line for %s found (test type %s).'
                                 % (target, test_type), output_path=None)
-
-    if is_win and asan:
-      # Sandbox is not yet supported by ASAN for Windows.
-      # Perhaps this is only needed for tests that use the sandbox?
-      cmdline.append('--no-sandbox')
 
     cmdline += isolate_map[target].get('args', [])
 
@@ -1241,8 +1591,11 @@ class MetaBuildWrapper(object):
     try:
       self.WriteJSON(gn_inp, gn_input_path)
       cmd = self.GNCmd('analyze', build_path, gn_input_path, gn_output_path)
-      ret, _, _ = self.Run(cmd, force_verbose=True)
+      ret, output, _ = self.Run(cmd, force_verbose=True)
       if ret:
+        if self.args.json_output:
+          # write errors to json.output
+          self.WriteJSON({'output': output}, self.args.json_output)
         return ret
 
       gn_outp_str = self.ReadFile(gn_output_path)
@@ -1407,7 +1760,7 @@ class MetaBuildWrapper(object):
     if self.args.jobs:
       ninja_cmd.extend(['-j', '%d' % self.args.jobs])
     ninja_cmd.append(target)
-    ret, _, _ = self.Run(ninja_cmd, force_verbose=False, buffer_output=False)
+    ret, _, _ = self.Run(ninja_cmd, buffer_output=False)
     return ret
 
   def Run(self, cmd, env=None, force_verbose=True, buffer_output=True):
@@ -1422,17 +1775,18 @@ class MetaBuildWrapper(object):
       if ret:
         self.Print('  -> returned %d' % ret)
       if out:
+        # This is the error seen on the logs
         self.Print(out, end='')
       if err:
         self.Print(err, end='', file=sys.stderr)
     return ret, out, err
 
-  def Call(self, cmd, env=None, buffer_output=True):
+  def Call(self, cmd, env=None, buffer_output=True, stdin=None):
     if buffer_output:
       p = subprocess.Popen(cmd, shell=False, cwd=self.chromium_src_dir,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           env=env)
-      out, err = p.communicate()
+                           env=env, stdin=subprocess.PIPE)
+      out, err = p.communicate(input=stdin)
     else:
       p = subprocess.Popen(cmd, shell=False, cwd=self.chromium_src_dir,
                            env=env)
@@ -1510,6 +1864,28 @@ class MetaBuildWrapper(object):
       self.Print('\nWriting """\\\n%s""" to %s.\n' % (contents, path))
     with open(path, 'w') as fp:
       return fp.write(contents)
+
+
+class LedResult(object):
+  """Holds the result of a led operation. Can be chained using |then|."""
+
+  def __init__(self, result, run_cmd):
+    self._result = result
+    self._run_cmd = run_cmd
+
+  @property
+  def result(self):
+    """The mutable result data of the previous led call as decoded JSON."""
+    return self._result
+
+  def then(self, *cmd):
+    """Invoke led, passing it the current `result` data as input.
+
+    Returns another LedResult object with the output of the command.
+    """
+    return self.__class__(
+        self._run_cmd(self._result, cmd), self._run_cmd)
+
 
 
 class MBErr(Exception):

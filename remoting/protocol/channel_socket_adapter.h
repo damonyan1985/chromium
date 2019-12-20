@@ -19,7 +19,7 @@
 // TODO(johan): Replace #include by forward declaration once proper
 // inheritance is defined for rtc::PacketTransportInterface and
 // cricket::TransportChannel.
-#include "third_party/webrtc/p2p/base/packet_transport_interface.h"
+#include "third_party/webrtc/p2p/base/packet_transport_internal.h"
 #include "third_party/webrtc/rtc_base/async_packet_socket.h"
 #include "third_party/webrtc/rtc_base/socket_address.h"
 #include "third_party/webrtc/rtc_base/third_party/sigslot/sigslot.h"
@@ -50,18 +50,20 @@ class TransportChannelSocketAdapter : public P2PDatagramSocket,
   void Close(int error_code);
 
   // P2PDatagramSocket interface.
-  int Recv(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-           const net::CompletionCallback& callback) override;
-  int Send(const scoped_refptr<net::IOBuffer>& buf, int buf_len,
-           const net::CompletionCallback& callback) override;
+  int Recv(const scoped_refptr<net::IOBuffer>& buf,
+           int buf_len,
+           const net::CompletionRepeatingCallback& callback) override;
+  int Send(const scoped_refptr<net::IOBuffer>& buf,
+           int buf_len,
+           const net::CompletionRepeatingCallback& callback) override;
 
  private:
-  void OnNewPacket(rtc::PacketTransportInterface* transport,
+  void OnNewPacket(rtc::PacketTransportInternal* transport,
                    const char* data,
                    size_t data_size,
                    const int64_t& packet_time,
                    int flags);
-  void OnWritableState(rtc::PacketTransportInterface* transport);
+  void OnWritableState(rtc::PacketTransportInternal* transport);
   void OnChannelDestroyed(cricket::IceTransportInternal* ice_transport);
 
   base::ThreadChecker thread_checker_;
@@ -70,11 +72,11 @@ class TransportChannelSocketAdapter : public P2PDatagramSocket,
 
   base::Closure destruction_callback_;
 
-  net::CompletionCallback read_callback_;
+  net::CompletionRepeatingCallback read_callback_;
   scoped_refptr<net::IOBuffer> read_buffer_;
   int read_buffer_size_;
 
-  net::CompletionCallback write_callback_;
+  net::CompletionRepeatingCallback write_callback_;
   scoped_refptr<net::IOBuffer> write_buffer_;
   int write_buffer_size_;
 

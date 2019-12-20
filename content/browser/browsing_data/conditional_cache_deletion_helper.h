@@ -10,7 +10,7 @@
 #include "base/callback_forward.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/common/content_export.h"
-#include "net/base/completion_callback.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 #include "url/gurl.h"
@@ -25,7 +25,6 @@ namespace content {
 class CONTENT_EXPORT ConditionalCacheDeletionHelper {
  public:
   // Creates a helper to delete |cache| entries that match the |condition|.
-  // Must be created on the IO thread!
   ConditionalCacheDeletionHelper(
       disk_cache::Backend* cache,
       base::RepeatingCallback<bool(const disk_cache::Entry*)> condition);
@@ -35,7 +34,7 @@ class CONTENT_EXPORT ConditionalCacheDeletionHelper {
   // (exclusively) and whose URL is matched by the |url_predicate|. Note that
   // |begin_time| and |end_time| can be null to indicate unbounded time interval
   // in their respective direction.
-  static base::Callback<bool(const disk_cache::Entry*)>
+  static base::RepeatingCallback<bool(const disk_cache::Entry*)>
   CreateURLAndTimeCondition(
       base::RepeatingCallback<bool(const GURL&)> url_predicate,
       base::Time begin_time,
@@ -56,27 +55,27 @@ class CONTENT_EXPORT ConditionalCacheDeletionHelper {
 
   // Deletes the cache entries according to the specified condition. Destroys
   // this instance of ConditionalCacheDeletionHelper when finished.
-  // Must be called on the IO thread!
   //
   // The return value is a net error code. If this method returns
   // ERR_IO_PENDING, the |completion_callback| will be invoked when the
   // operation completes.
   int DeleteAndDestroySelfWhenFinished(
-      const net::CompletionCallback& completion_callback);
+      net::CompletionOnceCallback completion_callback);
 
  private:
   friend class base::DeleteHelper<ConditionalCacheDeletionHelper>;
   ~ConditionalCacheDeletionHelper();
 
-  void IterateOverEntries(int error);
+  void IterateOverEntries(disk_cache::EntryResult result);
 
   disk_cache::Backend* cache_;
-  const base::Callback<bool(const disk_cache::Entry*)> condition_;
+  const base::RepeatingCallback<bool(const disk_cache::Entry*)> condition_;
 
-  net::CompletionCallback completion_callback_;
+  net::CompletionOnceCallback completion_callback_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   std::unique_ptr<disk_cache::Backend::Iterator> iterator_;
-  disk_cache::Entry* current_entry_;
   disk_cache::Entry* previous_entry_;
 
   DISALLOW_COPY_AND_ASSIGN(ConditionalCacheDeletionHelper);

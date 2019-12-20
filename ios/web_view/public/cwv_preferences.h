@@ -9,6 +9,8 @@
 
 #import "cwv_export.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 // Preferences for user settings. The preferences are stored on the local
 // storage.
 CWV_EXPORT
@@ -23,11 +25,14 @@ CWV_EXPORT
 - (instancetype)init NS_UNAVAILABLE;
 
 // Resets all translation settings back to default. In particular, this will
-// change all translation policies back to CWVTranslationPolicyAsk.
-// Because translate settings are shared from incognito to non-incognito, this
-// has no effect if this instance is from an incognito CWVWebViewConfiguration.
+// change all translation policies back to CWVTranslationPolicyAsk, and set
+// |translationEnabled| to YES. Because translate settings are shared from
+// incognito to non-incognito, this has no effect if this instance is from an
+// incognito CWVWebViewConfiguration.
 - (void)resetTranslationSettings;
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif  // IOS_WEB_VIEW_PUBLIC_CWV_PREFERENCES_H_

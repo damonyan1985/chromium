@@ -12,6 +12,7 @@ Polymer({
 
   behaviors: [
     settings.RouteObserverBehavior,
+    CrPngBehavior,
     I18nBehavior,
     WebUIListenerBehavior,
   ],
@@ -39,13 +40,11 @@ Polymer({
 
     /**
      * The active set of default user images.
-     * @private {!Array<!settings.DefaultImage>}
+     * @private {?Array<!settings.DefaultImage>}
      */
     defaultImages_: {
-      type: Array,
-      value: function() {
-        return [];
-      },
+      type: Object,
+      value: null,
     },
 
     /**
@@ -65,6 +64,9 @@ Polymer({
       },
       readOnly: true,
     },
+
+    /** @private */
+    oldImageLabel_: String,
   },
 
   listeners: {
@@ -147,6 +149,9 @@ Polymer({
    * @private
    */
   receiveOldImage_: function(imageInfo) {
+    this.oldImageLabel_ = this.i18n(
+        CrPngBehavior.isEncodedPngDataUrlAnimated(imageInfo.url) ? 'oldVideo' :
+                                                                   'oldPhoto');
     this.oldImagePending_ = false;
     this.pictureList_.setOldImageUrl(imageInfo.url, imageInfo.index);
   },
@@ -239,6 +244,17 @@ Polymer({
         videomode ? 'videoModeAccessibleText' : 'photoModeAccessibleText'));
   },
 
+  /**
+   * Callback the iron-a11y-keys "keys-pressed" event bubbles up from the
+   * cr-camera-pane.
+   * @param {!CustomEvent<!{key: string, keyboardEvent: Object}>} event
+   * @private
+   */
+  onCameraPaneKeysPressed_(event) {
+    this.$.pictureList.focus();
+    this.$.pictureList.onKeysPressed(event);
+  },
+
   /** @private */
   onDiscardImage_: function() {
     // Prevent image from being discarded if old image is pending.
@@ -277,7 +293,7 @@ Polymer({
    * @private
    */
   getDefaultImages_(defaultImages, firstDefaultImageIndex) {
-    return defaultImages.slice(firstDefaultImageIndex);
+    return defaultImages ? defaultImages.slice(firstDefaultImageIndex) : [];
   },
 
   /**

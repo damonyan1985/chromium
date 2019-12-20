@@ -14,8 +14,9 @@
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios_bridge.h"
 #import "ios/chrome/browser/web/chrome_web_test.h"
 #include "ios/net/cookies/system_cookie_util.h"
-#include "ios/web/public/features.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/common/features.h"
+#include "ios/web/public/test/web_task_environment.h"
+#include "net/base/net_errors.h"
 #include "net/cookies/cookie_store.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -52,37 +53,37 @@ class FakeGaiaAuthFetcherIOSBridgeDelegate
  public:
   FakeGaiaAuthFetcherIOSBridgeDelegate()
       : GaiaAuthFetcherIOSBridge::GaiaAuthFetcherIOSBridgeDelegate(),
-        fetch_complete_called_(false){};
+        fetch_complete_called_(false) {}
 
-  ~FakeGaiaAuthFetcherIOSBridgeDelegate() override{};
+  ~FakeGaiaAuthFetcherIOSBridgeDelegate() override {}
 
   // GaiaAuthFetcherIOSBridge::GaiaAuthFetcherIOSBridgeDelegate.
   void OnFetchComplete(const GURL& url,
                        const std::string& data,
-                       const net::URLRequestStatus& status,
+                       net::Error net_error,
                        int response_code) override {
     EXPECT_FALSE(fetch_complete_called_);
     fetch_complete_called_ = true;
     url_ = url;
     data_ = data;
-    status_ = status;
+    net_error_ = net_error;
     response_code_ = response_code;
-  };
+  }
 
   // Returns true if has been called().
-  bool GetFetchCompleteCalled() { return fetch_complete_called_; };
+  bool GetFetchCompleteCalled() const { return fetch_complete_called_; }
 
   // Returns |url| from FetchComplete().
-  const GURL& GetURL() { return url_; };
+  const GURL& GetURL() const { return url_; }
 
   // Returns |data| from FetchComplete().
-  const std::string& GetData() { return data_; };
+  const std::string& GetData() const { return data_; }
 
-  // Returns |status| from FetchComplete().
-  net::URLRequestStatus GetStatus() { return status_; };
+  // Returns |net_error| from FetchComplete().
+  net::Error GetNetError() const { return net_error_; }
 
   // Returns |response_code| from FetchComplete().
-  int GetResponseCode() { return response_code_; };
+  int GetResponseCode() const { return response_code_; }
 
  private:
   // true if has been called().
@@ -91,8 +92,8 @@ class FakeGaiaAuthFetcherIOSBridgeDelegate
   GURL url_;
   // |data| from FetchComplete().
   std::string data_;
-  // |status| from FetchComplete().
-  net::URLRequestStatus status_;
+  // |net_error| from FetchComplete().
+  net::Error net_error_;
   // |response_code| from FetchComplete().
   int response_code_;
 };
@@ -131,8 +132,8 @@ class GaiaAuthFetcherIOSNSURLSessionBridgeTest : public ChromeWebTest {
 
   void AddCookiesToCookieManager(NSArray<NSHTTPCookie*>* cookies);
 
-  std::string GetCookieDomain() { return std::string("example.com"); };
-  GURL GetFetchGURL() { return GURL("http://www." + GetCookieDomain()); };
+  std::string GetCookieDomain() { return std::string("example.com"); }
+  GURL GetFetchGURL() { return GURL("http://www." + GetCookieDomain()); }
 
   NSHTTPCookie* GetCookie1();
 
@@ -187,7 +188,6 @@ NSURLSession* TestGaiaAuthFetcherIOSNSURLSessionBridge::CreateNSURLSession(
 void GaiaAuthFetcherIOSNSURLSessionBridgeTest::SetUp() {
   std::vector<base::Feature> enabled_features;
   std::vector<base::Feature> disabled_features;
-  enabled_features.push_back(web::features::kWKHTTPSystemCookieStore);
   enabled_features.push_back(kUseNSURLSessionForGaiaSigninRequests);
   scoped_feature_list.InitWithFeatures(enabled_features, disabled_features);
   delegate_.reset(new FakeGaiaAuthFetcherIOSBridgeDelegate());
@@ -259,10 +259,13 @@ void GaiaAuthFetcherIOSNSURLSessionBridgeTest::AddCookiesToCookieManager(
   network::mojom::CookieManager* cookie_manager =
       browser_state_->GetCookieManager();
   for (NSHTTPCookie* cookie in cookies) {
+    net::CookieOptions options;
+    options.set_include_httponly();
+    options.set_same_site_cookie_context(
+        net::CookieOptions::SameSiteCookieContext::SAME_SITE_STRICT);
     cookie_manager->SetCanonicalCookie(
         net::CanonicalCookieFromSystemCookie(cookie, base::Time::Now()),
-        /*secure_source=*/true,
-        /*modify_http_only=*/true, base::DoNothing());
+        "https", options, base::DoNothing());
   }
   WaitForBackgroundTasks();
 }
@@ -332,7 +335,7 @@ TEST_F(GaiaAuthFetcherIOSNSURLSessionBridgeTest, FetchWithEmptyCookieStore) {
                       http_url_reponse, nil);
   EXPECT_TRUE(delegate_->GetFetchCompleteCalled());
   EXPECT_EQ(delegate_->GetURL(), GetFetchGURL());
-  EXPECT_EQ(delegate_->GetStatus().status(), net::URLRequestStatus::SUCCESS);
+  EXPECT_EQ(delegate_->GetNetError(), net::OK);
   EXPECT_EQ(delegate_->GetResponseCode(), 200);
   EXPECT_EQ(delegate_->GetData(), std::string("Test"));
   ExpectCookies(@[ GetCookie1(), GetCookie2() ]);
@@ -354,7 +357,7 @@ TEST_F(GaiaAuthFetcherIOSNSURLSessionBridgeTest, FetchWithCookieStore) {
   completion_handler_(nil, http_url_reponse, nil);
   EXPECT_TRUE(delegate_->GetFetchCompleteCalled());
   EXPECT_EQ(delegate_->GetURL(), GetFetchGURL());
-  EXPECT_EQ(delegate_->GetStatus().status(), net::URLRequestStatus::SUCCESS);
+  EXPECT_EQ(delegate_->GetNetError(), net::OK);
   EXPECT_EQ(delegate_->GetResponseCode(), 200);
   EXPECT_EQ(delegate_->GetData(), std::string());
   ExpectCookies(@[ GetCookie1(), GetCookie2() ]);
@@ -389,7 +392,7 @@ TEST_F(GaiaAuthFetcherIOSNSURLSessionBridgeTest, FetchWithRedirect) {
   completion_handler_(nil, http_url_reponse, nil);
   EXPECT_TRUE(delegate_->GetFetchCompleteCalled());
   EXPECT_EQ(delegate_->GetURL(), GetFetchGURL());
-  EXPECT_EQ(delegate_->GetStatus().status(), net::URLRequestStatus::SUCCESS);
+  EXPECT_EQ(delegate_->GetNetError(), net::OK);
   EXPECT_EQ(delegate_->GetResponseCode(), 200);
   EXPECT_EQ(delegate_->GetData(), std::string());
   ExpectCookies(@[ GetCookie1(), GetCookie2() ]);
@@ -409,7 +412,7 @@ TEST_F(GaiaAuthFetcherIOSNSURLSessionBridgeTest, FetchWithCancel) {
   WaitForBackgroundTasks();
   EXPECT_TRUE(delegate_->GetFetchCompleteCalled());
   EXPECT_EQ(delegate_->GetURL(), GetFetchGURL());
-  EXPECT_EQ(delegate_->GetStatus().status(), net::URLRequestStatus::CANCELED);
+  EXPECT_EQ(delegate_->GetNetError(), net::ERR_ABORTED);
   EXPECT_EQ(delegate_->GetResponseCode(), 0);
   EXPECT_EQ(delegate_->GetData(), std::string());
 }
@@ -428,7 +431,7 @@ TEST_F(GaiaAuthFetcherIOSNSURLSessionBridgeTest, FetchWithError) {
                       [NSError errorWithDomain:@"test" code:1 userInfo:nil]);
   EXPECT_TRUE(delegate_->GetFetchCompleteCalled());
   EXPECT_EQ(delegate_->GetURL(), GetFetchGURL());
-  EXPECT_EQ(delegate_->GetStatus().status(), net::URLRequestStatus::FAILED);
+  EXPECT_EQ(delegate_->GetNetError(), net::ERR_FAILED);
   EXPECT_EQ(delegate_->GetResponseCode(), 501);
   EXPECT_EQ(delegate_->GetData(), std::string());
   ExpectCookies(@[]);

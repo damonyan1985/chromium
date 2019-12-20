@@ -9,16 +9,8 @@
 Polymer({
   is: 'settings-search-page',
 
-  behaviors: [I18nBehavior],
-
   properties: {
     prefs: Object,
-
-    // <if expr="chromeos">
-    arcEnabled: Boolean,
-
-    voiceInteractionValuePropAccepted: Boolean,
-    // </if>
 
     /**
      * List of default search engines available.
@@ -36,31 +28,6 @@ Polymer({
 
     /** @type {?Map<string, string>} */
     focusConfig_: Object,
-
-    // <if expr="chromeos">
-    /** @private */
-    voiceInteractionFeatureEnabled_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableVoiceInteraction');
-      },
-    },
-
-    /** @private */
-    assistantFeatureEnabled_: {
-      type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('enableAssistant');
-      },
-    },
-
-    /** @private */
-    assistantOn_: {
-      type: Boolean,
-      computed: 'isAssistantTurnedOn_(arcEnabled, ' +
-          'voiceInteractionValuePropAccepted, assistantFeatureEnabled_)',
-    }
-    // </if>
   },
 
   /** @private {?settings.SearchEnginesBrowserProxy} */
@@ -83,16 +50,8 @@ Polymer({
     this.focusConfig_ = new Map();
     if (settings.routes.SEARCH_ENGINES) {
       this.focusConfig_.set(
-          settings.routes.SEARCH_ENGINES.path,
-          '#engines-subpage-trigger');
+          settings.routes.SEARCH_ENGINES.path, '#enginesSubpageTrigger');
     }
-    // <if expr="chromeos">
-    if (settings.routes.GOOGLE_ASSISTANT) {
-      this.focusConfig_.set(
-          settings.routes.GOOGLE_ASSISTANT.path,
-          '#assistant-subpage-trigger .subpage-arrow button');
-    }
-    // </if>
   },
 
   /** @private */
@@ -110,56 +69,6 @@ Polymer({
   /** @private */
   onManageSearchEnginesTap_: function() {
     settings.navigateTo(settings.routes.SEARCH_ENGINES);
-  },
-
-  // <if expr="chromeos">
-  /** @private */
-  onGoogleAssistantTap_: function() {
-    assert(this.voiceInteractionFeatureEnabled_);
-
-    if (!this.assistantOn_) {
-      return;
-    }
-
-    settings.navigateTo(settings.routes.GOOGLE_ASSISTANT);
-  },
-
-  /** @private */
-  onAssistantTurnOnTap_: function(event) {
-    this.browserProxy_.turnOnGoogleAssistant();
-  },
-  // </if>
-
-  // <if expr="chromeos">
-  /**
-   * @param {boolean} toggleValue
-   * @return {string}
-   * @private
-   */
-  getAssistantEnabledDisabledLabel_: function(toggleValue) {
-    return this.i18n(
-        toggleValue ? 'searchGoogleAssistantEnabled' :
-                      'searchGoogleAssistantDisabled');
-  },
-
-  /** @private
-   *  @param {boolean} arcEnabled
-   *  @param {boolean} valuePropAccepted
-   *  @param {boolean} assistantFeatureEnabled
-   *  @return {boolean}
-   */
-  isAssistantTurnedOn_: function(
-      arcEnabled, valuePropAccepted, assistantFeatureEnabled) {
-    return (arcEnabled && valuePropAccepted) || assistantFeatureEnabled;
-  },
-  // </if>
-
-  /**
-   * @param {!Event} event
-   * @private
-   */
-  doNothing_: function(event) {
-    event.stopPropagation();
   },
 
   /**

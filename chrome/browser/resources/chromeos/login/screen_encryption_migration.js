@@ -27,6 +27,13 @@ login.createScreen(
           return $('encryption-migration-element');
         },
 
+        /*
+         * Executed on language change.
+         */
+        updateLocalizedContent: function() {
+          $('encryption-migration-element').i18nUpdateLocale();
+        },
+
         /** @override */
         decorate: function() {
           var encryptionMigration = $('encryption-migration-element');
@@ -65,11 +72,6 @@ login.createScreen(
          */
         setUIState: function(state) {
           $('encryption-migration-element').uiState = state;
-
-          // TODO(qnnguyen): Hide the views login shelf "Shutdown" button during
-          // migration.
-          $('login-header-bar').showShutdownButton =
-              state != EncryptionMigrationUIState.MIGRATING;
         },
 
         /**

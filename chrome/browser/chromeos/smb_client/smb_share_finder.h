@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_CHROMEOS_SMB_CLIENT_SMB_SHARE_FINDER_H_
 
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
@@ -18,16 +19,6 @@
 namespace chromeos {
 namespace smb_client {
 
-// The callback that will be passed to GatherSharesInNetwork. The shares found
-// will have a format of "smb://host/share". This will be called once per host.
-using GatherSharesResponse =
-    base::RepeatingCallback<void(const std::vector<SmbUrl>& shares_gathered)>;
-
-// The callback that will be passed to GatherSharesInNetwork. Used to implicitly
-// convert GatherSharesResponse to a OnceCallback.
-using GatherSharesInNetworkResponse =
-    base::OnceCallback<void(const std::vector<SmbUrl>& shares_gathered)>;
-
 // The callback run to indicate the scan for hosts on the network is complete.
 using HostDiscoveryResponse = base::OnceClosure;
 
@@ -35,6 +26,10 @@ using HostDiscoveryResponse = base::OnceClosure;
 // available shares for each host found.
 class SmbShareFinder : public base::SupportsWeakPtr<SmbShareFinder> {
  public:
+  // The callback that will be passed to GatherSharesInNetwork.
+  using GatherSharesInNetworkResponse =
+      base::OnceCallback<void(const std::vector<SmbUrl>& shares_gathered)>;
+
   explicit SmbShareFinder(SmbProviderClient* client);
   ~SmbShareFinder();
 
@@ -58,12 +53,12 @@ class SmbShareFinder : public base::SupportsWeakPtr<SmbShareFinder> {
   // otherwise returns ToString of |url|.
   std::string GetResolvedUrl(const SmbUrl& url) const;
 
- private:
-  // Handles the response from discovering hosts in the network.
-  void OnHostsDiscovered(HostDiscoveryResponse discovery_callback,
-                         bool success,
-                         const HostMap& hosts);
+  // Attempts to resolve |url|. If able to resolve |url|, returns true and sets
+  // |resolved_url| the the resolved url. If unable, returns false and sets
+  // |resolved_url| to ToString of |url|.
+  bool TryResolveUrl(const SmbUrl& url, std::string* updated_url) const;
 
+ private:
   // Handles the response from finding hosts in the network.
   void OnHostsFound(bool success, const HostMap& hosts);
 
@@ -90,6 +85,9 @@ class SmbShareFinder : public base::SupportsWeakPtr<SmbShareFinder> {
 
   // Inserts |shares_callback| to |share_callbacks_|.
   void InsertShareCallback(GatherSharesInNetworkResponse shares_callback);
+
+  // Inserts |discovery_callback| to |discovery_callbacks_|.
+  void InsertDiscoveryCallback(HostDiscoveryResponse discovery_callback);
 
   NetworkScanner scanner_;
 

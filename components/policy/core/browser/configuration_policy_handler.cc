@@ -16,6 +16,7 @@
 #include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/numerics/ranges.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -28,6 +29,14 @@
 #include "url/gurl.h"
 
 namespace policy {
+
+namespace {
+// UMA histogram name to count how often validation results with strategy
+// SCHEMA_ALLOW_UNKNOWN differ from strategy SCHEMA_ALLOW_INVALID.
+// See crbug.com/969706
+const char* const kSchemaMismatchedValueIgnored =
+    "Enterprise.SchemaMismatchedValueIgnored";
+}  // namespace
 
 // ConfigurationPolicyHandler implementation -----------------------------------
 
@@ -112,7 +121,7 @@ bool ListPolicyHandler::CheckAndGetList(
     return true;
 
   // Filter the list, rejecting any invalid strings.
-  const base::Value::ListStorage& list = value->GetList();
+  base::Value::ConstListView list = value->GetList();
   if (filtered_list)
     *filtered_list = std::make_unique<base::ListValue>();
   for (size_t list_index = 0; list_index < list.size(); ++list_index) {
@@ -178,22 +187,20 @@ bool IntRangePolicyHandlerBase::EnsureInRange(const base::Value* input,
 
   if (value < min_ || value > max_) {
     if (errors) {
-      errors->AddError(policy_name(),
-                       IDS_POLICY_OUT_OF_RANGE_ERROR,
-                       base::IntToString(value));
+      errors->AddError(policy_name(), IDS_POLICY_OUT_OF_RANGE_ERROR,
+                       base::NumberToString(value));
     }
 
     if (!clamp_)
       return false;
 
-    value = std::min(std::max(value, min_), max_);
+    value = base::ClampToRange(value, min_, max_);
   }
 
   if (output)
     *output = value;
   return true;
 }
-
 
 // StringMappingListPolicyHandler implementation -----------------------------
 
@@ -228,8 +235,8 @@ void StringMappingListPolicyHandler::ApplyPolicySettings(
   if (!pref_path_)
     return;
   const base::Value* value = policies.GetValue(policy_name());
-  std::unique_ptr<base::ListValue> list(new base::ListValue());
-  if (value && Convert(value, list.get(), nullptr))
+  base::ListValue list;
+  if (value && Convert(value, &list, nullptr))
     prefs->SetValue(pref_path_, std::move(list));
 }
 
@@ -262,8 +269,7 @@ bool StringMappingListPolicyHandler::Convert(const base::Value* input,
         output->Append(std::move(mapped_value));
     } else {
       if (errors) {
-        errors->AddError(policy_name(),
-                         entry - list_value->begin(),
+        errors->AddError(policy_name(), entry - list_value->begin(),
                          IDS_POLICY_OUT_OF_RANGE_ERROR);
       }
     }
@@ -308,7 +314,6 @@ void IntRangePolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     prefs->SetInteger(pref_path_, value_in_range);
 }
 
-
 // IntPercentageToDoublePolicyHandler implementation ---------------------------
 
 IntPercentageToDoublePolicyHandler::IntPercentageToDoublePolicyHandler(
@@ -333,7 +338,6 @@ void IntPercentageToDoublePolicyHandler::ApplyPolicySettings(
     prefs->SetDouble(pref_path_, static_cast<double>(percentage) / 100.);
 }
 
-
 // SimplePolicyHandler implementation ------------------------------------------
 
 SimplePolicyHandler::SimplePolicyHandler(const char* policy_name,
@@ -350,9 +354,8 @@ void SimplePolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     return;
   const base::Value* value = policies.GetValue(policy_name());
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
-
 
 // SchemaValidatingPolicyHandler implementation --------------------------------
 
@@ -381,6 +384,13 @@ bool SchemaValidatingPolicyHandler::CheckPolicySettings(
   std::string error;
   bool result = schema_.Validate(*value, strategy_, &error_path, &error);
 
+  if (strategy_ == SCHEMA_ALLOW_INVALID) {
+    bool allow_unknown_result =
+        schema_.Validate(*value, SCHEMA_ALLOW_UNKNOWN, &error_path, &error);
+    base::UmaHistogramBoolean(kSchemaMismatchedValueIgnored,
+                              result != allow_unknown_result);
+  }
+
   if (errors && !error.empty()) {
     if (error_path.empty())
       error_path = "(ROOT)";
@@ -403,6 +413,13 @@ bool SchemaValidatingPolicyHandler::CheckAndGetValue(
   std::string error;
   bool result =
       schema_.Normalize(output->get(), strategy_, &error_path, &error, nullptr);
+
+  if (strategy_ == SCHEMA_ALLOW_INVALID) {
+    bool allow_unknown_result =
+        schema_.Validate(*value, SCHEMA_ALLOW_UNKNOWN, &error_path, &error);
+    base::UmaHistogramBoolean(kSchemaMismatchedValueIgnored,
+                              result != allow_unknown_result);
+  }
 
   if (errors && !error.empty()) {
     if (error_path.empty())
@@ -456,7 +473,7 @@ void SimpleSchemaValidatingPolicyHandler::ApplyPolicySettings(
     return;
   const base::Value* value = policies.GetValue(policy_name());
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
 
 // SimpleJsonStringSchemaValidatingPolicyHandler implementation ----------------
@@ -541,7 +558,7 @@ bool SimpleJsonStringSchemaValidatingPolicyHandler::CheckListOfJsonStrings(
 
   // If that succeeds, validate all the list items are strings and validate
   // the JSON inside the strings.
-  const ::base::Value::ListStorage& list = root_value->GetList();
+  base::Value::ConstListView list = root_value->GetList();
   bool json_error_seen = false;
 
   for (size_t index = 0; index < list.size(); ++index) {
@@ -572,7 +589,7 @@ bool SimpleJsonStringSchemaValidatingPolicyHandler::ValidateJsonString(
     int index) {
   std::string parse_error;
   std::unique_ptr<base::Value> parsed_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           json_string, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &parse_error);
   if (errors && !parse_error.empty()) {
     errors->AddError(policy_name_, ErrorPath(index, ""),
@@ -585,8 +602,11 @@ bool SimpleJsonStringSchemaValidatingPolicyHandler::ValidateJsonString(
   std::string error_path;
   const Schema json_string_schema =
       IsListSchema() ? schema_.GetItems() : schema_;
-  bool validated = json_string_schema.Validate(*parsed_value, SCHEMA_STRICT,
-                                               &error_path, &schema_error);
+  // Even though we are validating this schema here, we don't actually change
+  // the policy if it fails to validate. This validation is just so we can show
+  // the user errors.
+  bool validated = json_string_schema.Validate(
+      *parsed_value, SCHEMA_ALLOW_UNKNOWN, &error_path, &schema_error);
   if (errors && !schema_error.empty())
     errors->AddError(policy_name_, ErrorPath(index, error_path), schema_error);
   if (!validated)
@@ -614,7 +634,7 @@ void SimpleJsonStringSchemaValidatingPolicyHandler::ApplyPolicySettings(
     return;
   const base::Value* value = policies.GetValue(policy_name_);
   if (value)
-    prefs->SetValue(pref_path_, value->CreateDeepCopy());
+    prefs->SetValue(pref_path_, value->Clone());
 }
 
 void SimpleJsonStringSchemaValidatingPolicyHandler::RecordJsonError() {

@@ -1,47 +1,69 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package org.chromium.chrome.browser.send_tab_to_self;
 
+import android.content.Context;
+
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.send_tab_to_self.SendTabToSelfMetrics.SendTabToSelfShareClickResult;
 import org.chromium.chrome.browser.share.ShareActivity;
-import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.util.UrlUtilities;
-import org.chromium.components.sync.ModelType;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetContent;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetController;
+import org.chromium.content_public.browser.NavigationEntry;
 
 /**
- * A simple activity that allows Chrome to expose send tab to self as an
- * option in the share menu.
+ * A simple activity that allows Chrome to expose send tab to self as an option in the share menu.
  */
 public class SendTabToSelfShareActivity extends ShareActivity {
+    private static BottomSheetContent sBottomSheetContentForTesting;
+
     @Override
     protected void handleShareAction(ChromeActivity triggeringActivity) {
-        // TODO(tgupta): Hook up logic to the sync server here
+        Tab tab = triggeringActivity.getActivityTabProvider().get();
+        if (tab == null) return;
+        NavigationEntry entry = tab.getWebContents().getNavigationController().getVisibleEntry();
+        actionHandler(triggeringActivity, entry, triggeringActivity.getBottomSheetController());
+    }
+
+    public static void actionHandler(
+            Context context, NavigationEntry entry, BottomSheetController controller) {
+        if (entry == null || controller == null) {
+            return;
+        }
+
+        SendTabToSelfShareClickResult.recordClickResult(
+                SendTabToSelfShareClickResult.ClickType.SHOW_DEVICE_LIST);
+        controller.requestShowContent(createBottomSheetContent(context, entry, controller), true);
+        // TODO(crbug.com/968246): Remove the need to call this explicitly and instead have it
+        // automatically show since PeekStateEnabled is set to false.
+        controller.expandSheet();
+    }
+
+    static BottomSheetContent createBottomSheetContent(
+            Context context, NavigationEntry entry, BottomSheetController controller) {
+        if (sBottomSheetContentForTesting != null) {
+            return sBottomSheetContentForTesting;
+        }
+        return new DevicePickerBottomSheetContent(context, entry, controller);
     }
 
     public static boolean featureIsAvailable(Tab currentTab) {
-        // Check that sync requirements are met:
-        //   User is syncing on at least 2 devices (including this one)
-        //   SendTabToSelf sync datatype is enabled
-        ProfileSyncService syncService = ProfileSyncService.get();
-        boolean userEnabledSyncType =
-                syncService.getPreferredDataTypes().contains(ModelType.SEND_TAB_TO_SELF);
-        boolean syncRequirementsMet =
-                userEnabledSyncType && syncService.getNumberOfSyncedDevices() > 1;
+        boolean shouldShow =
+                SendTabToSelfAndroidBridge.isFeatureAvailable(currentTab.getWebContents());
+        if (shouldShow) {
+            SendTabToSelfShareClickResult.recordClickResult(
+                    SendTabToSelfShareClickResult.ClickType.SHOW_ITEM);
+        }
+        return shouldShow;
+    }
 
-        // Check that the tab and web content requirements are met:
-        //   The active tab is not in inCognito mode or on a native page
-        //   User is viewing an HTTP or HTTPS page
-        boolean isHttpOrHttps = UrlUtilities.isHttpOrHttps(currentTab.getUrl());
-        boolean contentRequirementsMet =
-                isHttpOrHttps && !currentTab.isNativePage() && !currentTab.isIncognito();
-
-        // Return whether the feature is enabled and the criteria is met as defined above.
-        boolean featureEnabled = ChromeFeatureList.isEnabled(ChromeFeatureList.SEND_TAB_TO_SELF);
-        return featureEnabled && contentRequirementsMet && syncRequirementsMet;
+    @VisibleForTesting
+    public static void setBottomSheetContentForTesting(BottomSheetContent bottomSheetContent) {
+        sBottomSheetContentForTesting = bottomSheetContent;
     }
 }
-

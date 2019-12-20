@@ -21,10 +21,13 @@ MockPermissionPrompt::~MockPermissionPrompt() {
 
 void MockPermissionPrompt::UpdateAnchorPosition() {}
 
-gfx::NativeWindow MockPermissionPrompt::GetNativeWindow() {
-  // This class should only be used when the UI is not necessary.
-  NOTREACHED();
-  return nullptr;
+PermissionPrompt::TabSwitchingBehavior
+MockPermissionPrompt::GetTabSwitchingBehavior() {
+#if defined(OS_ANDROID)
+  return TabSwitchingBehavior::kKeepPromptAlive;
+#else
+  return TabSwitchingBehavior::kDestroyPromptButKeepRequestPending;
+#endif
 }
 
 MockPermissionPrompt::MockPermissionPrompt(MockPermissionPromptFactory* factory,

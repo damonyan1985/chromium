@@ -101,7 +101,8 @@ base::FilePath CrashReporterClient::GetReporterLogFilename() {
   return base::FilePath();
 }
 
-bool CrashReporterClient::HandleCrashDump(const char* crashdump_filename) {
+bool CrashReporterClient::HandleCrashDump(const char* crashdump_filename,
+                                          uint64_t crash_pid) {
   return false;
 }
 #endif
@@ -148,7 +149,7 @@ bool CrashReporterClient::ReportingIsEnforcedByPolicy(bool* breakpad_enabled) {
 }
 
 #if defined(OS_ANDROID)
-unsigned int CrashReporterClient::GetCrashDumpPercentageForWebView() {
+unsigned int CrashReporterClient::GetCrashDumpPercentage() {
   return 100;
 }
 

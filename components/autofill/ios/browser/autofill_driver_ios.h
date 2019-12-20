@@ -40,7 +40,7 @@ class AutofillDriverIOS : public AutofillDriver {
   // AutofillDriver:
   bool IsIncognito() const override;
   bool IsInMainFrame() const override;
-  net::URLRequestContextGetter* GetURLRequestContext() override;
+  ui::AXTreeID GetAxTreeId() const override;
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
   bool RendererIsAvailable() override;
   void SendFormDataToRenderer(int query_id,
@@ -48,6 +48,7 @@ class AutofillDriverIOS : public AutofillDriver {
                               const FormData& data) override;
   void PropagateAutofillPredictions(
       const std::vector<autofill::FormStructure*>& forms) override;
+  void HandleParsedForms(const std::vector<FormStructure*>& forms) override;
   void SendAutofillTypePredictionsToRenderer(
       const std::vector<FormStructure*>& forms) override;
   void RendererShouldClearFilledSection() override;
@@ -60,12 +61,15 @@ class AutofillDriverIOS : public AutofillDriver {
   void RendererShouldFillFieldWithValue(const base::string16& value) override;
   void RendererShouldPreviewFieldWithValue(
       const base::string16& value) override;
+  void RendererShouldSetSuggestionAvailability(
+      const mojom::AutofillState state) override;
   void PopupHidden() override;
   gfx::RectF TransformBoundingBoxToViewportCoordinates(
       const gfx::RectF& bounding_box) override;
+  net::NetworkIsolationKey NetworkIsolationKey() override;
 
   bool is_processed() const { return processed_; }
-  void set_processed(bool processed) { processed_ = processed; };
+  void set_processed(bool processed) { processed_ = processed; }
 
  protected:
   AutofillDriverIOS(
@@ -80,9 +84,9 @@ class AutofillDriverIOS : public AutofillDriver {
   // The WebState with which this object is associated.
   web::WebState* web_state_ = nullptr;
 
-  // The WebState with which this object is associated.
-  // nullptr if frame messaging is disabled.
-  web::WebFrame* web_frame_ = nullptr;
+  // The id of the WebFrame with which this object is associated.
+  // "" if frame messaging is disabled.
+  std::string web_frame_id_;
 
   // AutofillDriverIOSBridge instance that is passed in.
   __unsafe_unretained id<AutofillDriverIOSBridge> bridge_;

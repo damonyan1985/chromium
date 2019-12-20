@@ -100,6 +100,8 @@ Polymer({
 
     /** @type {AriaLabels} */
     ariaLabels: Object,
+
+    ariaExpandArtworkLabel: String,
   },
 
   /**
@@ -218,6 +220,7 @@ Polymer({
     if(this.repeatMode === "repeat-one") {
       this.playing = true;
       this.$.audio.currentTime = 0;
+      this.time = 0;
       return;
     }
     this.advance_(true /* forward */, this.repeatMode === "repeat-all");
@@ -290,6 +293,7 @@ Polymer({
     var shouldFireEvent = this.$.trackList.currentTrackIndex === nextTrackIndex;
     this.$.trackList.currentTrackIndex = nextTrackIndex;
     this.$.audio.currentTime = 0;
+    this.time = 0;
     // If the next track and current track is the same,
     // the event will not be fired.
     // So we will fire the event here.
@@ -420,7 +424,7 @@ Polymer({
   /**
    * Invoked when dragging state of seek bar on control panel is changed.
    * During the user is dragging it, audio playback is paused temporalily.
-   * @param {!{detail: {value: boolean}}} e
+   * @param {!CustomEvent<{value: boolean}>} e
    */
   onSeekingChanged_: function(e) {
     if (e.detail.value && this.playing) {
@@ -436,7 +440,7 @@ Polymer({
   },
 
   /**
-   * @param {!{detail: number}} e
+   * @param {!CustomEvent<number>} e
    * @private
    */
   onUpdateTime_: function(e) {

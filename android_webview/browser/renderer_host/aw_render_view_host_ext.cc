@@ -11,7 +11,6 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "components/web_restrictions/browser/web_restrictions_mojo_implementation.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -117,15 +116,15 @@ void AwRenderViewHostExt::SetBackgroundColor(SkColor c) {
   }
 }
 
-void AwRenderViewHostExt::SetShouldSuppressErrorPage(bool suppress) {
+void AwRenderViewHostExt::SetWillSuppressErrorPage(bool suppress) {
   // We need to store state on the browser-side, as state might need to be
   // synchronized again later (see AwRenderViewHostExt::RenderFrameCreated)
-  if (should_suppress_error_page_ == suppress)
+  if (will_suppress_error_page_ == suppress)
     return;
-  should_suppress_error_page_ = suppress;
+  will_suppress_error_page_ = suppress;
 
-  web_contents()->SendToAllFrames(new AwViewMsg_ShouldSuppressErrorPage(
-      MSG_ROUTING_NONE, should_suppress_error_page_));
+  web_contents()->SendToAllFrames(new AwViewMsg_WillSuppressErrorPage(
+      MSG_ROUTING_NONE, will_suppress_error_page_));
 }
 
 void AwRenderViewHostExt::SetJsOnlineProperty(bool network_up) {
@@ -135,10 +134,10 @@ void AwRenderViewHostExt::SetJsOnlineProperty(bool network_up) {
 
 void AwRenderViewHostExt::SmoothScroll(int target_x,
                                        int target_y,
-                                       long duration_ms) {
-  web_contents()->GetMainFrame()->Send(new AwViewMsg_SmoothScroll(
-      web_contents()->GetMainFrame()->GetRoutingID(), target_x, target_y,
-      static_cast<int>(duration_ms)));
+                                       base::TimeDelta duration) {
+  web_contents()->GetMainFrame()->Send(
+      new AwViewMsg_SmoothScroll(web_contents()->GetMainFrame()->GetRoutingID(),
+                                 target_x, target_y, duration));
 }
 
 void AwRenderViewHostExt::RenderViewHostChanged(
@@ -157,9 +156,6 @@ void AwRenderViewHostExt::ClearImageRequests() {
 
 void AwRenderViewHostExt::RenderFrameCreated(
     content::RenderFrameHost* frame_host) {
-  registry_.AddInterface(base::BindRepeating(
-      &web_restrictions::WebRestrictionsMojoImplementation::Create,
-      AwBrowserContext::GetDefault()->GetWebRestrictionProvider()));
   if (!frame_host->GetParent()) {
     frame_host->Send(new AwViewMsg_SetBackgroundColor(
         frame_host->GetRoutingID(), background_color_));
@@ -170,8 +166,8 @@ void AwRenderViewHostExt::RenderFrameCreated(
   // it) because for cross-origin navigations in multi-process mode, the
   // navigation will already have started then. Also, newly created subframes
   // need to inherit the state.
-  frame_host->Send(new AwViewMsg_ShouldSuppressErrorPage(
-      frame_host->GetRoutingID(), should_suppress_error_page_));
+  frame_host->Send(new AwViewMsg_WillSuppressErrorPage(
+      frame_host->GetRoutingID(), will_suppress_error_page_));
 }
 
 void AwRenderViewHostExt::DidFinishNavigation(
@@ -205,7 +201,7 @@ bool AwRenderViewHostExt::OnMessageReceived(
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
-  return handled ? true : WebContentsObserver::OnMessageReceived(message);
+  return handled;
 }
 
 void AwRenderViewHostExt::OnInterfaceRequestFromFrame(

@@ -5,13 +5,15 @@
 #ifndef IOS_CHROME_BROWSER_UI_POPUP_MENU_POPUP_MENU_CONSTANTS_H_
 #define IOS_CHROME_BROWSER_UI_POPUP_MENU_POPUP_MENU_CONSTANTS_H_
 
-#import <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
 
 // Accessibility IDs for the table view in various kinds of popup menus.
 extern NSString* const kPopupMenuToolsMenuTableViewId;
 extern NSString* const kPopupMenuNavigationTableViewId;
 
 // Accessibility IDs for the Tools Menu items.
+// Downloads item accessibility Identifier.
+extern NSString* const kToolsMenuDownloadsId;
 // Reload item accessibility Identifier.
 extern NSString* const kToolsMenuReload;
 // Stop item accessibility Identifier.
@@ -36,6 +38,8 @@ extern NSString* const kToolsMenuOtherDevicesId;
 extern NSString* const kToolsMenuHistoryId;
 // Report an issue item accessibility Identifier.
 extern NSString* const kToolsMenuReportAnIssueId;
+// Translate item accessibility Identifier.
+extern NSString* const kToolsMenuTranslateId;
 // Find in Page item accessibility Identifier.
 extern NSString* const kToolsMenuFindInPageId;
 // Request desktop item accessibility Identifier.
@@ -58,9 +62,17 @@ extern NSString* const kToolsMenuSiteInformation;
 extern NSString* const kToolsMenuPasteAndGo;
 // Voice Search item accessibility Identifier.
 extern NSString* const kToolsMenuVoiceSearch;
+// TODO(crbug.com/974751): Check if this is still used.
+// Search item accessibility Identifier.
+extern NSString* const kToolsMenuSearch;
+// TODO(crbug.com/974751): Check if this is still used.
+// Incognito Search item accessibility Identifier.
+extern NSString* const kToolsMenuIncognitoSearch;
 // QR Code Search item accessibility Identifier.
 extern NSString* const kToolsMenuQRCodeSearch;
 // Copied Image Search item accessibility Identifier.
 extern NSString* const kToolsMenuCopiedImageSearch;
+// Text Zoom item accessibility identifier.
+extern NSString* const kToolsMenuTextZoom;
 
 #endif  // IOS_CHROME_BROWSER_UI_POPUP_MENU_POPUP_MENU_CONSTANTS_H_

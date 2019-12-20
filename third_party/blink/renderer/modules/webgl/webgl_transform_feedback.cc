@@ -9,12 +9,6 @@
 
 namespace blink {
 
-WebGLTransformFeedback* WebGLTransformFeedback::Create(
-    WebGL2RenderingContextBase* ctx,
-    TFType type) {
-  return MakeGarbageCollected<WebGLTransformFeedback>(ctx, type);
-}
-
 WebGLTransformFeedback::WebGLTransformFeedback(WebGL2RenderingContextBase* ctx,
                                                TFType type)
     : WebGLContextObject(ctx),
@@ -40,9 +34,7 @@ WebGLTransformFeedback::WebGLTransformFeedback(WebGL2RenderingContextBase* ctx,
   }
 }
 
-WebGLTransformFeedback::~WebGLTransformFeedback() {
-  RunDestructor();
-}
+WebGLTransformFeedback::~WebGLTransformFeedback() = default;
 
 void WebGLTransformFeedback::DispatchDetached(gpu::gles2::GLES2Interface* gl) {
   for (WebGLBuffer* buffer : bound_indexed_transform_feedback_buffers_) {

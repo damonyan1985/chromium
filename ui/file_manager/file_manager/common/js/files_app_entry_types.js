@@ -206,7 +206,6 @@ class CombinedReaders {
         this.currentReader_ = this.readers_.pop();
         this.readEntries(success, error);
       }
-
     }, error);
   }
 }
@@ -258,16 +257,23 @@ class EntryList {
    * @param {string} label: Label to be used when displaying to user, it should
    *    already translated.
    * @param {VolumeManagerCommon.RootType} rootType root type.
-   *
+   * @param {string} devicePath Device path
    */
-  constructor(label, rootType) {
+  constructor(label, rootType, devicePath = '') {
     /**
      * @private {string} label: Label to be used when displaying to user, it
-     *      should be already translated. */
+     *      should be already translated.
+     */
     this.label_ = label;
 
     /** @private {VolumeManagerCommon.RootType} rootType root type. */
     this.rootType_ = rootType;
+
+    /**
+     * @private {string} devicePath Path belonging to the external media
+     * device. Partitions on the same external drive have the same device path.
+     */
+    this.devicePath_ = devicePath;
 
     /**
      * @private {!Array<!Entry|!FilesAppEntry>} children entries of
@@ -278,6 +284,7 @@ class EntryList {
     this.isDirectory = true;
     this.isFile = false;
     this.type_name = 'EntryList';
+    this.fullPath = '/';
   }
 
   /**
@@ -317,6 +324,11 @@ class EntryList {
    * @override
    */
   toURL() {
+    // There may be multiple entry lists. Append the device path to return
+    // a unique identifiable URL for the entry list.
+    if (this.devicePath_) {
+      return 'entry-list://' + this.rootType + '/' + this.devicePath_;
+    }
     return 'entry-list://' + this.rootType;
   }
 
@@ -404,6 +416,22 @@ class EntryList {
     return false;
   }
 
+  /**
+   * Removes the entry.
+   * @param {!Entry|FilesAppEntry} entry to be removed.
+   * This method is specific to EntryList and VolumeEntry instance.
+   * @return {boolean} if entry was removed.
+   */
+  removeChildEntry(entry) {
+    const childIndex =
+        this.children_.findIndex(childEntry => childEntry === entry);
+    if (childIndex !== -1) {
+      this.children_.splice(childIndex, 1);
+      return true;
+    }
+    return false;
+  }
+
   /** @override */
   getNativeEntry() {
     return null;
@@ -446,6 +474,9 @@ class VolumeEntry {
       });
     }
     this.type_name = 'VolumeEntry';
+
+    // TODO(lucmult): consider deriving this from volumeInfo.
+    this.rootType = null;
   }
 
   /**
@@ -457,11 +488,11 @@ class VolumeEntry {
   }
 
   /**
-   * @return {!FileSystem} FileSystem for this volume.
+   * @return {?FileSystem} FileSystem for this volume.
    * This method is defined on Entry.
    */
   get filesystem() {
-    return this.rootEntry_.filesystem;
+    return this.rootEntry_ ? this.rootEntry_.filesystem : null;
   }
 
   /**
@@ -480,13 +511,16 @@ class VolumeEntry {
    * @override.
    */
   get fullPath() {
-    return this.rootEntry_.fullPath;
+    return this.rootEntry_ ? this.rootEntry_.fullPath : '';
   }
   get isDirectory() {
-    return this.rootEntry_.isDirectory;
+    // Defaults to true if root entry isn't resolved yet, because a VolumeEntry
+    // is like a directory.
+    return this.rootEntry_ ? this.rootEntry_.isDirectory : true;
   }
   get isFile() {
-    return this.rootEntry_.isFile;
+    // Defaults to false if root entry isn't resolved yet.
+    return this.rootEntry_ ? this.rootEntry_.isFile : false;
   }
 
   /**
@@ -533,7 +567,7 @@ class VolumeEntry {
    * @override
    */
   toURL() {
-    return this.rootEntry_.toURL();
+    return this.rootEntry_ ? this.rootEntry_.toURL() : '';
   }
 
   /**
@@ -659,6 +693,22 @@ class VolumeEntry {
     }
     return false;
   }
+
+  /**
+   * Removes the entry.
+   * @param {!Entry|FilesAppEntry} entry to be removed.
+   * This method is specific to EntryList and VolumeEntry instance.
+   * @return {boolean} if entry was removed.
+   */
+  removeChildEntry(entry) {
+    const childIndex =
+        this.children_.findIndex(childEntry => childEntry === entry);
+    if (childIndex !== -1) {
+      this.children_.splice(childIndex, 1);
+      return true;
+    }
+    return false;
+  }
 }
 
 /**
@@ -677,7 +727,8 @@ class FakeEntry {
   constructor(label, rootType, opt_sourceRestriction) {
     /**
      * @public {string} label: Label to be used when displaying to user, it
-     *      should be already translated. */
+     *      should be already translated.
+     */
     this.label = label;
 
     /** @public {string} Name for this volume. */
@@ -705,6 +756,8 @@ class FakeEntry {
      * page can't be checked with "instanceof".
      */
     this.type_name = 'FakeEntry';
+
+    this.fullPath = '/';
   }
 
   /**

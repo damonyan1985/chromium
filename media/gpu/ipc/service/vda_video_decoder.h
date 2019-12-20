@@ -14,7 +14,6 @@
 #include "base/containers/mru_cache.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -47,7 +46,7 @@ class VdaVideoDecoder : public VideoDecoder,
   using CreateCommandBufferHelperCB =
       base::OnceCallback<scoped_refptr<CommandBufferHelper>()>;
   using CreateAndInitializeVdaCB =
-      base::OnceCallback<std::unique_ptr<VideoDecodeAccelerator>(
+      base::RepeatingCallback<std::unique_ptr<VideoDecodeAccelerator>(
           scoped_refptr<CommandBufferHelper>,
           VideoDecodeAccelerator::Client*,
           MediaLog*,
@@ -101,12 +100,11 @@ class VdaVideoDecoder : public VideoDecoder,
   void Initialize(const VideoDecoderConfig& config,
                   bool low_delay,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
+                  InitCB init_cb,
                   const OutputCB& output_cb,
                   const WaitingCB& waiting_cb) override;
-  void Decode(scoped_refptr<DecoderBuffer> buffer,
-              const DecodeCB& decode_cb) override;
-  void Reset(const base::RepeatingClosure& reset_cb) override;
+  void Decode(scoped_refptr<DecoderBuffer> buffer, DecodeCB decode_cb) override;
+  void Reset(base::OnceClosure reset_cb) override;
   bool NeedsBitstreamConversion() const override;
   bool CanReadWithoutStalling() const override;
   int GetMaxDecodeRequests() const override;
@@ -138,6 +136,7 @@ class VdaVideoDecoder : public VideoDecoder,
   // Tasks and thread hopping.
   void DestroyOnGpuThread();
   void InitializeOnGpuThread();
+  void ReinitializeOnGpuThread();
   void InitializeDone(bool status);
   void DecodeOnGpuThread(scoped_refptr<DecoderBuffer> buffer,
                          int32_t bitstream_id);
@@ -178,7 +177,7 @@ class VdaVideoDecoder : public VideoDecoder,
   InitCB init_cb_;
   OutputCB output_cb_;
   DecodeCB flush_cb_;
-  base::RepeatingClosure reset_cb_;
+  base::OnceClosure reset_cb_;
 
   int32_t bitstream_buffer_id_ = 0;
   std::map<int32_t, DecodeCB> decode_cbs_;
@@ -197,8 +196,10 @@ class VdaVideoDecoder : public VideoDecoder,
   // Only written on the GPU thread during initialization, which is mutually
   // exclusive with reads on the parent thread.
   std::unique_ptr<VideoDecodeAccelerator> vda_;
+  scoped_refptr<CommandBufferHelper> command_buffer_helper_;
   bool vda_initialized_ = false;
   bool decode_on_parent_thread_ = false;
+  bool reinitializing_ = false;
 
   //
   // Weak pointers, prefixed by bound thread.
@@ -214,8 +215,8 @@ class VdaVideoDecoder : public VideoDecoder,
   //     indicates that we should not make any new client callbacks.
   base::WeakPtr<VdaVideoDecoder> gpu_weak_this_;
   base::WeakPtr<VdaVideoDecoder> parent_weak_this_;
-  base::WeakPtrFactory<VdaVideoDecoder> gpu_weak_this_factory_;
-  base::WeakPtrFactory<VdaVideoDecoder> parent_weak_this_factory_;
+  base::WeakPtrFactory<VdaVideoDecoder> gpu_weak_this_factory_{this};
+  base::WeakPtrFactory<VdaVideoDecoder> parent_weak_this_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VdaVideoDecoder);
 };

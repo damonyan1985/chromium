@@ -15,6 +15,7 @@
 #include "ios/chrome/browser/favicon/ios_chrome_favicon_loader_factory.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
 #include "ios/chrome/browser/feature_engagement/tracker_factory.h"
+#include "ios/chrome/browser/main/browser.h"
 #import "ios/chrome/browser/metrics/new_tab_page_uma.h"
 #include "ios/chrome/browser/reading_list/offline_url_utils.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
@@ -27,14 +28,18 @@
 #import "ios/chrome/browser/ui/reading_list/reading_list_list_view_controller_delegate.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_mediator.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_table_view_controller.h"
+#import "ios/chrome/browser/ui/table_view/feature_flags.h"
 #import "ios/chrome/browser/ui/table_view/table_view_animator.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller_constants.h"
 #import "ios/chrome/browser/ui/table_view/table_view_presentation_controller.h"
-#import "ios/chrome/browser/ui/url_loader.h"
 #import "ios/chrome/browser/ui/util/pasteboard_util.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
+#import "ios/chrome/browser/url_loading/url_loading_service.h"
+#import "ios/chrome/browser/url_loading/url_loading_service_factory.h"
+#include "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/grit/ios_strings.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "url/gurl.h"
@@ -50,8 +55,6 @@
 
 // Whether the coordinator is started.
 @property(nonatomic, assign, getter=isStarted) BOOL started;
-// The URL loader used to load pages that have been added to the reading list.
-@property(nonatomic, strong) id<UrlLoader> loader;
 // The mediator that updates the table for model changes.
 @property(nonatomic, strong) ReadingListMediator* mediator;
 // The navigation controller displaying self.tableViewController.
@@ -68,23 +71,10 @@
 
 @implementation ReadingListCoordinator
 @synthesize started = _started;
-@synthesize loader = _loader;
 @synthesize mediator = _mediator;
 @synthesize navigationController = _navigationController;
 @synthesize tableViewController = _tableViewController;
 @synthesize contextMenuCoordinator = _contextMenuCoordinator;
-
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                              browserState:
-                                  (ios::ChromeBrowserState*)browserState
-                                    loader:(id<UrlLoader>)loader {
-  self = [super initWithBaseViewController:viewController
-                              browserState:browserState];
-  if (self) {
-    _loader = loader;
-  }
-  return self;
-}
 
 #pragma mark - Accessors
 
@@ -134,8 +124,26 @@
   self.navigationController = [[TableViewNavigationController alloc]
       initWithTable:self.tableViewController];
   self.navigationController.toolbarHidden = NO;
-  self.navigationController.transitioningDelegate = self;
-  self.navigationController.modalPresentationStyle = UIModalPresentationCustom;
+
+  BOOL useCustomPresentation = YES;
+  if (IsCollectionsCardPresentationStyleEnabled()) {
+    if (@available(iOS 13, *)) {
+#if defined(__IPHONE_13_0) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0)
+      [self.navigationController
+          setModalPresentationStyle:UIModalPresentationFormSheet];
+      self.navigationController.presentationController.delegate =
+          self.tableViewController;
+      useCustomPresentation = NO;
+#endif
+    }
+  }
+
+  if (useCustomPresentation) {
+    self.navigationController.transitioningDelegate = self;
+    self.navigationController.modalPresentationStyle =
+        UIModalPresentationCustom;
+  }
+
   [self.baseViewController presentViewController:self.navigationController
                                         animated:YES
                                       completion:nil];
@@ -346,8 +354,11 @@ animationControllerForDismissedController:(UIViewController*)dismissed {
            incognito:(BOOL)incognito {
   DCHECK(entryURL.is_valid());
   base::RecordAction(base::UserMetricsAction("MobileReadingListOpen"));
+  web::WebState* activeWebState =
+      self.browser->GetWebStateList()->GetActiveWebState();
   new_tab_page_uma::RecordAction(
-      self.browserState, new_tab_page_uma::ACTION_OPENED_READING_LIST_ENTRY);
+      self.browserState, activeWebState,
+      new_tab_page_uma::ACTION_OPENED_READING_LIST_ENTRY);
 
   // Load the offline URL if available.
   GURL loadURL = entryURL;
@@ -355,8 +366,6 @@ animationControllerForDismissedController:(UIViewController*)dismissed {
     loadURL = offlineURL;
     // Offline URLs should always be opened in new tabs.
     newTab = YES;
-    // Record the offline load and update the model.
-    UMA_HISTOGRAM_BOOLEAN("ReadingList.OfflineVersionDisplayed", true);
     const GURL updateURL = entryURL;
     [self.mediator markEntryRead:updateURL];
   }
@@ -367,22 +376,19 @@ animationControllerForDismissedController:(UIViewController*)dismissed {
   // Use a referrer with a specific URL to signal that this entry should not be
   // taken into account for the Most Visited tiles.
   if (newTab) {
-    web::Referrer referrer = web::Referrer(GURL(kReadingListReferrerURL),
-                                           web::ReferrerPolicyDefault);
-    OpenNewTabCommand* command =
-        [[OpenNewTabCommand alloc] initWithURL:loadURL
-                                      referrer:referrer
-                                   inIncognito:incognito
-                                  inBackground:NO
-                                      appendTo:kLastTab];
-    [self.loader webPageOrderedOpen:command];
+    UrlLoadParams params = UrlLoadParams::InNewTab(loadURL, entryURL);
+    params.in_incognito = incognito;
+    params.web_params.referrer = web::Referrer(GURL(kReadingListReferrerURL),
+                                               web::ReferrerPolicyDefault);
+    UrlLoadingServiceFactory::GetForBrowserState(self.browserState)
+        ->Load(params);
   } else {
-    web::NavigationManager::WebLoadParams params(loadURL);
-    params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-    params.referrer = web::Referrer(GURL(kReadingListReferrerURL),
-                                    web::ReferrerPolicyDefault);
-    ChromeLoadParams chromeParams(params);
-    [self.loader loadURLWithParams:chromeParams];
+    UrlLoadParams params = UrlLoadParams::InCurrentTab(loadURL);
+    params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
+    params.web_params.referrer = web::Referrer(GURL(kReadingListReferrerURL),
+                                               web::ReferrerPolicyDefault);
+    UrlLoadingServiceFactory::GetForBrowserState(self.browserState)
+        ->Load(params);
   }
 
   [self stop];

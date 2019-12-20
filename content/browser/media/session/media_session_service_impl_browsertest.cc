@@ -5,9 +5,11 @@
 #include "content/browser/media/session/media_session_service_impl.h"
 
 #include "base/command_line.h"
+#include "build/build_config.h"
 #include "content/browser/media/session/media_session_impl.h"
 #include "content/browser/media/session/media_session_player_observer.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -20,19 +22,20 @@ namespace content {
 
 namespace {
 
-class MockWebContentsObserver : public WebContentsObserver {
+class NavigationWatchingWebContentsObserver : public WebContentsObserver {
  public:
-  explicit MockWebContentsObserver(WebContents* contents,
-                                   const base::Closure& closure_on_navigate)
+  explicit NavigationWatchingWebContentsObserver(
+      WebContents* contents,
+      base::OnceClosure closure_on_navigate)
       : WebContentsObserver(contents),
-        closure_on_navigate_(closure_on_navigate) {}
+        closure_on_navigate_(std::move(closure_on_navigate)) {}
 
   void DidFinishNavigation(NavigationHandle* navigation_handle) override {
-    closure_on_navigate_.Run();
+    std::move(closure_on_navigate_).Run();
   }
 
  private:
-  base::Closure closure_on_navigate_;
+  base::OnceClosure closure_on_navigate_;
 };
 
 class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
@@ -49,6 +52,11 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
   void OnSetVolumeMultiplier(int player_id, double volume_multiplier) override {
   }
 
+  base::Optional<media_session::MediaPosition> GetPosition(
+      int player_id) const override {
+    return base::nullopt;
+  }
+
   RenderFrameHost* render_frame_host() const override {
     return render_frame_host_;
   }
@@ -59,10 +67,10 @@ class MockMediaSessionPlayerObserver : public MediaSessionPlayerObserver {
 
 void NavigateToURLAndWaitForFinish(Shell* window, const GURL& url) {
   base::RunLoop run_loop;
-  MockWebContentsObserver observer(window->web_contents(),
-                                   run_loop.QuitClosure());
+  NavigationWatchingWebContentsObserver observer(window->web_contents(),
+                                                 run_loop.QuitClosure());
 
-  NavigateToURL(window, url);
+  EXPECT_TRUE(NavigateToURL(window, url));
   run_loop.Run();
 }
 
@@ -79,7 +87,8 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ContentBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII("--enable-blink-features", "MediaSession");
+    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
+                                    "MediaSession");
   }
 
   void EnsurePlayer() {
@@ -109,10 +118,15 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
   bool ExecuteScriptToSetUpMediaSessionSync() {
     bool result = ExecuteScript(shell(), kSetUpMediaSessionScript);
     media_session::test::MockMediaSessionMojoObserver observer(*GetSession());
-    observer.WaitForActions();
-    EXPECT_TRUE(base::ContainsKey(
-        observer.actions_set(),
-        media_session::mojom::MediaSessionAction::kSeekForward));
+
+    std::set<media_session::mojom::MediaSessionAction> expected_actions;
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPlay);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kPause);
+    expected_actions.insert(media_session::mojom::MediaSessionAction::kStop);
+    expected_actions.insert(
+        media_session::mojom::MediaSessionAction::kSeekForward);
+
+    observer.WaitForExpectedActions(expected_actions);
     return result;
   }
 
@@ -129,9 +143,10 @@ class MediaSessionServiceImplBrowserTest : public ContentBrowserTest {
 // Two windows from the same BrowserContext.
 IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
                        MAYBE_CrashMessageOnUnload) {
-  NavigateToURL(shell(), GetTestUrl("media/session", "embedder.html"));
+  EXPECT_TRUE(
+      NavigateToURL(shell(), GetTestUrl("media/session", "embedder.html")));
   // Navigate to a chrome:// URL to avoid render process re-use.
-  NavigateToURL(shell(), GURL("chrome://flags"));
+  EXPECT_TRUE(NavigateToURL(shell(), GURL("chrome://gpu")));
   // Should not crash.
 }
 
@@ -145,19 +160,23 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
 // TODO(crbug.com/850870) Plug the leaks.
 #define MAYBE_ResetServiceWhenNavigatingAway \
   DISABLED_ResetServiceWhenNavigatingAway
+#elif defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_ANDROID)
+// crbug.com/927234.
+#define MAYBE_ResetServiceWhenNavigatingAway \
+  DISABLED_ResetServiceWhenNavigatingAway
 #else
 #define MAYBE_ResetServiceWhenNavigatingAway ResetServiceWhenNavigatingAway
 #endif
 IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
                        MAYBE_ResetServiceWhenNavigatingAway) {
-  NavigateToURL(shell(), GetTestUrl(".", "title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();
 
   EXPECT_TRUE(ExecuteScriptToSetUpMediaSessionSync());
 
   EXPECT_EQ(blink::mojom::MediaSessionPlaybackState::PLAYING,
             GetService()->playback_state());
-  EXPECT_TRUE(GetService()->metadata().has_value());
+  EXPECT_TRUE(GetService()->metadata());
   EXPECT_EQ(1u, GetService()->actions().size());
 
   // Start a non-same-page navigation and check the playback state, metadata,
@@ -166,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
 
   EXPECT_EQ(blink::mojom::MediaSessionPlaybackState::NONE,
             GetService()->playback_state());
-  EXPECT_FALSE(GetService()->metadata().has_value());
+  EXPECT_FALSE(GetService()->metadata());
   EXPECT_EQ(0u, GetService()->actions().size());
 }
 
@@ -175,12 +194,13 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
 #define MAYBE_DontResetServiceForSameDocumentNavigation \
   DISABLED_DontResetServiceForSameDocumentNavigation
 #else
+// crbug.com/927234.
 #define MAYBE_DontResetServiceForSameDocumentNavigation \
-  DontResetServiceForSameDocumentNavigation
+  DISABLED_DontResetServiceForSameDocumentNavigation
 #endif
 IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
                        MAYBE_DontResetServiceForSameDocumentNavigation) {
-  NavigateToURL(shell(), GetTestUrl(".", "title1.html"));
+  EXPECT_TRUE(NavigateToURL(shell(), GetTestUrl(".", "title1.html")));
   EnsurePlayer();
 
   EXPECT_TRUE(ExecuteScriptToSetUpMediaSessionSync());
@@ -193,7 +213,7 @@ IN_PROC_BROWSER_TEST_F(MediaSessionServiceImplBrowserTest,
 
   EXPECT_EQ(blink::mojom::MediaSessionPlaybackState::PLAYING,
             GetService()->playback_state());
-  EXPECT_TRUE(GetService()->metadata().has_value());
+  EXPECT_TRUE(GetService()->metadata());
   EXPECT_EQ(1u, GetService()->actions().size());
 }
 

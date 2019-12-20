@@ -58,7 +58,8 @@ void DebugDumpPageTask(const base::string16& doc_name,
                   base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
   page->metafile()->SaveTo(&file);
 }
-#else
+#endif  // defined(OS_WIN)
+
 void DebugDumpTask(const base::string16& doc_name,
                    const MetafilePlayer* metafile) {
   DCHECK(PrintedDocument::HasDebugDumpPath());
@@ -72,7 +73,6 @@ void DebugDumpTask(const base::string16& doc_name,
                   base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
   metafile->SaveTo(&file);
 }
-#endif
 
 void DebugDumpDataTask(const base::string16& doc_name,
                        const base::FilePath::StringType& extension,
@@ -81,8 +81,7 @@ void DebugDumpDataTask(const base::string16& doc_name,
       PrintedDocument::CreateDebugDumpPath(doc_name, extension);
   if (path.empty())
     return;
-  base::WriteFile(path,
-                  reinterpret_cast<const char*>(data->front()),
+  base::WriteFile(path, reinterpret_cast<const char*>(data->front()),
                   base::checked_cast<int>(data->size()));
 }
 
@@ -95,24 +94,25 @@ void DebugDumpSettings(const base::string16& doc_name,
       job_settings, base::JSONWriter::OPTIONS_PRETTY_PRINT, &settings_str);
   scoped_refptr<base::RefCountedMemory> data =
       base::RefCountedString::TakeString(&settings_str);
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+  base::PostTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::TaskPriority::BEST_EFFORT, base::MayBlock()},
       base::BindOnce(&DebugDumpDataTask, doc_name, FILE_PATH_LITERAL(".json"),
                      base::RetainedRef(data)));
 }
 
 }  // namespace
 
-PrintedDocument::PrintedDocument(const PrintSettings& settings,
+PrintedDocument::PrintedDocument(std::unique_ptr<PrintSettings> settings,
                                  const base::string16& name,
                                  int cookie)
-    : immutable_(settings, name, cookie) {
+    : immutable_(std::move(settings), name, cookie) {
   // If there is a range, set the number of page
-  for (const PageRange& range : settings.ranges())
+  for (const PageRange& range : immutable_.settings_->ranges())
     mutable_.expected_page_count_ += range.to - range.from + 1;
 
   if (HasDebugDumpPath())
-    DebugDumpSettings(name, settings);
+    DebugDumpSettings(name, *immutable_.settings_);
 }
 
 PrintedDocument::~PrintedDocument() = default;
@@ -139,8 +139,9 @@ void PrintedDocument::SetPage(int page_number,
   }
 
   if (HasDebugDumpPath()) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+    base::PostTask(
+        FROM_HERE,
+        {base::ThreadPool(), base::TaskPriority::BEST_EFFORT, base::MayBlock()},
         base::BindOnce(&DebugDumpPageTask, name(), base::RetainedRef(page)));
   }
 }
@@ -156,7 +157,15 @@ scoped_refptr<PrintedPage> PrintedDocument::GetPage(int page_number) {
   return page;
 }
 
-#else
+void PrintedDocument::DropPage(const PrintedPage* page) {
+  base::AutoLock lock(lock_);
+  PrintedPages::const_iterator it =
+      mutable_.pages_.find(page->page_number() - 1);
+  DCHECK_EQ(page, it->second.get());
+  mutable_.pages_.erase(it);
+}
+#endif  // defined(OS_WIN)
+
 void PrintedDocument::SetDocument(std::unique_ptr<MetafilePlayer> metafile,
                                   const gfx::Size& page_size,
                                   const gfx::Rect& page_content_rect) {
@@ -170,8 +179,9 @@ void PrintedDocument::SetDocument(std::unique_ptr<MetafilePlayer> metafile,
   }
 
   if (HasDebugDumpPath()) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+    base::PostTask(
+        FROM_HERE,
+        {base::ThreadPool(), base::TaskPriority::BEST_EFFORT, base::MayBlock()},
         base::BindOnce(&DebugDumpTask, name(), mutable_.metafile_.get()));
   }
 }
@@ -179,8 +189,6 @@ void PrintedDocument::SetDocument(std::unique_ptr<MetafilePlayer> metafile,
 const MetafilePlayer* PrintedDocument::GetMetafile() {
   return mutable_.metafile_.get();
 }
-
-#endif
 
 bool PrintedDocument::IsComplete() const {
   base::AutoLock lock(lock_);
@@ -190,7 +198,7 @@ bool PrintedDocument::IsComplete() const {
   if (mutable_.converting_pdf_)
     return true;
 
-  PageNumber page(immutable_.settings_, mutable_.page_count_);
+  PageNumber page(*immutable_.settings_, mutable_.page_count_);
   if (page == PageNumber::npos())
     return false;
 
@@ -211,7 +219,7 @@ void PrintedDocument::set_page_count(int max_page) {
   base::AutoLock lock(lock_);
   DCHECK_EQ(0, mutable_.page_count_);
   mutable_.page_count_ = max_page;
-  if (immutable_.settings_.ranges().empty()) {
+  if (immutable_.settings_->ranges().empty()) {
     mutable_.expected_page_count_ = max_page;
   } else {
     // If there is a range, don't bother since expected_page_count_ is already
@@ -269,10 +277,11 @@ void PrintedDocument::DebugDumpData(
     const base::RefCountedMemory* data,
     const base::FilePath::StringType& extension) {
   DCHECK(HasDebugDumpPath());
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
-                           base::BindOnce(&DebugDumpDataTask, name(), extension,
-                                          base::RetainedRef(data)));
+  base::PostTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+      base::BindOnce(&DebugDumpDataTask, name(), extension,
+                     base::RetainedRef(data)));
 }
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
@@ -297,10 +306,10 @@ PrintedDocument::Mutable::Mutable() = default;
 
 PrintedDocument::Mutable::~Mutable() = default;
 
-PrintedDocument::Immutable::Immutable(const PrintSettings& settings,
+PrintedDocument::Immutable::Immutable(std::unique_ptr<PrintSettings> settings,
                                       const base::string16& name,
                                       int cookie)
-    : settings_(settings), name_(name), cookie_(cookie) {}
+    : settings_(std::move(settings)), name_(name), cookie_(cookie) {}
 
 PrintedDocument::Immutable::~Immutable() = default;
 

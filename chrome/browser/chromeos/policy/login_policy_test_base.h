@@ -9,6 +9,8 @@
 #include <string>
 
 #include "base/macros.h"
+#include "chrome/browser/chromeos/login/test/fake_gaia_mixin.h"
+#include "chrome/browser/chromeos/login/test/local_policy_test_server_mixin.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 
 namespace base {
@@ -21,14 +23,14 @@ class UserPolicyTestHelper;
 
 // This class can be used to implement tests which need policy to be set prior
 // to login.
+// TODO (crbug/1014663): Deprecate this class in favor of LoggedInUserMixin.
 class LoginPolicyTestBase : public chromeos::OobeBaseTest {
  protected:
   LoginPolicyTestBase();
   ~LoginPolicyTestBase() override;
 
   // chromeos::OobeBaseTest::
-  void SetUp() override;
-  void SetUpCommandLine(base::CommandLine* command_line) override;
+  void SetUpInProcessBrowserTestFixture() override;
   void SetUpOnMainThread() override;
 
   virtual void GetMandatoryPoliciesValue(base::DictionaryValue* policy) const;
@@ -40,8 +42,16 @@ class LoginPolicyTestBase : public chromeos::OobeBaseTest {
     return user_policy_helper_.get();
   }
 
+  Profile* GetProfileForActiveUser();
+
   void SkipToLoginScreen();
-  // Should match ShowSigninScreenForTest method in SigninScreenHandler.
+
+  // Triggers the login, but does not wait for a user session to start.
+  void TriggerLogIn(const std::string& user_id,
+                    const std::string& password,
+                    const std::string& services);
+
+  // Triggers the login and waits for a user session to start.
   void LogIn(const std::string& user_id,
              const std::string& password,
              const std::string& services);
@@ -49,6 +59,9 @@ class LoginPolicyTestBase : public chromeos::OobeBaseTest {
   static const char kAccountPassword[];
   static const char kAccountId[];
   static const char kEmptyServices[];
+
+  chromeos::FakeGaiaMixin fake_gaia_{&mixin_host_, embedded_test_server()};
+  chromeos::LocalPolicyTestServerMixin local_policy_server_{&mixin_host_};
 
  private:
   void SetUpGaiaServerWithAccessTokens();

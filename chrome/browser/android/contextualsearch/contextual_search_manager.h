@@ -12,7 +12,7 @@
 #include "chrome/browser/android/contextualsearch/contextual_search_context.h"
 #include "chrome/browser/android/contextualsearch/contextual_search_delegate.h"
 #include "components/contextual_search/content/browser/contextual_search_js_api_handler.h"
-#include "components/contextual_search/content/common/contextual_search_js_api_service.mojom.h"
+#include "components/contextual_search/content/common/mojom/contextual_search_js_api_service.mojom.h"
 
 // Manages the native extraction and request logic for Contextual Search,
 // and interacts with the Java ContextualSearchManager for UX.
@@ -47,16 +47,6 @@ class ContextualSearchManager
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& j_contextual_search_context,
       const base::android::JavaParamRef<jobject>& j_base_web_contents);
-
-  // Gets the target language for translation purposes.
-  base::android::ScopedJavaLocalRef<jstring> GetTargetLanguage(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-
-  // Gets the accept-languages preference string.
-  base::android::ScopedJavaLocalRef<jstring> GetAcceptLanguages(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
 
   // Whitelists the given |j_url| for injection of the Contextual Search
   // JavaScript API.  EnableContextualSearchJsApiForWebContents must also be

@@ -20,6 +20,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
+#include "build/branding_buildflags.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "third_party/crashpad/crashpad/client/crash_report_database.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
@@ -43,7 +44,7 @@ std::map<std::string, std::string> GetProcessSimpleAnnotations() {
       process_annotations["prod"] =
           base::SysNSStringToUTF8(product).append("_Mac");
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       // Empty means stable.
       const bool allow_empty_channel = true;
 #else
@@ -124,14 +125,15 @@ base::FilePath PlatformCrashpadInitialization(
     @autoreleasepool {
       base::FilePath framework_bundle_path = base::mac::FrameworkBundlePath();
       base::FilePath handler_path =
-          framework_bundle_path.Append("Helpers").Append("crashpad_handler");
+          framework_bundle_path.Append("Helpers").Append(
+              "chrome_crashpad_handler");
 
       // Is there a way to recover if this fails?
       CrashReporterClient* crash_reporter_client = GetCrashReporterClient();
       crash_reporter_client->GetCrashDumpLocation(&database_path);
       crash_reporter_client->GetCrashMetricsLocation(&metrics_path);
 
-#if defined(GOOGLE_CHROME_BUILD) && defined(OFFICIAL_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && defined(OFFICIAL_BUILD)
       // Only allow the possibility of report upload in official builds. This
       // crash server won't have symbols for any other build types.
       std::string url = "https://clients2.google.com/cr/report";

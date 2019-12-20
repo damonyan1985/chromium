@@ -33,10 +33,6 @@ namespace {
 // key the cache.
 typedef std::tuple<int, SkColor> ShadowCacheKey;
 
-// The border is stroked at 1px, but for the purposes of reserving space we have
-// to deal in dip coordinates, so round up to 1dip.
-constexpr int kBorderThicknessDip = 1;
-
 // Utility functions for getting alignment points on the edge of a rectangle.
 gfx::Point CenterTop(const gfx::Rect& rect) {
   return gfx::Point(rect.CenterPoint().x(), rect.y());
@@ -56,8 +52,6 @@ gfx::Point RightCenter(const gfx::Rect& rect) {
 
 }  // namespace
 
-const int BubbleBorder::kStroke = 1;
-
 BubbleBorder::BubbleBorder(Arrow arrow, Shadow shadow, SkColor color)
     : arrow_(arrow),
       arrow_offset_(0),
@@ -67,7 +61,7 @@ BubbleBorder::BubbleBorder(Arrow arrow, Shadow shadow, SkColor color)
   DCHECK(shadow_ < SHADOW_COUNT);
 }
 
-BubbleBorder::~BubbleBorder() {}
+BubbleBorder::~BubbleBorder() = default;
 
 // static
 gfx::Insets BubbleBorder::GetBorderAndShadowInsets(
@@ -91,19 +85,23 @@ gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
   // In MD, there are no arrows, so positioning logic is significantly simpler.
   if (has_arrow(arrow_)) {
     gfx::Rect contents_bounds(contents_size);
-    // Apply the border part of the inset before calculating coordinates because
-    // the border should align with the anchor's border. For the purposes of
-    // positioning, the border is rounded up to a dip, which may mean we have
-    // misalignment in scale factors greater than 1. Borders with custom shadow
-    // elevations do not draw the 1px border.
+    // Always apply the border part of the inset before calculating coordinates,
+    // that ensures the bubble's border is aligned with the anchor's border.
+    // For the purposes of positioning, the border is rounded up to a dip, which
+    // may cause misalignment in scale factors greater than 1.
     // TODO(estade): when it becomes possible to provide px bounds instead of
     // dip bounds, fix this.
+    // Borders with custom shadow elevations do not draw the 1px border.
     const gfx::Insets border_insets =
         shadow_ == NO_ASSETS || md_shadow_elevation_.has_value()
             ? gfx::Insets()
             : gfx::Insets(kBorderThicknessDip);
     const gfx::Insets shadow_insets = GetInsets() - border_insets;
     contents_bounds.Inset(-border_insets);
+    // If |avoid_shadow_overlap_| is true, the shadow part of the inset is also
+    // applied now, to ensure that the shadow itself doesn't overlap the anchor.
+    if (avoid_shadow_overlap_)
+      contents_bounds.Inset(-shadow_insets);
     switch (arrow_) {
       case TOP_LEFT:
         contents_bounds += anchor_rect.bottom_left() - contents_bounds.origin();
@@ -155,8 +153,9 @@ gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
     // With NO_ASSETS, there should be further insets, but the same logic is
     // used to position the bubble origin according to |anchor_rect|.
     DCHECK((shadow_ != NO_ASSETS && shadow_ != NO_SHADOW) ||
-           shadow_insets.IsEmpty());
-    contents_bounds.Inset(-shadow_insets);
+           insets_.has_value() || shadow_insets.IsEmpty());
+    if (!avoid_shadow_overlap_)
+      contents_bounds.Inset(-shadow_insets);
     // |arrow_offset_| is used to adjust bubbles that would normally be
     // partially offscreen.
     if (is_arrow_on_horizontal(arrow_))
@@ -200,11 +199,6 @@ gfx::Rect BubbleBorder::GetBounds(const gfx::Rect& anchor_rect,
   return gfx::Rect(x, y, size.width(), size.height());
 }
 
-int BubbleBorder::GetBorderCornerRadius() const {
-  constexpr int kCornerRadius = 2;
-  return corner_radius_.value_or(kCornerRadius);
-}
-
 void BubbleBorder::Paint(const views::View& view, gfx::Canvas* canvas) {
   if (shadow_ == NO_ASSETS)
     return PaintNoAssets(view, canvas);
@@ -223,6 +217,8 @@ void BubbleBorder::Paint(const views::View& view, gfx::Canvas* canvas) {
 }
 
 gfx::Insets BubbleBorder::GetInsets() const {
+  if (insets_.has_value())
+    return insets_.value();
   if (shadow_ == NO_ASSETS)
     return gfx::Insets();
   if (shadow_ == NO_SHADOW)
@@ -306,8 +302,8 @@ gfx::Size BubbleBorder::GetSizeForContentsSize(
 SkRRect BubbleBorder::GetClientRect(const View& view) const {
   gfx::RectF bounds(view.GetLocalBounds());
   bounds.Inset(GetInsets());
-  return SkRRect::MakeRectXY(gfx::RectFToSkRect(bounds),
-                             GetBorderCornerRadius(), GetBorderCornerRadius());
+  return SkRRect::MakeRectXY(gfx::RectFToSkRect(bounds), corner_radius(),
+                             corner_radius());
 }
 
 void BubbleBorder::PaintNoAssets(const View& view, gfx::Canvas* canvas) {
@@ -326,7 +322,7 @@ void BubbleBorder::PaintNoShadow(const View& view, gfx::Canvas* canvas) {
   flags.setStrokeWidth(kBorderThicknessDip);
   constexpr SkColor kBorderColor = gfx::kGoogleGrey600;
   flags.setColor(kBorderColor);
-  canvas->DrawRoundRect(bounds, GetBorderCornerRadius(), flags);
+  canvas->DrawRoundRect(bounds, corner_radius(), flags);
 }
 
 void BubbleBackground::Paint(gfx::Canvas* canvas, views::View* view) const {
@@ -341,7 +337,7 @@ void BubbleBackground::Paint(gfx::Canvas* canvas, views::View* view) const {
   gfx::RectF bounds(view->GetLocalBounds());
   bounds.Inset(gfx::InsetsF(border_->GetInsets()));
 
-  canvas->DrawRoundRect(bounds, border_->GetBorderCornerRadius(), flags);
+  canvas->DrawRoundRect(bounds, border_->corner_radius(), flags);
 }
 
 }  // namespace views

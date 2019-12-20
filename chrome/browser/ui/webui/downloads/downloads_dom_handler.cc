@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -29,6 +31,7 @@
 #include "chrome/browser/download/drag_download_item.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/webui/downloads/downloads.mojom.h"
 #include "chrome/browser/ui/webui/fileicon_source.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -43,6 +46,9 @@
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 #include "net/base/filename_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/gfx/image/image.h"
@@ -76,14 +82,14 @@ void CountDownloadsDOMEvents(DownloadsDOMEvent event) {
 
 }  // namespace
 
-MdDownloadsDOMHandler::MdDownloadsDOMHandler(
-    md_downloads::mojom::PageHandlerRequest request,
-    md_downloads::mojom::PagePtr page,
+DownloadsDOMHandler::DownloadsDOMHandler(
+    mojo::PendingReceiver<downloads::mojom::PageHandler> receiver,
+    mojo::PendingRemote<downloads::mojom::Page> page,
     content::DownloadManager* download_manager,
     content::WebUI* web_ui)
     : list_tracker_(download_manager, std::move(page)),
       web_ui_(web_ui),
-      binding_(this, std::move(request)) {
+      receiver_(this, std::move(receiver)) {
   // Create our fileicon data source.
   content::URLDataSource::Add(
       Profile::FromBrowserContext(download_manager->GetBrowserContext()),
@@ -91,7 +97,7 @@ MdDownloadsDOMHandler::MdDownloadsDOMHandler(
   CheckForRemovedFiles();
 }
 
-MdDownloadsDOMHandler::~MdDownloadsDOMHandler() {
+DownloadsDOMHandler::~DownloadsDOMHandler() {
   list_tracker_.Stop();
   list_tracker_.Reset();
   if (!render_process_gone_)
@@ -99,13 +105,13 @@ MdDownloadsDOMHandler::~MdDownloadsDOMHandler() {
   FinalizeRemovals();
 }
 
-void MdDownloadsDOMHandler::RenderProcessGone(base::TerminationStatus status) {
+void DownloadsDOMHandler::RenderProcessGone(base::TerminationStatus status) {
   // TODO(dbeam): WebUI + WebUIMessageHandler should do this automatically.
   // http://crbug.com/610450
   render_process_gone_ = true;
 }
 
-void MdDownloadsDOMHandler::GetDownloads(
+void DownloadsDOMHandler::GetDownloads(
     const std::vector<std::string>& search_terms) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_GET_DOWNLOADS);
 
@@ -116,7 +122,7 @@ void MdDownloadsDOMHandler::GetDownloads(
   list_tracker_.StartAndSendChunk();
 }
 
-void MdDownloadsDOMHandler::OpenFileRequiringGesture(const std::string& id) {
+void DownloadsDOMHandler::OpenFileRequiringGesture(const std::string& id) {
   if (!GetWebUIWebContents()->HasRecentInteractiveInputEvent()) {
     LOG(ERROR) << "OpenFileRequiringGesture received without recent "
                   "user interaction";
@@ -129,7 +135,7 @@ void MdDownloadsDOMHandler::OpenFileRequiringGesture(const std::string& id) {
     file->OpenDownload();
 }
 
-void MdDownloadsDOMHandler::Drag(const std::string& id) {
+void DownloadsDOMHandler::Drag(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_DRAG);
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (!file)
@@ -153,8 +159,7 @@ void MdDownloadsDOMHandler::Drag(const std::string& id) {
   }
 }
 
-void MdDownloadsDOMHandler::SaveDangerousRequiringGesture(
-    const std::string& id) {
+void DownloadsDOMHandler::SaveDangerousRequiringGesture(const std::string& id) {
   if (!GetWebUIWebContents()->HasRecentInteractiveInputEvent()) {
     LOG(ERROR) << "SaveDangerousRequiringGesture received without recent "
                   "user interaction";
@@ -167,12 +172,12 @@ void MdDownloadsDOMHandler::SaveDangerousRequiringGesture(
     ShowDangerPrompt(file);
 }
 
-void MdDownloadsDOMHandler::DiscardDangerous(const std::string& id) {
+void DownloadsDOMHandler::DiscardDangerous(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_DISCARD_DANGEROUS);
   RemoveDownloadInArgs(id);
 }
 
-void MdDownloadsDOMHandler::RetryDownload(const std::string& id) {
+void DownloadsDOMHandler::RetryDownload(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_RETRY_DOWNLOAD);
 
   download::DownloadItem* file = GetDownloadByStringId(id);
@@ -202,10 +207,15 @@ void MdDownloadsDOMHandler::RetryDownload(const std::string& id) {
           policy_exception_justification: "Not implemented."
         })");
 
+  // For "Retry", we want to use the network isolation key associated with the
+  // initial download request rather than treating it as initiated from the
+  // chrome://downloads/ page. Thus we get the NIK from |file|, not from
+  // |render_frame_host|.
   auto dl_params = std::make_unique<download::DownloadUrlParameters>(
       url, render_frame_host->GetProcess()->GetID(),
       render_frame_host->GetRenderViewHost()->GetRoutingID(),
-      render_frame_host->GetRoutingID(), traffic_annotation);
+      render_frame_host->GetRoutingID(), traffic_annotation,
+      file->GetNetworkIsolationKey());
   dl_params->set_content_initiated(true);
   dl_params->set_initiator(url::Origin::Create(GURL("chrome://downloads")));
   dl_params->set_download_source(download::DownloadSource::RETRY);
@@ -214,28 +224,28 @@ void MdDownloadsDOMHandler::RetryDownload(const std::string& id) {
       ->DownloadUrl(std::move(dl_params));
 }
 
-void MdDownloadsDOMHandler::Show(const std::string& id) {
+void DownloadsDOMHandler::Show(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_SHOW);
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (file)
     file->ShowDownloadInShell();
 }
 
-void MdDownloadsDOMHandler::Pause(const std::string& id) {
+void DownloadsDOMHandler::Pause(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_PAUSE);
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (file)
     file->Pause();
 }
 
-void MdDownloadsDOMHandler::Resume(const std::string& id) {
+void DownloadsDOMHandler::Resume(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_RESUME);
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (file)
     file->Resume(true);
 }
 
-void MdDownloadsDOMHandler::Remove(const std::string& id) {
+void DownloadsDOMHandler::Remove(const std::string& id) {
   if (!IsDeletingHistoryAllowed())
     return;
 
@@ -243,7 +253,7 @@ void MdDownloadsDOMHandler::Remove(const std::string& id) {
   RemoveDownloadInArgs(id);
 }
 
-void MdDownloadsDOMHandler::Undo() {
+void DownloadsDOMHandler::Undo() {
   // TODO(dbeam): handle more than removed downloads someday?
   if (removals_.empty())
     return;
@@ -275,14 +285,14 @@ void MdDownloadsDOMHandler::Undo() {
     list_tracker_.StartAndSendChunk();
 }
 
-void MdDownloadsDOMHandler::Cancel(const std::string& id) {
+void DownloadsDOMHandler::Cancel(const std::string& id) {
   CountDownloadsDOMEvents(DOWNLOADS_DOM_EVENT_CANCEL);
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (file)
     file->Cancel(true);
 }
 
-void MdDownloadsDOMHandler::ClearAll() {
+void DownloadsDOMHandler::ClearAll() {
   if (!IsDeletingHistoryAllowed()) {
     // This should only be reached during tests.
     return;
@@ -303,7 +313,7 @@ void MdDownloadsDOMHandler::ClearAll() {
   list_tracker_.StartAndSendChunk();
 }
 
-void MdDownloadsDOMHandler::RemoveDownloads(const DownloadVector& to_remove) {
+void DownloadsDOMHandler::RemoveDownloads(const DownloadVector& to_remove) {
   IdSet ids;
 
   for (auto* download : to_remove) {
@@ -328,7 +338,7 @@ void MdDownloadsDOMHandler::RemoveDownloads(const DownloadVector& to_remove) {
     removals_.push_back(ids);
 }
 
-void MdDownloadsDOMHandler::OpenDownloadsFolderRequiringGesture() {
+void DownloadsDOMHandler::OpenDownloadsFolderRequiringGesture() {
   if (!GetWebUIWebContents()->HasRecentInteractiveInputEvent()) {
     LOG(ERROR) << "OpenDownloadsFolderRequiringGesture received without recent "
                   "user interaction";
@@ -345,19 +355,18 @@ void MdDownloadsDOMHandler::OpenDownloadsFolderRequiringGesture() {
   }
 }
 
-// MdDownloadsDOMHandler, private: --------------------------------------------
+// DownloadsDOMHandler, private: --------------------------------------------
 
-content::DownloadManager* MdDownloadsDOMHandler::GetMainNotifierManager()
-    const {
+content::DownloadManager* DownloadsDOMHandler::GetMainNotifierManager() const {
   return list_tracker_.GetMainNotifierManager();
 }
 
-content::DownloadManager* MdDownloadsDOMHandler::GetOriginalNotifierManager()
+content::DownloadManager* DownloadsDOMHandler::GetOriginalNotifierManager()
     const {
   return list_tracker_.GetOriginalNotifierManager();
 }
 
-void MdDownloadsDOMHandler::FinalizeRemovals() {
+void DownloadsDOMHandler::FinalizeRemovals() {
   while (!removals_.empty()) {
     const IdSet remove = removals_.back();
     removals_.pop_back();
@@ -370,20 +379,19 @@ void MdDownloadsDOMHandler::FinalizeRemovals() {
   }
 }
 
-void MdDownloadsDOMHandler::ShowDangerPrompt(
+void DownloadsDOMHandler::ShowDangerPrompt(
     download::DownloadItem* dangerous_item) {
   DownloadDangerPrompt* danger_prompt = DownloadDangerPrompt::Create(
-      dangerous_item,
-      GetWebUIWebContents(),
-      false,
-      base::Bind(&MdDownloadsDOMHandler::DangerPromptDone,
+      dangerous_item, GetWebUIWebContents(), false,
+      base::Bind(&DownloadsDOMHandler::DangerPromptDone,
                  weak_ptr_factory_.GetWeakPtr(), dangerous_item->GetId()));
   // danger_prompt will delete itself.
   DCHECK(danger_prompt);
 }
 
-void MdDownloadsDOMHandler::DangerPromptDone(
-    int download_id, DownloadDangerPrompt::Action action) {
+void DownloadsDOMHandler::DangerPromptDone(
+    int download_id,
+    DownloadDangerPrompt::Action action) {
   if (action != DownloadDangerPrompt::ACCEPT)
     return;
   download::DownloadItem* item = NULL;
@@ -397,14 +405,14 @@ void MdDownloadsDOMHandler::DangerPromptDone(
   item->ValidateDangerousDownload();
 }
 
-bool MdDownloadsDOMHandler::IsDeletingHistoryAllowed() {
+bool DownloadsDOMHandler::IsDeletingHistoryAllowed() {
   content::DownloadManager* manager = GetMainNotifierManager();
   return manager &&
          Profile::FromBrowserContext(manager->GetBrowserContext())->
              GetPrefs()->GetBoolean(prefs::kAllowDeletingBrowserHistory);
 }
 
-download::DownloadItem* MdDownloadsDOMHandler::GetDownloadByStringId(
+download::DownloadItem* DownloadsDOMHandler::GetDownloadByStringId(
     const std::string& id) {
   uint64_t id_num;
   if (!base::StringToUint64(id, &id_num)) {
@@ -415,7 +423,7 @@ download::DownloadItem* MdDownloadsDOMHandler::GetDownloadByStringId(
   return GetDownloadById(static_cast<uint32_t>(id_num));
 }
 
-download::DownloadItem* MdDownloadsDOMHandler::GetDownloadById(uint32_t id) {
+download::DownloadItem* DownloadsDOMHandler::GetDownloadById(uint32_t id) {
   download::DownloadItem* item = NULL;
   if (GetMainNotifierManager())
     item = GetMainNotifierManager()->GetDownload(id);
@@ -424,18 +432,18 @@ download::DownloadItem* MdDownloadsDOMHandler::GetDownloadById(uint32_t id) {
   return item;
 }
 
-content::WebContents* MdDownloadsDOMHandler::GetWebUIWebContents() {
+content::WebContents* DownloadsDOMHandler::GetWebUIWebContents() {
   return web_ui_->GetWebContents();
 }
 
-void MdDownloadsDOMHandler::CheckForRemovedFiles() {
+void DownloadsDOMHandler::CheckForRemovedFiles() {
   if (GetMainNotifierManager())
     GetMainNotifierManager()->CheckForHistoryFilesRemoval();
   if (GetOriginalNotifierManager())
     GetOriginalNotifierManager()->CheckForHistoryFilesRemoval();
 }
 
-void MdDownloadsDOMHandler::RemoveDownloadInArgs(const std::string& id) {
+void DownloadsDOMHandler::RemoveDownloadInArgs(const std::string& id) {
   download::DownloadItem* file = GetDownloadByStringId(id);
   if (!file)
     return;

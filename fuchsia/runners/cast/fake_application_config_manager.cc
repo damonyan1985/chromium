@@ -4,27 +4,65 @@
 
 #include "fuchsia/runners/cast/fake_application_config_manager.h"
 
+#include <string>
+#include <utility>
+
 #include "base/logging.h"
 
-const char FakeApplicationConfigManager::kTestCastAppId[] = "00000000";
+namespace {
+const char kAgentComponentUrl[] =
+    "fuchsia-pkg://fuchsia.com/cast_agent#meta/cast_agent.cmx";
+}  // namespace
 
-FakeApplicationConfigManager::FakeApplicationConfigManager(
-    net::EmbeddedTestServer* embedded_test_server)
-    : embedded_test_server_(embedded_test_server) {}
+FakeApplicationConfigManager::FakeApplicationConfigManager() = default;
+
 FakeApplicationConfigManager::~FakeApplicationConfigManager() = default;
 
 void FakeApplicationConfigManager::GetConfig(std::string id,
                                              GetConfigCallback callback) {
-  if (id != kTestCastAppId) {
-    LOG(ERROR) << "Unknown Cast app Id: " << id;
-    callback(chromium::cast::ApplicationConfigPtr());
+  if (id_to_config_.find(id) == id_to_config_.end()) {
+    LOG(ERROR) << "Unknown Cast App ID: " << id;
+    callback(chromium::cast::ApplicationConfig());
     return;
   }
 
-  chromium::cast::ApplicationConfigPtr app_config =
-      chromium::cast::ApplicationConfig::New();
-  app_config->id = id;
-  app_config->display_name = "Dummy test app";
-  app_config->web_url = embedded_test_server_->base_url().spec();
-  callback(std::move(app_config));
+  callback(std::move(std::move(id_to_config_[id])));
+  id_to_config_.erase(id);
+}
+
+void FakeApplicationConfigManager::AddAppMapping(const std::string& id,
+                                                 const GURL& url,
+                                                 bool enable_remote_debugging) {
+  AddAppMappingWithAgent(id, url, enable_remote_debugging, kAgentComponentUrl);
+}
+
+void FakeApplicationConfigManager::AddAppMappingWithAgent(
+    const std::string& id,
+    const GURL& url,
+    bool enable_remote_debugging,
+    const std::string& agent_url) {
+  chromium::cast::ApplicationConfig app_config;
+  app_config.set_id(id);
+  app_config.set_display_name("Dummy test app");
+  app_config.set_web_url(url.spec());
+  app_config.set_enable_remote_debugging(enable_remote_debugging);
+  app_config.set_agent_url(agent_url);
+  id_to_config_[id] = std::move(app_config);
+}
+
+void FakeApplicationConfigManager::AddAppMappingWithContentDirectories(
+    const std::string& id,
+    const GURL& url,
+    std::vector<fuchsia::web::ContentDirectoryProvider> directories) {
+  chromium::cast::ApplicationConfig app_config;
+  app_config.set_id(id);
+  app_config.set_display_name("Dummy test app");
+  app_config.set_web_url(url.spec());
+  app_config.set_agent_url(kAgentComponentUrl);
+  if (!directories.empty()) {
+    app_config.set_content_directories_for_isolated_application(
+        std::move(directories));
+  }
+
+  id_to_config_[id] = std::move(app_config);
 }

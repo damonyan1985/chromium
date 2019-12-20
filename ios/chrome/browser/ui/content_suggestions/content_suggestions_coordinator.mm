@@ -9,6 +9,7 @@
 #include "components/ntp_snippets/pref_names.h"
 #include "components/ntp_snippets/remote/remote_suggestions_scheduler.h"
 #include "components/ntp_tiles/most_visited_sites.h"
+#include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_cache_factory.h"
 #include "ios/chrome/browser/favicon/ios_chrome_large_icon_service_factory.h"
@@ -18,6 +19,8 @@
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #include "ios/chrome/browser/search_engines/template_url_service_factory.h"
+#import "ios/chrome/browser/signin/authentication_service_factory.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
@@ -36,7 +39,8 @@
 #import "ios/chrome/browser/ui/overscroll_actions/overscroll_actions_controller.h"
 #import "ios/chrome/browser/ui/settings/utils/pref_backed_boolean.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
-#import "ios/chrome/browser/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/url_loading/url_loading_service.h"
+#import "ios/chrome/browser/url_loading/url_loading_service_factory.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/public/provider/chrome/browser/voice/voice_search_provider.h"
 
@@ -66,18 +70,6 @@
 @implementation ContentSuggestionsCoordinator
 
 @synthesize browserState = _browserState;
-@synthesize suggestionsViewController = _suggestionsViewController;
-@synthesize URLLoader = _URLLoader;
-@synthesize visible = _visible;
-@synthesize contentSuggestionsMediator = _contentSuggestionsMediator;
-@synthesize headerCollectionInteractionHandler =
-    _headerCollectionInteractionHandler;
-@synthesize headerController = _headerController;
-@synthesize webStateList = _webStateList;
-@synthesize toolbarDelegate = _toolbarDelegate;
-@synthesize dispatcher = _dispatcher;
-@synthesize metricsRecorder = _metricsRecorder;
-@synthesize NTPMediator = _NTPMediator;
 
 - (void)start {
   if (self.visible || !self.browserState) {
@@ -113,12 +105,20 @@
     ntp_home::RecordNTPImpression(ntp_home::LOCAL_SUGGESTIONS);
   }
 
+  UrlLoadingService* urlLoadingService =
+      UrlLoadingServiceFactory::GetForBrowserState(self.browserState);
+
   self.NTPMediator = [[NTPHomeMediator alloc]
-      initWithWebStateList:self.webStateList
-        templateURLService:ios::TemplateURLServiceFactory::GetForBrowserState(
-                               self.browserState)
-                logoVendor:ios::GetChromeBrowserProvider()->CreateLogoVendor(
-                               self.browserState, self.dispatcher)];
+        initWithWebState:self.webState
+      templateURLService:ios::TemplateURLServiceFactory::GetForBrowserState(
+                             self.browserState)
+       urlLoadingService:urlLoadingService
+             authService:AuthenticationServiceFactory::GetForBrowserState(
+                             self.browserState)
+         identityManager:IdentityManagerFactory::GetForBrowserState(
+                             self.browserState)
+              logoVendor:ios::GetChromeBrowserProvider()->CreateLogoVendor(
+                             self.browserState)];
 
   BOOL voiceSearchEnabled = ios::GetChromeBrowserProvider()
                                 ->GetVoiceSearchProvider()
@@ -145,17 +145,14 @@
             largeIconService:largeIconService
               largeIconCache:cache
              mostVisitedSite:std::move(mostVisitedFactory)
-            readingListModel:readingListModel];
+            readingListModel:readingListModel
+                 prefService:prefs];
   self.contentSuggestionsMediator.commandHandler = self.NTPMediator;
   self.contentSuggestionsMediator.headerProvider = self.headerController;
   self.contentSuggestionsMediator.contentArticlesExpanded =
       [[PrefBackedBoolean alloc]
           initWithPrefService:prefs
                      prefName:ntp_snippets::prefs::kArticlesListVisible];
-  self.contentSuggestionsMediator.contentArticlesEnabled =
-      [[PrefBackedBoolean alloc]
-          initWithPrefService:prefs
-                     prefName:prefs::kArticlesForYouEnabled];
 
   self.headerController.promoCanShow =
       [self.contentSuggestionsMediator notificationPromo]->CanShow();
@@ -171,13 +168,13 @@
   self.suggestionsViewController.audience = self;
   self.suggestionsViewController.overscrollDelegate = self;
   self.suggestionsViewController.metricsRecorder = self.metricsRecorder;
-  self.suggestionsViewController.containsToolbar = YES;
   self.suggestionsViewController.dispatcher = self.dispatcher;
 
   self.NTPMediator.consumer = self.headerController;
   self.NTPMediator.dispatcher = self.dispatcher;
   self.NTPMediator.NTPMetrics =
-      [[NTPHomeMetrics alloc] initWithBrowserState:self.browserState];
+      [[NTPHomeMetrics alloc] initWithBrowserState:self.browserState
+                                          webState:self.webState];
   self.NTPMediator.metricsRecorder = self.metricsRecorder;
   self.NTPMediator.suggestionsViewController = self.suggestionsViewController;
   self.NTPMediator.suggestionsMediator = self.contentSuggestionsMediator;
@@ -261,20 +258,10 @@
   return height + topInset;
 }
 
-#pragma mark - CRWNativeContent
+#pragma mark - Public methods
 
 - (UIView*)view {
   return self.suggestionsViewController.view;
-}
-
-- (void)reload {
-  [self.contentSuggestionsMediator.dataSink reloadAllData];
-}
-
-- (void)wasShown {
-}
-
-- (void)wasHidden {
 }
 
 - (void)dismissModals {
@@ -297,16 +284,8 @@
   [self.suggestionsViewController clearOverscroll];
 }
 
-- (NSString*)title {
-  return nil;
-}
-
-- (const GURL&)url {
-  return GURL::EmptyGURL();
-}
-
-- (BOOL)isViewAlive {
-  return YES;
+- (void)reload {
+  [self.contentSuggestionsMediator.dataSink reloadAllData];
 }
 
 @end

@@ -60,8 +60,7 @@ WebrtcVideoRendererAdapter::WebrtcVideoRendererAdapter(
     VideoRenderer* video_renderer)
     : label_(label),
       video_renderer_(video_renderer),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_factory_(this) {}
+      task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
 
 WebrtcVideoRendererAdapter::~WebrtcVideoRendererAdapter() {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -105,11 +104,11 @@ void WebrtcVideoRendererAdapter::OnFrame(const webrtc::VideoFrame& frame) {
 
   task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&WebrtcVideoRendererAdapter::HandleFrameOnMainThread,
-                 weak_factory_.GetWeakPtr(), frame.transport_frame_id(),
-                 base::TimeTicks::Now(),
-                 scoped_refptr<webrtc::VideoFrameBuffer>(
-                     frame.video_frame_buffer().get())));
+      base::BindOnce(&WebrtcVideoRendererAdapter::HandleFrameOnMainThread,
+                     weak_factory_.GetWeakPtr(), frame.transport_frame_id(),
+                     base::TimeTicks::Now(),
+                     scoped_refptr<webrtc::VideoFrameBuffer>(
+                         frame.video_frame_buffer().get())));
 }
 
 void WebrtcVideoRendererAdapter::OnVideoFrameStats(
@@ -176,8 +175,9 @@ void WebrtcVideoRendererAdapter::HandleFrameOnMainThread(
       video_renderer_->GetFrameConsumer()->AllocateFrame(
           webrtc::DesktopSize(frame->width(), frame->height()));
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&ConvertYuvToRgb, base::Passed(&frame),
                  base::Passed(&rgb_frame),
                  video_renderer_->GetFrameConsumer()->GetPixelFormat()),

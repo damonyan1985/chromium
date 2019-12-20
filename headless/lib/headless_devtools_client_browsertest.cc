@@ -18,6 +18,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "headless/lib/browser/headless_web_contents_impl.h"
 #include "headless/public/devtools/domains/browser.h"
 #include "headless/public/devtools/domains/dom.h"
@@ -82,7 +83,7 @@ class HeadlessDevToolsClientWindowManagementTest
  public:
   void SetWindowBounds(
       const gfx::Rect& rect,
-      base::Callback<void(std::unique_ptr<browser::SetWindowBoundsResult>)>
+      base::OnceCallback<void(std::unique_ptr<browser::SetWindowBoundsResult>)>
           callback) {
     std::unique_ptr<browser::Bounds> bounds =
         browser::Bounds::Builder()
@@ -99,12 +100,12 @@ class HeadlessDevToolsClientWindowManagementTest
             .SetBounds(std::move(bounds))
             .Build();
     browser_devtools_client_->GetBrowser()->GetExperimental()->SetWindowBounds(
-        std::move(params), callback);
+        std::move(params), std::move(callback));
   }
 
   void SetWindowState(
       const browser::WindowState state,
-      base::Callback<void(std::unique_ptr<browser::SetWindowBoundsResult>)>
+      base::OnceCallback<void(std::unique_ptr<browser::SetWindowBoundsResult>)>
           callback) {
     std::unique_ptr<browser::Bounds> bounds =
         browser::Bounds::Builder().SetWindowState(state).Build();
@@ -115,11 +116,11 @@ class HeadlessDevToolsClientWindowManagementTest
             .SetBounds(std::move(bounds))
             .Build();
     browser_devtools_client_->GetBrowser()->GetExperimental()->SetWindowBounds(
-        std::move(params), callback);
+        std::move(params), std::move(callback));
   }
 
   void GetWindowBounds(
-      base::Callback<void(std::unique_ptr<browser::GetWindowBoundsResult>)>
+      base::OnceCallback<void(std::unique_ptr<browser::GetWindowBoundsResult>)>
           callback) {
     int window_id = HeadlessWebContentsImpl::From(web_contents_)->window_id();
     std::unique_ptr<browser::GetWindowBoundsParams> params =
@@ -128,7 +129,7 @@ class HeadlessDevToolsClientWindowManagementTest
             .Build();
 
     browser_devtools_client_->GetBrowser()->GetExperimental()->GetWindowBounds(
-        std::move(params), callback);
+        std::move(params), std::move(callback));
   }
 
   void CheckWindowBounds(
@@ -152,14 +153,14 @@ class HeadlessDevToolsClientChangeWindowBoundsTest
   void RunDevTooledTest() override {
     SetWindowBounds(
         gfx::Rect(100, 200, 300, 400),
-        base::Bind(
+        base::BindOnce(
             &HeadlessDevToolsClientChangeWindowBoundsTest::OnSetWindowBounds,
             base::Unretained(this)));
   }
 
   void OnSetWindowBounds(
       std::unique_ptr<browser::SetWindowBoundsResult> result) {
-    GetWindowBounds(base::Bind(
+    GetWindowBounds(base::BindOnce(
         &HeadlessDevToolsClientChangeWindowBoundsTest::OnGetWindowBounds,
         base::Unretained(this)));
   }
@@ -179,19 +180,19 @@ class HeadlessDevToolsClientChangeWindowStateTest
  public:
   explicit HeadlessDevToolsClientChangeWindowStateTest(
       browser::WindowState state)
-      : state_(state){};
+      : state_(state) {}
 
   void RunDevTooledTest() override {
     SetWindowState(
         state_,
-        base::Bind(
+        base::BindOnce(
             &HeadlessDevToolsClientChangeWindowStateTest::OnSetWindowState,
             base::Unretained(this)));
   }
 
   void OnSetWindowState(
       std::unique_ptr<browser::SetWindowBoundsResult> result) {
-    GetWindowBounds(base::Bind(
+    GetWindowBounds(base::BindOnce(
         &HeadlessDevToolsClientChangeWindowStateTest::OnGetWindowState,
         base::Unretained(this)));
   }
@@ -214,7 +215,7 @@ class HeadlessDevToolsClientMinimizeWindowTest
  public:
   HeadlessDevToolsClientMinimizeWindowTest()
       : HeadlessDevToolsClientChangeWindowStateTest(
-            browser::WindowState::MINIMIZED){};
+            browser::WindowState::MINIMIZED) {}
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessDevToolsClientMinimizeWindowTest);
@@ -224,7 +225,7 @@ class HeadlessDevToolsClientMaximizeWindowTest
  public:
   HeadlessDevToolsClientMaximizeWindowTest()
       : HeadlessDevToolsClientChangeWindowStateTest(
-            browser::WindowState::MAXIMIZED){};
+            browser::WindowState::MAXIMIZED) {}
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessDevToolsClientMaximizeWindowTest);
@@ -234,7 +235,7 @@ class HeadlessDevToolsClientFullscreenWindowTest
  public:
   HeadlessDevToolsClientFullscreenWindowTest()
       : HeadlessDevToolsClientChangeWindowStateTest(
-            browser::WindowState::FULLSCREEN){};
+            browser::WindowState::FULLSCREEN) {}
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessDevToolsClientFullscreenWindowTest);
@@ -473,6 +474,9 @@ class HeadlessCrashObserverTest : public HeadlessAsyncDevTooledBrowserTest,
     EXPECT_EQ(base::TERMINATION_STATUS_ABNORMAL_TERMINATION, status);
 #endif
   }
+
+ private:
+  content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes_;
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessCrashObserverTest);
@@ -684,12 +688,12 @@ class RawDevtoolsProtocolTest
     devtools_client_->SendRawDevToolsMessage(json_message);
   }
 
-  bool OnProtocolMessage(const std::string& json_message,
+  bool OnProtocolMessage(base::span<const uint8_t> json_message,
                          const base::DictionaryValue& parsed_message) override {
     EXPECT_EQ(
         "{\"id\":1,\"result\":{\"result\":{\"type\":\"number\","
         "\"value\":2,\"description\":\"2\"}}}",
-        json_message);
+        std::string(json_message.begin(), json_message.end()));
 
     FinishAsynchronousTest();
     return true;

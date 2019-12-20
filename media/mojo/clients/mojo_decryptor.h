@@ -12,15 +12,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "media/base/decryptor.h"
-#include "media/mojo/interfaces/decryptor.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "media/mojo/mojom/decryptor.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 
 namespace media {
 
 class MojoDecoderBufferReader;
 class MojoDecoderBufferWriter;
 
-// A Decryptor implementation based on mojom::DecryptorPtr.
+// A Decryptor implementation based on mojo::PendingRemote<mojom::Decryptor>.
 // This class is single threaded. The |remote_decryptor| is connected before
 // being passed to MojoDecryptor, but it is bound to the thread MojoDecryptor
 // lives on the first time it is used in this class.
@@ -28,7 +29,7 @@ class MojoDecryptor : public Decryptor {
  public:
   // |writer_capacity| can be used for testing. If 0, default writer capacity
   // will be used.
-  MojoDecryptor(mojom::DecryptorPtr remote_decryptor,
+  MojoDecryptor(mojo::PendingRemote<mojom::Decryptor> remote_decryptor,
                 uint32_t writer_capacity = 0);
   ~MojoDecryptor() final;
 
@@ -56,7 +57,8 @@ class MojoDecryptor : public Decryptor {
  private:
   // These are once callbacks corresponding to repeating callbacks DecryptCB,
   // DecoderInitCB, AudioDecodeCB and VideoDecodeCB. They are needed so that we
-  // can use ScopedCallbackRunner to make sure callbacks always run.
+  // can use WrapCallbackWithDefaultInvokeIfNotRun to make sure callbacks always
+  // run.
   // TODO(xhwang): Update Decryptor to use OnceCallback. The change is easy,
   // but updating tests is hard given gmock doesn't support move-only types.
   // See http://crbug.com/751838
@@ -75,10 +77,11 @@ class MojoDecryptor : public Decryptor {
   void OnAudioDecoded(AudioDecodeOnceCB audio_decode_cb,
                       Status status,
                       std::vector<mojom::AudioBufferPtr> audio_buffers);
-  void OnVideoDecoded(VideoDecodeOnceCB video_decode_cb,
-                      Status status,
-                      const scoped_refptr<VideoFrame>& video_frame,
-                      mojom::FrameResourceReleaserPtr releaser);
+  void OnVideoDecoded(
+      VideoDecodeOnceCB video_decode_cb,
+      Status status,
+      const scoped_refptr<VideoFrame>& video_frame,
+      mojo::PendingRemote<mojom::FrameResourceReleaser> releaser);
 
   void OnConnectionError(uint32_t custom_reason,
                          const std::string& description);
@@ -88,7 +91,7 @@ class MojoDecryptor : public Decryptor {
 
   base::ThreadChecker thread_checker_;
 
-  mojom::DecryptorPtr remote_decryptor_;
+  mojo::Remote<mojom::Decryptor> remote_decryptor_;
 
   // Helper class to send DecoderBuffer to the |remote_decryptor_| for
   // DecryptAndDecodeAudio(), DecryptAndDecodeVideo() and Decrypt().
@@ -103,7 +106,7 @@ class MojoDecryptor : public Decryptor {
   NewKeyCB new_audio_key_cb_;
   NewKeyCB new_video_key_cb_;
 
-  base::WeakPtrFactory<MojoDecryptor> weak_factory_;
+  base::WeakPtrFactory<MojoDecryptor> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MojoDecryptor);
 };

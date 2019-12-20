@@ -84,14 +84,15 @@ interface NetworkChangeManagerClient {
 // An interface for facilitating notifications of network change events.
 interface NetworkChangeManager {
   // Requests to receive notification when there is a network change.
-  RequestNotifications(NetworkChangeManagerClient client_ptr);
+  RequestNotifications(
+      pending_remote<NetworkChangeManagerClient> client_remote);
 
   // Notifies the network service that the network configuration has changed.
   // This is needed for ChromeOS because only one process can listen for network
   // changes from Shill, and currently that has to be the browser process. This
   // allows the browser process to forward the network changes to the network
   // service.
-  [EnableIf=is_chromeos]
+  [EnableIf=network_change_notifier_in_browser]
   OnNetworkChanged(
       bool dns_changed,
       bool ip_address_changed,

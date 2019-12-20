@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 
+from telemetry.core import util
 from telemetry.internal.browser import browser_finder
 from telemetry.testing import options_for_unittests
 
@@ -94,7 +95,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     with open(fieldtrial_path, "w") as f:
       f.write(testing_config)
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
 
     expected_args = [
       "--enable-features=Feature1<TestStudy,Feature2<TestStudy",
@@ -110,7 +111,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     options = options_for_unittests.GetCopy()
     options.chrome_root = self._output_dir
     options.browser_options.browser_type = 'reference'
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
 
     for arg in expected_args:
       self.assertNotIn(arg, options.browser_options.extra_browser_args)
@@ -120,19 +121,30 @@ class PerfBenchmarkTest(unittest.TestCase):
     options = options_for_unittests.GetCopy()
     options.chrome_root = self._output_dir
     options.browser_options.compatibility_mode = ['no-field-trials']
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
 
     for arg in expected_args:
       self.assertNotIn(arg, options.browser_options.extra_browser_args)
 
   def testNoAdTaggingRuleset(self):
+    # This tests (badly) assumes that util.GetBuildDirectories() will always
+    # return a list of multiple directories, with Debug ordered before Release.
+    # This is not the case if CHROMIUM_OUTPUT_DIR is set or a build.ninja file
+    # exists in the current working directory - in those cases, only a single
+    # directory is returned. So, abort early if we only get back one directory.
+    num_dirs = 0
+    for _ in util.GetBuildDirectories(self._chrome_root):
+      num_dirs += 1
+    if num_dirs < 2:
+      return
+
     benchmark = perf_benchmark.PerfBenchmark()
     options = options_for_unittests.GetCopy()
 
     # Set the chrome root to avoid using a ruleset from an existing "Release"
     # out dir.
     options.chrome_root = self._output_dir
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, False)
 
   def testAdTaggingRulesetReference(self):
@@ -147,7 +159,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     # affecting other tests. See http://crbug.com/843994.
     options.chromium_output_dir = self._output_dir
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, False)
 
   def testAdTaggingRuleset(self):
@@ -161,7 +173,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     # affecting other tests. See http://crbug.com/843994.
     options.chromium_output_dir = self._output_dir
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, True)
 
   def testAdTaggingRulesetNoExplicitOutDir(self):
@@ -172,7 +184,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     options.chrome_root = self._chrome_root
     options.browser_options.browser_type = "release"
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, True)
 
   def testAdTaggingRulesetNoExplicitOutDirAndroidChromium(self):
@@ -185,7 +197,7 @@ class PerfBenchmarkTest(unittest.TestCase):
     # android-chromium is special cased to search for anything.
     options.browser_options.browser_type = "android-chromium"
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, True)
 
   def testAdTaggingRulesetOutputDirNotFound(self):
@@ -194,12 +206,23 @@ class PerfBenchmarkTest(unittest.TestCase):
     # directories matching the browser_type.
     self._PopulateGenFiles(os.path.join(self._chrome_root, 'out', 'Debug'))
 
+    # This tests (badly) assumes that util.GetBuildDirectories() will always
+    # return a list of multiple directories, with Debug ordered before Release.
+    # This is not the case if CHROMIUM_OUTPUT_DIR is set or a build.ninja file
+    # exists in the current working directory - in those cases, only a single
+    # directory is returned. So, abort early if we only get back one directory.
+    num_dirs = 0
+    for _ in util.GetBuildDirectories(self._chrome_root):
+      num_dirs += 1
+    if num_dirs < 2:
+      return
+
     benchmark = perf_benchmark.PerfBenchmark()
     options = options_for_unittests.GetCopy()
     options.chrome_root = self._chrome_root
     options.browser_options.browser_type = "release"
 
-    benchmark.CustomizeBrowserOptions(options.browser_options)
+    benchmark.CustomizeOptions(options)
     self._ExpectAdTaggingProfileFiles(options.browser_options, False)
 
   def testAdTaggingRulesetInvalidJson(self):
@@ -217,4 +240,4 @@ class PerfBenchmarkTest(unittest.TestCase):
 
     # Should fail due to invalid JSON.
     with self.assertRaises(ValueError):
-      benchmark.CustomizeBrowserOptions(options.browser_options)
+      benchmark.CustomizeOptions(options)

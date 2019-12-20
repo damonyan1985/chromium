@@ -24,7 +24,7 @@
 #include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
-#include "content/public/common/page_zoom.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 
 namespace {
 
@@ -81,7 +81,7 @@ std::string ChromeZoomLevelPrefs::GetPartitionKeyForTesting(
 }
 
 void ChromeZoomLevelPrefs::SetDefaultZoomLevelPref(double level) {
-  if (content::ZoomValuesEqual(level, host_zoom_map_->GetDefaultZoomLevel()))
+  if (blink::PageZoomValuesEqual(level, host_zoom_map_->GetDefaultZoomLevel()))
     return;
 
   DictionaryPrefUpdate update(pref_service_, prefs::kPartitionDefaultZoomLevel);
@@ -128,7 +128,7 @@ void ChromeZoomLevelPrefs::OnZoomLevelChanged(
   DCHECK(host_zoom_dictionaries);
 
   bool modification_is_removal =
-      content::ZoomValuesEqual(level, host_zoom_map_->GetDefaultZoomLevel());
+      blink::PageZoomValuesEqual(level, host_zoom_map_->GetDefaultZoomLevel());
 
   base::DictionaryValue* host_zoom_dictionary_weak = nullptr;
   if (!host_zoom_dictionaries->GetDictionary(partition_key_,
@@ -144,8 +144,9 @@ void ChromeZoomLevelPrefs::OnZoomLevelChanged(
   } else {
     base::DictionaryValue dict;
     dict.SetDouble(kZoomLevelPath, level);
-    dict.SetString(kLastModifiedPath,
-                   base::Int64ToString(change.last_modified.ToInternalValue()));
+    dict.SetString(
+        kLastModifiedPath,
+        base::NumberToString(change.last_modified.ToInternalValue()));
     host_zoom_dictionary_weak->SetKey(change.host, std::move(dict));
   }
 }
@@ -184,8 +185,8 @@ void ChromeZoomLevelPrefs::ExtractPerHostZoomLevels(
     // will ignore type B values, thus, to have consistency with HostZoomMap's
     // internal state, these values must also be removed from Prefs.
     if (host.empty() || !has_valid_zoom_level ||
-        content::ZoomValuesEqual(zoom_level,
-                                 host_zoom_map_->GetDefaultZoomLevel())) {
+        blink::PageZoomValuesEqual(zoom_level,
+                                   host_zoom_map_->GetDefaultZoomLevel())) {
       keys_to_remove.push_back(host);
       continue;
     }
@@ -238,6 +239,7 @@ void ChromeZoomLevelPrefs::InitHostZoomMap(
     ExtractPerHostZoomLevels(host_zoom_dictionary,
                              true /* sanitize_partition_host_zoom_levels */);
   }
-  zoom_subscription_ = host_zoom_map_->AddZoomLevelChangedCallback(base::Bind(
-      &ChromeZoomLevelPrefs::OnZoomLevelChanged, base::Unretained(this)));
+  zoom_subscription_ =
+      host_zoom_map_->AddZoomLevelChangedCallback(base::BindRepeating(
+          &ChromeZoomLevelPrefs::OnZoomLevelChanged, base::Unretained(this)));
 }

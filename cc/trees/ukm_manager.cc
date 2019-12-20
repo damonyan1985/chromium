@@ -19,13 +19,12 @@ UkmManager::~UkmManager() {
   RecordRenderingUkm();
 }
 
-void UkmManager::SetSourceURL(const GURL& url) {
-  // If we accumulating any metrics, record them before reseting the source.
+void UkmManager::SetSourceId(ukm::SourceId source_id) {
+  // If we accumulated any metrics, record them before resetting the source.
   RecordCheckerboardUkm();
   RecordRenderingUkm();
 
-  source_id_ = recorder_->GetNewSourceID();
-  recorder_->UpdateSourceURL(source_id_, url);
+  source_id_ = source_id;
 }
 
 void UkmManager::SetUserInteractionInProgress(bool in_progress) {
@@ -89,6 +88,85 @@ void UkmManager::RecordRenderingUkm() {
       .SetCheckerboardedImagesCount(total_num_of_checkerboarded_images_)
       .Record(recorder_.get());
   total_num_of_checkerboarded_images_ = 0;
+}
+
+void UkmManager::RecordThroughputUKM(
+    FrameSequenceTrackerType tracker_type,
+    FrameSequenceMetrics::ThreadType thread_type,
+    int64_t throughput) const {
+  ukm::builders::Graphics_Smoothness_Throughput builder(source_id_);
+  switch (thread_type) {
+    case FrameSequenceMetrics::ThreadType::kMain: {
+      switch (tracker_type) {
+#define CASE_FOR_MAIN_THREAD_TRACKER(name)    \
+  case FrameSequenceTrackerType::k##name:     \
+    builder.SetMainThread_##name(throughput); \
+    break;
+        CASE_FOR_MAIN_THREAD_TRACKER(CompositorAnimation);
+        CASE_FOR_MAIN_THREAD_TRACKER(MainThreadAnimation);
+        CASE_FOR_MAIN_THREAD_TRACKER(PinchZoom);
+        CASE_FOR_MAIN_THREAD_TRACKER(RAF);
+        CASE_FOR_MAIN_THREAD_TRACKER(TouchScroll);
+        CASE_FOR_MAIN_THREAD_TRACKER(Universal);
+        CASE_FOR_MAIN_THREAD_TRACKER(Video);
+        CASE_FOR_MAIN_THREAD_TRACKER(WheelScroll);
+#undef CASE_FOR_MAIN_THREAD_TRACKER
+        default:
+          NOTREACHED();
+          break;
+      }
+
+      break;
+    }
+
+    case FrameSequenceMetrics::ThreadType::kCompositor: {
+      switch (tracker_type) {
+#define CASE_FOR_COMPOSITOR_THREAD_TRACKER(name)    \
+  case FrameSequenceTrackerType::k##name:           \
+    builder.SetCompositorThread_##name(throughput); \
+    break;
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(CompositorAnimation);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(MainThreadAnimation);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(PinchZoom);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(RAF);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(TouchScroll);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(Universal);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(Video);
+        CASE_FOR_COMPOSITOR_THREAD_TRACKER(WheelScroll);
+#undef CASE_FOR_COMPOSITOR_THREAD_TRACKER
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    }
+
+    case FrameSequenceMetrics::ThreadType::kSlower: {
+      switch (tracker_type) {
+#define CASE_FOR_SLOWER_THREAD_TRACKER(name)    \
+  case FrameSequenceTrackerType::k##name:       \
+    builder.SetSlowerThread_##name(throughput); \
+    break;
+        CASE_FOR_SLOWER_THREAD_TRACKER(CompositorAnimation);
+        CASE_FOR_SLOWER_THREAD_TRACKER(MainThreadAnimation);
+        CASE_FOR_SLOWER_THREAD_TRACKER(PinchZoom);
+        CASE_FOR_SLOWER_THREAD_TRACKER(RAF);
+        CASE_FOR_SLOWER_THREAD_TRACKER(TouchScroll);
+        CASE_FOR_SLOWER_THREAD_TRACKER(Universal);
+        CASE_FOR_SLOWER_THREAD_TRACKER(Video);
+        CASE_FOR_SLOWER_THREAD_TRACKER(WheelScroll);
+#undef CASE_FOR_SLOWER_THREAD_TRACKER
+        default:
+          NOTREACHED();
+          break;
+      }
+      break;
+    }
+    default:
+      NOTREACHED();
+      break;
+  }
+  builder.Record(recorder_.get());
 }
 
 }  // namespace cc

@@ -16,9 +16,9 @@
 #include "chrome/common/chrome_features.h"
 #include "components/bubble/bubble_controller.h"
 #include "components/bubble/bubble_ui.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/manifest_constants.h"
-#include "services/identity/public/cpp/identity_test_utils.h"
 
 using extensions::Manifest;
 using ActionType = extensions::ExtensionBuilder::ActionType;
@@ -41,11 +41,10 @@ class ExtensionInstalledBubbleBrowserTest
 
   BubbleController* GetExtensionBubbleControllerFromManager(
       BubbleManager* manager) const {
-    for (auto& controller : manager->controllers_) {
-      if (controller->GetName() == "ExtensionInstalled")
-        return controller.get();
-    }
-    return nullptr;
+    // TODO(https://crbug.com/496955): This test class should not be aware of BubbleController
+    // or its internals. Figure out an alternate strategy to find the needed BubbleUi instance.
+    return manager->controllers_.size() ? manager->controllers_[0].get()
+                                        : nullptr;
   }
 
   BubbleUi* GetBubbleUiFromManager(BubbleManager* manager) const {
@@ -77,7 +76,6 @@ ExtensionInstalledBubbleBrowserTest::MakeBubble(
   extension_service()->AddExtension(extension.get());
   auto bubble = std::make_unique<ExtensionInstalledBubble>(
       extension.get(), browser(), SkBitmap());
-  bubble->Initialize();
   return bubble;
 }
 
@@ -138,7 +136,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
 IN_PROC_BROWSER_TEST_F(ExtensionInstalledBubbleBrowserTest,
                        DISABLED_InvokeUi_NoAction) {
   // Sign in to supppress the signin promo.
-  identity::MakePrimaryAccountAvailable(
+  signin::MakePrimaryAccountAvailable(
       IdentityManagerFactory::GetForProfile(profile()), "test@example.com");
   ShowAndVerifyUi();
 }

@@ -42,9 +42,9 @@ public class InfoBarControlLayoutTest {
     public UiThreadTestRule mRule = new UiThreadTestRule();
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         mContext = InstrumentationRegistry.getTargetContext();
-        mContext.setTheme(R.style.MainTheme);
+        mContext.setTheme(R.style.Theme_Chromium_WithWindowAnimation);
     }
 
     /**

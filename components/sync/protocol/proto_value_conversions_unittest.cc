@@ -11,7 +11,6 @@
 #include "base/values.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/unique_position.h"
-#include "components/sync/protocol/app_notification_specifics.pb.h"
 #include "components/sync/protocol/app_setting_specifics.pb.h"
 #include "components/sync/protocol/app_specifics.pb.h"
 #include "components/sync/protocol/autofill_specifics.pb.h"
@@ -24,10 +23,10 @@
 #include "components/sync/protocol/favicon_image_specifics.pb.h"
 #include "components/sync/protocol/favicon_tracking_specifics.pb.h"
 #include "components/sync/protocol/managed_user_setting_specifics.pb.h"
-#include "components/sync/protocol/managed_user_shared_setting_specifics.pb.h"
-#include "components/sync/protocol/managed_user_specifics.pb.h"
 #include "components/sync/protocol/managed_user_whitelist_specifics.pb.h"
 #include "components/sync/protocol/nigori_specifics.pb.h"
+#include "components/sync/protocol/os_preference_specifics.pb.h"
+#include "components/sync/protocol/os_priority_preference_specifics.pb.h"
 #include "components/sync/protocol/password_specifics.pb.h"
 #include "components/sync/protocol/preference_specifics.pb.h"
 #include "components/sync/protocol/priority_preference_specifics.pb.h"
@@ -36,7 +35,6 @@
 #include "components/sync/protocol/sync.pb.h"
 #include "components/sync/protocol/theme_specifics.pb.h"
 #include "components/sync/protocol/typed_url_specifics.pb.h"
-#include "components/sync/protocol/wifi_credential_specifics.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace syncer {
@@ -58,53 +56,50 @@ namespace {
 // default_instance().ByteSize() won't change for most changes, since most of
 // our fields are optional. So we just settle for comments in the proto files.
 
-DEFINE_SPECIFICS_TO_VALUE_TEST(encrypted);
+DEFINE_SPECIFICS_TO_VALUE_TEST(encrypted)
 
-static_assert(43 == syncer::MODEL_TYPE_COUNT,
+static_assert(40 == syncer::ModelType::NUM_ENTRIES,
               "When adding a new field, add a DEFINE_SPECIFICS_TO_VALUE_TEST "
               "for your field below, and optionally a test for the specific "
               "conversions.");
 
-DEFINE_SPECIFICS_TO_VALUE_TEST(app);
-DEFINE_SPECIFICS_TO_VALUE_TEST(app_list);
-DEFINE_SPECIFICS_TO_VALUE_TEST(app_notification);
-DEFINE_SPECIFICS_TO_VALUE_TEST(app_setting);
-DEFINE_SPECIFICS_TO_VALUE_TEST(arc_package);
-DEFINE_SPECIFICS_TO_VALUE_TEST(article);
-DEFINE_SPECIFICS_TO_VALUE_TEST(autofill);
-DEFINE_SPECIFICS_TO_VALUE_TEST(autofill_profile);
-DEFINE_SPECIFICS_TO_VALUE_TEST(autofill_wallet);
-DEFINE_SPECIFICS_TO_VALUE_TEST(bookmark);
-DEFINE_SPECIFICS_TO_VALUE_TEST(device_info);
-DEFINE_SPECIFICS_TO_VALUE_TEST(dictionary);
-DEFINE_SPECIFICS_TO_VALUE_TEST(experiments);
-DEFINE_SPECIFICS_TO_VALUE_TEST(extension);
-DEFINE_SPECIFICS_TO_VALUE_TEST(extension_setting);
-DEFINE_SPECIFICS_TO_VALUE_TEST(favicon_image);
-DEFINE_SPECIFICS_TO_VALUE_TEST(favicon_tracking);
-DEFINE_SPECIFICS_TO_VALUE_TEST(history_delete_directive);
-DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user);
-DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user_setting);
-DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user_shared_setting);
-DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user_whitelist);
-DEFINE_SPECIFICS_TO_VALUE_TEST(mountain_share);
-DEFINE_SPECIFICS_TO_VALUE_TEST(nigori);
-DEFINE_SPECIFICS_TO_VALUE_TEST(password);
-DEFINE_SPECIFICS_TO_VALUE_TEST(preference);
-DEFINE_SPECIFICS_TO_VALUE_TEST(printer);
-DEFINE_SPECIFICS_TO_VALUE_TEST(priority_preference);
-DEFINE_SPECIFICS_TO_VALUE_TEST(reading_list);
-DEFINE_SPECIFICS_TO_VALUE_TEST(search_engine);
-DEFINE_SPECIFICS_TO_VALUE_TEST(send_tab_to_self);
-DEFINE_SPECIFICS_TO_VALUE_TEST(session);
-DEFINE_SPECIFICS_TO_VALUE_TEST(synced_notification);
-DEFINE_SPECIFICS_TO_VALUE_TEST(synced_notification_app_info);
-DEFINE_SPECIFICS_TO_VALUE_TEST(theme);
-DEFINE_SPECIFICS_TO_VALUE_TEST(typed_url);
-DEFINE_SPECIFICS_TO_VALUE_TEST(user_consent);
-DEFINE_SPECIFICS_TO_VALUE_TEST(user_event);
-DEFINE_SPECIFICS_TO_VALUE_TEST(wallet_metadata);
-DEFINE_SPECIFICS_TO_VALUE_TEST(wifi_credential);
+DEFINE_SPECIFICS_TO_VALUE_TEST(app)
+DEFINE_SPECIFICS_TO_VALUE_TEST(app_list)
+DEFINE_SPECIFICS_TO_VALUE_TEST(app_setting)
+DEFINE_SPECIFICS_TO_VALUE_TEST(arc_package)
+DEFINE_SPECIFICS_TO_VALUE_TEST(autofill)
+DEFINE_SPECIFICS_TO_VALUE_TEST(autofill_profile)
+DEFINE_SPECIFICS_TO_VALUE_TEST(autofill_wallet)
+DEFINE_SPECIFICS_TO_VALUE_TEST(bookmark)
+DEFINE_SPECIFICS_TO_VALUE_TEST(device_info)
+DEFINE_SPECIFICS_TO_VALUE_TEST(dictionary)
+DEFINE_SPECIFICS_TO_VALUE_TEST(experiments)
+DEFINE_SPECIFICS_TO_VALUE_TEST(extension)
+DEFINE_SPECIFICS_TO_VALUE_TEST(extension_setting)
+DEFINE_SPECIFICS_TO_VALUE_TEST(favicon_image)
+DEFINE_SPECIFICS_TO_VALUE_TEST(favicon_tracking)
+DEFINE_SPECIFICS_TO_VALUE_TEST(history_delete_directive)
+DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user_setting)
+DEFINE_SPECIFICS_TO_VALUE_TEST(managed_user_whitelist)
+DEFINE_SPECIFICS_TO_VALUE_TEST(nigori)
+DEFINE_SPECIFICS_TO_VALUE_TEST(os_preference)
+DEFINE_SPECIFICS_TO_VALUE_TEST(os_priority_preference)
+DEFINE_SPECIFICS_TO_VALUE_TEST(password)
+DEFINE_SPECIFICS_TO_VALUE_TEST(preference)
+DEFINE_SPECIFICS_TO_VALUE_TEST(printer)
+DEFINE_SPECIFICS_TO_VALUE_TEST(priority_preference)
+DEFINE_SPECIFICS_TO_VALUE_TEST(reading_list)
+DEFINE_SPECIFICS_TO_VALUE_TEST(search_engine)
+DEFINE_SPECIFICS_TO_VALUE_TEST(security_event)
+DEFINE_SPECIFICS_TO_VALUE_TEST(send_tab_to_self)
+DEFINE_SPECIFICS_TO_VALUE_TEST(session)
+DEFINE_SPECIFICS_TO_VALUE_TEST(theme)
+DEFINE_SPECIFICS_TO_VALUE_TEST(typed_url)
+DEFINE_SPECIFICS_TO_VALUE_TEST(user_consent)
+DEFINE_SPECIFICS_TO_VALUE_TEST(user_event)
+DEFINE_SPECIFICS_TO_VALUE_TEST(wallet_metadata)
+DEFINE_SPECIFICS_TO_VALUE_TEST(web_app)
+DEFINE_SPECIFICS_TO_VALUE_TEST(wifi_configuration)
 
 TEST(ProtoValueConversionsTest, PasswordSpecifics) {
   sync_pb::PasswordSpecifics specifics;
@@ -144,30 +139,43 @@ TEST(ProtoValueConversionsTest, AutofillWalletSpecificsToValue) {
   specifics.mutable_masked_card()->set_name_on_card("Igloo");
   specifics.mutable_address()->set_recipient_name("John");
   specifics.mutable_customer_data()->set_id("123456");
+  specifics.mutable_cloud_token_data()->set_masked_card_id("1111");
 
   specifics.set_type(sync_pb::AutofillWalletSpecifics::UNKNOWN);
   auto value = AutofillWalletSpecificsToValue(specifics);
   EXPECT_FALSE(value->Get("masked_card", nullptr));
   EXPECT_FALSE(value->Get("address", nullptr));
   EXPECT_FALSE(value->Get("customer_data", nullptr));
+  EXPECT_FALSE(value->Get("cloud_token_data", nullptr));
 
   specifics.set_type(sync_pb::AutofillWalletSpecifics::MASKED_CREDIT_CARD);
   value = AutofillWalletSpecificsToValue(specifics);
   EXPECT_TRUE(value->Get("masked_card", nullptr));
   EXPECT_FALSE(value->Get("address", nullptr));
   EXPECT_FALSE(value->Get("customer_data", nullptr));
+  EXPECT_FALSE(value->Get("cloud_token_data", nullptr));
 
   specifics.set_type(sync_pb::AutofillWalletSpecifics::POSTAL_ADDRESS);
   value = AutofillWalletSpecificsToValue(specifics);
   EXPECT_FALSE(value->Get("masked_card", nullptr));
   EXPECT_TRUE(value->Get("address", nullptr));
   EXPECT_FALSE(value->Get("customer_data", nullptr));
+  EXPECT_FALSE(value->Get("cloud_token_data", nullptr));
 
   specifics.set_type(sync_pb::AutofillWalletSpecifics::CUSTOMER_DATA);
   value = AutofillWalletSpecificsToValue(specifics);
   EXPECT_FALSE(value->Get("masked_card", nullptr));
   EXPECT_FALSE(value->Get("address", nullptr));
   EXPECT_TRUE(value->Get("customer_data", nullptr));
+  EXPECT_FALSE(value->Get("cloud_token_data", nullptr));
+
+  specifics.set_type(
+      sync_pb::AutofillWalletSpecifics::CREDIT_CARD_CLOUD_TOKEN_DATA);
+  value = AutofillWalletSpecificsToValue(specifics);
+  EXPECT_FALSE(value->Get("masked_card", nullptr));
+  EXPECT_FALSE(value->Get("address", nullptr));
+  EXPECT_FALSE(value->Get("customer_data", nullptr));
+  EXPECT_TRUE(value->Get("cloud_token_data", nullptr));
 }
 
 TEST(ProtoValueConversionsTest, BookmarkSpecificsData) {
@@ -188,7 +196,8 @@ TEST(ProtoValueConversionsTest, BookmarkSpecificsData) {
   EXPECT_FALSE(value->empty());
   std::string encoded_time;
   EXPECT_TRUE(value->GetString("creation_time_us", &encoded_time));
-  EXPECT_EQ(base::Int64ToString(creation_time.ToInternalValue()), encoded_time);
+  EXPECT_EQ(base::NumberToString(creation_time.ToInternalValue()),
+            encoded_time);
   std::string encoded_icon_url;
   EXPECT_TRUE(value->GetString("icon_url", &encoded_icon_url));
   EXPECT_EQ(icon_url, encoded_icon_url);

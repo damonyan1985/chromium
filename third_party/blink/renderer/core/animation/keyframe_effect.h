@@ -42,6 +42,7 @@ namespace blink {
 class Element;
 class ExceptionState;
 class KeyframeEffectModelBase;
+class PaintArtifactCompositor;
 class SampledEffect;
 class UnrestrictedDoubleOrKeyframeEffectOptions;
 
@@ -53,11 +54,6 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
  public:
   enum Priority { kDefaultPriority, kTransitionPriority };
 
-  static KeyframeEffect* Create(Element*,
-                                KeyframeEffectModelBase*,
-                                const Timing&,
-                                Priority = kDefaultPriority,
-                                EventDelegate* = nullptr);
   // Web Animations API Bindings constructors.
   static KeyframeEffect* Create(
       ScriptState*,
@@ -74,22 +70,30 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
   KeyframeEffect(Element*,
                  KeyframeEffectModelBase*,
                  const Timing&,
-                 Priority,
-                 EventDelegate*);
+                 Priority = kDefaultPriority,
+                 EventDelegate* = nullptr);
   ~KeyframeEffect() override;
 
   bool IsKeyframeEffect() const override { return true; }
 
   // IDL implementation.
-  Element* target() const { return target_; }
+
+  // Returns the target element. If the animation targets a pseudo-element,
+  // this returns the originating element.
+  Element* target() const { return target_element_; }
   void setTarget(Element*);
+  const String& pseudoElement();
+  void setPseudoElement(String, ExceptionState&);
   String composite() const;
   void setComposite(String);
-  Vector<ScriptValue> getKeyframes(ScriptState*);
+  HeapVector<ScriptValue> getKeyframes(ScriptState*);
   void setKeyframes(ScriptState*,
                     const ScriptValue& keyframes,
                     ExceptionState&);
 
+  // Returns blink's representation of the effect target.
+  // This can be a blink::PseudoElement which should not be web-exposed.
+  Element* EffectTarget() const { return effect_target_; }
   void SetKeyframes(StringKeyframeVector keyframes);
 
   bool Affects(const PropertyHandle&) const;
@@ -103,8 +107,8 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
 
   void NotifySampledEffectRemovedFromEffectStack();
 
-  CompositorAnimations::FailureCode CheckCanStartAnimationOnCompositor(
-      const base::Optional<CompositorElementIdSet>& composited_element_ids,
+  CompositorAnimations::FailureReasons CheckCanStartAnimationOnCompositor(
+      const PaintArtifactCompositor*,
       double animation_playback_rate) const;
   // Must only be called once.
   void StartAnimationOnCompositor(int group,
@@ -120,17 +124,14 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
 
   void AttachCompositedLayers();
 
-  void SetCompositorKeyframeModelIdsForTesting(
-      const Vector<int>& compositor_keyframe_model_ids) {
-    compositor_keyframe_model_ids_ = compositor_keyframe_model_ids;
-  }
-
   void DowngradeToNormal() { priority_ = kDefaultPriority; }
 
   bool HasAnimation() const;
   bool HasPlayingAnimation() const;
 
   void Trace(blink::Visitor*) override;
+
+  bool AnimationsPreserveAxisAlignment() const;
 
  private:
   EffectModel::CompositeOperation CompositeInternal() const;
@@ -142,14 +143,19 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
   void Detach() override;
   void AttachTarget(Animation*);
   void DetachTarget(Animation*);
-  double CalculateTimeToEffectChange(
+  void RefreshTarget();
+  AnimationTimeDelta CalculateTimeToEffectChange(
       bool forwards,
-      double inherited_time,
+      base::Optional<double> inherited_time,
       double time_to_next_iteration) const override;
   bool HasIncompatibleStyle() const;
   bool HasMultipleTransformProperties() const;
 
-  Member<Element> target_;
+  bool AnimationsPreserveAxisAlignment(const PropertyHandle&) const;
+
+  Member<Element> effect_target_;
+  Member<Element> target_element_;
+  String target_pseudo_;
   Member<KeyframeEffectModelBase> model_;
   Member<SampledEffect> sampled_effect_;
 
@@ -158,11 +164,12 @@ class CORE_EXPORT KeyframeEffect final : public AnimationEffect {
   Vector<int> compositor_keyframe_model_ids_;
 };
 
-DEFINE_TYPE_CASTS(KeyframeEffect,
-                  AnimationEffect,
-                  animationNode,
-                  animationNode->IsKeyframeEffect(),
-                  animationNode.IsKeyframeEffect());
+template <>
+struct DowncastTraits<KeyframeEffect> {
+  static bool AllowFrom(const AnimationEffect& animationNode) {
+    return animationNode.IsKeyframeEffect();
+  }
+};
 
 }  // namespace blink
 

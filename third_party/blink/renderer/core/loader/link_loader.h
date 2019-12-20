@@ -42,7 +42,6 @@ namespace blink {
 
 class Document;
 class LinkLoaderClient;
-class NetworkHintsInterface;
 class PrerenderHandle;
 class Resource;
 class ResourceClient;
@@ -54,8 +53,6 @@ class CORE_EXPORT LinkLoader final : public SingleModuleClient,
   USING_GARBAGE_COLLECTED_MIXIN(LinkLoader);
 
  public:
-  static LinkLoader* Create(LinkLoaderClient*);
-
   LinkLoader(LinkLoaderClient*, scoped_refptr<base::SingleThreadTaskRunner>);
   ~LinkLoader() override;
 
@@ -66,9 +63,7 @@ class CORE_EXPORT LinkLoader final : public SingleModuleClient,
   void DidSendDOMContentLoadedForPrerender() override;
 
   void Abort();
-  bool LoadLink(const LinkLoadParameters&,
-                Document&,
-                const NetworkHintsInterface&);
+  bool LoadLink(const LinkLoadParameters&, Document&);
   void LoadStylesheet(const LinkLoadParameters&,
                       const AtomicString&,
                       const WTF::TextEncoding&,

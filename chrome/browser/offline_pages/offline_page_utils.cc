@@ -28,10 +28,11 @@
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
-#include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/offline_clock.h"
+#include "components/offline_pages/core/offline_page_client_policy.h"
 #include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_item_utils.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/request_header/offline_page_header.h"
 #include "content/public/browser/browser_context.h"
@@ -42,7 +43,7 @@
 #include "net/base/mime_util.h"
 
 #if defined(OS_ANDROID)
-#include "chrome/browser/android/download/download_controller_base.h"
+#include "chrome/browser/download/android/download_controller_base.h"
 #endif  // defined(OS_ANDROID)
 
 namespace offline_pages {
@@ -57,43 +58,9 @@ class OfflinePageComparer {
   }
 };
 
-void OnGetPagesByURLDone(
-    const GURL& url,
-    int tab_id,
-    const std::vector<std::string>& namespaces_restricted_to_tab_from_client_id,
-    base::OnceCallback<void(const std::vector<OfflinePageItem>&)> callback,
-    const MultipleOfflinePageItemResult& pages) {
-  std::vector<OfflinePageItem> selected_pages;
-  std::string tab_id_str = base::IntToString(tab_id);
-
-  // Exclude pages whose tab id does not match.
-  // Note: For this restriction to work offline pages saved to tab-bound
-  // namespaces must have the assigned tab id set to their ClientId::id field.
-  for (const auto& page : pages) {
-    if (base::ContainsValue(namespaces_restricted_to_tab_from_client_id,
-                            page.client_id.name_space) &&
-        page.client_id.id != tab_id_str) {
-      continue;
-    }
-    selected_pages.push_back(page);
-  }
-
-  // Sort based on creation date.
-  std::sort(selected_pages.begin(), selected_pages.end(),
-            OfflinePageComparer());
-
-  std::move(callback).Run(selected_pages);
-}
-
 bool IsSupportedByDownload(content::BrowserContext* browser_context,
                            const std::string& name_space) {
-  OfflinePageModel* offline_page_model =
-      OfflinePageModelFactory::GetForBrowserContext(browser_context);
-  DCHECK(offline_page_model);
-  ClientPolicyController* policy_controller =
-      offline_page_model->GetPolicyController();
-  DCHECK(policy_controller);
-  return policy_controller->IsSupportedByDownload(name_space);
+  return GetPolicy(name_space).is_supported_by_download;
 }
 
 void CheckDuplicateOngoingDownloads(
@@ -161,9 +128,9 @@ content::WebContents* GetWebContentsByFrameID(int render_process_id,
   return content::WebContents::FromRenderFrameHost(render_frame_host);
 }
 
-content::ResourceRequestInfo::WebContentsGetter GetWebContentsGetter(
+content::WebContents::Getter GetWebContentsGetter(
     content::WebContents* web_contents) {
-  // PlzNavigate: The FrameTreeNode ID should be used to access the WebContents.
+  // The FrameTreeNode ID should be used to access the WebContents.
   int frame_tree_node_id = web_contents->GetMainFrame()->GetFrameTreeNodeId();
   if (frame_tree_node_id != -1) {
     return base::Bind(content::WebContents::FromFrameTreeNodeId,
@@ -202,12 +169,23 @@ const base::FilePath::CharType OfflinePageUtils::kMHTMLExtension[] =
 
 // static
 void OfflinePageUtils::SelectPagesForURL(
-    content::BrowserContext* browser_context,
+    SimpleFactoryKey* key,
     const GURL& url,
     int tab_id,
     base::OnceCallback<void(const std::vector<OfflinePageItem>&)> callback) {
+  PageCriteria criteria;
+  criteria.url = url;
+  criteria.pages_for_tab_id = tab_id;
+  SelectPagesWithCriteria(key, criteria, std::move(callback));
+}
+
+// static
+void OfflinePageUtils::SelectPagesWithCriteria(
+    SimpleFactoryKey* key,
+    const PageCriteria& criteria,
+    base::OnceCallback<void(const std::vector<OfflinePageItem>&)> callback) {
   OfflinePageModel* offline_page_model =
-      OfflinePageModelFactory::GetForBrowserContext(browser_context);
+      OfflinePageModelFactory::GetForKey(key);
   if (!offline_page_model) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
@@ -215,11 +193,7 @@ void OfflinePageUtils::SelectPagesForURL(
     return;
   }
 
-  offline_page_model->GetPagesByURL(
-      url, base::BindOnce(&OnGetPagesByURLDone, url, tab_id,
-                          offline_page_model->GetPolicyController()
-                              ->GetNamespacesRestrictedToTabFromClientId(),
-                          std::move(callback)));
+  offline_page_model->GetPagesWithCriteria(criteria, std::move(callback));
 }
 
 const OfflinePageItem* OfflinePageUtils::GetOfflinePageFromWebContents(
@@ -266,18 +240,6 @@ bool OfflinePageUtils::IsShowingDownloadButtonInErrorPage(
   chrome_browser_net::NetErrorTabHelper* tab_helper =
       chrome_browser_net::NetErrorTabHelper::FromWebContents(web_contents);
   return tab_helper && tab_helper->is_showing_download_button_in_error_page();
-}
-
-// static
-bool OfflinePageUtils::EqualsIgnoringFragment(const GURL& lhs,
-                                              const GURL& rhs) {
-  GURL::Replacements remove_params;
-  remove_params.ClearRef();
-
-  GURL lhs_stripped = lhs.ReplaceComponents(remove_params);
-  GURL rhs_stripped = rhs.ReplaceComponents(remove_params);
-
-  return lhs_stripped == rhs_stripped;
 }
 
 // static
@@ -328,9 +290,10 @@ void OfflinePageUtils::CheckDuplicateDownloads(
       callback.Run(DuplicateCheckResult::DUPLICATE_PAGE_FOUND);
     }
   };
-
-  offline_page_model->GetPagesByURL(
-      url, base::BindOnce(continuation, browser_context, url, callback));
+  PageCriteria criteria;
+  criteria.url = url;
+  offline_page_model->GetPagesWithCriteria(
+      criteria, base::BindOnce(continuation, browser_context, url, callback));
 }
 
 // static
@@ -339,7 +302,8 @@ void OfflinePageUtils::ScheduleDownload(content::WebContents* web_contents,
                                         const GURL& url,
                                         DownloadUIActionFlags ui_action,
                                         const std::string& request_origin) {
-  DCHECK(web_contents);
+  if (!web_contents)
+    return;
 
   // Ensure that the storage permission is granted since the archive file is
   // going to be placed in the public directory.
@@ -378,8 +342,11 @@ bool OfflinePageUtils::GetCachedOfflinePageSizeBetween(
       OfflinePageModelFactory::GetForBrowserContext(browser_context);
   if (!offline_page_model || begin_time > end_time)
     return false;
-  offline_page_model->GetPagesRemovedOnCacheReset(base::BindOnce(
-      &DoCalculateSizeBetween, std::move(callback), begin_time, end_time));
+  PageCriteria criteria;
+  criteria.lifetime_type = LifetimeType::TEMPORARY;
+  offline_page_model->GetPagesWithCriteria(
+      criteria, base::BindOnce(&DoCalculateSizeBetween, std::move(callback),
+                               begin_time, end_time));
   return true;
 }
 
@@ -417,7 +384,7 @@ void OfflinePageUtils::AcquireFileAccessPermission(
     content::WebContents* web_contents,
     base::OnceCallback<void(bool)> callback) {
 #if defined(OS_ANDROID)
-  content::ResourceRequestInfo::WebContentsGetter web_contents_getter =
+  content::WebContents::Getter web_contents_getter =
       GetWebContentsGetter(web_contents);
   DownloadControllerBase::Get()->AcquireFileAccessPermission(
       web_contents_getter, std::move(callback));

@@ -7,7 +7,6 @@
 #include "media/gpu/vaapi/va_surface.h"
 #include "media/gpu/vaapi/vaapi_wrapper.h"
 #include "ui/gfx/gpu_memory_buffer.h"
-#include "ui/gfx/linux/native_pixmap_dmabuf.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_image_native_pixmap.h"
@@ -18,7 +17,7 @@
 namespace media {
 
 VaapiPictureNativePixmapOzone::VaapiPictureNativePixmapOzone(
-    const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
+    scoped_refptr<VaapiWrapper> vaapi_wrapper,
     const MakeGLContextCurrentCallback& make_context_current_cb,
     const BindGLImageCallback& bind_image_cb,
     int32_t picture_buffer_id,
@@ -26,7 +25,7 @@ VaapiPictureNativePixmapOzone::VaapiPictureNativePixmapOzone(
     uint32_t texture_id,
     uint32_t client_texture_id,
     uint32_t texture_target)
-    : VaapiPictureNativePixmap(vaapi_wrapper,
+    : VaapiPictureNativePixmap(std::move(vaapi_wrapper),
                                make_context_current_cb,
                                bind_image_cb,
                                picture_buffer_id,
@@ -48,12 +47,13 @@ VaapiPictureNativePixmapOzone::~VaapiPictureNativePixmapOzone() {
   }
 }
 
-bool VaapiPictureNativePixmapOzone::Initialize() {
+bool VaapiPictureNativePixmapOzone::Initialize(
+    scoped_refptr<gfx::NativePixmap> pixmap) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(pixmap_);
-
+  DCHECK(pixmap);
+  DCHECK(pixmap->AreDmaBufFdsValid());
   // Create a |va_surface_| from dmabuf fds (pixmap->GetDmaBufFd)
-  va_surface_ = vaapi_wrapper_->CreateVASurfaceForPixmap(pixmap_);
+  va_surface_ = vaapi_wrapper_->CreateVASurfaceForPixmap(pixmap);
   if (!va_surface_) {
     LOG(ERROR) << "Failed creating VASurface for NativePixmap";
     return false;
@@ -69,10 +69,10 @@ bool VaapiPictureNativePixmapOzone::Initialize() {
 
   gl::ScopedTextureBinder texture_binder(texture_target_, texture_id_);
 
-  const gfx::BufferFormat format = pixmap_->GetBufferFormat();
+  const gfx::BufferFormat format = pixmap->GetBufferFormat();
 
   auto image = base::MakeRefCounted<gl::GLImageNativePixmap>(size_, format);
-  if (!image->Initialize(pixmap_.get())) {
+  if (!image->Initialize(std::move(pixmap))) {
     LOG(ERROR) << "Failed to create GLImage";
     return false;
   }
@@ -97,35 +97,35 @@ bool VaapiPictureNativePixmapOzone::Allocate(gfx::BufferFormat format) {
 
   ui::OzonePlatform* platform = ui::OzonePlatform::GetInstance();
   ui::SurfaceFactoryOzone* factory = platform->GetSurfaceFactoryOzone();
-  pixmap_ =
-      factory->CreateNativePixmap(gfx::kNullAcceleratedWidget, size_, format,
-                                  gfx::BufferUsage::SCANOUT_VDA_WRITE);
-  if (!pixmap_) {
+  auto pixmap = factory->CreateNativePixmap(
+      gfx::kNullAcceleratedWidget, VK_NULL_HANDLE, size_, format,
+      gfx::BufferUsage::SCANOUT_VDA_WRITE);
+  if (!pixmap) {
     LOG(ERROR) << "Failed allocating a pixmap";
     return false;
   }
 
-  return Initialize();
+  return Initialize(std::move(pixmap));
 }
 
 bool VaapiPictureNativePixmapOzone::ImportGpuMemoryBufferHandle(
     gfx::BufferFormat format,
-    const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) {
+    gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ui::OzonePlatform* platform = ui::OzonePlatform::GetInstance();
   ui::SurfaceFactoryOzone* factory = platform->GetSurfaceFactoryOzone();
   // CreateNativePixmapFromHandle() will take ownership of the handle.
-  pixmap_ = factory->CreateNativePixmapFromHandle(
+  auto pixmap = factory->CreateNativePixmapFromHandle(
       gfx::kNullAcceleratedWidget, size_, format,
-      gpu_memory_buffer_handle.native_pixmap_handle);
+      std::move(gpu_memory_buffer_handle.native_pixmap_handle));
 
-  if (!pixmap_) {
+  if (!pixmap) {
     LOG(ERROR) << "Failed creating a pixmap from a native handle";
     return false;
   }
 
-  return Initialize();
+  return Initialize(std::move(pixmap));
 }
 
 }  // namespace media

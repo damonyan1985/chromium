@@ -90,12 +90,9 @@ Polymer({
   // <if expr="chromeos">
   /** @override */
   attached: function() {
-    if (settings.AndroidAppsBrowserProxyImpl) {
-      cr.addWebUIListener(
-          'android-apps-info-update', this.androidAppsInfoUpdate_.bind(this));
-      settings.AndroidAppsBrowserProxyImpl.getInstance()
-          .requestAndroidAppsInfo();
-    }
+    cr.addWebUIListener(
+        'android-apps-info-update', this.androidAppsInfoUpdate_.bind(this));
+    settings.AndroidAppsBrowserProxyImpl.getInstance().requestAndroidAppsInfo();
   },
   // </if>
 
@@ -207,8 +204,7 @@ Polymer({
     this.actionMenuModel_ = event.model.item;
     /** @type {!CrActionMenuElement} */ (this.$$('cr-action-menu'))
         .showAt(
-            /** @type {!Element} */ (
-                Polymer.dom(/** @type {!Event} */ (event)).localTarget));
+            /** @type {!Element} */ (/** @type {!Event} */ (event).target));
   },
 
   // <if expr="chromeos">

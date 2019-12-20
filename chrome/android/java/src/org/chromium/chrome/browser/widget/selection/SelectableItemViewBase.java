@@ -6,13 +6,17 @@ package org.chromium.chrome.browser.widget.selection;
 
 import android.content.Context;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
+import android.view.View.OnTouchListener;
 import android.widget.Checkable;
-import android.widget.FrameLayout;
+
+import androidx.annotation.Nullable;
 
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate.SelectionObserver;
+import org.chromium.ui.widget.ViewLookupCachingFrameLayout;
 
 import java.util.List;
 
@@ -26,14 +30,24 @@ import java.util.List;
  *
  * @param <E> The type of the item associated with this SelectableItemViewBase.
  */
-public abstract class SelectableItemViewBase<E> extends FrameLayout
-        implements Checkable, OnClickListener, OnLongClickListener, SelectionObserver<E> {
+public abstract class SelectableItemViewBase<E> extends ViewLookupCachingFrameLayout
+        implements Checkable, OnClickListener, OnLongClickListener, OnTouchListener,
+                   SelectionObserver<E> {
+    // Heuristic value used to rule out long clicks preceded by long horizontal move. A long click
+    // is ignored if finger was moved horizontally more than this threshold.
+    private static final float LONG_CLICK_SLIDE_THRESHOLD_PX = 100.f;
+
     private SelectionDelegate<E> mSelectionDelegate;
     private E mItem;
-    private boolean mIsChecked;
+    private @Nullable Boolean mIsChecked;
 
     // Controls whether selection should happen during onLongClick.
     private boolean mSelectOnLongClick = true;
+
+    // X position of touch events to detect the amount of horizontal movement between touch down
+    // and the position where long click is triggered.
+    private float mAnchorX;
+    private float mCurrentX;
 
     /**
      * Constructor for inflating from XML.
@@ -93,6 +107,7 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
     protected void onFinishInflate() {
         super.onFinishInflate();
 
+        setOnTouchListener(this);
         setOnClickListener(this);
         setOnLongClickListener(this);
     }
@@ -108,12 +123,26 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        setChecked(false);
+        resetCheckedState();
+    }
+
+    // OnTouchListener implementation.
+    @Override
+    public final boolean onTouch(View view, MotionEvent event) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            // mCurrentX needs init here as well, since we might not get ACTION_MOVE
+            // for a simple click turning into a long click when selection mode is on.
+            mAnchorX = mCurrentX = event.getX();
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            mCurrentX = event.getX();
+        }
+        return false;
     }
 
     // OnClickListener implementation.
     @Override
-    public final void onClick(View view) {
+    public void onClick(View view) {
         assert view == this;
 
         if (!mSelectOnLongClick) {
@@ -132,7 +161,7 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
     @Override
     public boolean onLongClick(View view) {
         assert view == this;
-        handleSelection();
+        if (Math.abs(mCurrentX - mAnchorX) < LONG_CLICK_SLIDE_THRESHOLD_PX) handleSelection();
         return true;
     }
 
@@ -160,7 +189,7 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
     // Checkable implementations.
     @Override
     public boolean isChecked() {
-        return mIsChecked;
+        return mIsChecked != null && mIsChecked;
     }
 
     @Override
@@ -168,11 +197,28 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
         setChecked(!isChecked());
     }
 
+    /**
+     * Sets whether the item is checked. Note that if the views to be updated run animations, you
+     * should override {@link #updateView(boolean)} to get the correct animation state instead of
+     * overriding this method to update the views.
+     * @param checked Whether the item is checked.
+     */
     @Override
     public void setChecked(boolean checked) {
-        if (checked == mIsChecked) return;
+        if (mIsChecked != null && checked == mIsChecked) return;
+
+        // We shouldn't run the animation when mIsChecked is first initialized to the correct state.
+        final boolean animate = mIsChecked != null;
         mIsChecked = checked;
-        updateView();
+        updateView(animate);
+    }
+
+    /**
+     * Resets the checked state to be uninitialized.
+     */
+    private void resetCheckedState() {
+        setChecked(false);
+        mIsChecked = null;
     }
 
     // SelectionObserver implementation.
@@ -183,8 +229,9 @@ public abstract class SelectableItemViewBase<E> extends FrameLayout
 
     /**
      * Update the view based on whether this item is selected.
+     * @param animate Whether to animate the selection state changing if applicable.
      */
-    protected void updateView() {}
+    protected void updateView(boolean animate) {}
 
     /**
      * Same as {@link OnClickListener#onClick(View)} on this.

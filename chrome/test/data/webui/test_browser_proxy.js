@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// #import {assert} from 'chrome://resources/js/assert.m.js';
+// #import {PromiseResolver} from 'chrome://resources/js/promise_resolver.m.js';
+
 /**
  * @typedef {{resolver: !PromiseResolver,
- *            callCount: number}}
+ *            callCount: number,
+ *            result?: *}}
  */
 let MethodData;
 
@@ -36,7 +40,7 @@ let MethodData;
  * });
  * --------------------------------------------------------------------------
  */
-class TestBrowserProxy {
+/* #export */ class TestBrowserProxy {
   /**
    * @param {!Array<string>} methodNames Names of all methods whose calls
    *     need to be tracked.
@@ -99,6 +103,27 @@ class TestBrowserProxy {
    */
   getCallCount(methodName) {
     return this.getMethodData_(methodName).callCount;
+  }
+
+  /**
+   * Sets the return value of a method.
+   * @param {string} methodName
+   * @paran {*} value
+   */
+  setResultFor(methodName, value) {
+    this.getMethodData_(methodName).result = value;
+  }
+
+  /**
+   * Returns the return value of a method or the default value if no return
+   * value is registered.
+   * @param {string} methodName
+   * @param {*} defaultValue
+   * @return {*}
+   */
+  getResultFor(methodName, defaultValue) {
+    const methodData = this.getMethodData_(methodName);
+    return 'result' in methodData ? methodData.result : defaultValue;
   }
 
   /**

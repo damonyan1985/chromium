@@ -35,11 +35,9 @@ class HeadlessDevToolsSession : public FrontendChannel {
   ~HeadlessDevToolsSession() override;
 
   void HandleCommand(
-      std::unique_ptr<base::DictionaryValue> command,
-      const std::string& message,
+      const std::string& method,
+      base::span<const uint8_t> message,
       content::DevToolsManagerDelegate::NotHandledCallback callback);
-
-  UberDispatcher* dispatcher() { return dispatcher_.get(); }
 
  private:
   void AddHandler(std::unique_ptr<DomainHandler> handler);
@@ -51,17 +49,15 @@ class HeadlessDevToolsSession : public FrontendChannel {
   void flushProtocolNotifications() override;
   void fallThrough(int call_id,
                    const std::string& method,
-                   const std::string& message) override;
+                   crdtp::span<uint8_t> message) override;
 
   base::WeakPtr<HeadlessBrowserImpl> browser_;
   content::DevToolsAgentHost* const agent_host_;
   content::DevToolsAgentHostClient* const client_;
-  std::unique_ptr<UberDispatcher> dispatcher_;
-  base::flat_map<std::string, std::unique_ptr<DomainHandler>> handlers_;
-  using PendingCommand =
-      std::pair<content::DevToolsManagerDelegate::NotHandledCallback,
-                std::unique_ptr<base::DictionaryValue>>;
-  base::flat_map<int, PendingCommand> pending_commands_;
+  UberDispatcher dispatcher_;
+  std::vector<std::unique_ptr<DomainHandler>> handlers_;
+  base::flat_map<int, content::DevToolsManagerDelegate::NotHandledCallback>
+      pending_commands_;
 
   DISALLOW_COPY_AND_ASSIGN(HeadlessDevToolsSession);
 };

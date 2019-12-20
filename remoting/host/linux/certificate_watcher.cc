@@ -7,7 +7,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/path_service.h"
@@ -140,7 +140,8 @@ void CertDbContentWatcher::OnTimer() {
   if (new_hash != current_hash_) {
     current_hash_ = new_hash;
     caller_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&CertificateWatcher::DatabaseChanged, watcher_));
+        FROM_HERE,
+        base::BindOnce(&CertificateWatcher::DatabaseChanged, watcher_));
   } else {
     VLOG(1) << "Directory changed but contents are the same.";
   }
@@ -173,8 +174,7 @@ CertificateWatcher::CertificateWatcher(
     : restart_action_(restart_action),
       caller_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       io_task_runner_(io_task_runner),
-      delay_(base::TimeDelta::FromSeconds(kReadDelayInSeconds)),
-      weak_factory_(this) {
+      delay_(base::TimeDelta::FromSeconds(kReadDelayInSeconds)) {
   if (!base::PathService::Get(base::DIR_HOME, &cert_watch_path_)) {
     LOG(FATAL) << "Failed to get path of the home directory.";
   }
@@ -204,8 +204,8 @@ void CertificateWatcher::Start() {
                                                   cert_watch_path_, delay_));
 
   io_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&CertDbContentWatcher::StartWatching,
-                            base::Unretained(content_watcher_.get())));
+      FROM_HERE, base::BindOnce(&CertDbContentWatcher::StartWatching,
+                                base::Unretained(content_watcher_.get())));
 
   VLOG(1) << "Started watching certificate changes.";
 }

@@ -13,7 +13,10 @@
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/win/scoped_gdi_object.h"
+#include "base/win/windows_version.h"
 #include "ui/aura/window_tree_host.h"
+
+#include "dwmapi.h"
 
 namespace aura {
 
@@ -87,35 +90,43 @@ void NativeWindowOcclusionTrackerWin::OnWindowDestroying(Window* window) {
   Disable(window);
 }
 
+NativeWindowOcclusionTrackerWin**
+NativeWindowOcclusionTrackerWin::GetInstanceForTesting() {
+  return &g_tracker;
+}
+
 NativeWindowOcclusionTrackerWin::NativeWindowOcclusionTrackerWin()
     :  // Use a COMSTATaskRunner so that registering and unregistering
        // event hooks will happen on the same thread, as required by Windows,
        // and the task runner will have a message loop to call
        // EventHookCallback.
-      update_occlusion_task_runner_(base::CreateCOMSTATaskRunnerWithTraits(
-          {base::MayBlock(),
+      update_occlusion_task_runner_(base::CreateCOMSTATaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
            // This may be needed to determine that a window is no longer
            // occluded.
            base::TaskPriority::USER_VISIBLE,
            // Occlusion calculation doesn't need to happen on shutdown.
            // event hooks should also be cleaned up by Windows.
-           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})) {
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
+      session_change_observer_(
+          base::BindRepeating(&NativeWindowOcclusionTrackerWin::OnSessionChange,
+                              base::Unretained(this))) {
   occlusion_calculator_ = std::make_unique<WindowOcclusionCalculator>(
       update_occlusion_task_runner_, base::SequencedTaskRunnerHandle::Get());
 }
 
 NativeWindowOcclusionTrackerWin::~NativeWindowOcclusionTrackerWin() {
-  // This shouldn't be reached, because if it is, |occlusion_calculator_| will
-  // be deleted on the ui thread, which is problematic if there tasks scheduled
-  // on the background thread.
-  NOTREACHED();
+  // This shouldn't be reached in production code, because if it is,
+  // |occlusion_calculator_| will be deleted on the ui thread, which is
+  // problematic if there tasks scheduled on the background thread.
+  // Tests are allowed to delete the instance after running all pending tasks.
 }
 
 // static
 bool NativeWindowOcclusionTrackerWin::IsWindowVisibleAndFullyOpaque(
     HWND hwnd,
     gfx::Rect* window_rect) {
-  // Filter out windows that are not “visible”, IsWindowVisible().
+  // Filter out windows that are not "visible", IsWindowVisible().
   if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
     return false;
 
@@ -124,13 +135,12 @@ bool NativeWindowOcclusionTrackerWin::IsWindowVisibleAndFullyOpaque(
     return false;
 
   LONG ex_styles = GetWindowLong(hwnd, GWL_EXSTYLE);
-
-  // Filter out “transparent” windows, windows where the mouse clicks fall
+  // Filter out "transparent" windows, windows where the mouse clicks fall
   // through them.
   if (ex_styles & WS_EX_TRANSPARENT)
     return false;
 
-  // Filter out “tool windows”, which are floating windows that do not appear on
+  // Filter out "tool windows", which are floating windows that do not appear on
   // the taskbar or ALT-TAB. Floating windows can have larger window rectangles
   // than what is visible to the user, so by filtering them out we will avoid
   // incorrectly marking native windows as occluded.
@@ -142,18 +152,37 @@ bool NativeWindowOcclusionTrackerWin::IsWindowVisibleAndFullyOpaque(
   if (ex_styles & WS_EX_LAYERED) {
     BYTE alpha;
     DWORD flags;
-    if (GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags)) {
-      if (flags & LWA_ALPHA && alpha < 255)
-        return false;
-      if (flags & LWA_COLORKEY)
-        return false;
-    }
+
+    // GetLayeredWindowAttributes only works if the application has
+    // previously called SetLayeredWindowAttributes on the window.
+    // The function will fail if the layered window was setup with
+    // UpdateLayeredWindow. Treat this failure as the window being transparent.
+    // See Remarks section of
+    // https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlayeredwindowattributes
+    if (!GetLayeredWindowAttributes(hwnd, nullptr, &alpha, &flags))
+      return false;
+
+    if (flags & LWA_ALPHA && alpha < 255)
+      return false;
+    if (flags & LWA_COLORKEY)
+      return false;
   }
 
   // Filter out windows that do not have a simple rectangular region.
   base::win::ScopedRegion region(CreateRectRgn(0, 0, 0, 0));
   if (GetWindowRgn(hwnd, region.get()) == COMPLEXREGION)
     return false;
+
+  // Windows 10 has cloaked windows, windows with WS_VISIBLE attribute but
+  // not displayed. explorer.exe, in particular has one that's the
+  // size of the desktop. It's usually behind Chrome windows in the z-order,
+  // but using a remote desktop can move it up in the z-order. So, ignore them.
+  DWORD reason;
+  if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &reason,
+                                      sizeof(reason))) &&
+      reason != 0) {
+    return false;
+  }
 
   RECT win_rect;
   // Filter out windows that take up zero area. The call to GetWindowRect is one
@@ -176,13 +205,41 @@ void NativeWindowOcclusionTrackerWin::UpdateOcclusionState(
     if (it == hwnd_root_window_map_.end())
       continue;
     // Check Window::IsVisible here, on the UI thread, because it can't be
-    // checked on the occlusion calculation thread.
-    bool root_window_hidden = !it->second->IsVisible();
+    // checked on the occlusion calculation thread. Do this first before
+    // checking screen_locked_ so that hidden windows remain hidden.
+    if (!it->second->IsVisible()) {
+      it->second->GetHost()->SetNativeWindowOcclusionState(
+          Window::OcclusionState::HIDDEN);
+      continue;
+    }
+    // If the screen is locked, ignore occlusion state results and
+    // mark the window as occluded.
     it->second->GetHost()->SetNativeWindowOcclusionState(
-        root_window_hidden ? Window::OcclusionState::HIDDEN
-                           : root_window_pair.second);
-    if (!root_window_hidden)
-      num_visible_root_windows_++;
+        screen_locked_ ? Window::OcclusionState::OCCLUDED
+                       : root_window_pair.second);
+    num_visible_root_windows_++;
+  }
+}
+
+void NativeWindowOcclusionTrackerWin::OnSessionChange(
+    WPARAM status_code,
+    const bool* is_current_session) {
+  if (is_current_session && !*is_current_session)
+    return;
+  if (status_code == WTS_SESSION_UNLOCK) {
+    // UNLOCK will cause a foreground window change, which will
+    // trigger an occlusion calculation on its own.
+    screen_locked_ = false;
+  } else if (status_code == WTS_SESSION_LOCK && is_current_session) {
+    screen_locked_ = true;
+    // Set all visible root windows as occluded. If not visible,
+    // set them as hidden.
+    for (const auto& root_window_hwnd_pair : hwnd_root_window_map_) {
+      root_window_hwnd_pair.second->GetHost()->SetNativeWindowOcclusionState(
+          IsIconic(root_window_hwnd_pair.first)
+              ? Window::OcclusionState::HIDDEN
+              : Window::OcclusionState::OCCLUDED);
+    }
   }
 }
 
@@ -191,6 +248,10 @@ NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
         scoped_refptr<base::SequencedTaskRunner> task_runner,
         scoped_refptr<base::SequencedTaskRunner> ui_thread_task_runner)
     : task_runner_(task_runner), ui_thread_task_runner_(ui_thread_task_runner) {
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
+    ::CoCreateInstance(__uuidof(VirtualDesktopManager), nullptr, CLSCTX_ALL,
+                       IID_PPV_ARGS(&virtual_desktop_manager_));
+  }
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
@@ -285,7 +346,16 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
   if (root_window_hwnds_occlusion_state_.empty())
     return;
   // Set up initial conditions for occlusion calculation.
-  bool all_minimized = true;
+  bool should_unregister_event_hooks = true;
+
+  // Compute the SkRegion for the screen.
+  int screen_left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  int screen_top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  SkRegion screen_region = SkRegion(
+      SkIRect::MakeLTRB(screen_left, screen_top,
+                        screen_left + GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                        screen_top + GetSystemMetrics(SM_CYVIRTUALSCREEN)));
+
   for (auto& root_window_pair : root_window_hwnds_occlusion_state_) {
     root_window_pair.second.unoccluded_region.setEmpty();
     HWND hwnd = root_window_pair.first;
@@ -294,6 +364,14 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
     // minimized windows to HIDDEN.
     if (IsIconic(hwnd)) {
       root_window_pair.second.occlusion_state = Window::OcclusionState::HIDDEN;
+    } else if (IsWindowOnCurrentVirtualDesktop(hwnd) == false) {
+      // If window is not on the current virtual desktop, immediately
+      // set the state of the window to OCCLUDED.
+      root_window_pair.second.occlusion_state =
+          Window::OcclusionState::OCCLUDED;
+      // Don't unregister event hooks when not on current desktop. There's no
+      // notification when that changes, so we can't reregister event hooks.
+      should_unregister_event_hooks = false;
     } else {
       root_window_pair.second.occlusion_state = Window::OcclusionState::UNKNOWN;
       RECT window_rect;
@@ -301,14 +379,18 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
         root_window_pair.second.unoccluded_region =
             SkRegion(SkIRect::MakeLTRB(window_rect.left, window_rect.top,
                                        window_rect.right, window_rect.bottom));
+        // Clip the unoccluded region by the screen dimensions, to handle the
+        // case of the app window being partly off screen.
+        root_window_pair.second.unoccluded_region.op(screen_region,
+                                                     SkRegion::kIntersect_Op);
       }
       // If call to GetWindowRect fails, window will be treated as occluded,
       // because unoccluded_region will be empty.
-      all_minimized = false;
+      should_unregister_event_hooks = false;
     }
   }
   // Unregister event hooks if all native windows are minimized.
-  if (all_minimized) {
+  if (should_unregister_event_hooks) {
     UnregisterEventHooks();
   } else {
     base::flat_set<DWORD> current_pids_with_visible_windows;
@@ -449,21 +531,15 @@ bool NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
   // computed for all |root_window_hwnds_occlusion_state_|, and if so, skipping
   // further oclcusion calculations. However, we still want to keep computing
   // |current_pids_with_visible_windows_|, so this function always returns true.
-  for (auto& root_window_pair : root_window_hwnds_occlusion_state_) {
-    if (hwnd == root_window_pair.first) {
-      if (root_window_pair.second.occlusion_state ==
-          Window::OcclusionState::HIDDEN) {
-        break;
-      }
-
-      root_window_pair.second.occlusion_state =
-          root_window_pair.second.unoccluded_region.isEmpty()
-              ? Window::OcclusionState::OCCLUDED
-              : Window::OcclusionState::VISIBLE;
-      break;
-    }
+  auto it = root_window_hwnds_occlusion_state_.find(hwnd);
+  if (it != root_window_hwnds_occlusion_state_.end() &&
+      it->second.occlusion_state != Window::OcclusionState::HIDDEN) {
+    it->second.occlusion_state = it->second.unoccluded_region.isEmpty()
+                                     ? Window::OcclusionState::OCCLUDED
+                                     : Window::OcclusionState::VISIBLE;
   }
-  if (!IsWindowVisibleAndFullyOpaque(hwnd, &window_rect))
+
+  if (!WindowCanOccludeOtherWindowsOnCurrentVirtualDesktop(hwnd, &window_rect))
     return true;
   // We are interested in this window, but are not currently hooking it with
   // EVENT_OBJECT_LOCATION_CHANGE, so we need to hook it. We check
@@ -471,7 +547,7 @@ bool NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
   DWORD pid;
   GetWindowThreadProcessId(hwnd, &pid);
   current_pids_with_visible_windows->insert(pid);
-  if (!base::ContainsKey(process_event_hooks_, pid))
+  if (!base::Contains(process_event_hooks_, pid))
     RegisterEventHookForProcess(pid);
 
   SkRegion window_region(SkIRect::MakeLTRB(window_rect.x(), window_rect.y(),
@@ -494,8 +570,8 @@ bool NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
 void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
     ProcessEventHookCallback(DWORD event,
                              HWND hwnd,
-                             LONG idObject,
-                             LONG idChild) {
+                             LONG id_object,
+                             LONG id_child) {
   // Can't do DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_) here. See
   // comment before call to PostTask below as to why.
 
@@ -504,6 +580,12 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
   // events.
   if (!hwnd)
     return;
+
+  // We only care about events for window objects. In particular, we don't care
+  // about OBJID_CARET, which is spammy.
+  if (id_object != OBJID_WINDOW)
+    return;
+
   // Don't continually calculate occlusion while a window is moving, but rather
   // once at the beginning and once at the end.
   if (event == EVENT_SYSTEM_MOVESIZESTART) {
@@ -520,12 +602,13 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
     // that case, we want to go back to calculating occlusion.
     window_is_moving_ = false;
   }
+
   // ProcessEventHookCallback is called from the task_runner's PeekMessage
   // call, on the task runner's thread, but before the task_tracker thread sets
   // up the thread sequence. In order to prevent DCHECK failures with the
   // |occlusion_update_timer_, we need to call
   // ScheduleOcclusionCalculationIfNeeded from a task.
-  // See SchedulerWorkerCOMDelegate::GetWorkFromWindowsMessageQueue().
+  // See WorkerThreadCOMDelegate::GetWorkFromWindowsMessageQueue().
   task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -537,11 +620,32 @@ void NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
     ProcessUpdateVisibleWindowProcessIdsCallback(HWND hwnd) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   gfx::Rect window_rect;
-  if (IsWindowVisibleAndFullyOpaque(hwnd, &window_rect)) {
+  if (WindowCanOccludeOtherWindowsOnCurrentVirtualDesktop(hwnd, &window_rect)) {
     DWORD pid;
     GetWindowThreadProcessId(hwnd, &pid);
     pids_for_location_change_hook_.insert(pid);
   }
+}
+
+bool NativeWindowOcclusionTrackerWin::WindowOcclusionCalculator::
+    WindowCanOccludeOtherWindowsOnCurrentVirtualDesktop(
+        HWND hwnd,
+        gfx::Rect* window_rect) {
+  return IsWindowVisibleAndFullyOpaque(hwnd, window_rect) &&
+         (IsWindowOnCurrentVirtualDesktop(hwnd) != false);
+}
+
+base::Optional<bool> NativeWindowOcclusionTrackerWin::
+    WindowOcclusionCalculator::IsWindowOnCurrentVirtualDesktop(HWND hwnd) {
+  if (virtual_desktop_manager_) {
+    BOOL on_current_desktop;
+
+    if (SUCCEEDED(virtual_desktop_manager_->IsWindowOnCurrentVirtualDesktop(
+            hwnd, &on_current_desktop))) {
+      return on_current_desktop;
+    }
+  }
+  return base::nullopt;
 }
 
 }  // namespace aura

@@ -21,14 +21,14 @@ namespace remoting {
 namespace protocol {
 
 FakeStreamSocket::FakeStreamSocket()
-    : task_runner_(base::ThreadTaskRunnerHandle::Get()), weak_factory_(this) {}
+    : task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
 
 FakeStreamSocket::~FakeStreamSocket() {
   EXPECT_TRUE(task_runner_->BelongsToCurrentThread());
   if (peer_socket_) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&FakeStreamSocket::SetReadError, peer_socket_,
-                              net::ERR_CONNECTION_CLOSED));
+        FROM_HERE, base::BindOnce(&FakeStreamSocket::SetReadError, peer_socket_,
+                                  net::ERR_CONNECTION_CLOSED));
   }
 }
 
@@ -147,16 +147,13 @@ void FakeStreamSocket::DoWrite(const scoped_refptr<net::IOBuffer>& buf,
   if (peer_socket_) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&FakeStreamSocket::AppendInputData,
-                   peer_socket_,
-                   std::string(buf->data(), buf->data() + buf_len)));
+        base::BindOnce(&FakeStreamSocket::AppendInputData, peer_socket_,
+                       std::string(buf->data(), buf->data() + buf_len)));
   }
 }
 
 FakeStreamChannelFactory::FakeStreamChannelFactory()
-    : task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_factory_(this) {
-}
+    : task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
 
 FakeStreamChannelFactory::~FakeStreamChannelFactory() = default;
 
@@ -188,9 +185,11 @@ void FakeStreamChannelFactory::CreateChannel(
     channel.reset();
 
   if (asynchronous_create_) {
-    task_runner_->PostTask(FROM_HERE, base::Bind(
-        &FakeStreamChannelFactory::NotifyChannelCreated,
-        weak_factory_.GetWeakPtr(), base::Passed(&channel), name, callback));
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&FakeStreamChannelFactory::NotifyChannelCreated,
+                       weak_factory_.GetWeakPtr(), std::move(channel), name,
+                       callback));
   } else {
     NotifyChannelCreated(std::move(channel), name, callback);
   }

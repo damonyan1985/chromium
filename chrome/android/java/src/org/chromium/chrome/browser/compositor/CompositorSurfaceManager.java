@@ -24,6 +24,7 @@ public interface CompositorSurfaceManager {
         public void surfaceChanged(Surface surface, int format, int width, int height);
         public void surfaceCreated(Surface surface);
         public void surfaceDestroyed(Surface surface);
+        public void unownedSurfaceDestroyed();
     }
 
     /**
@@ -49,6 +50,14 @@ public interface CompositorSurfaceManager {
      * Destroy and re-create the surface.
      */
     void recreateSurface();
+
+    /**
+     * Called by client to re-create the translucent surface after surface control is enabled. For
+     * surface control mode, the translucent surface should have a different z-order and should be
+     * recreated if the surface control mode is changed.
+     * TODO(crbug.com/1031636): Remove this method once SurfaceControl is always enabled on Q.
+     */
+    void recreateTranslucentSurfaceForSurfaceControl();
 
     /**
      * Update the background drawable on all surfaces.

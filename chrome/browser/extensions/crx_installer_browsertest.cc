@@ -28,7 +28,7 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/fake_safe_browsing_database_manager.h"
-#include "chrome/browser/extensions/forced_extensions/installation_failures.h"
+#include "chrome/browser/extensions/forced_extensions/installation_reporter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -37,6 +37,7 @@
 #include "chrome/common/web_application_info.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/safe_browsing/buildflags.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/render_view_host.h"
@@ -130,14 +131,6 @@ SkBitmap CreateSquareBitmap(int size) {
   return bitmap;
 }
 
-WebApplicationInfo::IconInfo CreateIconInfoWithBitmap(int size) {
-  WebApplicationInfo::IconInfo icon_info;
-  icon_info.width = size;
-  icon_info.height = size;
-  icon_info.data = CreateSquareBitmap(size);
-  return icon_info;
-}
-
 WebApplicationInfo CreateWebAppInfo(const char* title,
                                     const char* description,
                                     const char* app_url,
@@ -147,8 +140,7 @@ WebApplicationInfo CreateWebAppInfo(const char* title,
   web_app_info.description = base::UTF8ToUTF16(description);
   web_app_info.app_url = GURL(app_url);
   web_app_info.scope = GURL(app_url);
-
-  web_app_info.icons.push_back(CreateIconInfoWithBitmap(size));
+  web_app_info.icon_bitmaps[size] = CreateSquareBitmap(size);
 
   return web_app_info;
 }
@@ -236,13 +228,8 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
         strict_manifest_checks);
   }
 
-  ExtensionService* extension_service() {
-    return extensions::ExtensionSystem::Get(browser()->profile())
-        ->extension_service();
-  }
-
   const Extension* GetInstalledExtension(const std::string& extension_id) {
-    return extension_service()->GetInstalledExtension(extension_id);
+    return extension_registry()->GetInstalledExtension(extension_id);
   }
 
   std::unique_ptr<base::ScopedTempDir> UnpackedCrxTempDir() {
@@ -689,7 +676,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   ASSERT_EQ("3.0", extension->version().GetString());
 }
 
-#if defined(FULL_SAFE_BROWSING)
+#if BUILDFLAG(FULL_SAFE_BROWSING)
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, Blacklist) {
   scoped_refptr<FakeSafeBrowsingDatabaseManager> blacklist_db(
       new FakeSafeBrowsingDatabaseManager(true));
@@ -703,11 +690,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, Blacklist) {
   EXPECT_FALSE(InstallExtension(crx_path, 0));
 
   auto installation_failure =
-      InstallationFailures::Get(profile(), extension_id);
-  EXPECT_EQ(InstallationFailures::Reason::CRX_INSTALL_ERROR_DECLINED,
-            installation_failure.first);
+      InstallationReporter::Get(profile())->Get(extension_id);
+  EXPECT_EQ(InstallationReporter::FailureReason::CRX_INSTALL_ERROR_DECLINED,
+            installation_failure.failure_reason);
   EXPECT_EQ(CrxInstallErrorDetail::EXTENSION_IS_BLOCKLISTED,
-            installation_failure.second);
+            installation_failure.install_error_detail);
 }
 #endif
 
@@ -966,11 +953,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   EXPECT_EQ("0.0", extension->VersionString());
 
   auto installation_failure =
-      InstallationFailures::Get(profile(), extension_id);
-  EXPECT_EQ(InstallationFailures::Reason::
+      InstallationReporter::Get(profile())->Get(extension_id);
+  EXPECT_EQ(InstallationReporter::FailureReason::
                 CRX_INSTALL_ERROR_SANDBOXED_UNPACKER_FAILURE,
-            installation_failure.first);
-  EXPECT_EQ(base::nullopt, installation_failure.second);
+            installation_failure.failure_reason);
+  EXPECT_EQ(base::nullopt, installation_failure.install_error_detail);
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
@@ -1009,10 +996,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   EXPECT_EQ("0.0", extension->VersionString());
 
   auto installation_failure =
-      InstallationFailures::Get(profile(), extension_id);
-  EXPECT_EQ(InstallationFailures::Reason::CRX_INSTALL_ERROR_OTHER,
-            installation_failure.first);
-  EXPECT_EQ(CrxInstallErrorDetail::UNEXPECTED_ID, *installation_failure.second);
+      InstallationReporter::Get(profile())->Get(extension_id);
+  EXPECT_EQ(InstallationReporter::FailureReason::CRX_INSTALL_ERROR_OTHER,
+            installation_failure.failure_reason);
+  EXPECT_EQ(CrxInstallErrorDetail::UNEXPECTED_ID,
+            *installation_failure.install_error_detail);
 }
 
 #if defined(OS_CHROMEOS)

@@ -13,7 +13,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
-import android.support.customtabs.trusted.TrustedWebActivityServiceConnectionManager;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 import android.support.test.rule.ServiceTestRule;
@@ -24,16 +23,20 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.dependency_injection.ChromeAppComponent;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
 import org.chromium.chrome.browser.notifications.StandardNotificationBuilder;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.concurrent.TimeoutException;
+
 
 /**
  * Tests the TrustedWebActivityClient.
@@ -56,7 +59,7 @@ import java.util.concurrent.TimeoutException;
 @RunWith(BaseJUnit4ClassRunner.class)
 public class TrustedWebActivityClientTest {
     private static final Uri SCOPE = Uri.parse("https://www.example.com/notifications");
-    private static final Origin ORIGIN = new Origin(SCOPE);
+    private static final Origin ORIGIN = Origin.create(SCOPE);
     private static final String NOTIFICATION_TAG = "tag";
     private static final int NOTIFICATION_ID = 123;
 
@@ -119,16 +122,16 @@ public class TrustedWebActivityClientTest {
     }
 
     @Before
-    public void setUp() throws TimeoutException, RemoteException, InterruptedException {
+    public void setUp() throws TimeoutException, RemoteException {
         RecordHistogram.setDisabledForTests(true);
         mTargetContext = InstrumentationRegistry.getTargetContext();
         mBuilder = new StandardNotificationBuilder(mTargetContext);
-        mClient = new TrustedWebActivityClient(new TrustedWebActivityServiceConnectionManager(
-                ContextUtils.getApplicationContext()), new TrustedWebActivityUmaRecorder(),
-                NotificationUmaTracker.getInstance());
+
+        ChromeAppComponent component = ChromeApplication.getComponent();
+        mClient = component.resolveTrustedWebActivityClient();
 
         // TestTrustedWebActivityService is in the test support apk.
-        TrustedWebActivityClient.registerClient(mTargetContext, ORIGIN, TEST_SUPPORT_PACKAGE);
+        component.resolveTwaPermissionManager().addDelegateApp(ORIGIN, TEST_SUPPORT_PACKAGE);
 
         // The MessengerService lives in the same package as the TestTrustedWebActivityService.
         // We use it as a side channel to verify what the TestTrustedWebActivityService does.
@@ -158,8 +161,7 @@ public class TrustedWebActivityClientTest {
      */
     @Test
     @SmallTest
-    public void clientCommunicatesWithServiceCorrectly()
-            throws TimeoutException, InterruptedException {
+    public void clientCommunicatesWithServiceCorrectly() throws TimeoutException {
         postNotification();
 
         Assert.assertTrue(mResponseHandler.mGetSmallIconId.getCallCount() >= 1);
@@ -172,14 +174,13 @@ public class TrustedWebActivityClientTest {
                         R.string.notification_category_group_general));
     }
 
-
-    private void postNotification()
-            throws TimeoutException, InterruptedException {
-        ThreadUtils.runOnUiThread(() -> {
-            mClient.notifyNotification(SCOPE, NOTIFICATION_TAG, NOTIFICATION_ID, mBuilder);
+    private void postNotification() throws TimeoutException {
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT, () -> {
+            mClient.notifyNotification(SCOPE, NOTIFICATION_TAG, NOTIFICATION_ID, mBuilder,
+                    NotificationUmaTracker.getInstance());
         });
 
-        mResponseHandler.mNotifyNotification.waitForCallback();
+        mResponseHandler.mNotifyNotification.waitForFirst();
     }
 
     /**
@@ -188,14 +189,13 @@ public class TrustedWebActivityClientTest {
      */
     @Test
     @SmallTest
-    public void testCancelNotification() throws TimeoutException, InterruptedException {
-        ThreadUtils.runOnUiThread(() ->
-            mClient.cancelNotification(SCOPE, NOTIFICATION_TAG, NOTIFICATION_ID));
+    public void testCancelNotification() throws TimeoutException {
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT,
+                () -> mClient.cancelNotification(SCOPE, NOTIFICATION_TAG, NOTIFICATION_ID));
 
-        mResponseHandler.mCancelNotification.waitForCallback();
+        mResponseHandler.mCancelNotification.waitForFirst();
 
         Assert.assertEquals(mResponseHandler.mNotificationTag, NOTIFICATION_TAG);
         Assert.assertEquals(mResponseHandler.mNotificationId, NOTIFICATION_ID);
     }
-
 }

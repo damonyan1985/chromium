@@ -4,15 +4,14 @@
 
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 
-#include "base/base_switches.h"
-#include "base/command_line.h"
 #include "base/macros.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/metrics/metrics_pref_names.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class ChromeMetricsServiceAccessorTest : public testing::Test {
@@ -26,14 +25,14 @@ class ChromeMetricsServiceAccessorTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   ScopedTestingLocalState testing_local_state_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeMetricsServiceAccessorTest);
 };
 
 TEST_F(ChromeMetricsServiceAccessorTest, MetricsReportingEnabled) {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   const char* pref = metrics::prefs::kMetricsReportingEnabled;
   GetLocalState()->SetDefaultPrefValue(pref, base::Value(false));
 
@@ -46,18 +45,9 @@ TEST_F(ChromeMetricsServiceAccessorTest, MetricsReportingEnabled) {
   GetLocalState()->ClearPref(pref);
   EXPECT_FALSE(
       ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled());
-
-  // If field trials are forced, metrics should always be disabled, regardless
-  // of the value of the pref.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kForceFieldTrials);
-  EXPECT_FALSE(
-      ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled());
-  GetLocalState()->SetBoolean(pref, true);
-  EXPECT_FALSE(
-      ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled());
 #else
-  // Metrics Reporting is never enabled when GOOGLE_CHROME_BUILD is undefined.
+  // Metrics Reporting is never enabled when GOOGLE_CHROME_BRANDING is
+  // undefined.
   EXPECT_FALSE(
       ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled());
 #endif

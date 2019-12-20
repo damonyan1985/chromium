@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
@@ -42,11 +43,16 @@ FORWARD_DECLARE_TEST(AppCacheDatabaseTest, OnlineWhiteListRecords);
 FORWARD_DECLARE_TEST(AppCacheDatabaseTest, ReCreate);
 FORWARD_DECLARE_TEST(AppCacheDatabaseTest, DeletableResponseIds);
 FORWARD_DECLARE_TEST(AppCacheDatabaseTest, OriginUsage);
-FORWARD_DECLARE_TEST(AppCacheDatabaseTest, UpgradeSchemaNukesDeprecatedVersion);
+FORWARD_DECLARE_TEST(AppCacheDatabaseTest, FindCachesForOrigin);
+FORWARD_DECLARE_TEST(AppCacheDatabaseTest,
+                     UpgradeSchemaForVersionsWithoutSupportedMigrations);
+FORWARD_DECLARE_TEST(AppCacheDatabaseTest, UpgradeSchemaFrom7to9);
+FORWARD_DECLARE_TEST(AppCacheDatabaseTest, UpgradeSchemaFrom8to9);
 FORWARD_DECLARE_TEST(AppCacheDatabaseTest, WasCorrutionDetected);
 class AppCacheDatabaseTest;
 class AppCacheStorageImplTest;
 
+// A wrapper around the SQLite database that serves one StoragePartition.
 class CONTENT_EXPORT AppCacheDatabase {
  public:
   struct CONTENT_EXPORT GroupRecord {
@@ -64,24 +70,34 @@ class CONTENT_EXPORT AppCacheDatabase {
   };
 
   struct CONTENT_EXPORT CacheRecord {
-    CacheRecord()
-        : cache_id(0), group_id(0), online_wildcard(false), cache_size(0) {}
+    CacheRecord();
+    CacheRecord(const CacheRecord& other);
+    ~CacheRecord();
 
-    int64_t cache_id;
-    int64_t group_id;
-    bool online_wildcard;
+    int64_t cache_id = 0;
+    int64_t group_id = 0;
+    bool online_wildcard = false;
     base::Time update_time;
-    int64_t cache_size;  // the sum of all response sizes in this cache
+    int64_t cache_size = 0;    // the sum of all response sizes in this cache
+    int64_t padding_size = 0;  // the sum of all padding sizes in this cache
+    int64_t manifest_parser_version = -1;
+    std::string manifest_scope;
   };
 
   struct EntryRecord {
-    EntryRecord() : cache_id(0), flags(0), response_id(0), response_size(0) {}
+    EntryRecord()
+        : cache_id(0),
+          flags(0),
+          response_id(0),
+          response_size(0),
+          padding_size(0) {}
 
     int64_t cache_id;
     GURL url;
     int flags;
     int64_t response_id;
     int64_t response_size;
+    int64_t padding_size;  // space added to obfuscate quota used by this entry
   };
 
   struct CONTENT_EXPORT NamespaceRecord {
@@ -127,8 +143,8 @@ class CONTENT_EXPORT AppCacheDatabase {
   bool InsertGroup(const GroupRecord* record);
   bool DeleteGroup(int64_t group_id);
 
-  // The access and eviction time update methods do not fail when
-  // given invalid group_ids. The return value only indicates whether
+  // The access, eviction time, and manifest version/scope update methods do not
+  // fail when given invalid group_ids. The return value only indicates whether
   // the database is functioning.
   bool UpdateLastAccessTime(int64_t group_id, base::Time last_access_time);
   bool LazyUpdateLastAccessTime(int64_t group_id, base::Time last_access_time);
@@ -257,8 +273,13 @@ class CONTENT_EXPORT AppCacheDatabase {
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest, ReCreate);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest, DeletableResponseIds);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest, OriginUsage);
+  FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest, FindCachesForOrigin);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest,
-                           UpgradeSchemaNukesDeprecatedVersion);
+                           UpgradeSchemaForVersionsWithoutSupportedMigrations);
+  FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest,
+                           UpgradeSchemaFrom7to9);
+  FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest,
+                           UpgradeSchemaFrom8to9);
   FRIEND_TEST_ALL_PREFIXES(content::AppCacheDatabaseTest, WasCorrutionDetected);
 
   DISALLOW_COPY_AND_ASSIGN(AppCacheDatabase);

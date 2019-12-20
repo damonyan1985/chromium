@@ -12,15 +12,21 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
+#include "chrome/android/test_support_jni_headers/OfflineTestUtil_jni.h"
+#include "chrome/browser/android/profile_key_util.h"
 #include "chrome/browser/offline_pages/android/offline_page_bridge.h"
+#include "chrome/browser/offline_pages/android/request_coordinator_bridge.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
 #include "chrome/browser/offline_pages/prefetch/prefetch_service_factory.h"
 #include "chrome/browser/offline_pages/request_coordinator_factory.h"
+#include "chrome/browser/profiles/profile_android.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/offline_page_model.h"
+#include "components/offline_pages/core/prefetch/prefetch_prefs.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/test/url_loader_interceptor.h"
-#include "jni/OfflineTestUtil_jni.h"
 
 // Below is the native implementation of OfflineTestUtil.java.
 
@@ -40,7 +46,7 @@ RequestCoordinator* GetRequestCoordinator() {
   return RequestCoordinatorFactory::GetForBrowserContext(GetProfile());
 }
 OfflinePageModel* GetOfflinePageModel() {
-  return OfflinePageModelFactory::GetForBrowserContext(GetProfile());
+  return OfflinePageModelFactory::GetForKey(::android::GetLastUsedProfileKey());
 }
 
 void OnGetAllRequestsDone(
@@ -48,9 +54,8 @@ void OnGetAllRequestsDone(
     std::vector<std::unique_ptr<SavePageRequest>> all_requests) {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::RunObjectCallbackAndroid(
-      j_callback_obj,
-      offline_pages::android::OfflinePageBridge::CreateJavaSavePageRequests(
-          env, std::move(all_requests)));
+      j_callback_obj, offline_pages::android::CreateJavaSavePageRequests(
+                          env, std::move(all_requests)));
 }
 
 void OnGetAllPagesDone(
@@ -60,6 +65,15 @@ void OnGetAllPagesDone(
   JNIEnv* env = base::android::AttachCurrentThread();
   OfflinePageBridge::AddOfflinePageItemsToJavaList(env, j_result_obj, result);
   base::android::RunObjectCallbackAndroid(j_callback_obj, j_result_obj);
+}
+
+void OnGetVisualsDoneExtractThumbnail(
+    const ScopedJavaGlobalRef<jobject>& j_callback_obj,
+    std::unique_ptr<OfflinePageVisuals> visuals) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jbyteArray> j_bytes =
+      base::android::ToJavaByteArray(env, visuals->thumbnail);
+  base::android::RunObjectCallbackAndroid(j_callback_obj, j_bytes);
 }
 
 void OnDeletePageDone(const ScopedJavaGlobalRef<jobject>& j_callback_obj,
@@ -105,6 +119,54 @@ class Interceptor {
 // This is a raw pointer because global destructors are disallowed.
 Interceptor* g_interceptor = nullptr;
 
+// Waits for the connection type to change to a desired value.
+class NetworkConnectionObserver
+    : public network::NetworkConnectionTracker::NetworkConnectionObserver {
+ public:
+  // Waits for connection type to change to |type|.
+  static void WaitForConnectionType(
+      network::mojom::ConnectionType type_to_wait_for,
+      base::android::ScopedJavaGlobalRef<jobject> callback) {
+    // NetworkConnectionObserver manages it's own lifetime.
+    new NetworkConnectionObserver(type_to_wait_for, std::move(callback));
+  }
+
+ private:
+  NetworkConnectionObserver(
+      network::mojom::ConnectionType type_to_wait_for,
+      base::android::ScopedJavaGlobalRef<jobject> callback)
+      : type_to_wait_for_(type_to_wait_for), callback_(std::move(callback)) {
+    content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
+
+    // Call OnConnectionChanged() with the current state.
+    network::mojom::ConnectionType current_type;
+    if (content::GetNetworkConnectionTracker()->GetConnectionType(
+            &current_type,
+            base::BindOnce(&NetworkConnectionObserver::OnConnectionChanged,
+                           weak_factory_.GetWeakPtr()))) {
+      OnConnectionChanged(current_type);
+    }
+  }
+
+  ~NetworkConnectionObserver() override {
+    content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(
+        this);
+  }
+
+  // network::NetworkConnectionTracker::NetworkConnectionObserver:
+  void OnConnectionChanged(network::mojom::ConnectionType type) override {
+    if (type == type_to_wait_for_) {
+      base::android::RunRunnableAndroid(callback_);
+      delete this;
+    }
+  }
+
+  network::mojom::ConnectionType type_to_wait_for_ =
+      network::mojom::ConnectionType::CONNECTION_UNKNOWN;
+  base::android::ScopedJavaGlobalRef<jobject> callback_;
+  base::WeakPtrFactory<NetworkConnectionObserver> weak_factory_{this};
+};
+
 }  // namespace
 
 void JNI_OfflineTestUtil_GetRequestsInQueue(
@@ -138,17 +200,32 @@ void JNI_OfflineTestUtil_GetAllPages(
       &OnGetAllPagesDone, std::move(j_result_ref), std::move(j_callback_ref)));
 }
 
+void JNI_OfflineTestUtil_GetRawThumbnail(
+    JNIEnv* env,
+    jlong j_offline_id,
+    const JavaParamRef<jobject>& j_callback_obj) {
+  DCHECK(j_offline_id);
+
+  GetOfflinePageModel()->GetVisualsByOfflineId(
+      j_offline_id,
+      base::BindOnce(&OnGetVisualsDoneExtractThumbnail,
+                     ScopedJavaGlobalRef<jobject>(j_callback_obj)));
+}
+
 void JNI_OfflineTestUtil_DeletePagesByOfflineId(
     JNIEnv* env,
     const JavaParamRef<jlongArray>& j_offline_ids_array,
     const JavaParamRef<jobject>& j_callback_obj) {
   ScopedJavaGlobalRef<jobject> j_callback_ref(env, j_callback_obj);
+
   std::vector<int64_t> offline_ids;
   base::android::JavaLongArrayToInt64Vector(env, j_offline_ids_array,
                                             &offline_ids);
-  GetOfflinePageModel()->DeletePagesByOfflineId(
-      offline_ids,
-      base::BindOnce(&OnDeletePageDone, std::move(j_callback_ref)));
+
+  PageCriteria criteria;
+  criteria.offline_ids = std::move(offline_ids);
+  GetOfflinePageModel()->DeletePagesWithCriteria(
+      criteria, base::BindOnce(&OnDeletePageDone, std::move(j_callback_ref)));
 }
 
 JNI_EXPORT void JNI_OfflineTestUtil_StartRequestCoordinatorProcessing(
@@ -186,6 +263,36 @@ void JNI_OfflineTestUtil_DumpRequestCoordinatorState(
       },
       base::android::ScopedJavaGlobalRef<jobject>(env, j_callback));
   DumpRequestCoordinatorState(std::move(wrap_callback));
+}
+
+void JNI_OfflineTestUtil_WaitForConnectivityState(
+    JNIEnv* env,
+    jboolean connected,
+    const base::android::JavaParamRef<jobject>& callback) {
+  network::mojom::ConnectionType type =
+      connected ? network::mojom::ConnectionType::CONNECTION_UNKNOWN
+                : network::mojom::ConnectionType::CONNECTION_NONE;
+  NetworkConnectionObserver::WaitForConnectionType(
+      type, base::android::ScopedJavaGlobalRef<jobject>(env, callback));
+}
+
+void JNI_OfflineTestUtil_SetPrefetchingEnabledByServer(
+    JNIEnv* env,
+    const jboolean enabled) {
+  ProfileKey* key = ::android::GetLastUsedProfileKey();
+
+  prefetch_prefs::SetEnabledByServer(key->GetPrefs(), enabled);
+  if (!enabled) {
+    prefetch_prefs::ResetForbiddenStateForTesting(key->GetPrefs());
+  }
+}
+
+void JNI_OfflineTestUtil_SetGCMTokenForTesting(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& gcm_token) {
+  prefetch_prefs::SetCachedPrefetchGCMToken(
+      ::android::GetLastUsedProfileKey()->GetPrefs(),
+      base::android::ConvertJavaStringToUTF8(env, gcm_token));
 }
 
 }  // namespace offline_pages

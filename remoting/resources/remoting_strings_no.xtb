@@ -6,16 +6,9 @@
 <translation id="1050693411695664090">Dårlig</translation>
 <translation id="1152528166145813711">Velg</translation>
 <translation id="1199593201721843963">Deaktiver eksterne tilkoblinger</translation>
+<translation id="1201402288615127009">Neste</translation>
 <translation id="1291443878853470558">Du må aktivere eksterne tilkoblinger hvis du ønsker å bruke Chromoting med denne datamaskinen.</translation>
 <translation id="1297009705180977556">Det oppsto en feil ved tilkobling til <ph name="HOSTNAME" /></translation>
-<translation id="1300633907480909701">Få sikker tilgang til datamaskinene dine fra Android-enheten din.
-
-• Konfigurer ekstern tilgang på alle datamaskinene dine via Chrome Ekstern tilgang-appen fra Chrome Nettmarked: https://chrome.google.com/remotedesktop
-• Åpne appen på Android-enheten, og trykk på en av datamaskinene som er på nett for å koble til den.
-
-Eksterne datamaskiner som bruker andre tastaturspråk enn engelsk (USA) kan ha problemer med tekstinndata. Støtte for andre tastaturoppsett kommer snart!
-
-Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl/SyrVzj) og personvernreglene for Chrome (http://goo.gl/0uXE5d).</translation>
 <translation id="1324095856329524885">(Denne funksjonen er ikke tilgjengelig for datamaskinen din ennå.)</translation>
 <translation id="1342297293546459414">Se og kontrollér en delt datamaskin.</translation>
 <translation id="1389790901665088353">Last ned installasjonsprogrammet for verten for Chrome Eksternt skrivebord</translation>
@@ -27,8 +20,8 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="1624185583382384493">Chrome Eksternt skrivebord er nå på nettet. Prøv <ph name="LINK_BEGIN" />nettprogrammet<ph name="LINK_END" /> vårt – det er raskt og gratis, og det har enda flere funksjoner – blant annet bedre støtte for flere skjermer.</translation>
 <translation id="1643640058022401035">Hvis du forlater denne siden, avsluttes Chromoting-økten din.</translation>
 <translation id="1654128982815600832">Slår på eksterne tilkoblinger for denne datamaskinen …</translation>
+<translation id="1697532407822776718">Da er alt klart!</translation>
 <translation id="170207782578677537">Kunne ikke registrere denne datamaskinen.</translation>
-<translation id="1727412735341161734">Chrome Eksternt skrivebord</translation>
 <translation id="174018511426417793">Du har ikke registrert noen datamaskiner. For å aktivere ekstern tilkobling til en datamaskin må du installere Chrome Eksternt skrivebord på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
 <translation id="1742469581923031760">Kobler til …</translation>
 <translation id="1770394049404108959">Jeg kan ikke åpne appen.</translation>
@@ -46,13 +39,11 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="2078880767960296260">Vertsprosess</translation>
 <translation id="20876857123010370">Styreflatemodus</translation>
 <translation id="2089514346391228378">Eksterne tilkoblinger for denne datamaskinen er slått på.</translation>
-<translation id="2118549242412205620">Få sikker tilgang til datamaskinene dine fra Android-enheten din.
+<translation id="2198363917176605566">For å bruke <ph name="PRODUCT_NAME" /> må du innvilge «Skjermopptak»-tillatelsen, slik at skjerminnholdet på denne Macen kan sendes til den eksterne maskinen.
 
-• Konfigurer ekstern tilgang på alle datamaskinene dine via Chrome Ekstern tilgang-appen fra Chrome Nettmarked: https://chrome.google.com/remotedesktop
-• Åpne appen på Android-enheten, og trykk på en datamaskinene som er på nett for å koble til den.
+For å innvilge denne tillatelsen, klikk på «<ph name="BUTTON_NAME" />» under for å åpne innstillingsfeltet for «Skjermopptak», og merk deretter av i boksen ved siden av «<ph name="SERVICE_SCRIPT_NAME" />».
 
-Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl/SyrVzj) og personvernreglene for Chrome (http://goo.gl/0uXE5d).</translation>
-<translation id="2124408767156847088">Få sikker tilgang til datamaskinene dine fra Android-enheten din.</translation>
+Hvis det allerede er merket av for «<ph name="SERVICE_SCRIPT_NAME" />», fjerner du avmerkingen og merker av på nytt.</translation>
 <translation id="2208514473086078157">Innstillingene tillater ikke at denne datamaskinen deles som vert for Chrome Eksternt skrivebord. Ta kontakt med systemadministratoren for å få hjelp.</translation>
 <translation id="2220529011494928058">Rapportér et problem</translation>
 <translation id="2221097377466213233">Bruk høyre Ctrl som Win-tast (⌘ på Mac)</translation>
@@ -64,17 +55,17 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="2314101195544969792"><ph name="APPLICATION_NAME" />-økten din har vært inaktiv en stund og kommer snart til å bli koblet fra.</translation>
 <translation id="2317666076142640974">Ta en sniktitt på det nye <ph name="LINK_BEGIN" />Chrome Eksternt skrivebord-nettprogrammet<ph name="LINK_END" />. Vi vil gjerne høre hva du synes.</translation>
 <translation id="2320166752086256636">Skjul tastaturet</translation>
-<translation id="2332192922827071008">Åpne Innstillinger</translation>
 <translation id="2353140552984634198">Du kan trygt bruke denne datamaskinen med Chromoting.</translation>
 <translation id="2359808026110333948">Fortsett</translation>
 <translation id="2366718077645204424">Kunne ikke nå verten. Dette er sannsynligvis på grunn av innstillingene for nettverket du bruker.</translation>
 <translation id="2370754117186920852"><ph name="OPTIONAL_OFFLINE_REASON" /> Sist pålogget <ph name="RELATIVE_TIMESTAMP" />.</translation>
 <translation id="2405928220797050937">Denne appen støttes ikke lenger. For å sikre at du får de nyeste funksjonene og sikkerhetsoppdateringene, bør du bruke <ph name="LINK_BEGIN" />Chrome Eksternt skrivebord-nettprogrammet<ph name="LINK_END" />.</translation>
 <translation id="2499160551253595098">Hjelp oss med å forbedre Chrome Eksternt skrivebord ved å gi oss tillatelse til å samle bruksstatistikk og programstopprapporter.</translation>
+<translation id="2504109125669302160">Gi «Tilgjengelighet»-tillatelsen til <ph name="PRODUCT_NAME" /></translation>
 <translation id="2509394361235492552">Koblet til <ph name="HOSTNAME" /></translation>
 <translation id="2512228156274966424">MERK: For å sikre at alle hurtigtastene er tilgjengelige, kan du konfigurere Chrome Eksternt skrivebord til «Åpne som vindu».</translation>
 <translation id="2540992418118313681">Har du lyst til å dele denne datamaskinen slik at en annen bruker kan se og kontrollere den?</translation>
-<translation id="2579271889603567289">Verten kræsjet eller kunne ikke starte.</translation>
+<translation id="2579271889603567289">Verten krasjet eller kunne ikke starte.</translation>
 <translation id="2599300881200251572">Med denne tjenesten kan du motta innkommende tilkoblinger fra Chrome Eksternt skrivebord-klienter.</translation>
 <translation id="2647232381348739934">Chromoting-tjeneste</translation>
 <translation id="2676780859508944670">Behandler …</translation>
@@ -86,11 +77,6 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="2851754573186462851">Chromium-appstrømming</translation>
 <translation id="2888969873284818612">En nettverksfeil oppsto. Appen blir startet på nytt når enheten din er på nettet igjen.</translation>
 <translation id="2891243864890517178">For Mac (OS X Yosemite 10.10 eller nyere)</translation>
-<translation id="289405675947420287">Få sikker tilgang til datamaskinen din fra iOS-enheter. Det er raskt, enkelt og gratis.
-
-• Last ned Chrome Eksternt skrivebord-appen fra Chrome Nettmarked på datamaskinen du vil ha ekstern tilgang til.
-• Installer Chrome Eksternt skrivebord, og følg veiledningen for å fullføre konfigureringen.
-• Åpne appen på iOS-enheten din, og trykk på en av de tilgjengelige datamaskinene dine for å koble til.</translation>
 <translation id="2894654864775534701">Denne datamaskinen er for øyeblikket delt under en annen konto.</translation>
 <translation id="2919669478609886916">Du deler denne datamaskinen med en annen bruker. Vil du fortsette å dele?</translation>
 <translation id="2921543551052660690">Du har tidligere logget på som <ph name="USER_NAME" /> (<ph name="USER_EMAIL" />). Hvis du vil ha tilgang til datamaskiner på den kontoen, må du bruke den til å <ph name="LINK_BEGIN" />logge på Chromium<ph name="LINK_END" /> og deretter installere Chromoting på nytt.</translation>
@@ -104,7 +90,6 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="310979712355504754">Slett alle</translation>
 <translation id="3150823315463303127">Verten kunne ikke lese policyen.</translation>
 <translation id="3171922709365450819">Denne enheten støttes ikke av denne klienten fordi den krever tredjepartsautentisering.</translation>
-<translation id="3194245623920924351">Chrome Eksternt skrivebord</translation>
 <translation id="3197730452537982411">Eksternt skrivebord</translation>
 <translation id="324272851072175193">Send disse instruksjonene på e-post</translation>
 <translation id="3258789396564295715">Du kan få sikker tilgang til denne datamaskinen ved å bruke Chrome Eksternt skrivebord.</translation>
@@ -126,8 +111,6 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="3695446226812920698">Sånn gjør du det</translation>
 <translation id="3718805989288361841">Det er noe feil med innstillingene for retningslinjene for Chrome Eksternt skrivebord. Kontakt systemadministratoren din for å få hjelp.</translation>
 <translation id="3776024066357219166">Chrome Eksternt skrivebord-økten din er avsluttet.</translation>
-<translation id="3846148461359626420">• Bedre panorering og zooming på iPhone X.
-• Stabilitetsforbedringer og feilrettinger.</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
 <translation id="3884839335308961732">Bekreft kontoen og PIN-koden din nedenfor for å tillate tilgang via Chrome Eksternt skrivebord.</translation>
 <translation id="3897092660631435901">Meny</translation>
@@ -139,6 +122,7 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="3989511127559254552">Før du kan fortsette, må du gi datamaskinen utvidede tilgangstillatelser. Det er bare nødvendig å gjøre dette én gang.</translation>
 <translation id="4006787130661126000">Du må aktivere eksterne tilkoblinger hvis du vil ha tilgang til denne datamaskinen gjennom Chrome Eksternt skrivebord.</translation>
 <translation id="405887016757208221">Den eksterne datamaskinen kunne ikke initialisere økten. Hvis problemet vedvarer, kan du prøve å konfigurere verten på nytt.</translation>
+<translation id="4060747889721220580">Last ned fil</translation>
 <translation id="4068946408131579958">Alle tilkoblinger</translation>
 <translation id="409800995205263688">MERK: I henhold til lokale retningslinjer er tilkobling tillatt bare mellom datamaskiner i nettverket ditt.</translation>
 <translation id="4126409073460786861">Når konfigureringen er fullført, laster du inn denne siden på nytt, så kan du bruke datamaskinen ved å velge enhet og skrive inn PIN-koden.</translation>
@@ -152,11 +136,14 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="4240294130679914010">Avinstalleringsprogram for Chromoting-vert</translation>
 <translation id="4277463233460010382">Denne datamaskinen er konfigurer for å la én eller flere klienter koble til uten å skrive inn noen PIN-kode.</translation>
 <translation id="4277736576214464567">Tilgangskoden er ugyldig. Prøv på nytt.</translation>
+<translation id="4281844954008187215">Vilkår for bruk</translation>
 <translation id="4361728918881830843">For å muliggjøre ekstern tilkobling til en annen datamaskin må du installere Chrome Eksternt skrivebord på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
 <translation id="4394049700291259645">Slå av</translation>
 <translation id="4405930547258349619">Core-bibliotek</translation>
 <translation id="4430435636878359009">Deaktiver eksterne tilkoblinger til denne datamaskinen.</translation>
 <translation id="4430915108080446161">Genererer tilgangskode …</translation>
+<translation id="443560535555262820">Åpne innstillinger for tilgjengelighet</translation>
+<translation id="4450893287417543264">Ikke vis igjen</translation>
 <translation id="4472575034687746823">Kom i gang</translation>
 <translation id="4481276415609939789">Du har ikke registrert noen datamaskiner. For å aktivere eksterne tilkoblinger til en datamaskin, må du installere Chromoting på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
 <translation id="4513946894732546136">Google Feedback</translation>
@@ -169,17 +156,10 @@ Du kan finne informasjon om personvern i Googles personvernregler (http://goo.gl
 <translation id="4660011489602794167">Vis tastatur</translation>
 <translation id="4703302905453407178">En nødvendig komponent har sluttet å fungere. Vennligst rapportér dette problemet til utviklerne.</translation>
 <translation id="4703799847237267011">Chromoting-økten er avsluttet.</translation>
-<translation id="4706355010316049867">Chrome
-Eksternt
-Skrivebord
-Bruk
-Brukerstøtte
-Datamaskin
-PC</translation>
 <translation id="4736223761657662401">Tilkoblingslogg</translation>
 <translation id="4741792197137897469">Autentiseringen mislyktes. Logg på Chrome på nytt.</translation>
 <translation id="477305884757156764">Appen er for langsom.</translation>
-<translation id="4784508858340177375">X-tjeneren kræsjet eller kunne ikke starte.</translation>
+<translation id="4784508858340177375">X-tjeneren krasjet eller kunne ikke starte.</translation>
 <translation id="4795786176190567663">Du har ikke tillatelse til å utføre denne handlingen.</translation>
 <translation id="4798680868612952294">Alternativer for mus</translation>
 <translation id="4804818685124855865">Koble fra</translation>
@@ -192,9 +172,6 @@ PC</translation>
 <translation id="4973800994433240357">Ved å laste ned installasjonsprogrammet for Chromoting-verten samtykker du i Googles <ph name="LINK_BEGIN" />vilkår for bruk<ph name="LINK_END" />.</translation>
 <translation id="4974476491460646149">Koblet fra <ph name="HOSTNAME" /></translation>
 <translation id="4985296110227979402">Du må først konfigurere en datamaskin for ekstern tilgang.</translation>
-<translation id="5059773780693835145">Du må fullføre enda et konfigureringstrinn før du kan styre denne maskinen eksternt ved bruk av <ph name="PRODUCT_NAME" />.
-
-For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for å åpne innstillingspanelet for sikkerhet og personvern. Merk deretter av i boksen ved «<ph name="SERVICE_SCRIPT_NAME" />».</translation>
 <translation id="5064360042339518108"><ph name="HOSTNAME" /> (ikke på nett)</translation>
 <translation id="5070121137485264635">Den eksterne verten krever at du godkjenner via et tredjepartsnettsted. For å fortsette må du gi Chrome Eksternt skrivebord ytterligere tillatelser til å åpne denne adressen:</translation>
 <translation id="507204348399810022">Er du sikker på at du vil deaktivere eksterne forbindelser til <ph name="HOSTNAME" />?</translation>
@@ -204,8 +181,10 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="518094545883702183">Denne informasjonen brukes bare til å diagnostisere problemet du rapporterer om. Informasjonen er bare tilgjengelig for personer som går gjennom rapporten, og den slettes etter maksimalt 30 dager.</translation>
 <translation id="5204575267916639804">Vanlige spørsmål</translation>
 <translation id="5222676887888702881">Logg av</translation>
+<translation id="5234764350956374838">Lukk</translation>
 <translation id="5254120496627797685">Hvis du forlater denne siden, avsluttes Chrome Eksternt skrivebord-økten.</translation>
 <translation id="5308380583665731573">Koble til</translation>
+<translation id="5327248766486351172">Navn</translation>
 <translation id="533625276787323658">Det finnes ingenting å koble til</translation>
 <translation id="5363265567587775042">Be brukeren av datamaskinen du vil ha tilgang til, om å klikke på «<ph name="SHARE" />» og gi deg tilgangskoden.</translation>
 <translation id="5379087427956679853">Med Chrome Eksternt skrivebord kan du trygt dele datamaskinen din på nettet. Begge brukerne må installere Chrome Eksternt skrivebord-appen, som er å finne på <ph name="URL" /></translation>
@@ -243,14 +222,19 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="6198252989419008588">Endre personlig kode</translation>
 <translation id="6204583485351780592"><ph name="HOSTNAME" /> (utdatert)</translation>
 <translation id="6221358653751391898">Du er ikke logget på Chrome. Logg på, og prøv på nytt.</translation>
+<translation id="6223301979382383752">Åpne innstillinger for skjermopptak</translation>
 <translation id="6227369581881558336">Chrome Eksternt skrivebord er nå på nettet, og det har nye funksjoner – blant annet filoverføring. Ta en titt på <ph name="LINK_BEGIN" />nettprogrammet<ph name="LINK_END" /> vårt.</translation>
 <translation id="6284412385303060032">Verten som kjører på skjermen for konsollpålogging, har blitt avsluttet for å støtte gardinmodus ved å bytte til en vert som kjører i en brukerspesifikk økt.</translation>
 <translation id="629730747756840877">Konto</translation>
 <translation id="6304318647555713317">Klient</translation>
 <translation id="6381670701864002291">Noe annet.</translation>
 <translation id="6398765197997659313">Avslutt fullskjerm</translation>
+<translation id="6411861157501911556">For å bruke <ph name="PRODUCT_NAME" /> må du innvilge «Tilgjengelighet»-tillatelsen, slik at inndata fra den eksterne maskinen kan sendes til denne Macen.
+
+For å innvilge denne tillatelsen, klikk på «<ph name="BUTTON_NAME" />» under for å åpne innstillingsfeltet for «Tilgjengelighet», og merk deretter av i boksen ved siden av «<ph name="SERVICE_SCRIPT_NAME" />».
+
+Hvis det allerede er merket av for «<ph name="SERVICE_SCRIPT_NAME" />», fjerner du avmerkingen og merker av på nytt.</translation>
 <translation id="6441316101718669559">Denne plattformen har ikke støtte for skrivebordsintegrasjon. Du kan fortsatt bruke programmet, men brukeropplevelsen blir redusert.</translation>
-<translation id="6502629188777329097">Bruk datamaskinen din på en sikker måte</translation>
 <translation id="652218476070540101">PIN-koden for denne datamaskinen oppdateres …</translation>
 <translation id="6527303717912515753">Del</translation>
 <translation id="6541219117979389420">Programlogger kan inneholde privat informasjon, deriblant identiteten din (e-postadressen) og navnene og egenskapene til filer og mapper i Google Disk.</translation>
@@ -310,6 +294,7 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="7948001860594368197">Skjermalternativer</translation>
 <translation id="7970576581263377361">Autentiseringen mislyktes. Logg på Chromium på nytt.</translation>
 <translation id="7981525049612125370">Den eksterne økten er utløpt.</translation>
+<translation id="8038111231936746805">(standard)</translation>
 <translation id="8041089156583427627">Send tilbakemelding</translation>
 <translation id="8041721485428375115">Ved å laste ned installasjonsprogrammet for verten for Chrome Eksternt skrivebord samtykker du i Googles <ph name="LINK_BEGIN" />vilkår for bruk<ph name="LINK_END" />.</translation>
 <translation id="8060029310790625334">Brukerstøtte</translation>
@@ -319,7 +304,6 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="809687642899217504">Mine datamaskiner</translation>
 <translation id="811307782653349804">Bruk din egen datamaskin uansett hvor du er.</translation>
 <translation id="8116630183974937060">Det oppsto en nettverksfeil. Kontrollér at enheten er tilkoblet nettet, og prøv på nytt.</translation>
-<translation id="8123581458650016326">La eksterne brukere styre denne maskinen</translation>
 <translation id="8178433417677596899">Skjermdeling bruker-til-bruker, perfekt for ekstern teknisk støttte.</translation>
 <translation id="8187079423890319756">Copyright 2013 – The Chromium Authors. Med enerett.</translation>
 <translation id="8196755618196986400">Hvis du gir oss tillatelse til å kontakte deg for å be om ytterligere informasjon, blir e-postadressen din inkludert i eventuelle tilbakemeldinger du sender inn.</translation>
@@ -330,20 +314,22 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="837021510621780684">Fra denne datamaskinen</translation>
 <translation id="8383794970363966105">Hvis du vil bruke Chromoting, må du legge til en Google-konto på enheten din.</translation>
 <translation id="8386846956409881180">Verten er konfigurert med ugyldig OAuth-legitimasjon.</translation>
+<translation id="8397385476380433240">Gi tillatelse til <ph name="PRODUCT_NAME" /></translation>
+<translation id="8406498562923498210">Velg økten du vil starte i Chrome Eksternt skrivebord-miljøet ditt. (Merk at enkelte økttyper kanskje ikke støtter samtidig kjøring på Chrome Eksternt skrivebord og på den lokale konsollen.)</translation>
 <translation id="8428213095426709021">Innstillinger</translation>
 <translation id="8445362773033888690">Se oppføringen i Google Play-butikken</translation>
 <translation id="8509907436388546015">Integrasjonsprosess for skrivebord</translation>
 <translation id="8513093439376855948">Innebygd meldingsvert for administrasjon av ekstern vert</translation>
 <translation id="8525306231823319788">Full skjerm</translation>
 <translation id="8548209692293300397">Du har tidligere logget på som <ph name="USER_NAME" /> (<ph name="USER_EMAIL" />). Hvis du vil ha tilgang til datamaskiner på den kontoen, må du bruke den til å <ph name="LINK_BEGIN" />logge på Chrome<ph name="LINK_END" /> og deretter installere Chrome Eksternt skriverbord på nytt.</translation>
+<translation id="858006550102277544">Kommentar</translation>
 <translation id="8642984861538780905">Akseptabel</translation>
-<translation id="8705151241155781642">• Støtte for Android 9.0 Pie.
-• Støtte for å endre oppløsningen på eksternt skrivebord så det passer til Android-skjermen.</translation>
 <translation id="8712909229180978490">Jeg ser ikke de lagrede filene mine på nettet i Google Disk.</translation>
 <translation id="8743328882720071828">Vil du tillate at <ph name="CLIENT_USERNAME" /> kan se og kontrollere datamaskinen din?</translation>
-<translation id="8747048596626351634">Økten kræsjet eller kunne ikke starte. Hvis ~/.chrome-remote-desktop-session eksisterer på den eksterne datamaskinen, må du sørge for at den starter en prosess i forgrunnen som kjører lenge – for eksempel et skrivebordsmiljø eller en vindusbehandler.</translation>
+<translation id="8747048596626351634">Økten krasjet eller kunne ikke starte. Hvis ~/.chrome-remote-desktop-session eksisterer på den eksterne datamaskinen, må du sørge for at den starter en prosess i forgrunnen som kjører lenge – for eksempel et skrivebordsmiljø eller en vindusbehandler.</translation>
 <translation id="8759753423332885148">Finn ut mer</translation>
 <translation id="8791202241915690908">Last ned installasjonsprogrammet for Chromoting-verten</translation>
+<translation id="8804164990146287819">Personvernregler</translation>
 <translation id="894763922177556086">God</translation>
 <translation id="895780780740011433">For Windows 7 og nyere</translation>
 <translation id="897805526397249209">For å aktivere eksterne tilkoblinger til en annen datamaskin, må du installere Chromoting på maskinen, og klikke på «<ph name="BUTTON_NAME" />».</translation>
@@ -354,6 +340,8 @@ For å slå på denne funksjonaliteten, velg «<ph name="BUTTON_NAME" />» for �
 <translation id="9126115402994542723">Ikke be om PIN-kode igjen når du kobler til denne verten fra denne enheten.</translation>
 <translation id="9149580767411232853">Hold hele det eksterne skrivebordet synlig</translation>
 <translation id="9149992051684092333">Kom i gang med deling av skrivebordet ved å gi adgangskoden nedenfor til personen som skal hjelpe deg.</translation>
+<translation id="916856682307586697">Start standard XSession</translation>
+<translation id="9187628920394877737">Gi «Skjermopptak»-tillatelsen til <ph name="PRODUCT_NAME" /></translation>
 <translation id="9188433529406846933">Godkjenn</translation>
 <translation id="9213184081240281106">Ugyldig vertskonfigurasjon.</translation>
 <translation id="951991426597076286">Avvis</translation>

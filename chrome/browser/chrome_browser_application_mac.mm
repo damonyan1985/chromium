@@ -21,6 +21,7 @@
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/native_event_processor_mac.h"
 #include "content/public/browser/native_event_processor_observer_mac.h"
+#include "ui/base/cocoa/accessibility_focus_overrider.h"
 
 namespace chrome_browser_application_mac {
 
@@ -31,7 +32,7 @@ void RegisterBrowserCrApp() {
   // will not be a BrowserCrApplication, but will instead be an NSApplication.
   // This is undesirable and we must enforce that this doesn't happen.
   CHECK([NSApp isKindOfClass:[BrowserCrApplication class]]);
-};
+}
 
 void Terminate() {
   [NSApp terminate:nil];
@@ -101,7 +102,7 @@ std::string DescriptionForNSEvent(NSEvent* event) {
 
 @interface BrowserCrApplication ()<NativeEventProcessor> {
   base::ObserverList<content::NativeEventProcessorObserver>::Unchecked
-      observers_;
+      _observers;
 }
 @end
 
@@ -288,11 +289,11 @@ std::string DescriptionForNSEvent(NSEvent* event) {
 }
 
 - (BOOL)isHandlingSendEvent {
-  return handlingSendEvent_;
+  return _handlingSendEvent;
 }
 
 - (void)setHandlingSendEvent:(BOOL)handlingSendEvent {
-  handlingSendEvent_ = handlingSendEvent;
+  _handlingSendEvent = handlingSendEvent;
 }
 
 - (void)sendEvent:(NSEvent*)event {
@@ -320,7 +321,7 @@ std::string DescriptionForNSEvent(NSEvent* event) {
       default: {
         base::mac::ScopedSendingEvent sendingEventScoper;
         content::ScopedNotifyNativeEventProcessorObserver
-            scopedObserverNotifier(&observers_, event);
+            scopedObserverNotifier(&_observers, event);
         [super sendEvent:event];
       }
     }
@@ -340,14 +341,20 @@ std::string DescriptionForNSEvent(NSEvent* event) {
   return [super accessibilitySetValue:value forAttribute:attribute];
 }
 
+- (id)accessibilityFocusedUIElement {
+  if (id forced_focus = ui::AccessibilityFocusOverrider::GetFocusedUIElement())
+    return forced_focus;
+  return [super accessibilityFocusedUIElement];
+}
+
 - (void)addNativeEventProcessorObserver:
     (content::NativeEventProcessorObserver*)observer {
-  observers_.AddObserver(observer);
+  _observers.AddObserver(observer);
 }
 
 - (void)removeNativeEventProcessorObserver:
     (content::NativeEventProcessorObserver*)observer {
-  observers_.RemoveObserver(observer);
+  _observers.RemoveObserver(observer);
 }
 
 @end

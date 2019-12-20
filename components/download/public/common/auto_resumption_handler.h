@@ -40,8 +40,15 @@ class COMPONENTS_DOWNLOAD_EXPORT AutoResumptionHandler
       std::unique_ptr<download::TaskManager> task_manager,
       std::unique_ptr<Config> config);
 
-  // Returns the singleton instance of the AutoResumptionHandler.
+  // Returns the singleton instance of the AutoResumptionHandler, or nullptr if
+  // initialization is not yet complete.
   static AutoResumptionHandler* Get();
+
+  // Utility function to determine whether an interrupted download should be
+  // auto-resumable.
+  static bool IsInterruptedDownloadAutoResumable(
+      download::DownloadItem* download_item,
+      int auto_resumption_size_limit);
 
   AutoResumptionHandler(
       std::unique_ptr<download::NetworkStatusListener> network_listener,
@@ -88,7 +95,7 @@ class COMPONENTS_DOWNLOAD_EXPORT AutoResumptionHandler
 
   bool recompute_task_params_scheduled_ = false;
 
-  base::WeakPtrFactory<AutoResumptionHandler> weak_factory_;
+  base::WeakPtrFactory<AutoResumptionHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AutoResumptionHandler);
 };

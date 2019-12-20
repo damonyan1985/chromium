@@ -15,6 +15,7 @@
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/numerics/ranges.h"
 #include "base/optional.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -76,8 +77,8 @@ void ParseMouseMoveEvent(const MouseEvent& event, std::vector<INPUT>* output) {
     int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     if (width > 1 && height > 1) {
-      int x = std::max(0, std::min(width, event.x()));
-      int y = std::max(0, std::min(height, event.y()));
+      int x = base::ClampToRange(event.x(), 0, width);
+      int y = base::ClampToRange(event.y(), 0, height);
       input.mi.dx = static_cast<int>((x * 65535) / (width - 1));
       input.mi.dy = static_cast<int>((y * 65535) / (height - 1));
       input.mi.dwFlags =
@@ -303,7 +304,7 @@ InputInjectorWin::Core::Core(
 void InputInjectorWin::Core::InjectClipboardEvent(const ClipboardEvent& event) {
   if (!ui_task_runner_->BelongsToCurrentThread()) {
     ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectClipboardEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectClipboardEvent, this, event));
     return;
   }
 
@@ -313,8 +314,8 @@ void InputInjectorWin::Core::InjectClipboardEvent(const ClipboardEvent& event) {
 
 void InputInjectorWin::Core::InjectKeyEvent(const KeyEvent& event) {
   if (!main_task_runner_->BelongsToCurrentThread()) {
-    main_task_runner_->PostTask(FROM_HERE,
-                                base::Bind(&Core::InjectKeyEvent, this, event));
+    main_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Core::InjectKeyEvent, this, event));
     return;
   }
 
@@ -324,7 +325,7 @@ void InputInjectorWin::Core::InjectKeyEvent(const KeyEvent& event) {
 void InputInjectorWin::Core::InjectTextEvent(const TextEvent& event) {
   if (!main_task_runner_->BelongsToCurrentThread()) {
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectTextEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectTextEvent, this, event));
     return;
   }
 
@@ -334,7 +335,7 @@ void InputInjectorWin::Core::InjectTextEvent(const TextEvent& event) {
 void InputInjectorWin::Core::InjectMouseEvent(const MouseEvent& event) {
   if (!main_task_runner_->BelongsToCurrentThread()) {
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectMouseEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectMouseEvent, this, event));
     return;
   }
 
@@ -344,7 +345,7 @@ void InputInjectorWin::Core::InjectMouseEvent(const MouseEvent& event) {
 void InputInjectorWin::Core::InjectTouchEvent(const TouchEvent& event) {
   if (!main_task_runner_->BelongsToCurrentThread()) {
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&Core::InjectTouchEvent, this, event));
+        FROM_HERE, base::BindOnce(&Core::InjectTouchEvent, this, event));
     return;
   }
 
@@ -356,7 +357,7 @@ void InputInjectorWin::Core::Start(
   if (!ui_task_runner_->BelongsToCurrentThread()) {
     ui_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&Core::Start, this, base::Passed(&client_clipboard)));
+        base::BindOnce(&Core::Start, this, std::move(client_clipboard)));
     return;
   }
 
@@ -366,7 +367,7 @@ void InputInjectorWin::Core::Start(
 
 void InputInjectorWin::Core::Stop() {
   if (!ui_task_runner_->BelongsToCurrentThread()) {
-    ui_task_runner_->PostTask(FROM_HERE, base::Bind(&Core::Stop, this));
+    ui_task_runner_->PostTask(FROM_HERE, base::BindOnce(&Core::Stop, this));
     return;
   }
 
@@ -458,15 +459,14 @@ void InputInjectorWin::Core::HandleTouch(const TouchEvent& event) {
 // static
 std::unique_ptr<InputInjector> InputInjector::Create(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* chromeos_system_input_injector_factory) {
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
   return base::WrapUnique(
       new InputInjectorWin(main_task_runner, ui_task_runner));
 }
 
 // static
 bool InputInjector::SupportsTouchEvents() {
-  return base::win::GetVersion() >= base::win::VERSION_WIN8;
+  return base::win::GetVersion() >= base::win::Version::WIN8;
 }
 
 }  // namespace remoting

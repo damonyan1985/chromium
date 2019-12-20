@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -14,11 +15,10 @@
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_login_verifier.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 class GoogleServiceAuthError;
 class Profile;
-class ProfileOAuth2TokenService;
 
 namespace chromeos {
 
@@ -26,7 +26,7 @@ namespace chromeos {
 // OAuth2 refresh tokens or pre-authenticated cookie jar.
 class OAuth2LoginManager : public KeyedService,
                            public OAuth2LoginVerifier::Delegate,
-                           public OAuth2TokenService::Observer {
+                           public signin::IdentityManager::Observer {
  public:
   // Session restore states.
   enum SessionRestoreState {
@@ -68,9 +68,6 @@ class OAuth2LoginManager : public KeyedService,
     // Raised when merge session state changes.
     virtual void OnSessionRestoreStateChanged(Profile* user_profile,
                                               SessionRestoreState state) {}
-
-    // Raised when a new OAuth2 refresh token is available.
-    virtual void OnNewRefreshTokenAvaiable(Profile* user_profile) {}
 
     // Raised when session's GAIA credentials (SID+LSID) are available to
     // other signed in services.
@@ -153,27 +150,25 @@ class OAuth2LoginManager : public KeyedService,
       const std::vector<gaia::ListedAccount>& accounts) override;
   void OnListAccountsFailure(bool connection_error) override;
 
-  // OAuth2TokenService::Observer implementation:
-  void OnRefreshTokenAvailable(const std::string& user_email) override;
+  // signin::IdentityManager::Observer implementation:
+  void OnRefreshTokenUpdatedForAccount(
+      const CoreAccountInfo& account_info) override;
 
   // Signals delegate that authentication is completed, kicks off token fetching
   // process.
   void CompleteAuthentication();
 
-  // Retrieves ProfileOAuth2TokenService for |user_profile_|.
-  ProfileOAuth2TokenService* GetTokenService();
+  // Retrieves IdentityManager for |user_profile_|.
+  signin::IdentityManager* GetIdentityManager();
 
   // Retrieves the primary account for |user_profile_|.
-  std::string GetPrimaryAccountId();
+  CoreAccountId GetPrimaryAccountId();
 
   // Records |refresh_token_| to token service. The associated account id is
   // assumed to be the primary account id of the user profile. If the primary
   // account id is not present, GetAccountInfoOfRefreshToken will be called to
   // retrieve the associated account info.
   void StoreOAuth2Token();
-
-  // Update the token service and inform listeners of a new refresh token.
-  void UpdateCredentials(const std::string& account_id);
 
   // Checks if primary account sessions cookies are stale and restores them
   // if needed.
@@ -201,8 +196,6 @@ class OAuth2LoginManager : public KeyedService,
   static void RecordCookiesCheckOutcome(bool is_pre_merge,
                                         MergeVerificationOutcome outcome);
 
-  // Keeps the track if we have already reported OAuth2 token being loaded
-  // by OAuth2TokenService.
   Profile* user_profile_;
   SessionRestoreStrategy restore_strategy_;
   SessionRestoreState state_;

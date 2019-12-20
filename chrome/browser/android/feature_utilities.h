@@ -7,6 +7,8 @@
 
 #include <jni.h>
 
+#include <string>
+
 namespace chrome {
 namespace android {
 
@@ -16,11 +18,27 @@ enum CustomTabsVisibilityHistogram {
   CUSTOM_TABS_VISIBILITY_MAX
 };
 
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.flags
+enum class ActivityType {
+  kTabbed,
+  kCustomTab,
+  kTrustedWebActivity,
+  kWebapp,
+  kWebApk,
+  kMaxValue = kWebApk,
+};
+
 CustomTabsVisibilityHistogram GetCustomTabsVisibleValue();
+
+ActivityType GetActivityType();
 
 bool GetIsInMultiWindowModeValue();
 
 bool IsDownloadAutoResumptionEnabledInNative();
+
+// Returns a finch group name currently used for the reached code profiler.
+// Returns an empty string if the group isn't specified.
+std::string GetReachedCodeProfilerTrialGroup();
 
 } // namespace android
 } // namespace chrome

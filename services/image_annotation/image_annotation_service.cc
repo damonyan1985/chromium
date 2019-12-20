@@ -12,35 +12,34 @@
 
 namespace image_annotation {
 
-constexpr base::Feature ImageAnnotationService::kExperiment;
+// static
+const base::Feature ImageAnnotationService::kExperiment{
+    "ImageAnnotationServiceExperimental", base::FEATURE_DISABLED_BY_DEFAULT};
 constexpr base::FeatureParam<std::string> ImageAnnotationService::kServerUrl;
+constexpr base::FeatureParam<std::string> ImageAnnotationService::kApiKey;
 constexpr base::FeatureParam<int> ImageAnnotationService::kThrottleMs;
 constexpr base::FeatureParam<int> ImageAnnotationService::kBatchSize;
 constexpr base::FeatureParam<double> ImageAnnotationService::kMinOcrConfidence;
 
 ImageAnnotationService::ImageAnnotationService(
-    service_manager::mojom::ServiceRequest request,
-    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory)
-    : service_binding_(this, std::move(request)),
+    mojo::PendingReceiver<mojom::ImageAnnotationService> receiver,
+    std::string api_key,
+    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory,
+    std::unique_ptr<Annotator::Client> annotator_client)
+    : receiver_(this, std::move(receiver)),
       annotator_(GURL(kServerUrl.Get()),
+                 kApiKey.Get().empty() ? std::move(api_key) : kApiKey.Get(),
                  base::TimeDelta::FromMilliseconds(kThrottleMs.Get()),
                  kBatchSize.Get(),
                  kMinOcrConfidence.Get(),
-                 shared_url_loader_factory) {}
+                 shared_url_loader_factory,
+                 std::move(annotator_client)) {}
 
 ImageAnnotationService::~ImageAnnotationService() = default;
 
-void ImageAnnotationService::OnStart() {
-  registry_.AddInterface<mojom::Annotator>(base::BindRepeating(
-      &Annotator::BindRequest, base::Unretained(&annotator_)));
-}
-
-// service_manager::Service:
-void ImageAnnotationService::OnBindInterface(
-    const service_manager::BindSourceInfo& source_info,
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(interface_name, std::move(interface_pipe));
+void ImageAnnotationService::BindAnnotator(
+    mojo::PendingReceiver<mojom::Annotator> receiver) {
+  annotator_.BindReceiver(std::move(receiver));
 }
 
 }  // namespace image_annotation

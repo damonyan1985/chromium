@@ -34,8 +34,10 @@
 namespace blink {
 
 AnalyserHandler::AnalyserHandler(AudioNode& node, float sample_rate)
-    : AudioBasicInspectorHandler(kNodeTypeAnalyser, node, sample_rate, 1) {
+    : AudioBasicInspectorHandler(kNodeTypeAnalyser, node, sample_rate) {
   channel_count_ = 2;
+  AddOutput(1);
+
   Initialize();
 }
 
@@ -184,7 +186,7 @@ bool AnalyserHandler::RequiresTailProcessing() const {
 double AnalyserHandler::TailTime() const {
   return RealtimeAnalyser::kMaxFFTSize /
          static_cast<double>(Context()->sampleRate());
-};
+}
 // ----------------------------------------------------------------
 
 AnalyserNode::AnalyserNode(BaseAudioContext& context)
@@ -195,11 +197,6 @@ AnalyserNode::AnalyserNode(BaseAudioContext& context)
 AnalyserNode* AnalyserNode::Create(BaseAudioContext& context,
                                    ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<AnalyserNode>(context);
 }
@@ -292,6 +289,14 @@ void AnalyserNode::getFloatTimeDomainData(NotShared<DOMFloat32Array> array) {
 
 void AnalyserNode::getByteTimeDomainData(NotShared<DOMUint8Array> array) {
   GetAnalyserHandler().GetByteTimeDomainData(array.View());
+}
+
+void AnalyserNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+}
+
+void AnalyserNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

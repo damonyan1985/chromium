@@ -172,11 +172,13 @@ DesktopCloudPolicyStore::DesktopCloudPolicyStore(
     const base::FilePath& policy_path,
     const base::FilePath& key_path,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner,
-    PolicyScope policy_scope)
-    : UserCloudPolicyStoreBase(background_task_runner, policy_scope),
+    PolicyScope policy_scope,
+    PolicySource policy_source)
+    : UserCloudPolicyStoreBase(background_task_runner,
+                               policy_scope,
+                               policy_source),
       policy_path_(policy_path),
-      key_path_(key_path),
-      weak_factory_(this) {}
+      key_path_(key_path) {}
 
 DesktopCloudPolicyStore::~DesktopCloudPolicyStore() {}
 
@@ -406,7 +408,8 @@ UserCloudPolicyStore::UserCloudPolicyStore(
     : DesktopCloudPolicyStore(policy_path,
                               key_path,
                               background_task_runner,
-                              PolicyScope::POLICY_SCOPE_USER) {}
+                              PolicyScope::POLICY_SCOPE_USER,
+                              PolicySource::POLICY_SOURCE_CLOUD) {}
 
 UserCloudPolicyStore::~UserCloudPolicyStore() {}
 
@@ -430,7 +433,7 @@ void UserCloudPolicyStore::Validate(
     std::unique_ptr<em::PolicyFetchResponse> policy,
     std::unique_ptr<em::PolicySigningKey> cached_key,
     bool validate_in_background,
-    const UserCloudPolicyValidator::CompletionCallback& callback) {
+    UserCloudPolicyValidator::CompletionCallback callback) {
   // Configure the validator.
   std::unique_ptr<UserCloudPolicyValidator> validator = CreateValidator(
       std::move(policy), CloudPolicyValidatorBase::TIMESTAMP_VALIDATED);
@@ -457,13 +460,13 @@ void UserCloudPolicyStore::Validate(
 
   if (validate_in_background) {
     // Start validation in the background.
-    UserCloudPolicyValidator::StartValidation(std::move(validator), callback);
+    UserCloudPolicyValidator::StartValidation(std::move(validator),
+                                              std::move(callback));
   } else {
     // Run validation immediately and invoke the callback with the results.
     validator->RunValidation();
-    callback.Run(validator.get());
+    std::move(callback).Run(validator.get());
   }
 }
-
 
 }  // namespace policy

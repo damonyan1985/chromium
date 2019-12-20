@@ -6,11 +6,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/embedder_support/switches.h"
 #include "content/public/test/browser_test_base.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/test/extension_test_message_listener.h"
@@ -117,7 +116,7 @@ class PlatformAppNavigationRedirectorBrowserTest
 void PlatformAppNavigationRedirectorBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
   PlatformAppBrowserTest::SetUpCommandLine(command_line);
-  command_line->AppendSwitch(::switches::kDisablePopupBlocking);
+  command_line->AppendSwitch(embedder_support::kDisablePopupBlocking);
 }
 
 // TODO(sergeygs): Factor out common functionality from TestXyz,
@@ -218,13 +217,11 @@ void PlatformAppNavigationRedirectorBrowserTest::TestNegativeNavigationInApp(
 
   InstallPlatformApp(handler);
 
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_TAB_ADDED,
-      content::Source<content::WebContentsDelegate>(browser()));
+  ui_test_utils::TabAddedWaiter tab_add(browser());
 
   LoadAndLaunchPlatformApp(launcher, launcher_done_message);
 
-  observer.Wait();
+  tab_add.Wait();
 
   ASSERT_EQ(1U, GetAppWindowCount());
 }
@@ -237,13 +234,12 @@ void PlatformAppNavigationRedirectorBrowserTest::TestMismatchingNavigationInApp(
 
   InstallPlatformApp(handler);
 
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_TAB_ADDED,
-      content::Source<content::WebContentsDelegate>(browser()));
+  ui_test_utils::TabAddedWaiter tab_add(browser());
 
   LoadAndLaunchPlatformApp(launcher, launcher_done_message);
 
-  observer.Wait();
+  tab_add.Wait();
+
   ASSERT_EQ(1U, GetAppWindowCount());
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
 }

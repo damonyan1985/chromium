@@ -18,7 +18,7 @@ namespace android_webview {
 class AwPermissionRequestDelegate;
 
 // This class wraps a permission request, it works with PermissionRequestHandler
-// and its' Java peer to represent the request to AwContentsClient.
+// and its Java peer to represent the request to AwContentsClient.
 // The specific permission request should implement the
 // AwPermissionRequestDelegate interface, See MediaPermissionRequest.
 // This object is owned by the java peer.
@@ -47,7 +47,7 @@ class AwPermissionRequest {
   void OnAccept(JNIEnv* env,
                 const base::android::JavaParamRef<jobject>& jcaller,
                 jboolean granted);
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
   // Return the origin which initiated the request.
   const GURL& GetOrigin();
@@ -75,7 +75,7 @@ class AwPermissionRequest {
   JavaObjectWeakGlobalRef java_ref_;
 
   bool processed_;
-  base::WeakPtrFactory<AwPermissionRequest> weak_factory_;
+  base::WeakPtrFactory<AwPermissionRequest> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AwPermissionRequest);
 };

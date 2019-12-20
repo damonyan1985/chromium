@@ -28,7 +28,7 @@ void PulseAudioOutputStream::StreamNotifyCallback(pa_stream* s, void* p_this) {
   // should be thread safe.
   if (s && stream->source_callback_ &&
       pa_stream_get_state(s) == PA_STREAM_FAILED) {
-    stream->source_callback_->OnError();
+    stream->source_callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
   }
 
   pa_threaded_mainloop_signal(stream->pa_mainloop_, 0);
@@ -91,7 +91,8 @@ void PulseAudioOutputStream::Reset() {
       // Ensure all samples are played out before shutdown.
       pa_operation* operation = pa_stream_flush(
           pa_stream_, &pulse::StreamSuccessCallback, pa_mainloop_);
-      WaitForOperationCompletion(pa_mainloop_, operation);
+      WaitForOperationCompletion(pa_mainloop_, operation, pa_context_,
+                                 pa_stream_);
 
       // Release PulseAudio structures.
       pa_stream_disconnect(pa_stream_);
@@ -123,6 +124,10 @@ void PulseAudioOutputStream::Close() {
   // This should be the last call in the function as it deletes "this".
   manager_->ReleaseOutputStream(this);
 }
+
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void PulseAudioOutputStream::Flush() {}
 
 void PulseAudioOutputStream::FulfillWriteRequest(size_t requested_bytes) {
   int bytes_remaining = requested_bytes;
@@ -160,7 +165,8 @@ void PulseAudioOutputStream::FulfillWriteRequest(size_t requested_bytes) {
       frames_to_copy =
           std::min(audio_bus_->frames() - frame_offset_in_bus, frames_to_copy);
 
-      audio_bus_->ToInterleavedPartial<Float32SampleTypeTraits>(
+      // We skip clipping since that occurs at the shared memory boundary.
+      audio_bus_->ToInterleavedPartial<Float32SampleTypeTraitsNoClip>(
           frame_offset_in_bus, frames_to_copy,
           reinterpret_cast<float*>(pa_buffer));
       frame_offset_in_bus += frames_to_copy;
@@ -168,7 +174,7 @@ void PulseAudioOutputStream::FulfillWriteRequest(size_t requested_bytes) {
 
       if (pa_stream_write(pa_stream_, pa_buffer, pa_buffer_size, NULL, 0LL,
                           PA_SEEK_RELATIVE) < 0) {
-        source_callback_->OnError();
+        source_callback_->OnError(AudioSourceCallback::ErrorType::kUnknown);
         return;
       }
       bytes_remaining -= pa_buffer_size;
@@ -200,7 +206,7 @@ void PulseAudioOutputStream::Start(AudioSourceCallback* callback) {
   // Ensure the context and stream are ready.
   if (pa_context_get_state(pa_context_) != PA_CONTEXT_READY &&
       pa_stream_get_state(pa_stream_) != PA_STREAM_READY) {
-    callback->OnError();
+    callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
     return;
   }
 
@@ -209,7 +215,10 @@ void PulseAudioOutputStream::Start(AudioSourceCallback* callback) {
   // Uncork (resume) the stream.
   pa_operation* operation = pa_stream_cork(
       pa_stream_, 0, &pulse::StreamSuccessCallback, pa_mainloop_);
-  WaitForOperationCompletion(pa_mainloop_, operation);
+  if (!WaitForOperationCompletion(pa_mainloop_, operation, pa_context_,
+                                  pa_stream_)) {
+    callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
+  }
 }
 
 void PulseAudioOutputStream::Stop() {
@@ -221,18 +230,25 @@ void PulseAudioOutputStream::Stop() {
 
   // Set |source_callback_| to NULL so all FulfillWriteRequest() calls which may
   // occur while waiting on the flush and cork exit immediately.
-  source_callback_ = NULL;
+  auto* callback = source_callback_;
+  source_callback_ = nullptr;
 
   // Flush the stream prior to cork, doing so after will cause hangs.  Write
   // callbacks are suspended while inside pa_threaded_mainloop_lock() so this
   // is all thread safe.
-  pa_operation* operation = pa_stream_flush(
-      pa_stream_, &pulse::StreamSuccessCallback, pa_mainloop_);
-  WaitForOperationCompletion(pa_mainloop_, operation);
+  pa_operation* operation =
+      pa_stream_flush(pa_stream_, &pulse::StreamSuccessCallback, pa_mainloop_);
+  if (!WaitForOperationCompletion(pa_mainloop_, operation, pa_context_,
+                                  pa_stream_)) {
+    callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
+  }
 
   operation = pa_stream_cork(pa_stream_, 1, &pulse::StreamSuccessCallback,
                              pa_mainloop_);
-  WaitForOperationCompletion(pa_mainloop_, operation);
+  if (!WaitForOperationCompletion(pa_mainloop_, operation, pa_context_,
+                                  pa_stream_)) {
+    callback->OnError(AudioSourceCallback::ErrorType::kUnknown);
+  }
 }
 
 void PulseAudioOutputStream::SetVolume(double volume) {

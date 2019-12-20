@@ -19,18 +19,21 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/version.h"
-#include "chrome/browser/extensions/bookmark_app_helper.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
+#include "chrome/common/extensions/manifest_handlers/linked_app_icons.h"
 #include "chrome/common/web_application_info.h"
+#include "components/services/app_service/public/cpp/file_handler_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/file_handler_info.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/url_pattern.h"
+#include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "url/gurl.h"
@@ -41,9 +44,9 @@ namespace keys = manifest_keys;
 
 namespace {
 
-// Returns an icon info corresponding to a canned icon.
-WebApplicationInfo::IconInfo GetIconInfo(const GURL& url, int size) {
-  WebApplicationInfo::IconInfo result;
+// Returns an icon bitmap corresponding to a canned icon size.
+SkBitmap GetIconBitmap(int size) {
+  SkBitmap result;
 
   base::FilePath icon_file;
   if (!base::PathService::Get(chrome::DIR_TEST_DATA, &icon_file)) {
@@ -55,10 +58,6 @@ WebApplicationInfo::IconInfo GetIconInfo(const GURL& url, int size) {
                        .AppendASCII("convert_web_app")
                        .AppendASCII(base::StringPrintf("%i.png", size));
 
-  result.url = url;
-  result.width = size;
-  result.height = size;
-
   std::string icon_data;
   if (!base::ReadFileToString(icon_file, &icon_data)) {
     ADD_FAILURE() << "Could not read test icon.";
@@ -66,8 +65,8 @@ WebApplicationInfo::IconInfo GetIconInfo(const GURL& url, int size) {
   }
 
   if (!gfx::PNGCodec::Decode(
-        reinterpret_cast<const unsigned char*>(icon_data.c_str()),
-        icon_data.size(), &result.data)) {
+          reinterpret_cast<const unsigned char*>(icon_data.c_str()),
+          icon_data.size(), &result)) {
     ADD_FAILURE() << "Could not decode test icon.";
     return result;
   }
@@ -252,9 +251,12 @@ TEST(ExtensionFromWebApp, Basic) {
 
   const int sizes[] = {16, 48, 128};
   for (size_t i = 0; i < base::size(sizes); ++i) {
-    GURL icon_url(
-        web_app.app_url.Resolve(base::StringPrintf("%i.png", sizes[i])));
-    web_app.icons.push_back(GetIconInfo(icon_url, sizes[i]));
+    WebApplicationIconInfo icon_info;
+    icon_info.url =
+        web_app.app_url.Resolve(base::StringPrintf("%i.png", sizes[i]));
+    icon_info.square_size_px = sizes[i];
+    web_app.icon_infos.push_back(std::move(icon_info));
+    web_app.icon_bitmaps[sizes[i]] = GetIconBitmap(sizes[i]);
   }
 
   scoped_refptr<Extension> extension = ConvertWebAppToExtension(
@@ -287,16 +289,23 @@ TEST(ExtensionFromWebApp, Basic) {
             extension->permissions_data()->active_permissions().apis().size());
   ASSERT_EQ(0u, extension->web_extent().patterns().size());
 
-  EXPECT_EQ(web_app.icons.size(),
+  const LinkedAppIcons& linked_icons =
+      LinkedAppIcons::GetLinkedAppIcons(extension.get());
+  EXPECT_EQ(web_app.icon_infos.size(), linked_icons.icons.size());
+  for (size_t i = 0; i < web_app.icon_infos.size(); ++i) {
+    EXPECT_EQ(web_app.icon_infos[i].url, linked_icons.icons[i].url);
+    EXPECT_EQ(web_app.icon_infos[i].square_size_px, linked_icons.icons[i].size);
+  }
+
+  EXPECT_EQ(web_app.icon_bitmaps.size(),
             IconsInfo::GetIcons(extension.get()).map().size());
-  for (size_t i = 0; i < web_app.icons.size(); ++i) {
-    EXPECT_EQ(base::StringPrintf("icons/%i.png", web_app.icons[i].width),
-              IconsInfo::GetIcons(extension.get()).Get(
-                  web_app.icons[i].width, ExtensionIconSet::MATCH_EXACTLY));
-    ExtensionResource resource =
-        IconsInfo::GetIconResource(extension.get(),
-                                   web_app.icons[i].width,
-                                   ExtensionIconSet::MATCH_EXACTLY);
+  for (const std::pair<SquareSizePx, SkBitmap>& icon : web_app.icon_bitmaps) {
+    int size = icon.first;
+    EXPECT_EQ(base::StringPrintf("icons/%i.png", size),
+              IconsInfo::GetIcons(extension.get())
+                  .Get(size, ExtensionIconSet::MATCH_EXACTLY));
+    ExtensionResource resource = IconsInfo::GetIconResource(
+        extension.get(), size, ExtensionIconSet::MATCH_EXACTLY);
     ASSERT_TRUE(!resource.empty());
     EXPECT_TRUE(base::PathExists(resource.GetFilePath()));
   }
@@ -407,6 +416,68 @@ TEST(ExtensionFromWebApp, ScopeDoesNotEndInSlash) {
       Extension::NO_FLAGS, Manifest::INTERNAL);
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(web_app.scope, GetScopeURLFromBookmarkApp(extension.get()));
+}
+
+// Tests that |file_handler| on the WebAppManifest is correctly converted
+// to |file_handlers| on an extension manifest.
+TEST(ExtensionFromWebApp, FileHandlersAreCorrectlyConverted) {
+  base::ScopedTempDir extensions_dir;
+  ASSERT_TRUE(extensions_dir.CreateUniqueTempDir());
+
+  WebApplicationInfo web_app;
+  web_app.title = base::ASCIIToUTF16("Graphr");
+  web_app.description = base::ASCIIToUTF16("A magical graphy thing");
+  web_app.app_url = GURL("https://graphr.n/");
+  web_app.scope = GURL("https://graphr.n/");
+
+  {
+    blink::Manifest::FileHandler graph;
+    graph.action = GURL("https://graphr.n/open-graph/");
+    graph.name = base::ASCIIToUTF16("Graph");
+    graph.accept[base::ASCIIToUTF16("text/svg+xml")].push_back(
+        base::ASCIIToUTF16(""));
+    graph.accept[base::ASCIIToUTF16("text/svg+xml")].push_back(
+        base::ASCIIToUTF16(".svg"));
+    web_app.file_handlers.push_back(graph);
+
+    blink::Manifest::FileHandler raw;
+    raw.action = GURL("https://graphr.n/open-raw/");
+    raw.name = base::ASCIIToUTF16("Raw");
+    raw.accept[base::ASCIIToUTF16("text/csv")].push_back(
+        base::ASCIIToUTF16(".csv"));
+    web_app.file_handlers.push_back(raw);
+  }
+
+  scoped_refptr<Extension> extension = ConvertWebAppToExtension(
+      web_app, GetTestTime(1978, 12, 11, 0, 0, 0, 0), extensions_dir.GetPath(),
+      Extension::NO_FLAGS, Manifest::INTERNAL);
+
+  ASSERT_TRUE(extension.get());
+
+  const std::vector<apps::FileHandlerInfo> file_handler_info =
+      *extensions::FileHandlers::GetFileHandlers(extension.get());
+
+  EXPECT_EQ(2u, file_handler_info.size());
+
+  EXPECT_EQ("https://graphr.n/open-graph/", file_handler_info[0].id);
+  EXPECT_FALSE(file_handler_info[0].include_directories);
+  EXPECT_EQ(apps::file_handler_verbs::kOpenWith, file_handler_info[0].verb);
+  // Extensions should contain SVG, and only SVG
+  EXPECT_THAT(file_handler_info[0].extensions,
+              testing::UnorderedElementsAre("svg"));
+  // Mime types should contain text/svg+xml and only text/svg+xml
+  EXPECT_THAT(file_handler_info[0].types,
+              testing::UnorderedElementsAre("text/svg+xml"));
+
+  EXPECT_EQ("https://graphr.n/open-raw/", file_handler_info[1].id);
+  EXPECT_FALSE(file_handler_info[1].include_directories);
+  EXPECT_EQ(apps::file_handler_verbs::kOpenWith, file_handler_info[1].verb);
+  // Extensions should contain csv, and only csv
+  EXPECT_THAT(file_handler_info[1].extensions,
+              testing::UnorderedElementsAre("csv"));
+  // Mime types should contain text/csv and only text/csv
+  EXPECT_THAT(file_handler_info[1].types,
+              testing::UnorderedElementsAre("text/csv"));
 }
 
 }  // namespace extensions

@@ -7,15 +7,13 @@
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/table_view/chrome_table_view_styler.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-namespace {
-const CGFloat kMinimalHeight = 48;
-}  // namespace
 
 #pragma mark - TableViewDetailTextItem
 
@@ -54,14 +52,12 @@ const CGFloat kMinimalHeight = 48;
   } else if (styler.cellTitleColor) {
     cell.textLabel.textColor = styler.cellTitleColor;
   } else {
-    cell.textLabel.textColor =
-        UIColorFromRGB(kTableViewTextLabelColorLightGrey);
+    cell.textLabel.textColor = UIColor.cr_labelColor;
   }
   if (self.detailTextColor) {
     cell.detailTextLabel.textColor = self.detailTextColor;
   } else {
-    cell.detailTextLabel.textColor =
-        UIColorFromRGB(kTableViewSecondaryLabelLightGrayTextColor);
+    cell.detailTextLabel.textColor = UIColor.cr_secondaryLabelColor;
   }
   cell.textLabel.textAlignment =
       self.textAlignment ? self.textAlignment : NSTextAlignmentNatural;
@@ -94,25 +90,28 @@ const CGFloat kMinimalHeight = 48;
 
     _detailTextLabel = [[UILabel alloc] initWithFrame:CGRectZero];
     _detailTextLabel.font =
-        [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        [UIFont preferredFontForTextStyle:kTableViewSublabelFontStyle];
     _detailTextLabel.adjustsFontForContentSizeCategory = YES;
     _detailTextLabel.translatesAutoresizingMaskIntoConstraints = NO;
     [containerView addSubview:_detailTextLabel];
 
-    CGFloat margin = kTableViewHorizontalSpacing;
+    NSLayoutConstraint* heightConstraint = [self.contentView.heightAnchor
+        constraintGreaterThanOrEqualToConstant:kChromeTableViewCellHeight];
+    // Don't set the priority to required to avoid clashing with the estimated
+    // height.
+    heightConstraint.priority = UILayoutPriorityRequired - 1;
 
     [NSLayoutConstraint activateConstraints:@[
       // Minimal height.
-      [self.contentView.heightAnchor
-          constraintGreaterThanOrEqualToConstant:kMinimalHeight],
+      heightConstraint,
 
       // Container.
       [containerView.leadingAnchor
           constraintEqualToAnchor:self.contentView.leadingAnchor
-                         constant:margin],
+                         constant:kTableViewHorizontalSpacing],
       [containerView.trailingAnchor
           constraintEqualToAnchor:self.contentView.trailingAnchor
-                         constant:-margin],
+                         constant:-kTableViewHorizontalSpacing],
       [containerView.centerYAnchor
           constraintEqualToAnchor:self.contentView.centerYAnchor],
 
@@ -133,7 +132,8 @@ const CGFloat kMinimalHeight = 48;
     ]];
 
     // Make sure there are top and bottom margins of at least |margin|.
-    AddOptionalVerticalPadding(self.contentView, containerView, margin);
+    AddOptionalVerticalPadding(self.contentView, containerView,
+                               kTableViewTwoLabelsCellVerticalSpacing);
   }
   return self;
 }

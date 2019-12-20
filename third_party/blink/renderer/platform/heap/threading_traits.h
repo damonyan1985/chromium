@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_THREADING_TRAITS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_THREADING_TRAITS_H_
 
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/hash_counted_set.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -15,11 +15,6 @@
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
-
-template <typename T>
-class SameThreadCheckedMember;
-template <typename T>
-class TraceWrapperMember;
 
 // ThreadAffinity indicates which threads objects can be used on. We
 // distinguish between objects that can be used on the main thread
@@ -37,7 +32,7 @@ enum ThreadAffinity {
 // Remove them.
 class Node;
 class NodeList;
-class NodeRareDataBase;
+class NodeRareData;
 
 template <
     typename T,
@@ -45,7 +40,7 @@ template <
         WTF::IsSubclass<typename std::remove_const<T>::type, Node>::value ||
         WTF::IsSubclass<typename std::remove_const<T>::type, NodeList>::value ||
         WTF::IsSubclass<typename std::remove_const<T>::type,
-                        NodeRareDataBase>::value>
+                        NodeRareData>::value>
 struct DefaultThreadingTrait;
 
 template <typename T>
@@ -81,18 +76,6 @@ class ThreadingTrait<const U> : public ThreadingTrait<U> {};
 
 template <typename T>
 struct ThreadingTrait<Member<T>> {
-  STATIC_ONLY(ThreadingTrait);
-  static const ThreadAffinity kAffinity = ThreadingTrait<T>::kAffinity;
-};
-
-template <typename T>
-struct ThreadingTrait<SameThreadCheckedMember<T>> {
-  STATIC_ONLY(ThreadingTrait);
-  static const ThreadAffinity kAffinity = ThreadingTrait<T>::Affinity;
-};
-
-template <typename T>
-struct ThreadingTrait<TraceWrapperMember<T>> {
   STATIC_ONLY(ThreadingTrait);
   static const ThreadAffinity kAffinity = ThreadingTrait<T>::kAffinity;
 };

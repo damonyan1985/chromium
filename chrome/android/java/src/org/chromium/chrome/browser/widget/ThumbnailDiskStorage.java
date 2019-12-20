@@ -7,11 +7,13 @@ package org.chromium.chrome.browser.widget;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.support.v4.util.AtomicFile;
 import android.support.v4.util.Pair;
 import android.text.TextUtils;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import com.google.protobuf.ByteString;
 
@@ -19,8 +21,9 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VisibleForTesting;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.base.task.BackgroundOnlyAsyncTask;
 import org.chromium.chrome.browser.util.ConversionUtils;
 import org.chromium.chrome.browser.widget.ThumbnailCacheEntry.ContentId;
 import org.chromium.chrome.browser.widget.ThumbnailCacheEntry.ThumbnailEntry;
@@ -83,7 +86,10 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     @VisibleForTesting
     long mSizeBytes;
 
-    private class InitTask extends AsyncTask<Void> {
+    // Whether or not this class has been destroyed and should not be used.
+    private boolean mDestroyed;
+
+    private class InitTask extends BackgroundOnlyAsyncTask<Void> {
         @Override
         protected Void doInBackground() {
             initDiskCache();
@@ -91,7 +97,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
         }
     }
 
-    private class ClearTask extends AsyncTask<Void> {
+    private class ClearTask extends BackgroundOnlyAsyncTask<Void> {
         @Override
         protected Void doInBackground() {
             clearDiskCache();
@@ -103,7 +109,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      * Writes to disk cache.
      */
     @VisibleForTesting
-    class CacheThumbnailTask extends AsyncTask<Void> {
+    class CacheThumbnailTask extends BackgroundOnlyAsyncTask<Void> {
         private final String mContentId;
         private final Bitmap mBitmap;
         private final int mIconSizePx;
@@ -142,6 +148,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
 
         @Override
         protected void onPostExecute(Bitmap bitmap) {
+            RecordHistogram.recordBooleanHistogram(
+                    "Android.ThumbnailDiskStorage.CachedBitmap.Found", bitmap != null);
+
             if (bitmap != null) {
                 onThumbnailRetrieved(mRequest.getContentId(), bitmap, mRequest.getIconSize());
                 return;
@@ -154,7 +163,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     /**
      * Removes thumbnails with the given contentId from disk cache.
      */
-    private class RemoveThumbnailTask extends AsyncTask<Void> {
+    private class RemoveThumbnailTask extends BackgroundOnlyAsyncTask<Void> {
         private final String mContentId;
 
         public RemoveThumbnailTask(String contentId) {
@@ -201,6 +210,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      */
     public void destroy() {
         mThumbnailGenerator.destroy();
+        mDestroyed = true;
     }
 
     /**
@@ -217,7 +227,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
      */
     public void retrieveThumbnail(ThumbnailProvider.ThumbnailRequest request) {
         ThreadUtils.assertOnUiThread();
-        if (TextUtils.isEmpty(request.getContentId())) return;
+        if (mDestroyed || TextUtils.isEmpty(request.getContentId())) return;
 
         new GetThumbnailTask(request).executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
@@ -233,6 +243,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     @Override
     public void onThumbnailRetrieved(
             @NonNull String contentId, @Nullable Bitmap bitmap, int iconSizePx) {
+        // If we've been destroyed, drop any responses coming back from retrieval tasks.
+        if (mDestroyed) return;
+
         ThreadUtils.assertOnUiThread();
         if (bitmap != null && !TextUtils.isEmpty(contentId)) {
             new CacheThumbnailTask(contentId, bitmap, iconSizePx)
@@ -288,6 +301,9 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
                 Log.e(TAG, "Error while reading from disk.", e);
             }
         }
+
+        RecordHistogram.recordMemoryKBHistogram("Android.ThumbnailDiskStorage.Size",
+                (int) (mSizeBytes / ConversionUtils.BYTES_PER_KILOBYTE));
     }
 
     /**

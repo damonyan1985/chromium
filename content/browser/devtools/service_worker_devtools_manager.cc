@@ -16,7 +16,8 @@ namespace content {
 // static
 ServiceWorkerDevToolsManager* ServiceWorkerDevToolsManager::GetInstance() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return base::Singleton<ServiceWorkerDevToolsManager>::get();
+  static base::NoDestructor<ServiceWorkerDevToolsManager> instance;
+  return &*instance;
 }
 
 ServiceWorkerDevToolsAgentHost*
@@ -91,16 +92,16 @@ void ServiceWorkerDevToolsManager::WorkerCreated(
 void ServiceWorkerDevToolsManager::WorkerReadyForInspection(
     int worker_process_id,
     int worker_route_id,
-    blink::mojom::DevToolsAgentHostAssociatedRequest host_request,
-    blink::mojom::DevToolsAgentAssociatedPtrInfo devtools_agent_ptr_info) {
+    mojo::PendingRemote<blink::mojom::DevToolsAgent> agent_remote,
+    mojo::PendingReceiver<blink::mojom::DevToolsAgentHost> host_receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   const WorkerId worker_id(worker_process_id, worker_route_id);
   auto it = live_hosts_.find(worker_id);
   if (it == live_hosts_.end())
     return;
   scoped_refptr<ServiceWorkerDevToolsAgentHost> host = it->second;
-  host->WorkerReadyForInspection(std::move(host_request),
-                                 std::move(devtools_agent_ptr_info));
+  host->WorkerReadyForInspection(std::move(agent_remote),
+                                 std::move(host_receiver));
   // Bring up UI for the ones not picked by other clients.
   if (debug_service_worker_on_start_ && !host->IsAttached())
     host->Inspect();
@@ -187,11 +188,12 @@ void ServiceWorkerDevToolsManager::NavigationPreloadRequestSent(
   auto it = live_hosts_.find(worker_id);
   if (it == live_hosts_.end())
     return;
+  auto timestamp = base::TimeTicks::Now();
   for (auto* network :
        protocol::NetworkHandler::ForAgentHost(it->second.get())) {
     network->RequestSent(request_id, std::string(), request,
                          protocol::Network::Initiator::TypeEnum::Preload,
-                         base::nullopt /* initiator_url */);
+                         base::nullopt /* initiator_url */, timestamp);
   }
 }
 
@@ -200,7 +202,7 @@ void ServiceWorkerDevToolsManager::NavigationPreloadResponseReceived(
     int worker_route_id,
     const std::string& request_id,
     const GURL& url,
-    const network::ResourceResponseHead& head) {
+    const network::mojom::URLResponseHead& head) {
   const WorkerId worker_id(worker_process_id, worker_route_id);
   auto it = live_hosts_.find(worker_id);
   if (it == live_hosts_.end())

@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <EarlGrey/EarlGrey.h>
-
+#include <functional>
 #include <string>
 
 #include "base/bind.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #include "ios/testing/embedded_test_server_handlers.h"
 #include "net/test/embedded_test_server/default_handlers.h"
 #include "net/test/embedded_test_server/http_request.h"
@@ -43,10 +43,7 @@ std::string GetErrorMessage() {
   self.testServer->RegisterRequestHandler(base::BindRepeating(
       &net::test_server::HandlePrefixedRequest, "/echo-query",
       base::BindRepeating(&testing::HandleEchoQueryOrCloseSocket,
-                          base::ConstRef(_serverRespondsWithContent))));
-  self.testServer->RegisterRequestHandler(
-      base::BindRepeating(&net::test_server::HandlePrefixedRequest, "/iframe",
-                          base::BindRepeating(&testing::HandleIFrame)));
+                          std::cref(_serverRespondsWithContent))));
 
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
 }
@@ -56,12 +53,12 @@ std::string GetErrorMessage() {
   // No response leads to ERR_CONNECTION_CLOSED error.
   self.serverRespondsWithContent = NO;
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")];
-  [ChromeEarlGrey waitForWebViewContainingText:GetErrorMessage()];
+  [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()];
 
   // Reload the page, which should load without errors.
   self.serverRespondsWithContent = YES;
   [ChromeEarlGrey reload];
-  [ChromeEarlGrey waitForWebViewContainingText:"foo"];
+  [ChromeEarlGrey waitForWebStateContainingText:"foo"];
 }
 
 // Sucessfully loads the page, stops the server and reloads the page.
@@ -69,12 +66,12 @@ std::string GetErrorMessage() {
   // Sucessfully load the page.
   self.serverRespondsWithContent = YES;
   [ChromeEarlGrey loadURL:self.testServer->GetURL("/echo-query?foo")];
-  [ChromeEarlGrey waitForWebViewContainingText:"foo"];
+  [ChromeEarlGrey waitForWebStateContainingText:"foo"];
 
   // Reload the page, no response leads to ERR_CONNECTION_CLOSED error.
   self.serverRespondsWithContent = NO;
   [ChromeEarlGrey reload];
-  [ChromeEarlGrey waitForWebViewContainingText:GetErrorMessage()];
+  [ChromeEarlGrey waitForWebStateContainingText:GetErrorMessage()];
 }
 
 @end

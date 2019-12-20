@@ -32,7 +32,6 @@ class EnrollmentScreenView {
 
     virtual void OnLoginDone(const std::string& user,
                              const std::string& auth_code) = 0;
-    virtual void OnLicenseTypeSelected(const std::string& license_type) = 0;
     virtual void OnRetry() = 0;
     virtual void OnCancel() = 0;
     virtual void OnConfirmationClosed() = 0;
@@ -47,7 +46,7 @@ class EnrollmentScreenView {
                                            const std::string& location) = 0;
   };
 
-  constexpr static OobeScreen kScreenId = OobeScreen::SCREEN_OOBE_ENROLLMENT;
+  constexpr static StaticOobeScreenId kScreenId{"oauth-enrollment"};
 
   virtual ~EnrollmentScreenView() {}
 
@@ -63,10 +62,6 @@ class EnrollmentScreenView {
 
   // Shows the signin screen.
   virtual void ShowSigninScreen() = 0;
-
-  // Shows the license type selection screen.
-  virtual void ShowLicenseTypeSelectionScreen(
-      const base::DictionaryValue& license_types) = 0;
 
   // Shows the Active Directory domain joining screen.
   virtual void ShowActiveDirectoryScreen(const std::string& domain_join_config,

@@ -10,11 +10,11 @@
  * the 'name' of the command, and any required or optional arguments of the
  * command, e.g.,
  *
- *   sendTestMessage({
+ *   await sendTestMessage({
  *     name: 'addEntries', // command with volume and entries arguments
  *     volume: volume,
  *     entries: entries
- *   }).then(...);
+ *   });
  *
  * @param {Object} command Test command to send. The object is converted to
  *     a JSON string prior to sending.
@@ -51,14 +51,12 @@ function wait(time) {
  * @param {function()} callback Completion callback.
  * @return {Promise} Promise to be fulfilled on completion.
  */
-function checkIfNoErrorsOccuredOnApp(app, callback) {
-  var countPromise = app.callRemoteTestUtil('getErrorCount', null, []);
-  return countPromise.then(function(count) {
-    chrome.test.assertEq(0, count, 'The error count is not 0.');
-    if (callback) {
-      callback();
-    }
-  });
+async function checkIfNoErrorsOccuredOnApp(app, callback) {
+  const count = await app.callRemoteTestUtil('getErrorCount', null, []);
+  chrome.test.assertEq(0, count, 'The error count is not 0.');
+  if (callback) {
+    callback();
+  }
 }
 
 /**
@@ -66,18 +64,19 @@ function checkIfNoErrorsOccuredOnApp(app, callback) {
  * @param {Promise} promise Promise to add the check to.
  * @param {Array<!RemoteCall>} apps An array of RemoteCall interfaces.
  */
-function testPromiseAndApps(promise, apps) {
-  promise.then(function() {
-    return Promise.all(
-        apps.map(function(app) {
-          return new Promise(checkIfNoErrorsOccuredOnApp.bind(null, app));
-        }));
-  }).then(chrome.test.callbackPass(function() {
+async function testPromiseAndApps(promise, apps) {
+  const finished = chrome.test.callbackPass(function() {
     // The callbackPass is necessary to avoid prematurely finishing tests.
     // Don't use chrome.test.succeed() here to avoid doubled success log.
-  }), function(error) {
-    chrome.test.fail(error.stack || error);
   });
+  try {
+    await promise;
+    await Promise.all(apps.map(app => checkIfNoErrorsOccuredOnApp(app)));
+  } catch (error) {
+    chrome.test.fail(error.stack || error);
+    return;
+  }
+  finished();
 }
 
 /**
@@ -85,14 +84,14 @@ function testPromiseAndApps(promise, apps) {
  * @type {number}
  * @const
  */
-var REPEAT_UNTIL_INTERVAL = 200;
+const REPEAT_UNTIL_INTERVAL = 200;
 
 /**
  * Interval milliseconds between log output of repeatUntil.
  * @type {number}
  * @const
  */
-var LOG_INTERVAL = 3000;
+const LOG_INTERVAL = 3000;
 
 /**
  * Returns caller's file, function and line/column number from the call stack.
@@ -100,11 +99,11 @@ var LOG_INTERVAL = 3000;
  *     as returned by exception stack trace. Example "at /a_file.js:1:1".
  */
 function getCaller() {
-  let error = new Error('For extracting error.stack');
-  let ignoreStackLines = 3;
-  let lines = error.stack.split('\n');
+  const error = new Error('For extracting error.stack');
+  const ignoreStackLines = 3;
+  const lines = error.stack.split('\n');
   if (ignoreStackLines < lines.length) {
-    let caller = lines[ignoreStackLines];
+    const caller = lines[ignoreStackLines];
     // Strip 'chrome-extension://oobinhbdbiehknkpbpejbbpdbkdjmoco' prefix.
     return caller.replace(/(chrome-extension:\/\/\w*)/gi, '').trim();
   }
@@ -125,19 +124,23 @@ function getCaller() {
 function pending(caller, message, var_args) {
   // |index| is used to ignore caller and message arguments subsisting markers
   // (%s, %d and %j) within message with the remaining |arguments|.
-  var index = 2;
-  var args = arguments;
+  let index = 2;
+  const args = arguments;
   message = String(message);
-  var formattedMessage = message.replace(/%[sdj]/g, function(pattern) {
-    var arg = args[index++];
-    switch(pattern) {
-      case '%s': return String(arg);
-      case '%d': return Number(arg);
-      case '%j': return JSON.stringify(arg);
-      default: return pattern;
+  const formattedMessage = message.replace(/%[sdj]/g, function(pattern) {
+    const arg = args[index++];
+    switch (pattern) {
+      case '%s':
+        return String(arg);
+      case '%d':
+        return Number(arg);
+      case '%j':
+        return JSON.stringify(arg);
+      default:
+        return pattern;
     }
   });
-  var pendingMarker = Object.create(pending.prototype);
+  const pendingMarker = Object.create(pending.prototype);
   pendingMarker.message = caller + ': ' + formattedMessage;
   return pendingMarker;
 }
@@ -150,22 +153,19 @@ function pending(caller, message, var_args) {
  *     checkFunction when the checkFunction reutrns a value but a pending
  *     marker.
  */
-function repeatUntil(checkFunction) {
-  var logTime = Date.now() + LOG_INTERVAL;
-  var step = function() {
-    return Promise.resolve(checkFunction()).then(function(result) {
-      if (result instanceof pending) {
-        if (Date.now() > logTime) {
-          console.warn(result.message);
-          logTime += LOG_INTERVAL;
-        }
-        return wait(REPEAT_UNTIL_INTERVAL).then(step);
-      } else {
-        return result;
-      }
-    });
-  };
-  return step();
+async function repeatUntil(checkFunction) {
+  let logTime = Date.now() + LOG_INTERVAL;
+  while (true) {
+    const result = await checkFunction();
+    if (!(result instanceof pending)) {
+      return result;
+    }
+    if (Date.now() > logTime) {
+      console.warn(result.message);
+      logTime += LOG_INTERVAL;
+    }
+    await wait(REPEAT_UNTIL_INTERVAL);
+  }
 }
 
 /**
@@ -176,28 +176,28 @@ function repeatUntil(checkFunction) {
  * @param {function(string)} callback Completion callback.
  * @param {Object=} opt_debug If truthy, log the result.
  */
-function sendBrowserTestCommand(command, callback, opt_debug) {
+async function sendBrowserTestCommand(command, callback, opt_debug) {
   const caller = getCaller();
   if (typeof command.name !== 'string') {
     chrome.test.fail('Invalid test command: ' + JSON.stringify(command));
   }
-  repeatUntil(function sendTestCommand() {
+  const result = await repeatUntil(async () => {
     const tryAgain = pending(caller, 'Sent BrowserTest ' + command.name);
-    return sendTestMessage(command)
-        .then((result) => {
-          if (typeof result !== 'string') {
-            return tryAgain;
-          }
-          if (opt_debug) {
-            console.log('BrowserTest ' + command.name + ': ' + result);
-          }
-          callback(result);
-        })
-        .catch((error) => {
-          console.log(error.stack || error);
-          return tryAgain;
-        });
+    try {
+      const result = await sendTestMessage(command);
+      if (typeof result !== 'string') {
+        return tryAgain;
+      }
+      return result;
+    } catch (error) {
+      console.log(error.stack || error);
+      return tryAgain;
+    }
   });
+  if (opt_debug) {
+    console.log('BrowserTest ' + command.name + ': ' + result);
+  }
+  callback(result);
 }
 
 /**
@@ -209,13 +209,12 @@ function sendBrowserTestCommand(command, callback, opt_debug) {
 function waitForAppWindow(windowUrl) {
   const caller = getCaller();
   const command = {'name': 'getAppWindowId', 'windowUrl': windowUrl};
-  return repeatUntil(function() {
-    return sendTestMessage(command).then((result) => {
-      if (result == 'none') {
-        return pending(caller, 'getAppWindowId ' + windowUrl);
-      }
-      return result;
-    });
+  return repeatUntil(async () => {
+    const result = await sendTestMessage(command);
+    if (result == 'none') {
+      return pending(caller, 'getAppWindowId ' + windowUrl);
+    }
+    return result;
   });
 }
 
@@ -229,52 +228,72 @@ function waitForAppWindow(windowUrl) {
 function waitForAppWindowCount(appId, expectedCount) {
   const caller = getCaller();
   const command = {'name': 'countAppWindows', 'appId': appId};
-  return repeatUntil(function() {
-    return sendTestMessage(command).then((result) => {
-      if (result != expectedCount) {
-        return pending(caller, 'waitForAppWindowCount ' + appId + ' ' + result);
-      }
-      return true;
-    });
+  return repeatUntil(async () => {
+    if (await sendTestMessage(command) != expectedCount) {
+      return pending(caller, 'waitForAppWindowCount ' + appId + ' ' + result);
+    }
+    return true;
   });
 }
 
 /**
- * Adds the givin entries to the target volume(s).
+ * Get all the browser windows.
+ * @return {Object} Object returned from chrome.windows.getAll().
+ */
+async function getBrowserWindows() {
+  const caller = getCaller();
+  return repeatUntil(async () => {
+    const result = await new Promise(function(fulfill) {
+      chrome.windows.getAll({'populate': true}, fulfill);
+    });
+    if (result.length == 0) {
+      return pending(caller, 'getBrowserWindows ' + result.length);
+    }
+    return result;
+  });
+}
+
+/**
+ * Adds the given entries to the target volume(s).
  * @param {Array<string>} volumeNames Names of target volumes.
  * @param {Array<TestEntryInfo>} entries List of entries to be added.
  * @param {function(boolean)=} opt_callback Callback function to be passed the
  *     result of function. The argument is true on success.
  * @return {Promise} Promise to be fulfilled when the entries are added.
  */
-function addEntries(volumeNames, entries, opt_callback) {
+async function addEntries(volumeNames, entries, opt_callback) {
   if (volumeNames.length == 0) {
     callback(true);
     return;
   }
-  var volumeResultPromises = volumeNames.map(function(volume) {
+  const volumeResultPromises = volumeNames.map(function(volume) {
     return sendTestMessage({
       name: 'addEntries',
       volume: volume,
-      entries: entries
+      entries: entries,
     });
   });
-  var resultPromise = Promise.all(volumeResultPromises);
-  if (opt_callback) {
-    resultPromise.then(opt_callback.bind(null, true),
-                       opt_callback.bind(null, false));
+  if (!opt_callback) {
+    return volumeResultPromises;
   }
-  return resultPromise;
+  try {
+    await Promise.all(volumeResultPromises);
+  } catch (error) {
+    opt_callback(false);
+    throw error;
+  }
+  opt_callback(true);
 }
 
 /**
  * @enum {string}
  * @const
  */
-var EntryType = Object.freeze({
+const EntryType = Object.freeze({
   FILE: 'file',
   DIRECTORY: 'directory',
-  TEAM_DRIVE: 'team_drive',
+  LINK: 'link',
+  SHARED_DRIVE: 'team_drive',
   COMPUTER: 'Computer'
 });
 
@@ -282,7 +301,7 @@ var EntryType = Object.freeze({
  * @enum {string}
  * @const
  */
-var SharedOption = Object.freeze({
+const SharedOption = Object.freeze({
   NONE: 'none',
   SHARED: 'shared',
   SHARED_WITH_ME: 'sharedWithMe',
@@ -292,9 +311,8 @@ var SharedOption = Object.freeze({
 /**
  * @enum {string}
  */
-var RootPath = Object.seal({
+const RootPath = Object.seal({
   DOWNLOADS: '/must-be-filled-in-test-setup',
-  DOWNLOADS_PATH: '/must-be-filled-in-test-setup',
   DRIVE: '/must-be-filled-in-test-setup',
   ANDROID_FILES: '/must-be-filled-in-test-setup',
 });
@@ -478,7 +496,7 @@ TestEntryInfo.prototype.getExpectedRow = function() {
  * @type {Object<TestEntryInfo>}
  * @const
  */
-var ENTRIES = {
+const ENTRIES = {
   hello: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'text.txt',
@@ -501,6 +519,17 @@ var ENTRIES = {
     typeText: 'OGG video'
   }),
 
+  webm: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'world.webm',
+    targetPath: 'world.webm',
+    mimeType: 'video/webm',
+    lastModifiedTime: 'Jul 4, 2012, 10:35 AM',
+    nameText: 'world.webm',
+    sizeText: '17 KB',
+    typeText: 'WebM video'
+  }),
+
   video: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'video_long.ogv',
@@ -510,6 +539,17 @@ var ENTRIES = {
     nameText: 'video_long.ogv',
     sizeText: '166 KB',
     typeText: 'OGG video'
+  }),
+
+  subtitle: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'video.vtt',
+    targetPath: 'world.vtt',
+    mimeType: 'text/vtt',
+    lastModifiedTime: 'Feb 7, 2019, 15:03 PM',
+    nameText: 'world.vtt',
+    sizeText: '46 bytes',
+    typeText: 'VTT text'
   }),
 
   unsupported: new TestEntryInfo({
@@ -534,11 +574,10 @@ var ENTRIES = {
     typeText: 'PNG image'
   }),
 
-  // An image file without an extension, to confirm that file type detection
-  // using mime types works fine.
   image2: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'image2.png',
+    // No file extension.
     targetPath: 'image2',
     mimeType: 'image/png',
     lastModifiedTime: 'Jan 18, 2038, 1:02 AM',
@@ -569,11 +608,32 @@ var ENTRIES = {
     typeText: 'JPEG image'
   }),
 
-  // An ogg file without a mime type, to confirm that file type detection using
-  // file extensions works fine.
+  exifImage: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'exif.jpg',
+    // No mime type.
+    targetPath: 'exif.jpg',
+    lastModifiedTime: 'Jan 18, 2038, 1:02 AM',
+    nameText: 'exif.jpg',
+    sizeText: '31 KB',
+    typeText: 'JPEG image'
+  }),
+
+  rawImage: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'raw.orf',
+    // No mime type.
+    targetPath: 'raw.orf',
+    lastModifiedTime: 'May 20, 2019, 10:10 AM',
+    nameText: 'raw.orf',
+    sizeText: '214 KB',
+    typeText: 'ORF image'
+  }),
+
   beautiful: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'music.ogg',
+    // No mime type.
     targetPath: 'Beautiful Song.ogg',
     lastModifiedTime: 'Nov 12, 2086, 12:00 PM',
     nameText: 'Beautiful Song.ogg',
@@ -611,6 +671,19 @@ var ENTRIES = {
     typeText: 'Google document'
   }),
 
+  testSharedFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'text.txt',
+    targetPath: 'test.txt',
+    mimeType: 'text/plain',
+    sharedOption: SharedOption.SHARED,
+    lastModifiedTime: 'Mar 20, 2012, 11:40 PM',
+    nameText: 'test.txt',
+    sizeText: '51 bytes',
+    typeText: 'Plain text',
+    pinned: true
+  }),
+
   newlyAdded: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'music.ogg',
@@ -630,6 +703,17 @@ var ENTRIES = {
     lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
     nameText: 'tall.txt',
     sizeText: '546 bytes',
+    typeText: 'Plain text',
+  }),
+
+  plainText: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'plaintext',
+    // No mime type, no file extension.
+    targetPath: 'plaintext',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'plaintext',
+    sizeText: '32 bytes',
     typeText: 'Plain text',
   }),
 
@@ -653,6 +737,17 @@ var ENTRIES = {
     nameText: 'tall.pdf',
     sizeText: '15 KB',
     typeText: 'PDF document',
+  }),
+
+  imgPdf: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'img.pdf',
+    targetPath: 'imgpdf',
+    mimeType: 'application/pdf',
+    lastModifiedTime: 'Jul 4, 2012, 10:35 AM',
+    nameText: 'imgpdf',
+    sizeText: '1608 bytes',
+    typeText: 'PDF document'
   }),
 
   pinned: new TestEntryInfo({
@@ -721,6 +816,48 @@ var ENTRIES = {
     typeText: 'Folder'
   }),
 
+  deeplyBurriedSmallJpeg: new TestEntryInfo({
+    type: EntryType.FILE,
+    targetPath: 'A/B/C/deep.jpg',
+    sourceFileName: 'small.jpg',
+    mimeType: 'image/jpeg',
+    lastModifiedTime: 'Jan 18, 2038, 1:02 AM',
+    nameText: 'deep.jpg',
+    sizeText: '886 bytes',
+    typeText: 'JPEG image'
+  }),
+
+  linkGtoB: new TestEntryInfo({
+    type: EntryType.LINK,
+    targetPath: 'G',
+    sourceFileName: 'A/B',
+    lastModifiedTime: 'Jan 1, 2000, 1:00 AM',
+    nameText: 'G',
+    sizeText: '--',
+    typeText: 'Folder'
+  }),
+
+  linkHtoFile: new TestEntryInfo({
+    type: EntryType.LINK,
+    targetPath: 'H.jpg',
+    sourceFileName: 'A/B/C/deep.jpg',
+    mimeType: 'image/jpeg',
+    lastModifiedTime: 'Jan 18, 2038, 1:02 AM',
+    nameText: 'H.jpg',
+    sizeText: '886 bytes',
+    typeText: 'JPEG image'
+  }),
+
+  linkTtoTransitiveDirectory: new TestEntryInfo({
+    type: EntryType.LINK,
+    targetPath: 'T',
+    sourceFileName: 'G/C',
+    lastModifiedTime: 'Jan 1, 2000, 1:00 AM',
+    nameText: 'T',
+    sizeText: '--',
+    typeText: 'Folder'
+  }),
+
   zipArchive: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'archive.zip',
@@ -728,7 +865,7 @@ var ENTRIES = {
     mimeType: 'application/x-zip',
     lastModifiedTime: 'Jan 1, 2014, 1:00 AM',
     nameText: 'archive.zip',
-    sizeText: '533 bytes',
+    sizeText: '743 bytes',
     typeText: 'Zip archive'
   }),
 
@@ -787,6 +924,17 @@ var ENTRIES = {
     typeText: 'DEB file'
   }),
 
+  tiniFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'archive.tar.gz',
+    targetPath: 'test.tini',
+    mimeType: 'application/gzip',
+    lastModifiedTime: 'Jan 1, 2014, 1:00 AM',
+    nameText: 'test.tini',
+    sizeText: '439 bytes',
+    typeText: 'Crostini image file'
+  }),
+
   hiddenFile: new TestEntryInfo({
     type: EntryType.FILE,
     sourceFileName: 'text.txt',
@@ -800,7 +948,7 @@ var ENTRIES = {
 
   // Team-drive entries.
   teamDriveA: new TestEntryInfo({
-    type: EntryType.TEAM_DRIVE,
+    type: EntryType.SHARED_DRIVE,
     teamDriveName: 'Team Drive A',
     capabilities: {
       canCopy: true,
@@ -859,7 +1007,7 @@ var ENTRIES = {
   }),
 
   teamDriveB: new TestEntryInfo({
-    type: EntryType.TEAM_DRIVE,
+    type: EntryType.SHARED_DRIVE,
     teamDriveName: 'Team Drive B',
     capabilities: {
       canCopy: true,
@@ -879,6 +1027,23 @@ var ENTRIES = {
     nameText: 'teamDriveBFile.txt',
     sizeText: '51 bytes',
     typeText: 'Plain text',
+    teamDriveName: 'Team Drive B',
+    capabilities: {
+      canCopy: true,
+      canDelete: false,
+      canRename: false,
+      canAddChildren: false,
+      canShare: true,
+    },
+  }),
+
+  teamDriveBDirectory: new TestEntryInfo({
+    type: EntryType.DIRECTORY,
+    targetPath: 'teamDriveBDirectory',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'teamDriveBDirectory',
+    sizeText: '--',
+    typeText: 'Folder',
     teamDriveName: 'Team Drive B',
     capabilities: {
       canCopy: true,
@@ -1006,6 +1171,42 @@ var ENTRIES = {
     },
   }),
 
+  // A regular file that can't be renamed, but can be deleted.
+  deletableFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'text.txt',
+    targetPath: 'Deletable File.txt',
+    mimeType: 'text/plain',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'Deletable File.txt',
+    sizeText: '51 bytes',
+    typeText: 'Plain text',
+    capabilities: {
+      canCopy: true,
+      canAddChildren: false,
+      canRename: false,
+      canDelete: true
+    },
+  }),
+
+  // A regular file that can't be deleted, but can be renamed.
+  renamableFile: new TestEntryInfo({
+    type: EntryType.FILE,
+    sourceFileName: 'text.txt',
+    targetPath: 'Renamable File.txt',
+    mimeType: 'text/plain',
+    lastModifiedTime: 'Sep 4, 1998, 12:34 PM',
+    nameText: 'Renamable File.txt',
+    sizeText: '51 bytes',
+    typeText: 'Plain text',
+    capabilities: {
+      canCopy: true,
+      canAddChildren: false,
+      canRename: true,
+      canDelete: false
+    },
+  }),
+
   // Default Android directories.
   directoryDocuments: new TestEntryInfo({
     type: EntryType.DIRECTORY,
@@ -1126,3 +1327,48 @@ var ENTRIES = {
     typeText: 'CRDOWNLOAD file'
   }),
 };
+
+/**
+ * Returns the count for |value| for the histogram |name|.
+ * @param {string} name The histogram to be queried.
+ * @param {number} value The value within that histogram to query.
+ * @return {!Promise<number>} A promise fulfilled with the count.
+ */
+async function getHistogramCount(name, value) {
+  return JSON.parse(await sendTestMessage({
+    'name': 'getHistogramCount',
+    'histogramName': name,
+    'value': value,
+  }));
+}
+
+/**
+ * Returns the count for the user action |name|.
+ * @param {string} name The user action to be queried.
+ * @return {!Promise<number>} A promise fulfilled with the count.
+ */
+async function getUserActionCount(name) {
+  return JSON.parse(await sendTestMessage({
+    'name': 'getUserActionCount',
+    'userActionName': name,
+  }));
+}
+
+/**
+ * Simulate Click in the UI in the middle of the element.
+ * @param{string} appId ID of the app that contains the element. NOTE: The click
+ *     is simulated on most recent window in the window system.
+ * @param {string|!Array<string>} query Query to the element to be clicked.
+ * @return {!Promise} A promise fulfilled after the click event.
+ */
+async function simulateUiClick(appId, query) {
+  const element =
+      await remoteCall.waitForElementStyles(appId, query, ['display']);
+  chrome.test.assertTrue(!!element, 'element for simulateUiClick not found');
+
+  // Find the middle of the element.
+  const x = Math.floor(element.renderedLeft + (element.renderedWidth / 2));
+  const y = Math.floor(element.renderedTop + (element.renderedHeight / 2));
+
+  return sendTestMessage({name: 'simulateClick', 'clickX': x, 'clickY': y});
+}

@@ -32,8 +32,7 @@ void StartSyncOnUIThread(const base::FilePath& profile,
     return;
   }
 
-  syncer::SyncService* service =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(p);
+  syncer::SyncService* service = ProfileSyncServiceFactory::GetForProfile(p);
   if (!service) {
     DVLOG(2) << "No ProfileSyncService for profile, can't start sync.";
     return;
@@ -43,8 +42,8 @@ void StartSyncOnUIThread(const base::FilePath& profile,
 
 void StartSyncProxy(const base::FilePath& profile,
                     syncer::ModelType type) {
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(&StartSyncOnUIThread, profile, type));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&StartSyncOnUIThread, profile, type));
 }
 
 }  // namespace

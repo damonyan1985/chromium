@@ -19,7 +19,8 @@ namespace {
 // Unprovision MediaDrm in IO thread.
 void ClearMediaDrmLicensesBlocking(
     std::vector<base::UnguessableToken> origin_ids) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
 
   for (const auto& origin_id : origin_ids) {
     // MediaDrm will unprovision |origin_id| for all security level. Passing
@@ -56,8 +57,8 @@ void ClearMediaDrmLicenses(
   // Create a single thread task runner for MediaDrmBridge, for posting Java
   // callbacks immediately to avoid rentrancy issues.
   // TODO(yucliu): Remove task runner from MediaDrmBridge in this case.
-  base::CreateSingleThreadTaskRunnerWithTraits(
-      {base::TaskPriority::USER_VISIBLE, base::MayBlock()})
+  base::CreateSingleThreadTaskRunner(
+      {base::ThreadPool(), base::TaskPriority::USER_VISIBLE, base::MayBlock()})
       ->PostTaskAndReply(FROM_HERE,
                          base::BindOnce(&ClearMediaDrmLicensesBlocking,
                                         std::move(no_license_origin_ids)),

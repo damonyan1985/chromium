@@ -5,27 +5,17 @@
 #ifndef CHROME_BROWSER_SYNC_PROFILE_SYNC_SERVICE_ANDROID_H_
 #define CHROME_BROWSER_SYNC_PROFILE_SYNC_SERVICE_ANDROID_H_
 
-#include <map>
 #include <memory>
 
 #include "base/android/jni_weak_ref.h"
-#include "base/callback.h"
-#include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/time/time.h"
-#include "components/invalidation/public/invalidation_util.h"
-#include "components/sync/base/sync_prefs.h"
 #include "components/sync/driver/sync_service_observer.h"
-#include "google/cacheinvalidation/include/types.h"
-#include "google_apis/gaia/google_service_auth_error.h"
+#include "components/sync/engine/net/http_post_provider_factory.h"
 
 class Profile;
 
-namespace browser_sync {
-class ProfileSyncService;
-}
-
 namespace syncer {
+class ProfileSyncService;
 class SyncSetupInProgressHandle;
 }
 
@@ -60,8 +50,14 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
                                 jboolean allowed);
   jboolean IsSyncActive(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& obj);
+  jboolean IsSyncDisabledByEnterprisePolicy(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
   jboolean IsEngineInitialized(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj);
+  jboolean IsTransportStateActive(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
   void SetSetupInProgress(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj,
                           jboolean in_progress);
@@ -69,7 +65,8 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
   void SetFirstSetupComplete(JNIEnv* env,
-                             const base::android::JavaParamRef<jobject>& obj);
+                             const base::android::JavaParamRef<jobject>& obj,
+                             jint source);
   base::android::ScopedJavaLocalRef<jintArray> GetActiveDataTypes(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -92,7 +89,10 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
       const base::android::JavaParamRef<jobject>& obj);
   void EnableEncryptEverything(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj);
-  jboolean IsPassphraseRequiredForDecryption(
+  jboolean IsPassphraseRequiredForPreferredDataTypes(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+  jboolean IsTrustedVaultKeyRequiredForPreferredDataTypes(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
   jboolean IsUsingSecondaryPassphrase(
@@ -127,9 +127,7 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jboolean personalized);
-
-  // Gets SyncProtocolError.ClientAction.
-  jint GetProtocolErrorClientAction(
+  jboolean RequiresClientUpgrade(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
@@ -174,37 +172,31 @@ class ProfileSyncServiceAndroid : public syncer::SyncServiceObserver {
 
   // Functionality only available for testing purposes.
 
+  jlong GetProfileSyncServiceForTest(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
   // Returns a timestamp for when a sync was last executed. The return value is
   // the internal value of base::Time.
   jlong GetLastSyncedTimeForTest(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
-  // Overrides ProfileSyncService's NetworkResources object. This is used to
-  // set up the Sync FakeServer for testing.
-  void OverrideNetworkResourcesForTest(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      jlong network_resources);
+  void OverrideNetworkForTest(const syncer::CreateHttpPostProviderFactory&
+                                  create_http_post_provider_factory_cb);
 
-  static ProfileSyncServiceAndroid* GetProfileSyncServiceAndroid();
+  void TriggerRefresh(JNIEnv* env,
+                      const base::android::JavaParamRef<jobject>& obj);
 
  private:
-  // Returns whether sync is allowed by Android.
-  bool IsSyncAllowedByAndroid() const;
-
   // A reference to the Chrome profile object.
   Profile* profile_;
 
   // A reference to the sync service for this profile.
-  browser_sync::ProfileSyncService* sync_service_;
+  syncer::ProfileSyncService* sync_service_;
 
   // Prevents Sync from running until configuration is complete.
   std::unique_ptr<syncer::SyncSetupInProgressHandle> sync_blocker_;
-
-  // The class that handles getting, setting, and persisting sync
-  // preferences.
-  std::unique_ptr<syncer::SyncPrefs> sync_prefs_;
 
   // Java-side ProfileSyncService object.
   JavaObjectWeakGlobalRef weak_java_profile_sync_service_;

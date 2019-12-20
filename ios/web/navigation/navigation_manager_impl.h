@@ -13,13 +13,11 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #import "ios/web/navigation/navigation_item_impl.h"
-#import "ios/web/public/navigation_item_list.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/reload_type.h"
+#import "ios/web/public/deprecated/navigation_item_list.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/navigation/reload_type.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
-
-@class CRWSessionController;
 
 namespace web {
 class BrowserState;
@@ -74,36 +72,19 @@ class NavigationManagerImpl : public NavigationManager {
   virtual void SetDelegate(NavigationManagerDelegate* delegate);
   virtual void SetBrowserState(BrowserState* browser_state);
 
-  // Sets the CRWSessionController that backs this object.
-  // Keeps a strong reference to |session_controller|.
-  // This method should only be called when deserializing |session_controller|
-  // and joining it with its NavigationManager. Other cases should call
-  // InitializeSession() or Restore().
-  // TODO(stuartmorgan): Also move deserialization of CRWSessionControllers
-  // under the control of this class, and move the bulk of CRWSessionController
-  // logic into it.
-  virtual void SetSessionController(
-      CRWSessionController* session_controller) = 0;
-
   // Initializes a new session history.
   virtual void InitializeSession() = 0;
 
   // Helper functions for notifying WebStateObservers of changes.
   // TODO(stuartmorgan): Make these private once the logic triggering them moves
   // into this layer.
-  virtual void OnNavigationItemsPruned(size_t pruned_item_count) = 0;
   virtual void OnNavigationItemCommitted() = 0;
 
-  // Called when renderer-initiated navigation has started.
-  virtual void OnRendererInitiatedNavigationStarted(const GURL& url) = 0;
+  // Called when a navigation has started.
+  virtual void OnNavigationStarted(const GURL& url) = 0;
 
   // Prepares for the deletion of WKWebView such as caching necessary data.
   virtual void DetachFromWebView();
-
-  // Temporary accessors and content/ class pass-throughs.
-  // TODO(stuartmorgan): Re-evaluate this list once the refactorings have
-  // settled down.
-  virtual CRWSessionController* GetSessionController() const = 0;
 
   // Adds a transient item with the given URL. A transient item will be
   // discarded on any navigation.
@@ -122,7 +103,25 @@ class NavigationManagerImpl : public NavigationManager {
       UserAgentOverrideOption user_agent_override_option) = 0;
 
   // Commits the pending item, if any.
+  // TODO(crbug.com/936933): Remove this method.
   virtual void CommitPendingItem() = 0;
+
+  // Commits given pending |item| stored outside of navigation manager
+  // (normally in NavigationContext). It is possible to have additional pending
+  // items owned by navigation manager and/or outside of navigation manager.
+  virtual void CommitPendingItem(std::unique_ptr<NavigationItemImpl> item) = 0;
+
+  // Removes pending item, so it can be stored in NavigationContext.
+  // Pending item is stored in this object when NavigationContext object does
+  // not yet exist (e.g. when navigation was just requested, or when navigation
+  // has aborted).
+  virtual std::unique_ptr<NavigationItemImpl> ReleasePendingItem() = 0;
+
+  // Allows transferring pending item from NavigationContext to this object.
+  // Pending item can be moved from NavigationContext to this object when
+  // navigation is aborted, but pending item should be retained.
+  virtual void SetPendingItem(
+      std::unique_ptr<web::NavigationItemImpl> item) = 0;
 
   // Returns the navigation index that differs from the current item (or pending
   // item if it exists) by the specified |offset|, skipping redirect navigation
@@ -152,18 +151,15 @@ class NavigationManagerImpl : public NavigationManager {
   // Applies the workaround for crbug.com/887497.
   virtual void ApplyWKWebViewForwardHistoryClobberWorkaround();
 
+  // Set ShouldSkipSerialization to true for the next pending item, provided it
+  // matches |url|.  Applies the workaround for crbug.com/997182
+  virtual void SetWKWebViewNextPendingUrlNotSerializable(const GURL& url);
+
+  // Returns true if specific URL is blocked from session restore.
+  virtual bool ShouldBlockUrlDuringRestore(const GURL& url) = 0;
+
   // Resets the transient url rewriter list.
   void RemoveTransientURLRewriters();
-
-  // Creates a NavigationItem using the given properties. Calling this method
-  // resets the transient URLRewriters cached in this instance.
-  // TODO(crbug.com/738020): This method is only used by CRWSessionController.
-  // Remove it after switching to WKBasedNavigationManagerImpl.
-  std::unique_ptr<NavigationItemImpl> CreateNavigationItem(
-      const GURL& url,
-      const Referrer& referrer,
-      ui::PageTransition transition,
-      NavigationInitiationType initiation_type);
 
   // Updates the URL of the yet to be committed pending item. Useful for page
   // redirects. Does nothing if there is no pending item.
@@ -175,6 +171,10 @@ class NavigationManagerImpl : public NavigationManager {
   // TODO(crbug.com/661316): Make this private once all navigation code is moved
   // out of CRWWebController.
   NavigationItemImpl* GetCurrentItemImpl() const;
+
+  // Returns the last committed NavigationItem, which may be null if there
+  // are no committed entries or session restoration is in-progress.
+  NavigationItemImpl* GetLastCommittedItemImpl() const;
 
   // Updates the pending or last committed navigation item after replaceState.
   // TODO(crbug.com/783382): This is a legacy method to maintain backward
@@ -264,7 +264,8 @@ class NavigationManagerImpl : public NavigationManager {
                                NavigationInitiationType type,
                                bool has_user_gesture) = 0;
   virtual void FinishReload();
-  virtual void FinishLoadURLWithParams();
+  virtual void FinishLoadURLWithParams(
+      NavigationInitiationType initiation_type);
 
   // Returns true if the subclass uses placeholder URLs and this is such a URL.
   virtual bool IsPlaceholderUrl(const GURL& url) const;

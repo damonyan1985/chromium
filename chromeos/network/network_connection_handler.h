@@ -39,6 +39,10 @@ namespace chromeos {
 
 enum class ConnectCallbackMode { ON_STARTED, ON_COMPLETED };
 
+class NetworkStateHandler;
+class NetworkConfigurationHandler;
+class ManagedNetworkConfigurationHandler;
+
 class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnectionHandler {
  public:
   // Constants for |error_name| from |error_callback| for Connect.
@@ -168,17 +172,17 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnectionHandler {
       const base::Closure& success_callback,
       const network_handler::ErrorCallback& error_callback) = 0;
 
-  // Returns true if ConnectToNetwork has been called with |service_path| and
-  // has not completed (i.e. success or error callback has been called).
-  virtual bool HasConnectingNetwork(const std::string& service_path) = 0;
-
-  // Returns true if there are any pending connect requests.
-  virtual bool HasPendingConnectRequest() = 0;
-
   virtual void Init(NetworkStateHandler* network_state_handler,
                     NetworkConfigurationHandler* network_configuration_handler,
                     ManagedNetworkConfigurationHandler*
                         managed_network_configuration_handler) = 0;
+
+  // Construct and initialize an instance for testing.
+  static std::unique_ptr<NetworkConnectionHandler> InitializeForTesting(
+      NetworkStateHandler* network_state_handler,
+      NetworkConfigurationHandler* network_configuration_handler,
+      ManagedNetworkConfigurationHandler*
+          managed_network_configuration_handler);
 
  protected:
   NetworkConnectionHandler();
@@ -214,7 +218,7 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkConnectionHandler {
  private:
   // Only to be used by NetworkConnectionHandler implementation (and not by
   // derived classes).
-  base::WeakPtrFactory<NetworkConnectionHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<NetworkConnectionHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NetworkConnectionHandler);
 };

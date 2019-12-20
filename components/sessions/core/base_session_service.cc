@@ -32,7 +32,7 @@ void RunIfNotCanceled(
 }
 
 void PostOrRunInternalGetCommandsCallback(
-    base::TaskRunner* task_runner,
+    base::SequencedTaskRunner* task_runner,
     const BaseSessionService::GetCommandsCallback& callback,
     std::vector<std::unique_ptr<SessionCommand>> commands) {
   if (task_runner->RunsTasksInCurrentSequence()) {
@@ -55,9 +55,9 @@ BaseSessionService::BaseSessionService(SessionType type,
     : pending_reset_(false),
       commands_since_reset_(0),
       delegate_(delegate),
-      backend_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
-      weak_factory_(this) {
+      backend_task_runner_(base::CreateSequencedTaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
   backend_ = new SessionBackend(type, path);
   DCHECK(backend_);
 }

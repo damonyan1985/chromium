@@ -59,7 +59,7 @@ class ChannelMultiplexer : public StreamChannelFactory {
 
   // Called by MuxChannel.
   void DoWrite(std::unique_ptr<MultiplexPacket> packet,
-               const base::Closure& done_task,
+               base::OnceClosure done_task,
                const net::NetworkTrafficAnnotationTag& traffic_annotation);
 
   // Factory used to create |base_channel_|. Set to nullptr once creation is
@@ -85,7 +85,7 @@ class ChannelMultiplexer : public StreamChannelFactory {
   BufferedSocketWriter writer_;
   MessageReader reader_;
 
-  base::WeakPtrFactory<ChannelMultiplexer> weak_factory_;
+  base::WeakPtrFactory<ChannelMultiplexer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChannelMultiplexer);
 };

@@ -4,12 +4,17 @@
 
 #include "ash/screen_util.h"
 
+#include <memory>
+
+#include "ash/magnifier/docked_magnifier_controller_impl.h"
+#include "ash/public/cpp/shelf_config.h"
 #include "ash/root_window_controller.h"
 #include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_constants.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/window_util.h"
+#include "ash/wm/wm_event.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -33,8 +38,8 @@ TEST_F(ScreenUtilTest, Bounds) {
   secondary->Show();
 
   // Maximized bounds.
-  const int bottom_inset_first = 600 - ShelfConstants::shelf_size();
-  const int bottom_inset_second = 500 - ShelfConstants::shelf_size();
+  const int bottom_inset_first = 600 - ShelfConfig::Get()->shelf_size();
+  const int bottom_inset_second = 500 - ShelfConfig::Get()->shelf_size();
   EXPECT_EQ(
       gfx::Rect(0, 0, 600, bottom_inset_first).ToString(),
       screen_util::GetMaximizedWindowBoundsInParent(primary->GetNativeView())
@@ -161,7 +166,7 @@ TEST_F(ScreenUtilTest, ShelfDisplayBoundsInUnifiedDesktopGrid) {
   EXPECT_EQ(gfx::Size(766, 1254), screen->GetPrimaryDisplay().size());
 
   Shelf* shelf = Shell::GetPrimaryRootWindowController()->shelf();
-  EXPECT_EQ(shelf->alignment(), SHELF_ALIGNMENT_BOTTOM);
+  EXPECT_EQ(shelf->alignment(), ShelfAlignment::kBottom);
 
   // Regardless of where the window is, the shelf with a bottom alignment is
   // always in the bottom left display in the matrix.
@@ -175,20 +180,20 @@ TEST_F(ScreenUtilTest, ShelfDisplayBoundsInUnifiedDesktopGrid) {
 
   // Change the shelf alignment to left, and expect that it now resides in the
   // top left display in the matrix.
-  shelf->SetAlignment(SHELF_ALIGNMENT_LEFT);
+  shelf->SetAlignment(ShelfAlignment::kLeft);
   EXPECT_EQ(gfx::Rect(0, 0, 499, 400),
             screen_util::GetDisplayBoundsWithShelf(window));
 
   // Change the shelf alignment to right, and expect that it now resides in the
   // top right display in the matrix.
-  shelf->SetAlignment(SHELF_ALIGNMENT_RIGHT);
+  shelf->SetAlignment(ShelfAlignment::kRight);
   EXPECT_EQ(gfx::Rect(499, 0, 267, 400),
             screen_util::GetDisplayBoundsWithShelf(window));
 
   // Change alignment back to bottom and change the unified display zoom factor.
   // Expect that the display with shelf bounds will take into account the zoom
   // factor.
-  shelf->SetAlignment(SHELF_ALIGNMENT_BOTTOM);
+  shelf->SetAlignment(ShelfAlignment::kBottom);
   display_manager()->UpdateZoomFactor(display::kUnifiedDisplayId, 3.f);
   const display::Display unified_display =
       display_manager()->GetDisplayForId(display::kUnifiedDisplayId);
@@ -218,6 +223,38 @@ TEST_F(ScreenUtilTest, SnapBoundsToDisplayEdge) {
   bounds = gfx::Rect(0, 552, 800, 48);
   snapped_bounds = screen_util::SnapBoundsToDisplayEdge(bounds, window);
   EXPECT_EQ(snapped_bounds, gfx::Rect(0, 552, 800, 48));
+
+  UpdateDisplay("2400x1800*1.8/r");
+  EXPECT_EQ(gfx::Size(1000, 1333),
+            display::Screen::GetScreen()->GetPrimaryDisplay().size());
+  bounds = gfx::Rect(950, 0, 50, 1333);
+  snapped_bounds = screen_util::SnapBoundsToDisplayEdge(bounds, window);
+  EXPECT_EQ(snapped_bounds, gfx::Rect(950, 0, 50, 1334));
+}
+
+// Tests that making a window fullscreen while the Docked Magnifier is enabled
+// won't make its bounds occupy the entire screen bounds, but will take into
+// account the Docked Magnifier height.
+TEST_F(ScreenUtilTest, FullscreenWindowBoundsWithDockedMagnifier) {
+  UpdateDisplay("1366x768");
+
+  std::unique_ptr<aura::Window> window = CreateToplevelTestWindow(
+      gfx::Rect(300, 300, 200, 150), desks_util::GetActiveDeskContainerId());
+
+  auto* docked_magnifier_controller =
+      Shell::Get()->docked_magnifier_controller();
+  docked_magnifier_controller->SetEnabled(true);
+
+  const WMEvent event(WM_EVENT_TOGGLE_FULLSCREEN);
+  WindowState::Get(window.get())->OnWMEvent(&event);
+
+  constexpr gfx::Rect kDisplayBounds{1366, 768};
+  EXPECT_NE(window->bounds(), kDisplayBounds);
+
+  gfx::Rect expected_bounds = kDisplayBounds;
+  expected_bounds.Inset(
+      0, docked_magnifier_controller->GetTotalMagnifierHeight(), 0, 0);
+  EXPECT_EQ(expected_bounds, window->bounds());
 }
 
 }  // namespace ash

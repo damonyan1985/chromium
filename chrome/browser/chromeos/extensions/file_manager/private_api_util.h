@@ -69,7 +69,7 @@ base::FilePath GetLocalPathFromURL(content::RenderFrameHost* render_frame_host,
                                    const GURL& url);
 
 // The callback type is used for GetSelectedFileInfo().
-typedef base::Callback<void(const std::vector<ui::SelectedFileInfo>&)>
+typedef base::OnceCallback<void(const std::vector<ui::SelectedFileInfo>&)>
     GetSelectedFileInfoCallback;
 
 // Option enum to control how to set the ui::SelectedFileInfo::local_path
@@ -93,11 +93,6 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
                          const std::vector<GURL>& file_urls,
                          GetSelectedFileInfoLocalPathOption local_path_option,
                          GetSelectedFileInfoCallback callback);
-
-// Grants permission to access per-profile folder (Downloads, Drive) of
-// |profile| for the process |render_view_process_id|.
-void SetupProfileFileAccessPermissions(int render_view_process_id,
-                                       Profile* profile);
 
 // Get event logger to chrome://drive-internals page for the |profile|.
 drive::EventLogger* GetLogger(Profile* profile);

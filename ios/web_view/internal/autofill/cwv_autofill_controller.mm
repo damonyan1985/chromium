@@ -11,13 +11,14 @@
 #include "base/callback.h"
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/values.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/form_structure.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
+#include "components/autofill/core/browser/payments/legal_message_line.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
 #import "components/autofill/ios/browser/autofill_agent.h"
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
 #include "components/autofill/ios/browser/autofill_driver_ios_bridge.h"
-#include "components/autofill/ios/browser/autofill_switches.h"
 #import "components/autofill/ios/browser/autofill_util.h"
 #import "components/autofill/ios/browser/js_autofill_manager.h"
 #import "components/autofill/ios/browser/js_suggestion_manager.h"
@@ -25,20 +26,22 @@
 #include "components/autofill/ios/form_util/form_activity_params.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/sync/driver/sync_service.h"
-#import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
-#include "ios/web/public/web_state/web_frame.h"
-#include "ios/web/public/web_state/web_frame_util.h"
-#import "ios/web/public/web_state/web_frames_manager.h"
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#import "ios/web/public/deprecated/crw_js_injection_receiver.h"
+#include "ios/web/public/js_messaging/web_frame.h"
+#include "ios/web/public/js_messaging/web_frame_util.h"
+#import "ios/web/public/js_messaging/web_frames_manager.h"
+#import "ios/web/public/web_state.h"
+#import "ios/web/public/web_state_observer_bridge.h"
 #include "ios/web_view/internal/app/application_context.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_client_ios_bridge.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_form_internal.h"
+#import "ios/web_view/internal/autofill/cwv_autofill_profile_internal.h"
 #import "ios/web_view/internal/autofill/cwv_autofill_suggestion_internal.h"
 #import "ios/web_view/internal/autofill/cwv_credit_card_internal.h"
+#import "ios/web_view/internal/autofill/cwv_credit_card_saver_internal.h"
 #import "ios/web_view/internal/autofill/cwv_credit_card_verifier_internal.h"
 #include "ios/web_view/internal/autofill/web_view_autocomplete_history_manager_factory.h"
 #import "ios/web_view/internal/autofill/web_view_autofill_client_ios.h"
-#include "ios/web_view/internal/autofill/web_view_legacy_strike_database_factory.h"
 #include "ios/web_view/internal/autofill/web_view_personal_data_manager_factory.h"
 #include "ios/web_view/internal/autofill/web_view_strike_database_factory.h"
 #import "ios/web_view/internal/passwords/cwv_password_controller.h"
@@ -96,6 +99,10 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
   // The |webState| which this autofill controller should observe.
   web::WebState* _webState;
 
+  // The current credit card saver. Can be nil if no save attempt is pending.
+  // Held weak because |_delegate| is responsible for maintaing its lifetime.
+  __weak CWVCreditCardSaver* _saver;
+
   // The current credit card verifier. Can be nil if no verification is pending.
   // Held weak because |_delegate| is responsible for maintaing its lifetime.
   __weak CWVCreditCardVerifier* _verifier;
@@ -137,8 +144,6 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
             GetForBrowserState(browserState),
         _webState, self,
         ios_web_view::WebViewIdentityManagerFactory::GetForBrowserState(
-            browserState->GetRecordingBrowserState()),
-        ios_web_view::WebViewLegacyStrikeDatabaseFactory::GetForBrowserState(
             browserState->GetRecordingBrowserState()),
         ios_web_view::WebViewStrikeDatabaseFactory::GetForBrowserState(
             browserState->GetRecordingBrowserState()),
@@ -262,12 +267,11 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
       }
       completionHandler([autofillSuggestions copy]);
     };
-    // Set |typedValue| to " " to bypass the filtering logic in |AutofillAgent|.
     [strongSelf->_autofillAgent retrieveSuggestionsForForm:formName
                                            fieldIdentifier:fieldIdentifier
                                                  fieldType:fieldType
                                                       type:nil
-                                                typedValue:@" "
+                                                typedValue:nil
                                                    frameID:frameID
                                                   webState:strongSelf->_webState
                                          completionHandler:retrieveHandler];
@@ -275,21 +279,23 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
   // It is necessary to call |checkIfSuggestionsAvailableForForm| before
   // |retrieveSuggestionsForForm| because the former actually queries the db,
   // while the latter merely returns them.
-  // Set |typedValue| to " " to bypass the filtering logic in |AutofillAgent|.
+  NSString* mainFrameID =
+      base::SysUTF8ToNSString(web::GetMainWebFrameId(_webState));
+  BOOL isMainFrame = [frameID isEqualToString:mainFrameID];
   [_autofillAgent checkIfSuggestionsAvailableForForm:formName
                                      fieldIdentifier:fieldIdentifier
                                            fieldType:fieldType
                                                 type:nil
-                                          typedValue:@" "
+                                          typedValue:nil
                                              frameID:frameID
-                                         isMainFrame:YES
+                                         isMainFrame:isMainFrame
                                       hasUserGesture:YES
                                             webState:_webState
                                    completionHandler:availableHandler];
 }
 
-- (void)fillSuggestion:(CWVAutofillSuggestion*)suggestion
-     completionHandler:(nullable void (^)(void))completionHandler {
+- (void)acceptSuggestion:(CWVAutofillSuggestion*)suggestion
+       completionHandler:(nullable void (^)(void))completionHandler {
   if (suggestion.isPasswordSuggestion) {
     [_passwordController fillSuggestion:suggestion
                       completionHandler:^{
@@ -342,54 +348,10 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
                                       completionHandler:completionHandler];
 }
 
-- (void)findAllFormsWithCompletionHandler:
-    (void (^)(NSArray<CWVAutofillForm*>*))completionHandler {
-  web::WebFramesManager* framesManager =
-      web::WebFramesManager::FromWebState(_webState);
-  DCHECK(framesManager);
-  web::WebFrame* webFrame = framesManager->GetMainWebFrame();
-  if (!webFrame) {
-    completionHandler(nil);
-    return;
-  }
-
-  GURL pageURL = _webState->GetLastCommittedURL();
-  GURL frameOrigin = webFrame->GetSecurityOrigin();
-  id fetchCompletionHandler = ^(NSString* formJSON) {
-    std::vector<autofill::FormData> formDataVector;
-    bool success = autofill::ExtractFormsData(
-        formJSON, /*filtered=*/NO, /*form_name=*/base::string16(), pageURL,
-        frameOrigin, &formDataVector);
-    if (!success) {
-      completionHandler(nil);
-      return;
-    }
-    NSMutableArray<CWVAutofillForm*>* autofillForms = [NSMutableArray array];
-    for (const autofill::FormData& formData : formDataVector) {
-      autofill::FormStructure formStructure(formData);
-      formStructure.DetermineHeuristicTypes();
-      CWVAutofillForm* autofillForm =
-          [[CWVAutofillForm alloc] initWithFormStructure:formStructure];
-      [autofillForms addObject:autofillForm];
-    }
-    completionHandler([autofillForms copy]);
-  };
-
-  // Ignore empty forms.
-  NSUInteger minRequiredFieldsCount = 1;
-  [_JSAutofillManager
-      fetchFormsWithMinimumRequiredFieldsCount:minRequiredFieldsCount
-                                       inFrame:webFrame
-                             completionHandler:fetchCompletionHandler];
-}
-
 #pragma mark - Utility Methods
 
 - (autofill::AutofillManager*)autofillManagerForFrame:(web::WebFrame*)frame {
-  if (!_webState) {
-    return nil;
-  }
-  if (autofill::switches::IsAutofillIFrameMessagingEnabled() && !frame) {
+  if (!_webState || !frame) {
     return nil;
   }
   return autofill::AutofillDriverIOS::FromWebStateAndWebFrame(_webState, frame)
@@ -403,8 +365,8 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
                 (const base::WeakPtr<autofill::AutofillPopupDelegate>&)
                     delegate {
   // frontend_id is > 0 for Autofill suggestions, == 0 for Autocomplete
-  // suggestions, and < 0 for special suggestions such as clear form, or go to
-  // autofill settings which are not supported by CWVAutofillController.
+  // suggestions, and < 0 for special suggestions such as clear form.
+  // We only want Autofill suggestions.
   std::vector<autofill::Suggestion> filtered_suggestions;
   std::copy_if(suggestions.begin(), suggestions.end(),
                std::back_inserter(filtered_suggestions),
@@ -419,26 +381,75 @@ fetchNonPasswordSuggestionsForFormWithName:(NSString*)formName
   [_autofillAgent hideAutofillPopup];
 }
 
+- (void)confirmSaveAutofillProfile:(const autofill::AutofillProfile&)profile
+                          callback:(base::OnceClosure)callback {
+  if (![_delegate respondsToSelector:@selector
+                  (autofillController:
+                      decideSavePolicyForAutofillProfile:decisionHandler:)]) {
+    return;
+  }
+
+  __block base::OnceClosure scopedCallback = std::move(callback);
+  CWVAutofillProfile* autofillProfile =
+      [[CWVAutofillProfile alloc] initWithProfile:profile];
+  [_delegate autofillController:self
+      decideSavePolicyForAutofillProfile:autofillProfile
+                         decisionHandler:^(BOOL save) {
+                           if (save) {
+                             std::move(scopedCallback).Run();
+                           }
+                         }];
+}
+
 - (void)confirmSaveCreditCardLocally:(const autofill::CreditCard&)creditCard
+               saveCreditCardOptions:
+                   (autofill::AutofillClient::SaveCreditCardOptions)
+                       saveCreditCardOptions
                             callback:(autofill::AutofillClient::
                                           LocalSaveCardPromptCallback)callback {
-  if ([_delegate respondsToSelector:@selector
-                 (autofillController:decidePolicyForLocalStorageOfCreditCard
-                                       :decisionHandler:)]) {
-    CWVCreditCard* card = [[CWVCreditCard alloc] initWithCreditCard:creditCard];
-    __block autofill::AutofillClient::LocalSaveCardPromptCallback
-        scopedCallback = std::move(callback);
-    [_delegate autofillController:self
-        decidePolicyForLocalStorageOfCreditCard:card
-                                decisionHandler:^(CWVStoragePolicy policy) {
-                                  if (policy == CWVStoragePolicyAllow) {
-                                    if (scopedCallback)
-                                      std::move(scopedCallback)
-                                          .Run(autofill::AutofillClient::
-                                                   ACCEPTED);
-                                  }
-                                }];
+  if (![_delegate respondsToSelector:@selector(autofillController:
+                                          saveCreditCardWithSaver:)]) {
+    return;
   }
+
+  CWVCreditCardSaver* saver = [[CWVCreditCardSaver alloc]
+            initWithCreditCard:creditCard
+                   saveOptions:saveCreditCardOptions
+             willUploadToCloud:NO
+             legalMessageLines:autofill::LegalMessageLines()
+      uploadSavePromptCallback:autofill::AutofillClient::
+                                   UploadSaveCardPromptCallback()
+       localSavePromptCallback:std::move(callback)];
+  [_delegate autofillController:self saveCreditCardWithSaver:saver];
+  _saver = saver;
+}
+
+- (void)
+    confirmSaveCreditCardToCloud:(const autofill::CreditCard&)creditCard
+               legalMessageLines:(autofill::LegalMessageLines)legalMessageLines
+           saveCreditCardOptions:
+               (autofill::AutofillClient::SaveCreditCardOptions)
+                   saveCreditCardOptions
+                        callback:(autofill::AutofillClient::
+                                      UploadSaveCardPromptCallback)callback {
+  if (![_delegate respondsToSelector:@selector(autofillController:
+                                          saveCreditCardWithSaver:)]) {
+    return;
+  }
+  CWVCreditCardSaver* saver = [[CWVCreditCardSaver alloc]
+            initWithCreditCard:creditCard
+                   saveOptions:saveCreditCardOptions
+             willUploadToCloud:YES
+             legalMessageLines:legalMessageLines
+      uploadSavePromptCallback:std::move(callback)
+       localSavePromptCallback:autofill::AutofillClient::
+                                   LocalSaveCardPromptCallback()];
+  [_delegate autofillController:self saveCreditCardWithSaver:saver];
+  _saver = saver;
+}
+
+- (void)handleCreditCardUploadCompleted:(BOOL)cardSaved {
+  [_saver handleCreditCardUploadCompleted:cardSaved];
 }
 
 - (void)
@@ -469,7 +480,11 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
 }
 
 - (void)loadRiskData:(base::OnceCallback<void(const std::string&)>)callback {
-  [_verifier loadRiskData:std::move(callback)];
+  if (_verifier) {
+    [_verifier loadRiskData:std::move(callback)];
+  } else if (_saver) {
+    [_saver loadRiskData:std::move(callback)];
+  }
 }
 
 - (void)propagateAutofillPredictionsForForms:
@@ -484,6 +499,24 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
   [_autofillAgent fillFormData:form inFrame:frame];
 }
 
+- (void)handleParsedForms:(const std::vector<autofill::FormStructure*>&)forms
+                  inFrame:(web::WebFrame*)frame {
+  if (![_delegate respondsToSelector:@selector(autofillController:
+                                                     didFindForms:frameID:)]) {
+    return;
+  }
+
+  NSMutableArray<CWVAutofillForm*>* autofillForms = [NSMutableArray array];
+  for (autofill::FormStructure* form : forms) {
+    CWVAutofillForm* autofillForm =
+        [[CWVAutofillForm alloc] initWithFormStructure:*form];
+    [autofillForms addObject:autofillForm];
+  }
+  [_delegate autofillController:self
+                   didFindForms:autofillForms
+                        frameID:base::SysUTF8ToNSString(frame->GetFrameId())];
+}
+
 - (void)fillFormDataPredictions:
             (const std::vector<autofill::FormDataPredictions>&)forms
                         inFrame:(web::WebFrame*)frame {
@@ -491,23 +524,6 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
 }
 
 #pragma mark - CRWWebStateObserver
-
-- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
-  if (!success) {
-    return;
-  }
-
-  web::WebFramesManager* framesManager =
-      web::WebFramesManager::FromWebState(_webState);
-  DCHECK(framesManager);
-  web::WebFrame* webFrame = framesManager->GetMainWebFrame();
-  if (!webFrame) {
-    return;
-  }
-
-  // Start listening for any form mutations.
-  [_JSAutofillManager toggleTrackingFormMutations:YES inFrame:webFrame];
-}
 
 - (void)webState:(web::WebState*)webState
     didRegisterFormActivity:(const autofill::FormActivityParams&)params
@@ -520,45 +536,47 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
   NSString* nsFieldType = base::SysUTF8ToNSString(params.field_type);
   NSString* nsFrameID = base::SysUTF8ToNSString(GetWebFrameId(frame));
   NSString* nsValue = base::SysUTF8ToNSString(params.value);
+  BOOL userInitiated = params.has_user_gesture;
   if (params.type == "focus") {
     _lastFocusFormActivityWebFrameID = nsFrameID;
     if ([_delegate respondsToSelector:@selector
-                   (autofillController:didFocusOnFieldWithIdentifier:fieldType
-                                         :formName:frameID:value:)]) {
+                   (autofillController:
+                       didFocusOnFieldWithIdentifier:fieldType:formName:frameID
+                                                    :value:userInitiated:)]) {
       [_delegate autofillController:self
           didFocusOnFieldWithIdentifier:nsFieldIdentifier
                               fieldType:nsFieldType
                                formName:nsFormName
                                 frameID:nsFrameID
-                                  value:nsValue];
+                                  value:nsValue
+                          userInitiated:userInitiated];
     }
   } else if (params.type == "input") {
     _lastFocusFormActivityWebFrameID = nsFrameID;
     if ([_delegate respondsToSelector:@selector
-                   (autofillController:didInputInFieldWithIdentifier:fieldType
-                                         :formName:frameID:value:)]) {
+                   (autofillController:
+                       didInputInFieldWithIdentifier:fieldType:formName:frameID
+                                                    :value:userInitiated:)]) {
       [_delegate autofillController:self
           didInputInFieldWithIdentifier:nsFieldIdentifier
                               fieldType:nsFieldType
                                formName:nsFormName
                                 frameID:nsFrameID
-                                  value:nsValue];
+                                  value:nsValue
+                          userInitiated:userInitiated];
     }
   } else if (params.type == "blur") {
     if ([_delegate respondsToSelector:@selector
-                   (autofillController:didBlurOnFieldWithIdentifier:fieldType
-                                         :formName:frameID:value:)]) {
+                   (autofillController:
+                       didBlurOnFieldWithIdentifier:fieldType:formName:frameID
+                                                   :value:userInitiated:)]) {
       [_delegate autofillController:self
           didBlurOnFieldWithIdentifier:nsFieldIdentifier
                              fieldType:nsFieldType
                               formName:nsFormName
                                frameID:nsFrameID
-                                 value:nsValue];
-    }
-  } else if (params.type == "form_changed") {
-    if ([_delegate respondsToSelector:@selector
-                   (autofillControllerDidInsertFormElements:)]) {
-      [_delegate autofillControllerDidInsertFormElements:self];
+                                 value:nsValue
+                         userInitiated:userInitiated];
     }
   }
 }
@@ -570,12 +588,12 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
                    formInMainFrame:(BOOL)isMainFrame
                            inFrame:(web::WebFrame*)frame {
   if ([_delegate respondsToSelector:@selector
-                 (autofillController:didSubmitFormWithName:userInitiated
-                                       :isMainFrame:)]) {
+                 (autofillController:
+                     didSubmitFormWithName:frameID:userInitiated:)]) {
     [_delegate autofillController:self
             didSubmitFormWithName:base::SysUTF8ToNSString(formName)
-                    userInitiated:userInitiated
-                      isMainFrame:isMainFrame];
+                          frameID:base::SysUTF8ToNSString(frame->GetFrameId())
+                    userInitiated:userInitiated];
   }
 }
 
@@ -591,30 +609,28 @@ showUnmaskPromptForCard:(const autofill::CreditCard&)creditCard
 #pragma mark - CWVPasswordControllerDelegate
 
 - (void)passwordController:(CWVPasswordController*)passwordController
-    decidePasswordSavingPolicyForUsername:(NSString*)username
-                          decisionHandler:
-                              (void (^)(CWVPasswordUserDecision decision))
-                                  decisionHandler {
+    decideSavePolicyForPassword:(CWVPassword*)password
+                decisionHandler:(void (^)(CWVPasswordUserDecision decision))
+                                    decisionHandler {
   if ([self.delegate respondsToSelector:@selector
-                     (autofillController:decidePasswordSavingPolicyForUsername
-                                           :decisionHandler:)]) {
+                     (autofillController:
+                         decideSavePolicyForPassword:decisionHandler:)]) {
     [self.delegate autofillController:self
-        decidePasswordSavingPolicyForUsername:username
-                              decisionHandler:decisionHandler];
+          decideSavePolicyForPassword:password
+                      decisionHandler:decisionHandler];
   }
 }
 
 - (void)passwordController:(CWVPasswordController*)passwordController
-    decidePasswordUpdatingPolicyForUsername:(NSString*)username
-                            decisionHandler:
-                                (void (^)(CWVPasswordUserDecision decision))
-                                    decisionHandler {
+    decideUpdatePolicyForPassword:(CWVPassword*)password
+                  decisionHandler:(void (^)(CWVPasswordUserDecision decision))
+                                      decisionHandler {
   if ([self.delegate respondsToSelector:@selector
-                     (autofillController:decidePasswordUpdatingPolicyForUsername
-                                           :decisionHandler:)]) {
+                     (autofillController:
+                         decideUpdatePolicyForPassword:decisionHandler:)]) {
     [self.delegate autofillController:self
-        decidePasswordUpdatingPolicyForUsername:username
-                                decisionHandler:decisionHandler];
+        decideUpdatePolicyForPassword:password
+                      decisionHandler:decisionHandler];
   }
 }
 

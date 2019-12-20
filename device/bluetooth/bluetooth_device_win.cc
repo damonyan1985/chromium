@@ -18,7 +18,7 @@
 #include "device/bluetooth/bluetooth_socket_thread.h"
 #include "device/bluetooth/bluetooth_socket_win.h"
 #include "device/bluetooth/bluetooth_task_manager_win.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace {
 
@@ -153,10 +153,9 @@ void BluetoothDeviceWin::SetConnectionLatency(
   NOTIMPLEMENTED();
 }
 
-void BluetoothDeviceWin::Connect(
-    PairingDelegate* pairing_delegate,
-    const base::Closure& callback,
-    const ConnectErrorCallback& error_callback) {
+void BluetoothDeviceWin::Connect(PairingDelegate* pairing_delegate,
+                                 base::OnceClosure callback,
+                                 ConnectErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 

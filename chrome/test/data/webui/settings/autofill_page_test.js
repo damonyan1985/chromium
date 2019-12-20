@@ -3,20 +3,6 @@
 // found in the LICENSE file.
 
 cr.define('settings_autofill_page', function() {
-  /** @implements {settings.OpenWindowProxy} */
-  class TestOpenWindowProxy extends TestBrowserProxy {
-    constructor() {
-      super([
-        'openURL',
-      ]);
-    }
-
-    /** @override */
-    openURL(url) {
-      this.methodCalled('openURL', url);
-    }
-  }
-
   suite('PasswordsAndForms', function() {
     /**
      * Creates a new passwords and forms element.
@@ -27,11 +13,9 @@ cr.define('settings_autofill_page', function() {
       element.prefs = prefsElement.prefs;
       document.body.appendChild(element);
 
-      // TODO(dpapad): Update this once migration to Polymer 2 is done.
-      const domIfTag = Polymer.DomIf ? 'dom-if' : 'template';
-      element.$$(`${domIfTag}[route-path="/passwords"]`).if = true;
-      element.$$(`${domIfTag}[route-path="/payments"]`).if = true;
-      element.$$(`${domIfTag}[route-path="/addresses"]`).if = true;
+      element.$$('dom-if[route-path="/passwords"]').if = true;
+      element.$$('dom-if[route-path="/payments"]').if = true;
+      element.$$('dom-if[route-path="/addresses"]').if = true;
       Polymer.dom.flush();
       return element;
     }
@@ -124,10 +108,6 @@ cr.define('settings_autofill_page', function() {
       const expected = new PaymentsManagerExpectations();
       expected.requestedCreditCards = 1;
       expected.listeningCreditCards = 1;
-      expected.requestedLocalCreditCards = 1;
-      expected.listeningLocalCreditCards = 1;
-      expected.requestedServerCreditCards = 1;
-      expected.listeningServerCreditCards = 1;
       return expected;
     }
 
@@ -136,8 +116,9 @@ cr.define('settings_autofill_page', function() {
     let paymentsManager;
 
 
-    setup(function() {
+    setup(async function() {
       PolymerTest.clearBody();
+      await settings.forceLazyLoaded();
 
       // Override the PasswordManagerImpl for testing.
       passwordManager = new TestPasswordManagerProxy();
@@ -176,8 +157,6 @@ cr.define('settings_autofill_page', function() {
         autofillManager.assertExpectations(autofillExpectations);
 
         paymentsExpectations.listeningCreditCards = 0;
-        paymentsExpectations.listeningLocalCreditCards = 0;
-        paymentsExpectations.listeningServerCreditCards = 0;
         paymentsManager.assertExpectations(paymentsExpectations);
 
         destroyPrefs(prefs);
@@ -234,12 +213,15 @@ cr.define('settings_autofill_page', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createAutofillElement(prefs);
 
-        const list =
+        const addressList =
             [FakeDataMaker.addressEntry(), FakeDataMaker.addressEntry()];
-        autofillManager.lastCallback.addAddressListChangedListener(list);
+        const cardList =
+            [FakeDataMaker.creditCardEntry(), FakeDataMaker.creditCardEntry()];
+        autofillManager.lastCallback.setPersonalDataManagerListener(
+            addressList, cardList);
         Polymer.dom.flush();
 
-        assertEquals(list, element.$$('#autofillSection').addresses);
+        assertEquals(addressList, element.$$('#autofillSection').addresses);
 
         // The callback is coming from the manager, so the element shouldn't
         // have additional calls to the manager after the base expectations.
@@ -255,12 +237,15 @@ cr.define('settings_autofill_page', function() {
       return createPrefs(true, true).then(function(prefs) {
         const element = createAutofillElement(prefs);
 
-        const list =
+        const addressList =
+            [FakeDataMaker.addressEntry(), FakeDataMaker.addressEntry()];
+        const cardList =
             [FakeDataMaker.creditCardEntry(), FakeDataMaker.creditCardEntry()];
-        paymentsManager.lastCallback.addCreditCardListChangedListener(list);
+        paymentsManager.lastCallback.setPersonalDataManagerListener(
+            addressList, cardList);
         Polymer.dom.flush();
 
-        assertEquals(list, element.$$('#paymentsSection').creditCards);
+        assertEquals(cardList, element.$$('#paymentsSection').creditCards);
 
         // The callback is coming from the manager, so the element shouldn't
         // have additional calls to the manager after the base expectations.
@@ -292,6 +277,11 @@ cr.define('settings_autofill_page', function() {
 
       PolymerTest.clearBody();
       autofillPage = document.createElement('settings-autofill-page');
+      autofillPage.prefs = {
+        profile: {
+          password_manager_leak_detection: {},
+        },
+      };
       document.body.appendChild(autofillPage);
 
       Polymer.dom.flush();

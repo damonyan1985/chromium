@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_
 
+#include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -18,12 +20,14 @@ struct AutofillMetadata;
 class AutofillProfile;
 class AutofillWebDataService;
 class CreditCard;
-class PersonalDataManager;
+struct CreditCardCloudTokenData;
 struct PaymentsCustomerData;
+class PersonalDataManager;
 }  // namespace autofill
 
 namespace sync_pb {
 class SyncEntity;
+class ModelTypeState;
 }
 
 namespace wallet_helper {
@@ -32,6 +36,7 @@ extern const char kDefaultCardID[];
 extern const char kDefaultAddressID[];
 extern const char kDefaultCustomerID[];
 extern const char kDefaultBillingAddressID[];
+extern const char kDefaultCreditCardCloudTokenDataID[];
 
 // Used to access the personal data manager within a particular sync profile.
 autofill::PersonalDataManager* GetPersonalDataManager(int index)
@@ -57,6 +62,10 @@ void SetPaymentsCustomerData(
     int profile,
     const autofill::PaymentsCustomerData& customer_data);
 
+void SetCreditCardCloudTokenData(
+    int profile,
+    const std::vector<autofill::CreditCardCloudTokenData>& cloud_token_data);
+
 void UpdateServerCardMetadata(int profile,
                               const autofill::CreditCard& credit_card);
 
@@ -64,13 +73,13 @@ void UpdateServerAddressMetadata(
     int profile,
     const autofill::AutofillProfile& server_address);
 
-void GetServerCardsMetadata(
-    int profile,
-    std::map<std::string, autofill::AutofillMetadata>* cards_metadata);
+std::map<std::string, autofill::AutofillMetadata> GetServerCardsMetadata(
+    int profile);
 
-void GetServerAddressesMetadata(
-    int profile,
-    std::map<std::string, autofill::AutofillMetadata>* addresses_metadata);
+std::map<std::string, autofill::AutofillMetadata> GetServerAddressesMetadata(
+    int profile);
+
+sync_pb::ModelTypeState GetWalletDataModelTypeState(int profile);
 
 void UnmaskServerCard(int profile,
                       const autofill::CreditCard& credit_card,
@@ -97,6 +106,10 @@ sync_pb::SyncEntity CreateDefaultSyncWalletAddress();
 sync_pb::SyncEntity CreateSyncWalletAddress(const std::string& name,
                                             const std::string& company);
 
+sync_pb::SyncEntity CreateSyncCreditCardCloudTokenData(
+    const std::string& cloud_token_data_id);
+sync_pb::SyncEntity CreateDefaultSyncCreditCardCloudTokenData();
+
 // TODO(sebsg): Instead add a function to create a card, and one to inject in
 // the server. Then compare the cards directly.
 void ExpectDefaultCreditCardValues(const autofill::CreditCard& card);
@@ -113,7 +126,7 @@ std::vector<autofill::CreditCard*> GetServerCreditCards(int profile);
 }  // namespace wallet_helper
 
 // Checker to block until autofill wallet & server profiles match on both
-// profiles.
+// profiles and until server profiles got converted to local profiles.
 class AutofillWalletChecker : public StatusChangeChecker,
                               public autofill::PersonalDataManagerObserver {
  public:
@@ -122,8 +135,7 @@ class AutofillWalletChecker : public StatusChangeChecker,
 
   // StatusChangeChecker implementation.
   bool Wait() override;
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
+  bool IsExitConditionSatisfied(std::ostream* os) override;
 
   // autofill::PersonalDataManager implementation.
   void OnPersonalDataChanged() override;
@@ -131,6 +143,26 @@ class AutofillWalletChecker : public StatusChangeChecker,
  private:
   const int profile_a_;
   const int profile_b_;
+};
+
+// Checker to block until autofill server profiles got converted to local
+// profiles.
+class AutofillWalletConversionChecker
+    : public StatusChangeChecker,
+      public autofill::PersonalDataManagerObserver {
+ public:
+  explicit AutofillWalletConversionChecker(int profile);
+  ~AutofillWalletConversionChecker() override;
+
+  // StatusChangeChecker implementation.
+  bool Wait() override;
+  bool IsExitConditionSatisfied(std::ostream* os) override;
+
+  // autofill::PersonalDataManager implementation.
+  void OnPersonalDataChanged() override;
+
+ private:
+  const int profile_;
 };
 
 // Checker to block until autofill wallet metadata sizes match on both profiles.
@@ -142,40 +174,17 @@ class AutofillWalletMetadataSizeChecker
   ~AutofillWalletMetadataSizeChecker() override;
 
   // StatusChangeChecker implementation.
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
+  bool IsExitConditionSatisfied(std::ostream* os) override;
 
   // autofill::PersonalDataManager implementation.
   void OnPersonalDataChanged() override;
 
  private:
+  bool IsExitConditionSatisfiedImpl();
+
   const int profile_a_;
   const int profile_b_;
-};
-
-// Class that enables or disables USS based on test parameter. Must be the first
-// base class of the test fixture.
-// TODO(jkrcal): When the new implementation fully launches, remove this class,
-// convert all tests from *_P back to *_F and remove the instance at the end.
-class UssWalletSwitchToggler
-    : public testing::WithParamInterface<std::pair<bool, bool>> {
- public:
-  UssWalletSwitchToggler();
-
-  // Sets up feature overrides, based on the parameter of the test. Must be
-  // called before the test body is entered (otherwise TSan complains about a
-  // data race).
-  void InitWithDefaultFeatures();
-
-  // Sets up feature overrides, adds the toggled feature on top of specified
-  // |enabled_features| and |disabled_features|. Vectors are passed by value
-  // because we need to alter them anyway. Must be called before the test body
-  // is entered (otherwise TSan complains about a data race).
-  void InitWithFeatures(std::vector<base::Feature> enabled_features,
-                        std::vector<base::Feature> disabled_features);
-
- private:
-  base::test::ScopedFeatureList override_features_;
+  bool checking_exit_condition_in_flight_ = false;
 };
 
 #endif  // CHROME_BROWSER_SYNC_TEST_INTEGRATION_WALLET_HELPER_H_

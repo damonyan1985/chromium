@@ -8,15 +8,14 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "remoting/signaling/jid_util.h"
 #include "remoting/signaling/signal_strategy.h"
+#include "remoting/signaling/signaling_id_util.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 #include "third_party/libjingle_xmpp/xmpp/constants.h"
 
@@ -117,7 +116,7 @@ bool IqSender::OnSignalStrategyIncomingStanza(const jingle_xmpp::XmlElement* sta
 
   IqRequest* request = it->second;
 
-  if (NormalizeJid(request->addressee_) != NormalizeJid(from)) {
+  if (NormalizeSignalingId(request->addressee_) != NormalizeSignalingId(from)) {
     LOG(ERROR) << "Received IQ response from an invalid JID. Ignoring it."
                << " Message received from: " << from
                << " Original JID: " << request->addressee_;
@@ -133,10 +132,7 @@ bool IqSender::OnSignalStrategyIncomingStanza(const jingle_xmpp::XmlElement* sta
 IqRequest::IqRequest(IqSender* sender,
                      const IqSender::ReplyCallback& callback,
                      const std::string& addressee)
-    : sender_(sender),
-      callback_(callback),
-      addressee_(addressee),
-      weak_factory_(this) {}
+    : sender_(sender), callback_(callback), addressee_(addressee) {}
 
 IqRequest::~IqRequest() {
   sender_->RemoveRequest(this);
@@ -144,13 +140,14 @@ IqRequest::~IqRequest() {
 
 void IqRequest::SetTimeout(base::TimeDelta timeout) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&IqRequest::OnTimeout, weak_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&IqRequest::OnTimeout, weak_factory_.GetWeakPtr()),
       timeout);
 }
 
 void IqRequest::CallCallback(const jingle_xmpp::XmlElement* stanza) {
   if (!callback_.is_null())
-    base::ResetAndReturn(&callback_).Run(this, stanza);
+    std::move(callback_).Run(this, stanza);
 }
 
 void IqRequest::OnTimeout() {
@@ -163,8 +160,8 @@ void IqRequest::OnResponse(const jingle_xmpp::XmlElement* stanza) {
   std::unique_ptr<jingle_xmpp::XmlElement> stanza_copy(new jingle_xmpp::XmlElement(*stanza));
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&IqRequest::DeliverResponse, weak_factory_.GetWeakPtr(),
-                 base::Passed(&stanza_copy)));
+      base::BindOnce(&IqRequest::DeliverResponse, weak_factory_.GetWeakPtr(),
+                     std::move(stanza_copy)));
 }
 
 void IqRequest::DeliverResponse(std::unique_ptr<jingle_xmpp::XmlElement> stanza) {

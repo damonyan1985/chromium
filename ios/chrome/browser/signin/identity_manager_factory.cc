@@ -5,67 +5,47 @@
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 
 #include <memory>
+#include <utility>
 
+#include "components/image_fetcher/ios/ios_image_decoder_impl.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/pref_registry/pref_registry_syncable.h"
+#include "components/signin/public/base/account_consistency_method.h"
+#include "components/signin/public/base/signin_client.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_manager_builder.h"
+#include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
-#include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
-#include "ios/chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
-#include "services/identity/public/cpp/accounts_mutator.h"
-#include "services/identity/public/cpp/identity_manager.h"
-#include "services/identity/public/cpp/primary_account_mutator_impl.h"
+#include "ios/chrome/browser/signin/device_accounts_provider_impl.h"
+#include "ios/chrome/browser/signin/identity_manager_factory_observer.h"
+#include "ios/chrome/browser/signin/signin_client_factory.h"
 
-// Subclass that wraps IdentityManager in a KeyedService (as IdentityManager is
-// a client-side library intended for use by any process, it would be a layering
-// violation for IdentityManager itself to have direct knowledge of
-// KeyedService).
-// NOTE: Do not add any code here that further ties IdentityManager to
-// ChromeBrowserState without communicating with
-// {blundell, sdefresne}@chromium.org.
-class IdentityManagerWrapper : public KeyedService,
-                               public identity::IdentityManager {
- public:
-  explicit IdentityManagerWrapper(ios::ChromeBrowserState* browser_state)
-      : identity::IdentityManager(
-            ios::SigninManagerFactory::GetForBrowserState(browser_state),
-            ProfileOAuth2TokenServiceFactory::GetForBrowserState(browser_state),
-            ios::AccountTrackerServiceFactory::GetForBrowserState(
-                browser_state),
-            ios::GaiaCookieManagerServiceFactory::GetForBrowserState(
-                browser_state),
-            std::make_unique<identity::PrimaryAccountMutatorImpl>(
-                ios::AccountTrackerServiceFactory::GetForBrowserState(
-                    browser_state),
-                ios::SigninManagerFactory::GetForBrowserState(browser_state)),
-            nullptr) {}
-};
+void IdentityManagerFactory::RegisterBrowserStatePrefs(
+    user_prefs::PrefRegistrySyncable* registry) {
+  signin::IdentityManager::RegisterProfilePrefs(registry);
+}
 
 IdentityManagerFactory::IdentityManagerFactory()
     : BrowserStateKeyedServiceFactory(
           "IdentityManager",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(ios::AccountTrackerServiceFactory::GetInstance());
-  DependsOn(ios::GaiaCookieManagerServiceFactory::GetInstance());
-  DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
-  DependsOn(ios::SigninManagerFactory::GetInstance());
+  DependsOn(SigninClientFactory::GetInstance());
 }
 
 IdentityManagerFactory::~IdentityManagerFactory() {}
 
 // static
-identity::IdentityManager* IdentityManagerFactory::GetForBrowserState(
+signin::IdentityManager* IdentityManagerFactory::GetForBrowserState(
     ios::ChromeBrowserState* browser_state) {
-  return static_cast<IdentityManagerWrapper*>(
+  return static_cast<signin::IdentityManager*>(
       GetInstance()->GetServiceForBrowserState(browser_state, true));
 }
 
 // static
-identity::IdentityManager* IdentityManagerFactory::GetForBrowserStateIfExists(
+signin::IdentityManager* IdentityManagerFactory::GetForBrowserStateIfExists(
     ios::ChromeBrowserState* browser_state) {
-  return static_cast<IdentityManagerWrapper*>(
+  return static_cast<signin::IdentityManager*>(
       GetInstance()->GetServiceForBrowserState(browser_state, false));
 }
 
@@ -75,8 +55,46 @@ IdentityManagerFactory* IdentityManagerFactory::GetInstance() {
   return instance.get();
 }
 
+void IdentityManagerFactory::AddObserver(
+    IdentityManagerFactoryObserver* observer) {
+  observer_list_.AddObserver(observer);
+}
+
+void IdentityManagerFactory::RemoveObserver(
+    IdentityManagerFactoryObserver* observer) {
+  observer_list_.RemoveObserver(observer);
+}
+
 std::unique_ptr<KeyedService> IdentityManagerFactory::BuildServiceInstanceFor(
-    web::BrowserState* browser_state) const {
-  return std::make_unique<IdentityManagerWrapper>(
-      ios::ChromeBrowserState::FromBrowserState(browser_state));
+    web::BrowserState* context) const {
+  ios::ChromeBrowserState* browser_state =
+      ios::ChromeBrowserState::FromBrowserState(context);
+
+  signin::IdentityManagerBuildParams params;
+  params.account_consistency = signin::AccountConsistencyMethod::kMirror;
+  params.device_accounts_provider =
+      std::make_unique<DeviceAccountsProviderImpl>();
+  params.image_decoder = image_fetcher::CreateIOSImageDecoder();
+  params.local_state = GetApplicationContext()->GetLocalState();
+  params.pref_service = browser_state->GetPrefs();
+  params.profile_path = base::FilePath();
+  params.signin_client = SigninClientFactory::GetForBrowserState(browser_state);
+
+  std::unique_ptr<signin::IdentityManager> identity_manager =
+      signin::BuildIdentityManager(&params);
+
+  for (auto& observer : observer_list_)
+    observer.IdentityManagerCreated(identity_manager.get());
+
+  return identity_manager;
+}
+
+void IdentityManagerFactory::BrowserStateShutdown(web::BrowserState* context) {
+  auto* identity_manager = static_cast<signin::IdentityManager*>(
+      GetServiceForBrowserState(context, false));
+  if (identity_manager) {
+    for (auto& observer : observer_list_)
+      observer.IdentityManagerShutdown(identity_manager);
+  }
+  BrowserStateKeyedServiceFactory::BrowserStateShutdown(context);
 }

@@ -88,9 +88,19 @@ When adding tests or bumping timeouts, care must be taken to ensure the
 infrastructure has capacity to handle the extra load.  This is especially true
 for the established
 [Chromium CQ builders](https://chromium.googlesource.com/chromium/src/+/master/infra/config/branch/cq.cfg),
-as they operate under strict execution requirements. Make sure to get an
-infrastructure engineer on the Crossover Team to sign off that there is both
-buildbot and swarming capacity available.
+as they operate under strict execution requirements. Make sure to get a resource
+owner or a member of Chrome Browser Core EngProd to sign off that there is both
+builder and swarmed test shard capacity available.
+
+In particular, pay attention to the capacity of the builder which compiles and
+then triggers and collects swarming task shards. If you're adding a new test
+suite to a bot, and know that the test suite adds one hour of testing time to
+the swarming shards, and know that you have enough swarmed capacity to handle
+that one hour of testing, that's a good start. But if that test *also* happens
+to run in shards which take 10 minutes longer than any other shards on that
+current bot, that means that the top-level builder will also take 10 minutes
+longer to run -- or 20 minutes longer if there are failures and retries. Ensure
+that the builder pool has enough capacity to handle that increase as well.
 
 ## How to use the generate_buildbot_json tool
 ### Test suites
@@ -128,6 +138,10 @@ generated JSON file. Commonly used arguments include:
     * `can_use_on_swarming_builders`: if set to False, disables running this
       test on Swarming on any bot.
 
+    * `idempotent`: if set to False, prevents Swarming from returning the same
+      results of a similar run of the same test. See [task deduplication] for
+      more info.
+
 * `experiment_percentage`: an integer indicating that the test should be run
   as an experiment in the given percentage of builds. Tests running as
   experiments will not cause the containing builds to fail. Values should be
@@ -152,16 +166,17 @@ There are other arguments specific to other test types (script tests, JUnit
 tests, instrumentation tests, CTS tests); consult the generator script and
 test_suites.pyl for more details and examples.
 
+### Compound test suites
 #### Composition test suites
 
-One level of grouping of test suites is supported: composition test suites. A
+One level of grouping of test suites is composition test suites. A
 composition test suite is an array whose contents must all be names of
 individual test suites. Composition test suites *may not* refer to other
-composition test suites. This restriction is by design. First, adding multiple
-levels of indirection would make it more difficult to figure out which bots run
-which tests. Second, having only one minimal grouping construct motivates
-authors to simplify the configurations of tests on the bots and reduce the
-number of test suites.
+composition or matrix compound test suites. This restriction is by design.
+First, adding multiple levels of indirection would make it more difficult to
+figure out which bots run which tests. Second, having only one minimal grouping
+construct motivates authors to simplify the configurations of tests on the bots
+and reduce the number of test suites.
 
 An example of a composition test suite:
 
@@ -181,6 +196,97 @@ An example of a composition test suite:
 
 A bot referring to `linux_gtests` will run both `base_unittests` and
 `x11_unittests`.
+
+#### Matrix compound test suites
+
+Another level of grouping of basic test suites is the matrix compound test
+suite. A matrix compound test suite is a dictionary, composed of references to
+basic test suites (key) and configurations (value). Matrix compound test suites
+have the same restrictions as composition test suites, in that they *cannot*
+reference other composition or matrix test suites. Configurations defined for
+a basic test suite in a matrix test suite are applied to each tests for the
+referenced basic test suite.
+
+For example, for the given basic test suite definition:
+
+```
+  'ios_eg2_tests': {
+    'basic_unittests': {
+      'app': 'base_unittests',
+    },
+    'components_unittests': {
+      'app': 'components_unittests',
+      'swarming': {
+        'dimension_sets': [
+          {
+            'xcode build version': '11a1027',
+          },
+          {
+            'xcode build version': '11b53',
+          }
+        ]
+      }
+    }
+  }
+```
+
+And a matrix compound test suite `ios_simulator_gtests` referencing that basic
+test suite `ios_eg2_tests`:
+
+```
+  'ios_simulator_gtests': {
+      'ios_eg2_tests': {
+        'swarming': {
+          'dimension_sets': [
+            {
+              'device type': 'iPhone X',
+              'os': '13.1',
+            },
+            {
+              'device type': 'iPhone X',
+              'os': '12.2',
+            },
+          ]
+        }
+      }
+  }
+```
+
+Results in four tests running:
+
+* base_unittests on iPhone X with os 13.1
+* base_unittests on iPhone X with os 12.2
+* components_unittests on iPhone X with os 13.1 and xcode version 11a1027
+* components_unittests on iPhone X with os 12.2 and xcode version 11b53
+
+Matrix suites reference a list of basic test suites. Each basic test suite has a
+list of tests. Matrix suites take the cross product between the configuration
+defined by the basic suite and the configuration defined by the matrix suite.
+
+When both configurations define swarming dimension sets, matrix suites attempt
+to merge the two lists. In the example above, the swarming dimension set from
+`component_unittests` is merged with the dimension set defined by the matrix
+suite, resulting in the following dimension set:
+
+```
+  'dimension_sets': [
+    {
+      'device type': 'iPhone X',
+      'os': '13.1',
+      'xcode build version': '11a1027',
+    },
+    {
+      'device type': 'iPhone X',
+      'os': '12.2',
+      'xcode build version': '11b53',
+    },
+  ]
+```
+
+Due to limitations of the merging algorithm, mereging dimension sets fail when
+there are more dimension sets defined in the matrix test suite than the basic
+test suite. On failure, the user is notified of an error merging list key
+dimension sets.
 
 ### Waterfalls
 
@@ -269,11 +375,23 @@ The exceptions file supports the following options per test:
   bot. This can be used to add additional command line arguments, Swarming
   parameters, etc.
 
-* `key_removals`: a dictionary mapping a bot's name to a list of keys which
-  should be removed from the test's specification on that bot. Note that by
-  design, this feature *can not* be used to remove Swarming dictionary entries.
-  This feature was mainly used to match the previously handwritten JSON files,
-  should not be used in the future, and should ideally be removed.
+* `replacements`: a dictionary mapping bot names to a dictionaries of field
+  names to dictionaries of key/value pairs to replace. If the given value is
+  `None`, then the key will simply be removed. For example:
+  ```
+  'foo_tests': {
+    'Foo Tester': {
+      'args': {
+        '--some-flag': None,
+        '--another-flag': 'some-value',
+      },
+    },
+  }
+  ```
+  would remove the `--some-flag` and replace whatever value `--another-flag` was
+  set to with `some-value`. Note that passing `None` only works if the flag
+  being removed either has no value or is in the `--key=value` format. It does
+  not work if the key and value are two separate entries in the args list.
 
 ### Order of application of test changes
 
@@ -334,3 +452,5 @@ the data files. Some examples might include:
 
 `dpranke`, `jbudorick` or `kbr` will be glad to review any improvements you make
 to the tools. Thanks in advance for contributing!
+
+[task deduplication]: https://chromium.googlesource.com/infra/luci/luci-py/+/HEAD/appengine/swarming/doc/Detailed-Design.md#task-deduplication

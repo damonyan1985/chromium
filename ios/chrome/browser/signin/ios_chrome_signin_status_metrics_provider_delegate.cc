@@ -4,27 +4,25 @@
 
 #include "ios/chrome/browser/signin/ios_chrome_signin_status_metrics_provider_delegate.h"
 
-#include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_status_metrics_provider.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 IOSChromeSigninStatusMetricsProviderDelegate::
     IOSChromeSigninStatusMetricsProviderDelegate() {}
 
 IOSChromeSigninStatusMetricsProviderDelegate::
     ~IOSChromeSigninStatusMetricsProviderDelegate() {
-  ios::SigninManagerFactory* factory = ios::SigninManagerFactory::GetInstance();
+  IdentityManagerFactory* factory = IdentityManagerFactory::GetInstance();
   if (factory)
     factory->RemoveObserver(this);
 }
 
 void IOSChromeSigninStatusMetricsProviderDelegate::Initialize() {
-  ios::SigninManagerFactory* factory = ios::SigninManagerFactory::GetInstance();
+  IdentityManagerFactory* factory = IdentityManagerFactory::GetInstance();
   if (factory)
     factory->AddObserver(this);
 }
@@ -47,13 +45,14 @@ IOSChromeSigninStatusMetricsProviderDelegate::GetStatusOfAllAccounts() {
   return accounts_status;
 }
 
-std::vector<SigninManager*> IOSChromeSigninStatusMetricsProviderDelegate::
-    GetSigninManagersForAllAccounts() {
-  std::vector<SigninManager*> managers;
+std::vector<signin::IdentityManager*>
+IOSChromeSigninStatusMetricsProviderDelegate::
+    GetIdentityManagersForAllAccounts() {
+  std::vector<signin::IdentityManager*> managers;
   for (ios::ChromeBrowserState* browser_state :
        GetLoadedChromeBrowserStates()) {
-    SigninManager* manager =
-        ios::SigninManagerFactory::GetForBrowserStateIfExists(browser_state);
+    signin::IdentityManager* manager =
+        IdentityManagerFactory::GetForBrowserStateIfExists(browser_state);
     if (manager) {
       managers.push_back(manager);
     }
@@ -62,14 +61,14 @@ std::vector<SigninManager*> IOSChromeSigninStatusMetricsProviderDelegate::
   return managers;
 }
 
-void IOSChromeSigninStatusMetricsProviderDelegate::SigninManagerCreated(
-    SigninManager* manager) {
-  owner()->OnSigninManagerCreated(manager);
+void IOSChromeSigninStatusMetricsProviderDelegate::IdentityManagerCreated(
+    signin::IdentityManager* manager) {
+  owner()->OnIdentityManagerCreated(manager);
 }
 
-void IOSChromeSigninStatusMetricsProviderDelegate::SigninManagerShutdown(
-    SigninManager* manager) {
-  owner()->OnSigninManagerShutdown(manager);
+void IOSChromeSigninStatusMetricsProviderDelegate::IdentityManagerShutdown(
+    signin::IdentityManager* manager) {
+  owner()->OnIdentityManagerShutdown(manager);
 }
 
 std::vector<ios::ChromeBrowserState*>

@@ -1,17 +1,6 @@
 {
   "layers": [
     {
-      "name": "LayoutView #document",
-      "bounds": [800, 600],
-      "drawsContent": false,
-      "backgroundColor": "#FFFFFF"
-    },
-    {
-      "name": "Scrolling Layer",
-      "bounds": [800, 600],
-      "drawsContent": false
-    },
-    {
       "name": "Scrolling Contents Layer",
       "bounds": [800, 600],
       "contentsOpaque": true,
@@ -19,11 +8,11 @@
       "paintInvalidations": [
         {
           "object": "LayoutDeprecatedFlexibleBox DIV id='container' class='folded'",
-          "rect": [8, 8, 285, 21],
+          "rect": [8, 8, 285, 24],
           "reason": "chunk disappeared"
         },
         {
-          "object": "LayoutBlockFlow HTML",
+          "object": "LayoutNGBlockFlow HTML",
           "rect": [8, 10, 271, 43],
           "reason": "chunk appeared"
         }

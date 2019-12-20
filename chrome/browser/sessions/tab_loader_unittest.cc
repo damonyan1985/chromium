@@ -15,12 +15,12 @@
 #include "chrome/browser/sessions/session_restore_test_utils.h"
 #include "chrome/browser/sessions/tab_loader_tester.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/variations/variations_params_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_web_contents_factory.h"
+#include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using resource_coordinator::TabLoadTracker;
@@ -58,13 +58,15 @@ class TabLoaderTest : public testing::Test {
 
     TabLoaderTester::SetConstructionCallbackForTesting(nullptr);
     test_web_contents_factory_.reset();
-    thread_bundle_.RunUntilIdle();
+    task_environment_.RunUntilIdle();
     test_policy_.reset();
   }
 
   void SimulateLoadTimeout() {
-    // Unfortunately there's no mock time in BrowserThreadBundle. Fast-forward
-    // things and simulate firing the timer.
+    // Unfortunately there's no mock time in BrowserTaskEnvironment.
+    // Fast-forward things and simulate firing the timer.
+    // TODO(crbug.com/905412): TaskEnvironment::TimeSource::MOCK_TIME now
+    // supports this.
     EXPECT_TRUE(tab_loader_.force_load_timer().IsRunning());
     clock_.SetNowTicks(tab_loader_.force_load_time());
     tab_loader_.force_load_timer().Stop();
@@ -102,10 +104,9 @@ class TabLoaderTest : public testing::Test {
     // TabLoadTracker needs the resource_coordinator WebContentsData to be
     // initialized.
     ResourceCoordinatorTabHelper::CreateForWebContents(test_contents);
-
-    restored_tabs_.push_back(
-        RestoredTab(test_contents, is_active /* is_active */,
-                    false /* is_app */, false /* is_pinned */));
+    restored_tabs_.push_back(RestoredTab(
+        test_contents, is_active /* is_active */, false /* is_app */,
+        false /* is_pinned */, base::nullopt /* group */));
 
     // If the tab is active start "loading" it right away for consistency with
     // session restore code.
@@ -121,6 +122,13 @@ class TabLoaderTest : public testing::Test {
       CreateRestoredWebContents(true);
     for (size_t i = 0; i < num_inactive; ++i)
       CreateRestoredWebContents(false);
+  }
+
+  void StartTabLoader() {
+    TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
+    EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+    EXPECT_FALSE(tab_loader_.IsLoadingEnabled());
+    tab_loader_.WaitForTabLoadingEnabled();
   }
 
   // The number of loading slots to use. This needs to be set before the
@@ -141,7 +149,7 @@ class TabLoaderTest : public testing::Test {
   base::RepeatingCallback<void(TabLoader*)> construction_callback_;
 
   std::unique_ptr<content::TestWebContentsFactory> test_web_contents_factory_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile testing_profile_;
   std::unique_ptr<testing::ScopedAlwaysLoadSessionRestoreTestPolicy>
       test_policy_;
@@ -158,14 +166,12 @@ TEST_F(TabLoaderTest, AllLoadingSlotsUsed) {
   // inactive tabs should immediately be scheduled to load as well.
   max_simultaneous_loads_ = 4;
 
-  // Create the tab loader.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+  StartTabLoader();
 
   // The loader should be enabled, with 2 tabs loading and 4 tabs left to go.
   // The initial load should exclusively allow active tabs time to load, and
   // fill up the rest of the loading slots.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   EXPECT_EQ(4u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(2u, tab_loader_.scheduled_to_load_count());
   EXPECT_EQ(2u, TabLoadTracker::Get()->GetLoadingTabCount());
@@ -199,12 +205,10 @@ TEST_F(TabLoaderTest, ForceLoadTimer) {
   CreateMultipleRestoredWebContents(1, 1);
   max_simultaneous_loads_ = 1;
 
-  // Create the tab loader.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+  StartTabLoader();
 
   // The loader should be enabled, with 1 tab loading and 1 tab left to go.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   EXPECT_EQ(1u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
   EXPECT_EQ(1u, TabLoadTracker::Get()->GetLoadingTabCount());
@@ -215,7 +219,7 @@ TEST_F(TabLoaderTest, ForceLoadTimer) {
 
   // Expect all tabs to be loading. Note that this also validates that
   // force-loads can exceed the number of loadingslots.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   EXPECT_TRUE(tab_loader_.tabs_to_load().empty());
   EXPECT_EQ(2u, tab_loader_.scheduled_to_load_count());
   EXPECT_EQ(2u, TabLoadTracker::Get()->GetLoadingTabCount());
@@ -227,12 +231,10 @@ TEST_F(TabLoaderTest, LoadsAreStaggered) {
   CreateMultipleRestoredWebContents(1, 1);
   max_simultaneous_loads_ = 1;
 
-  // Create the tab loader.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+  StartTabLoader();
 
   // The loader should be enabled, with 1 tab loading and 1 tab left to go.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   EXPECT_EQ(1u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
   EXPECT_EQ(1u, TabLoadTracker::Get()->GetLoadingTabCount());
@@ -242,7 +244,7 @@ TEST_F(TabLoaderTest, LoadsAreStaggered) {
   SimulateLoaded(0);
 
   // Expect all tabs to be loaded/loading.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   EXPECT_TRUE(tab_loader_.tabs_to_load().empty());
   EXPECT_EQ(2u, tab_loader_.scheduled_to_load_count());
   EXPECT_EQ(1u, TabLoadTracker::Get()->GetLoadedTabCount());
@@ -255,16 +257,18 @@ TEST_F(TabLoaderTest, OnMemoryPressure) {
   // doesn't immediately kick off loading of all tabs and detach.
   CreateMultipleRestoredWebContents(0, 2);
 
-  // Create the tab loader.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+  max_simultaneous_loads_ = 1;
+  StartTabLoader();
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
 
-  // Simulate memory pressure and expect the tab loader to disable loading and
-  // detach from being the shared tab loader.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
+  // Simulate memory pressure and expect the tab loader to disable loading.
+  EXPECT_TRUE(tab_loader_.IsLoadingEnabled());
   tab_loader_.OnMemoryPressure(
       base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE);
+  EXPECT_FALSE(tab_loader_.IsLoadingEnabled());
+
+  // Finish loading the tab and expect the tab loader to disconnect.
+  SimulateLoaded(0);
   EXPECT_TRUE(TabLoaderTester::shared_tab_loader() == nullptr);
 }
 
@@ -274,10 +278,9 @@ TEST_F(TabLoaderTest, TimeoutCanExceedLoadingSlots) {
   // Create the tab loader with 2 loading slots. This should initially start
   // loading 1 tab, due to exclusive initial loading of active tabs.
   max_simultaneous_loads_ = 2;
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
+  StartTabLoader();
   EXPECT_EQ(4u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
 
   // Simulate a timeout and expect there to be 2 loading tabs and 3 left to
   // load.
@@ -332,32 +335,6 @@ TEST_F(TabLoaderTest, DelegatePolicyIsApplied) {
 
   test_policy_.reset();
 
-  std::set<std::string> features;
-  features.insert(features::kInfiniteSessionRestore.name);
-
-  // Configure the policy engine via its experimental feature. This configures
-  // it such that there are 2 max simultaneous tab loads, and 3 maximum tabs to
-  // restore.
-  std::map<std::string, std::string> params;
-  params[rc::InfiniteSessionRestoreParams::kMinSimultaneousTabLoads.name] = "2";
-  params[rc::InfiniteSessionRestoreParams::kMaxSimultaneousTabLoads.name] = "2";
-  params[rc::InfiniteSessionRestoreParams::kCoresPerSimultaneousTabLoad.name] =
-      "0";
-  params[rc::InfiniteSessionRestoreParams::kMinTabsToRestore.name] = "1";
-  params[rc::InfiniteSessionRestoreParams::kMaxTabsToRestore.name] = "3";
-
-  // Disable these policy features.
-  params[rc::InfiniteSessionRestoreParams::kMbFreeMemoryPerTabToRestore.name] =
-      "0";
-  params[rc::InfiniteSessionRestoreParams::kMaxTimeSinceLastUseToRestore.name] =
-      "0";
-  params[rc::InfiniteSessionRestoreParams::kMinSiteEngagementToRestore.name] =
-      "0";
-
-  variations::testing::VariationParamsManager variations_manager;
-  variations_manager.SetVariationParamsWithFeatureAssociations(
-      "DummyTrial", params, features);
-
   // Don't directly configure the max simultaneous loads, but rather let it be
   // configured via the policy engine.
   max_simultaneous_loads_ = 0;
@@ -367,10 +344,22 @@ TEST_F(TabLoaderTest, DelegatePolicyIsApplied) {
 
   // Create the tab loader. This should initially start loading 1 tab, due to
   // exclusive initial loading of active tabs.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
+  StartTabLoader();
   EXPECT_EQ(4u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
+
+  // Configure the policy engine explicitly. Values of zero disable those
+  // particular aspects of the policy engine.
+  auto* policy = tab_loader_.GetPolicy();
+  policy->MinSimultaneousTabLoadsForTesting() = 2;
+  policy->MaxSimultaneousTabLoadsForTesting() = 2;
+  policy->CoresPerSimultaneousTabLoadForTesting() = 0;
+  policy->MinTabsToRestoreForTesting() = 1;
+  policy->MaxTabsToRestoreForTesting() = 3;
+  policy->MbFreeMemoryPerTabToRestoreForTesting() = 0;
+  policy->MaxTimeSinceLastUseToRestoreForTesting() = base::TimeDelta();
+  policy->MinSiteEngagementToRestoreForTesting() = 0;
+  policy->CalculateSimultaneousTabLoadsForTesting();
 
   // Simulate the first tab as having loaded. Another 2 should start loading.
   SimulateLoaded(0);
@@ -392,10 +381,9 @@ TEST_F(TabLoaderTest, ObservesExternallyInitiatedLoads) {
   // Create the tab loader with 1 loading slots. This should initially start
   // loading 1 tab, due to exclusive initial loading of active tabs.
   max_simultaneous_loads_ = 1;
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
+  StartTabLoader();
   EXPECT_EQ(2u, tab_loader_.tabs_to_load().size());
   EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
 
   // Manually initiate the load on one of the tabs, as would occur if a user
   // focused a tab. The tab should no longer be in the scheduled to load bucket.

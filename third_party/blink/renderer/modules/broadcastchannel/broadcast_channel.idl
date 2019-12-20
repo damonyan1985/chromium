@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// https://html.spec.whatwg.org/multipage/comms.html#broadcastchannel
+// https://html.spec.whatwg.org/C/#broadcastchannel
 
 [
-    Constructor(DOMString name),
-    ConstructorCallWith=ExecutionContext,
-    RaisesException=Constructor,
     Exposed=(Window,Worker),
     ActiveScriptWrappable,
     Measure
 ] interface BroadcastChannel : EventTarget {
+    [CallWith=ExecutionContext, RaisesException] constructor(DOMString name);
     readonly attribute DOMString name;
 
     [RaisesException, Measure] void postMessage(any message);

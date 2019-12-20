@@ -5,9 +5,9 @@
 #import "ios/chrome/browser/ui/dialogs/java_script_dialog_blocking_state.h"
 
 #include "base/logging.h"
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/navigation_context.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -54,3 +54,5 @@ void JavaScriptDialogBlockingState::WebStateDestroyed(
   web_state_->RemoveObserver(this);
   web_state_ = nullptr;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(JavaScriptDialogBlockingState)

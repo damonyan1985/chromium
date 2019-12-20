@@ -116,7 +116,7 @@ void ZygoteHostImpl::Init(const base::CommandLine& command_line) {
     LOG(FATAL)
         << "No usable sandbox! Update your kernel or see "
            "https://chromium.googlesource.com/chromium/src/+/master/"
-           "docs/linux_suid_sandbox_development.md for more information on "
+           "docs/linux/suid_sandbox_development.md for more information on "
            "developing with the SUID sandbox. "
            "If you want to live dangerously and need an immediate workaround, "
            "you can try using --"
@@ -272,8 +272,8 @@ void ZygoteHostImpl::AdjustRendererOOMScore(base::ProcessHandle pid,
   std::vector<std::string> adj_oom_score_cmdline;
   adj_oom_score_cmdline.push_back(sandbox_binary_);
   adj_oom_score_cmdline.push_back(sandbox::kAdjustOOMScoreSwitch);
-  adj_oom_score_cmdline.push_back(base::Int64ToString(pid));
-  adj_oom_score_cmdline.push_back(base::IntToString(score));
+  adj_oom_score_cmdline.push_back(base::NumberToString(pid));
+  adj_oom_score_cmdline.push_back(base::NumberToString(score));
 
   // sandbox_helper_process is a setuid binary.
   base::LaunchOptions options;

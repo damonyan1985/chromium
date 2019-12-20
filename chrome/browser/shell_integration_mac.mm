@@ -7,6 +7,7 @@
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/scoped_cftyperef.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/common/channel_info.h"
 #include "components/version_info/version_info.h"
@@ -34,17 +35,15 @@ bool IsIdentifierDefaultBrowser(NSString* identifier) {
 // application for the given protocol.
 bool IsIdentifierDefaultProtocolClient(NSString* identifier,
                                        NSString* protocol) {
-  CFStringRef default_client_cf =
-      LSCopyDefaultHandlerForURLScheme(base::mac::NSToCFCast(protocol));
-  NSString* default_client = static_cast<NSString*>(
-      base::mac::CFTypeRefToNSObjectAutorelease(default_client_cf));
+  base::ScopedCFTypeRef<CFStringRef> default_client(
+      LSCopyDefaultHandlerForURLScheme(base::mac::NSToCFCast(protocol)));
   if (!default_client)
     return false;
 
   // We need to ensure we do the comparison case-insensitive as LS doesn't
   // persist the case of our bundle id.
   NSComparisonResult result =
-      [default_client caseInsensitiveCompare:identifier];
+      [base::mac::CFToNSCast(default_client) caseInsensitiveCompare:identifier];
   return result == NSOrderedSame;
 }
 
@@ -70,17 +69,15 @@ bool SetAsDefaultBrowser() {
   // behind the Chrome window. The user never sees the dialog, and therefore
   // never confirms the change. Make the CoreServicesUIAgent active so the
   // confirmation dialog comes to the front.
-  if (base::mac::IsAtLeastOS10_10()) {
-    NSString* const kCoreServicesUIAgentBundleID =
-        @"com.apple.coreservices.uiagent";
+  NSString* const kCoreServicesUIAgentBundleID =
+      @"com.apple.coreservices.uiagent";
 
-    for (NSRunningApplication* application in
-         [[NSWorkspace sharedWorkspace] runningApplications]) {
-      if ([[application bundleIdentifier]
-              isEqualToString:kCoreServicesUIAgentBundleID]) {
-        [application activateWithOptions:NSApplicationActivateAllWindows];
-        break;
-      }
+  for (NSRunningApplication* application in
+       [[NSWorkspace sharedWorkspace] runningApplications]) {
+    if ([[application bundleIdentifier]
+            isEqualToString:kCoreServicesUIAgentBundleID]) {
+      [application activateWithOptions:NSApplicationActivateAllWindows];
+      break;
     }
   }
 

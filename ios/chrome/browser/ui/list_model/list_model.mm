@@ -265,6 +265,39 @@ typedef NSMutableArray<ListItem*> SectionItems;
   return [NSIndexPath indexPathForItem:item inSection:section];
 }
 
+- (NSIndexPath*)indexPathForItemType:(NSInteger)itemType {
+  __block NSIndexPath* indexPath = nil;
+  [_sections
+      enumerateObjectsUsingBlock:^(SectionItems* sectionItems,
+                                   NSUInteger sectionIndex, BOOL* sectionStop) {
+        [sectionItems enumerateObjectsUsingBlock:^(
+                          ListItem* obj, NSUInteger itemIndex, BOOL* itemStop) {
+          if (obj.type == itemType) {
+            indexPath = [NSIndexPath indexPathForRow:itemIndex
+                                           inSection:sectionIndex];
+            *itemStop = YES;
+          }
+        }];
+        *sectionStop = (indexPath != nil);
+      }];
+  return indexPath;
+}
+
+- (NSArray<NSIndexPath*>*)indexPathsForItemType:(NSInteger)itemType
+                              sectionIdentifier:(NSInteger)sectionIdentifier {
+  NSMutableArray<NSIndexPath*>* indexPaths = [[NSMutableArray alloc] init];
+  NSInteger section = [self sectionForSectionIdentifier:sectionIdentifier];
+  SectionItems* items = [_sections objectAtIndex:section];
+  [items enumerateObjectsUsingBlock:^(ListItem* obj, NSUInteger itemIndex,
+                                      BOOL* itemStop) {
+    if (obj.type == itemType) {
+      [indexPaths addObject:[NSIndexPath indexPathForItem:itemIndex
+                                                inSection:section]];
+    }
+  }];
+  return indexPaths;
+}
+
 #pragma mark Query index paths from items
 
 - (BOOL)hasItem:(ListItem*)item

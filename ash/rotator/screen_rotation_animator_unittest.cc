@@ -60,15 +60,18 @@ class AnimationObserver : public ScreenRotationAnimatorObserver {
  public:
   AnimationObserver() = default;
 
-  bool notified() const { return notified_; }
+  bool copy_notified() const { return copy_notified_; }
+  bool finish_notified() const { return finish_notified_; }
 
-  void OnScreenRotationAnimationFinished(
-      ScreenRotationAnimator* animator) override {
-    notified_ = true;
+  void OnScreenCopiedBeforeRotation() override { copy_notified_ = true; }
+  void OnScreenRotationAnimationFinished(ScreenRotationAnimator* animator,
+                                         bool canceled) override {
+    finish_notified_ = true;
   }
 
  private:
-  bool notified_ = false;
+  bool copy_notified_ = false;
+  bool finish_notified_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(AnimationObserver);
 };
@@ -76,8 +79,8 @@ class AnimationObserver : public ScreenRotationAnimatorObserver {
 class TestScreenRotationAnimator : public ScreenRotationAnimator {
  public:
   TestScreenRotationAnimator(aura::Window* root_window,
-                             const base::Closure& before_callback,
-                             const base::Closure& after_callback);
+                             const base::RepeatingClosure& before_callback,
+                             const base::RepeatingClosure& after_callback);
   ~TestScreenRotationAnimator() override = default;
 
  private:
@@ -91,16 +94,16 @@ class TestScreenRotationAnimator : public ScreenRotationAnimator {
   void IntersectAfter(CopyCallback next_callback,
                       std::unique_ptr<viz::CopyOutputResult> result);
 
-  base::Closure intersect_before_callback_;
-  base::Closure intersect_after_callback_;
+  base::RepeatingClosure intersect_before_callback_;
+  base::RepeatingClosure intersect_after_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TestScreenRotationAnimator);
 };
 
 TestScreenRotationAnimator::TestScreenRotationAnimator(
     aura::Window* root_window,
-    const base::Closure& before_callback,
-    const base::Closure& after_callback)
+    const base::RepeatingClosure& before_callback,
+    const base::RepeatingClosure& after_callback)
     : ScreenRotationAnimator(root_window),
       intersect_before_callback_(before_callback),
       intersect_after_callback_(after_callback) {}
@@ -198,8 +201,8 @@ class ScreenRotationAnimatorSmoothAnimationTest : public AshTestBase {
   TestScreenRotationAnimator* animator() { return animator_.get(); }
 
   void SetScreenRotationAnimator(aura::Window* root_window,
-                                 const base::Closure& before_callback,
-                                 const base::Closure& after_callback);
+                                 const base::RepeatingClosure& before_callback,
+                                 const base::RepeatingClosure& after_callback);
 
   ScreenRotationAnimatorTestApi* test_api() { return test_api_.get(); }
 
@@ -227,7 +230,7 @@ void ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay(
 }
 
 void ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback() {
-  run_loop_->QuitWhenIdle();
+  run_loop_->Quit();
 }
 
 void ScreenRotationAnimatorSmoothAnimationTest::SetUp() {
@@ -245,8 +248,8 @@ void ScreenRotationAnimatorSmoothAnimationTest::SetUp() {
 
 void ScreenRotationAnimatorSmoothAnimationTest::SetScreenRotationAnimator(
     aura::Window* root_window,
-    const base::Closure& before_callback,
-    const base::Closure& after_callback) {
+    const base::RepeatingClosure& before_callback,
+    const base::RepeatingClosure& after_callback) {
   animator_ = std::make_unique<TestScreenRotationAnimator>(
       root_window, before_callback, after_callback);
   test_api_ = std::make_unique<ScreenRotationAnimatorTestApi>(animator_.get());
@@ -261,40 +264,46 @@ void ScreenRotationAnimatorSmoothAnimationTest::WaitForCopyCallback() {
 TEST_F(ScreenRotationAnimatorSlowAnimationTest, ShouldNotifyObserver) {
   SetDisplayRotation(display_id(), display::Display::ROTATE_0);
   AnimationObserver observer;
-  animator()->AddScreenRotationAnimatorObserver(&observer);
-  EXPECT_FALSE(observer.notified());
+  animator()->AddObserver(&observer);
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   animator()->Rotate(display::Display::ROTATE_90,
                      display::Display::RotationSource::USER,
                      DisplayConfigurationController::ANIMATION_SYNC);
-  EXPECT_FALSE(observer.notified());
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   test_api()->CompleteAnimations();
-  EXPECT_TRUE(observer.notified());
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_TRUE(observer.finish_notified());
   EXPECT_FALSE(test_api()->HasActiveAnimations());
-  animator()->RemoveScreenRotationAnimatorObserver(&observer);
+  animator()->RemoveObserver(&observer);
 }
 
 TEST_F(ScreenRotationAnimatorSlowAnimationTest, ShouldNotifyObserverOnce) {
   SetDisplayRotation(display_id(), display::Display::ROTATE_0);
   AnimationObserver observer;
-  animator()->AddScreenRotationAnimatorObserver(&observer);
-  EXPECT_FALSE(observer.notified());
+  animator()->AddObserver(&observer);
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   animator()->Rotate(display::Display::ROTATE_90,
                      display::Display::RotationSource::USER,
                      DisplayConfigurationController::ANIMATION_SYNC);
-  EXPECT_FALSE(observer.notified());
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   animator()->Rotate(display::Display::ROTATE_180,
                      display::Display::RotationSource::USER,
                      DisplayConfigurationController::ANIMATION_SYNC);
-  EXPECT_FALSE(observer.notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   test_api()->CompleteAnimations();
-  EXPECT_TRUE(observer.notified());
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_TRUE(observer.finish_notified());
   EXPECT_FALSE(test_api()->HasActiveAnimations());
-  animator()->RemoveScreenRotationAnimatorObserver(&observer);
+  animator()->RemoveObserver(&observer);
 }
 
 TEST_F(ScreenRotationAnimatorSlowAnimationTest, RotatesToDifferentRotation) {
@@ -370,12 +379,12 @@ TEST_F(ScreenRotationAnimatorSlowAnimationTest, ShouldCompleteAnimations) {
 // The OverviewButton should be hidden.
 TEST_F(ScreenRotationAnimatorSlowAnimationTest,
        OverviewButtonTrayHideAnimationAlwaysCompletes) {
-  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
 
   // Long duration for hide animation, to allow it to be interrupted.
   ui::ScopedAnimationDurationScaleMode hide_duration(
       ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
-  GetTray()->SetVisible(false);
+  GetTray()->SetVisiblePreferred(false);
 
   // ScreenRotationAnimator copies the current layers, and deletes them upon
   // completion. Allow its animation to complete first.
@@ -386,7 +395,43 @@ TEST_F(ScreenRotationAnimatorSlowAnimationTest,
                      display::Display::RotationSource::USER,
                      DisplayConfigurationController::ANIMATION_SYNC);
 
-  EXPECT_FALSE(GetTray()->visible());
+  EXPECT_FALSE(GetTray()->GetVisible());
+}
+
+TEST_F(ScreenRotationAnimatorSmoothAnimationTest, Observer) {
+  const int64_t display_id = display_manager()->GetDisplayAt(0).id();
+
+  SetScreenRotationAnimator(
+      Shell::GetRootWindowForDisplayId(display_id),
+      base::BindRepeating(
+          &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
+          base::Unretained(this)),
+      base::BindRepeating(
+          &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
+          base::Unretained(this)));
+  AnimationObserver observer;
+  animator()->AddObserver(&observer);
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
+
+  SetDisplayRotation(display_id, display::Display::ROTATE_0);
+  animator()->Rotate(display::Display::ROTATE_90,
+                     display::Display::RotationSource::USER,
+                     DisplayConfigurationController::ANIMATION_ASYNC);
+  EXPECT_TRUE(animator()->IsRotating());
+  WaitForCopyCallback();
+  EXPECT_TRUE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
+
+  WaitForCopyCallback();
+
+  EXPECT_TRUE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
+  test_api()->CompleteAnimations();
+  EXPECT_FALSE(test_api()->HasActiveAnimations());
+  EXPECT_EQ(display::Display::ROTATE_90, GetDisplayRotation(display_id));
+  EXPECT_TRUE(observer.copy_notified());
+  EXPECT_TRUE(observer.finish_notified());
 }
 
 // Test enable smooth screen rotation code path.
@@ -396,9 +441,14 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(display_id),
       run_loop_->QuitWhenIdleClosure(),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
           base::Unretained(this)));
+  AnimationObserver observer;
+  animator()->AddObserver(&observer);
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
+
   SetDisplayRotation(display_id, display::Display::ROTATE_0);
   animator()->Rotate(display::Display::ROTATE_90,
                      display::Display::RotationSource::USER,
@@ -407,9 +457,14 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
 
   EXPECT_EQ(display::Display::ROTATE_90, animator()->GetTargetRotation());
   EXPECT_NE(display::Display::ROTATE_90, GetDisplayRotation(display_id));
+  EXPECT_FALSE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
 
   WaitForCopyCallback();
   EXPECT_TRUE(test_api()->HasActiveAnimations());
+  EXPECT_TRUE(observer.copy_notified());
+  EXPECT_FALSE(observer.finish_notified());
+
   EXPECT_EQ(display::Display::ROTATE_90, animator()->GetTargetRotation());
   // Once copy is made, the rotation is set to the target, with the
   // image that was rotated to the original orientation.
@@ -418,6 +473,8 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   test_api()->CompleteAnimations();
   EXPECT_FALSE(test_api()->HasActiveAnimations());
   EXPECT_EQ(display::Display::ROTATE_90, GetDisplayRotation(display_id));
+  EXPECT_TRUE(observer.copy_notified());
+  EXPECT_TRUE(observer.finish_notified());
 }
 
 // If the rotating external secondary display is removed before the first copy
@@ -432,7 +489,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
 
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(secondary_display_id),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay,
           base::Unretained(this), "640x480"),
       run_loop_->QuitWhenIdleClosure());
@@ -458,7 +515,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   const int64_t secondary_display_id = display_manager()->GetDisplayAt(0).id();
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(primary_display_id),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay,
           base::Unretained(this), "640x480"),
       run_loop_->QuitWhenIdleClosure());
@@ -483,7 +540,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(secondary_display_id),
       run_loop_->QuitWhenIdleClosure(),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay,
           base::Unretained(this), "640x480"));
   SetDisplayRotation(secondary_display_id, display::Display::ROTATE_0);
@@ -509,7 +566,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(primary_display_id),
       run_loop_->QuitWhenIdleClosure(),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay,
           base::Unretained(this), "640x480"));
   SetDisplayRotation(primary_display_id, display::Display::ROTATE_0);
@@ -534,7 +591,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   const int64_t secondary_display_id = display_manager()->GetDisplayAt(0).id();
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(secondary_display_id),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::RemoveSecondaryDisplay,
           base::Unretained(this), "640x480"),
       run_loop_->QuitWhenIdleClosure());
@@ -553,12 +610,12 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
 // The OverviewButton should be hidden.
 TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
        OverviewButtonTrayHideAnimationAlwaysCompletes) {
-  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
 
   // Long duration for hide animation, to allow it to be interrupted.
   ui::ScopedAnimationDurationScaleMode hide_duration(
       ui::ScopedAnimationDurationScaleMode::SLOW_DURATION);
-  GetTray()->SetVisible(false);
+  GetTray()->SetVisiblePreferred(false);
 
   // Allow ScreenRotationAnimator animation to complete first.
   ui::ScopedAnimationDurationScaleMode rotate_duration(
@@ -567,7 +624,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   SetScreenRotationAnimator(
       Shell::GetRootWindowForDisplayId(display_id),
       run_loop_->QuitWhenIdleClosure(),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
           base::Unretained(this)));
   SetDisplayRotation(display_id, display::Display::ROTATE_0);
@@ -577,7 +634,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   WaitForCopyCallback();
 
   GetTray()->layer()->GetAnimator()->StopAnimating();
-  EXPECT_FALSE(GetTray()->visible());
+  EXPECT_FALSE(GetTray()->GetVisible());
 }
 
 // Test that smooth screen rotation animation will work when |root_window|
@@ -588,7 +645,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest,
   aura::Window* root_window = Shell::GetRootWindowForDisplayId(display_id);
   SetScreenRotationAnimator(
       root_window, run_loop_->QuitWhenIdleClosure(),
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
           base::Unretained(this)));
   SetDisplayRotation(display_id, display::Display::ROTATE_0);
@@ -623,13 +680,13 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest, DisplayChangeDuringCopy) {
   const int64_t internal_display_id =
       display::test::DisplayManagerTestApi(display_manager())
           .SetFirstDisplayAsInternalDisplay();
-  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(true);
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(true);
 
   aura::Window* root_window =
       Shell::GetRootWindowForDisplayId(internal_display_id);
   SetScreenRotationAnimator(
       root_window,
-      base::Bind(
+      base::BindRepeating(
           &ScreenRotationAnimatorSmoothAnimationTest::QuitWaitForCopyCallback,
           base::Unretained(this)),
       run_loop_->QuitWhenIdleClosure());
@@ -647,7 +704,7 @@ TEST_F(ScreenRotationAnimatorSmoothAnimationTest, DisplayChangeDuringCopy) {
 
   EXPECT_TRUE(animator->IsRotating());
   display_manager()->UpdateDisplays();
-  Shell::Get()->tablet_mode_controller()->EnableTabletModeWindowManager(false);
+  Shell::Get()->tablet_mode_controller()->SetEnabledForTest(false);
   EXPECT_FALSE(animator->IsRotating());
 
   WaitForCopyCallback();

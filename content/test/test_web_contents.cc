@@ -13,7 +13,7 @@
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/debug_urls.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
-#include "content/browser/frame_host/navigation_handle_impl.h"
+#include "content/browser/frame_host/navigation_request.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/navigator_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -22,7 +22,6 @@
 #include "content/common/frame_messages.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/common/view_messages.h"
-#include "content/public/browser/navigation_data.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
@@ -38,7 +37,7 @@ namespace content {
 
 namespace {
 
-const RenderProcessHostFactory* GetMockProcessFactory() {
+RenderProcessHostFactory* GetMockProcessFactory() {
   static base::NoDestructor<MockRenderProcessHostFactory> factory;
   return factory.get();
 }
@@ -83,11 +82,17 @@ TestWebContents::~TestWebContents() {
 }
 
 TestRenderFrameHost* TestWebContents::GetMainFrame() {
-  return static_cast<TestRenderFrameHost*>(WebContentsImpl::GetMainFrame());
+  auto* instance = WebContentsImpl::GetMainFrame();
+  DCHECK(instance->IsTestRenderFrameHost())
+      << "You may want to instantiate RenderViewHostTestEnabler.";
+  return static_cast<TestRenderFrameHost*>(instance);
 }
 
 TestRenderViewHost* TestWebContents::GetRenderViewHost() {
-  return static_cast<TestRenderViewHost*>(WebContentsImpl::GetRenderViewHost());
+  auto* instance = WebContentsImpl::GetRenderViewHost();
+  DCHECK(instance->IsTestRenderViewHost())
+      << "You may want to instantiate RenderViewHostTestEnabler.";
+  return static_cast<TestRenderViewHost*>(instance);
 }
 
 TestRenderFrameHost* TestWebContents::GetPendingMainFrame() {
@@ -97,6 +102,7 @@ TestRenderFrameHost* TestWebContents::GetPendingMainFrame() {
 
 int TestWebContents::DownloadImage(const GURL& url,
                                    bool is_favicon,
+                                   uint32_t preferred_size,
                                    uint32_t max_bitmap_size,
                                    bool bypass_cache,
                                    ImageDownloadCallback callback) {
@@ -185,11 +191,11 @@ void TestWebContents::TestDidNavigateWithSequenceNumber(
   rfh->SendNavigateWithParams(&params, was_within_same_document);
 }
 
-const std::string& TestWebContents::GetSaveFrameHeaders() const {
+const std::string& TestWebContents::GetSaveFrameHeaders() {
   return save_frame_headers_;
 }
 
-const base::string16& TestWebContents::GetSuggestedFileName() const {
+const base::string16& TestWebContents::GetSuggestedFileName() {
   return suggested_filename_;
 }
 
@@ -250,8 +256,7 @@ void TestWebContents::TestDidFailLoadWithError(
     const GURL& url,
     int error_code,
     const base::string16& error_description) {
-  FrameHostMsg_DidFailLoadWithError msg(0, url, error_code, error_description);
-  frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
+  GetMainFrame()->DidFailLoadWithError(url, error_code, error_description);
 }
 
 bool TestWebContents::CrossProcessNavigationPending() {
@@ -278,7 +283,8 @@ std::unique_ptr<WebContents> TestWebContents::Clone() {
   return contents;
 }
 
-void TestWebContents::NavigateAndCommit(const GURL& url) {
+void TestWebContents::NavigateAndCommit(const GURL& url,
+                                        ui::PageTransition transition) {
   std::unique_ptr<NavigationSimulator> navigation =
       NavigationSimulator::CreateBrowserInitiated(url, this);
   // TODO(clamy): Browser-initiated navigations should not have a transition of
@@ -286,7 +292,8 @@ void TestWebContents::NavigateAndCommit(const GURL& url) {
   // should be rewritten to simulate renderer-initiated navigations in these
   // cases. Once that's done, the transtion can be set to
   // ui::PAGE_TRANSITION_TYPED which makes more sense in this context.
-  navigation->SetTransition(ui::PAGE_TRANSITION_LINK);
+  // ui::PAGE_TRANSITION_TYPED is the default value for transition
+  navigation->SetTransition(transition);
   navigation->Commit();
 }
 
@@ -313,7 +320,7 @@ void TestWebContents::TestSetIsLoading(bool value) {
           node->render_manager()->speculative_frame_host();
       if (speculative_frame_host)
         speculative_frame_host->ResetLoadingState();
-      node->ResetNavigationRequest(false, true);
+      node->ResetNavigationRequest(false);
     }
   }
 }
@@ -364,35 +371,32 @@ void TestWebContents::SetHistoryOffsetAndLength(int history_offset,
             history_length);
 }
 
-void TestWebContents::SetNavigationData(
-    NavigationHandle* navigation_handle,
-    std::unique_ptr<NavigationData> navigation_data) {
-  static_cast<NavigationHandleImpl*>(navigation_handle)
-      ->set_navigation_data(std::move(navigation_data));
-}
-
 void TestWebContents::SetHttpResponseHeaders(
     NavigationHandle* navigation_handle,
     scoped_refptr<net::HttpResponseHeaders> response_headers) {
-  static_cast<NavigationHandleImpl*>(navigation_handle)
+  NavigationRequest::From(navigation_handle)
       ->set_response_headers_for_testing(response_headers);
 }
 
-void TestWebContents::CreateNewWindow(
+RenderFrameHostDelegate* TestWebContents::CreateNewWindow(
     RenderFrameHost* opener,
-    int32_t route_id,
-    int32_t main_frame_route_id,
-    int32_t main_frame_widget_route_id,
     const mojom::CreateNewWindowParams& params,
-    SessionStorageNamespace* session_storage_namespace) {}
+    bool is_new_browsing_instance,
+    bool has_user_gesture,
+    SessionStorageNamespace* session_storage_namespace) {
+  return nullptr;
+}
 
 void TestWebContents::CreateNewWidget(int32_t render_process_id,
                                       int32_t route_id,
-                                      mojom::WidgetPtr widget) {}
+                                      mojo::PendingRemote<mojom::Widget> widget,
+                                      RenderViewHostImpl* render_view_host) {}
 
-void TestWebContents::CreateNewFullscreenWidget(int32_t render_process_id,
-                                                int32_t route_id,
-                                                mojom::WidgetPtr widget) {}
+void TestWebContents::CreateNewFullscreenWidget(
+    int32_t render_process_id,
+    int32_t route_id,
+    mojo::PendingRemote<mojom::Widget> widget,
+    RenderViewHostImpl* render_view_host) {}
 
 void TestWebContents::ShowCreatedWindow(int process_id,
                                         int route_id,
@@ -419,10 +423,11 @@ void TestWebContents::SaveFrameWithHeaders(
   suggested_filename_ = suggested_filename;
 }
 
-std::vector<blink::mojom::PauseSubresourceLoadingHandlePtr>
+std::vector<mojo::Remote<blink::mojom::PauseSubresourceLoadingHandle>>
 TestWebContents::PauseSubresourceLoading() {
   pause_subresource_loading_called_ = true;
-  return std::vector<blink::mojom::PauseSubresourceLoadingHandlePtr>();
+  return std::vector<
+      mojo::Remote<blink::mojom::PauseSubresourceLoadingHandle>>();
 }
 
 bool TestWebContents::GetPauseSubresourceLoadingCalled() {
@@ -433,12 +438,16 @@ void TestWebContents::ResetPauseSubresourceLoadingCalled() {
   pause_subresource_loading_called_ = false;
 }
 
-void TestWebContents::SetPageImportanceSignals(PageImportanceSignals signals) {
-  page_importance_signals_ = signals;
-}
-
 void TestWebContents::SetLastActiveTime(base::TimeTicks last_active_time) {
   last_active_time_ = last_active_time;
+}
+
+void TestWebContents::TestIncrementBluetoothConnectedDeviceCount() {
+  IncrementBluetoothConnectedDeviceCount();
+}
+
+void TestWebContents::TestDecrementBluetoothConnectedDeviceCount() {
+  DecrementBluetoothConnectedDeviceCount();
 }
 
 base::UnguessableToken TestWebContents::GetAudioGroupId() {

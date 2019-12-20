@@ -47,9 +47,9 @@ class TestIPCMessageSender : public IPCMessageSender {
   ~TestIPCMessageSender() override;
 
   // IPCMessageSender:
-  void SendRequestIPC(ScriptContext* context,
-                      std::unique_ptr<ExtensionHostMsg_Request_Params> params,
-                      binding::RequestThread thread) override;
+  void SendRequestIPC(
+      ScriptContext* context,
+      std::unique_ptr<ExtensionHostMsg_Request_Params> params) override;
   void SendOnRequestResponseReceivedIPC(int request_id) override {}
   // The event listener methods are less of a pain to mock (since they don't
   // have complex parameters like ExtensionHostMsg_Request_Params).
@@ -86,10 +86,8 @@ class TestIPCMessageSender : public IPCMessageSender {
                void(int routing_id, const PortId& port_id));
   MOCK_METHOD3(SendCloseMessagePort,
                void(int routing_id, const PortId& port_id, bool close_channel));
-  MOCK_METHOD3(SendPostMessageToPort,
-               void(int routing_id,
-                    const PortId& port_id,
-                    const Message& message));
+  MOCK_METHOD2(SendPostMessageToPort,
+               void(const PortId& port_id, const Message& message));
 
   const ExtensionHostMsg_Request_Params* last_params() const {
     return last_params_.get();

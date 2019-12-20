@@ -6,7 +6,6 @@
 #define HEADLESS_LIB_HEADLESS_CONTENT_CLIENT_H_
 
 #include "content/public/common/content_client.h"
-#include "headless/public/headless_browser.h"
 
 namespace headless {
 
@@ -16,13 +15,11 @@ class HeadlessContentClient : public content::ContentClient {
   ~HeadlessContentClient() override;
 
   // content::ContentClient implementation:
-  base::string16 GetLocalizedString(int message_id) const override;
-  base::StringPiece GetDataResource(
-      int resource_id,
-      ui::ScaleFactor scale_factor) const override;
-  base::RefCountedMemory* GetDataResourceBytes(
-      int resource_id) const override;
-  gfx::Image& GetNativeImageNamed(int resource_id) const override;
+  base::string16 GetLocalizedString(int message_id) override;
+  base::StringPiece GetDataResource(int resource_id,
+                                    ui::ScaleFactor scale_factor) override;
+  base::RefCountedMemory* GetDataResourceBytes(int resource_id) override;
+  gfx::Image& GetNativeImageNamed(int resource_id) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HeadlessContentClient);

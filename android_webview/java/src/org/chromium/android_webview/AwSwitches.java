@@ -8,15 +8,15 @@ package org.chromium.android_webview;
  * Contains command line switches that are specific to Android WebView.
  */
 public final class AwSwitches {
+    // Allow mirroring JS console messages to system logs. This is the default behavior on
+    // debuggable devices (userdebug or eng), so there is no reason for a user to specify this
+    // explicitly. Native switch kWebViewLogJsConsoleMessages.
+    public static final String WEBVIEW_LOG_JS_CONSOLE_MESSAGES = "webview-log-js-console-messages";
+
     // Indicate that renderers are running in a sandbox. Enables
     // kInProcessGPU and sets kRendererProcessLimit to 1.
     // Native switch kWebViewSandboxedRenderer.
     public static final String WEBVIEW_SANDBOXED_RENDERER = "webview-sandboxed-renderer";
-
-    // Enables safebrowsing functionality in webview.
-    // Native switch kWebViewEnableSafeBrowsingSupport.
-    public static final String WEBVIEW_ENABLE_SAFEBROWSING_SUPPORT =
-            "webview-enable-safebrowsing-support";
 
     // Disables safebrowsing functionality in webview.
     // Native switch kWebViewDisableSafeBrowsingSupport.

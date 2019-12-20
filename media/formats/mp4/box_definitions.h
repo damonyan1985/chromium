@@ -39,7 +39,7 @@ enum SampleFlags {
   T(const T& other);                      \
   ~T() override;                          \
   bool Parse(BoxReader* reader) override; \
-  FourCC BoxType() const override;
+  FourCC BoxType() const override
 
 struct MEDIA_EXPORT FileType : Box {
   DECLARE_BOX_METHODS(FileType);
@@ -133,12 +133,10 @@ struct MEDIA_EXPORT TrackEncryption : Box {
   bool is_encrypted;
   uint8_t default_iv_size;
   std::vector<uint8_t> default_kid;
-#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   uint8_t default_crypt_byte_block;
   uint8_t default_skip_byte_block;
   uint8_t default_constant_iv_size;
   uint8_t default_constant_iv[kInitializationVectorSize];
-#endif
 };
 
 struct MEDIA_EXPORT SchemeInfo : Box {
@@ -280,6 +278,7 @@ struct MEDIA_EXPORT VideoSampleEntry : Box {
 
   VideoCodec video_codec;
   VideoCodecProfile video_codec_profile;
+  VideoCodecLevel video_codec_level;
 
   bool IsFormatValid() const;
 
@@ -357,12 +356,10 @@ struct MEDIA_EXPORT CencSampleEncryptionInfoEntry {
   bool is_encrypted;
   uint8_t iv_size;
   std::vector<uint8_t> key_id;
-#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
   uint8_t crypt_byte_block;
   uint8_t skip_byte_block;
   uint8_t constant_iv_size;
   uint8_t constant_iv[kInitializationVectorSize];
-#endif
 };
 
 struct MEDIA_EXPORT SampleGroupDescription : Box {  // 'sgpd'.
@@ -547,6 +544,18 @@ struct MEDIA_EXPORT MovieFragment : Box {
   MovieFragmentHeader header;
   std::vector<TrackFragment> tracks;
   std::vector<ProtectionSystemSpecificHeader> pssh;
+};
+
+struct MEDIA_EXPORT ID3v2Box : Box {
+  DECLARE_BOX_METHODS(ID3v2Box);
+
+  // Up to a maximum of the first 128 bytes of the ID3v2 box.
+  std::vector<uint8_t> id3v2_data;
+};
+
+struct MEDIA_EXPORT MetadataBox : Box {
+  DECLARE_BOX_METHODS(MetadataBox);
+  bool used_shaka_packager;
 };
 
 #undef DECLARE_BOX

@@ -33,6 +33,7 @@ source_set("ipc_client_sources") {
   ]
   deps = [
     "//base",
+    "//cc/paint",
     "//gpu/command_buffer/client:client_sources",
     "//gpu/command_buffer/common:common_sources",
     "//gpu/config:config_sources",

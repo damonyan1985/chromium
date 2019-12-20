@@ -11,10 +11,12 @@
 #include "base/callback_forward.h"
 #include "base/command_line.h"
 #include "base/memory/ref_counted.h"
+#include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/time/time.h"
+#include "chrome/chrome_cleaner/ipc/chrome_prompt_ipc.h"
 #include "chrome/chrome_cleaner/ipc/mojo_task_runner.h"
-#include "chrome/chrome_cleaner/logging/scoped_logging.h"
+#include "chrome/chrome_cleaner/test/child_process_logger.h"
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/system/invitation.h"
 #include "mojo/public/cpp/system/message_pipe.h"
@@ -41,6 +43,8 @@ class ParentProcess : public base::RefCountedThreadSafe<ParentProcess> {
                           const base::string16& value);
   void AppendSwitchPath(const std::string& switch_string,
                         const base::FilePath& value);
+  void AppendSwitchHandleToShare(const std::string& switch_string,
+                                 HANDLE handle);
 
   // The following methods are called during the launch sequence. They are
   // public so they can be called from helper classes.
@@ -49,6 +53,14 @@ class ParentProcess : public base::RefCountedThreadSafe<ParentProcess> {
   void CreateMojoPipe(base::CommandLine* command_line,
                       base::HandlesToInheritVector* handles_to_inherit);
   void ConnectMojoPipe(base::Process child_process);
+
+  base::HandlesToInheritVector extra_handles_to_inherit() const {
+    return extra_handles_to_inherit_;
+  }
+
+  const ChildProcessLogger& child_process_logger() const {
+    return child_process_logger_;
+  }
 
  protected:
   friend base::RefCountedThreadSafe<ParentProcess>;
@@ -67,6 +79,8 @@ class ParentProcess : public base::RefCountedThreadSafe<ParentProcess> {
   scoped_refptr<MojoTaskRunner> mojo_task_runner();
 
   base::CommandLine command_line_;
+  base::HandlesToInheritVector extra_handles_to_inherit_;
+  ChildProcessLogger child_process_logger_;
 
  private:
   scoped_refptr<MojoTaskRunner> mojo_task_runner_;
@@ -111,11 +125,25 @@ class ChildProcess : public base::RefCountedThreadSafe<ChildProcess> {
 
  private:
   base::CommandLine* command_line_;
-  std::unique_ptr<ScopedLogging> scopped_logging_;
 
   // This will be true iff the process is running in a sandbox and
   // TargetServices was initialized successfully.
   bool target_services_initialized_ = false;
+};
+
+class ChromePromptIPCTestErrorHandler : public ChromePromptIPC::ErrorHandler {
+ public:
+  ChromePromptIPCTestErrorHandler(base::OnceClosure on_closed,
+                                  base::OnceClosure on_closed_after_done);
+
+  ~ChromePromptIPCTestErrorHandler() override;
+
+  void OnConnectionClosed() override;
+  void OnConnectionClosedAfterDone() override;
+
+ private:
+  base::OnceClosure on_closed_;
+  base::OnceClosure on_closed_after_done_;
 };
 
 }  // namespace chrome_cleaner

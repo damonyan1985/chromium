@@ -130,7 +130,7 @@ String HTMLFormControlElementWithState::IDLExposedAutofillValue() const {
   // TODO(tkent): Share the code with autofill::FormStructure::
   // ParseFieldTypesFromAutocompleteAttributes().
 
-  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#autofill-processing-model
+  // https://html.spec.whatwg.org/C/#autofill-processing-model
   // 1. If the element has no autocomplete attribute, then jump to the step
   // labeled default.
   const AtomicString& value = FastGetAttribute(html_names::kAutocompleteAttr);
@@ -282,6 +282,10 @@ void HTMLFormControlElementWithState::FinishParsingChildren() {
 
 bool HTMLFormControlElementWithState::IsFormControlElementWithState() const {
   return true;
+}
+
+int HTMLFormControlElementWithState::DefaultTabIndex() const {
+  return 0;
 }
 
 }  // namespace blink

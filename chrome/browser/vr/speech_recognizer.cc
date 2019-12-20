@@ -59,10 +59,10 @@ class SpeechRecognizerOnIO : public content::SpeechRecognitionEventListener {
   SpeechRecognizerOnIO();
   ~SpeechRecognizerOnIO() override;
 
-  // |shared_url_loader_factory_info| must be non-null for the first call to
+  // |pending_shared_url_loader_factory| must be non-null for the first call to
   // Start().
-  void Start(std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-                 shared_url_loader_factory_info,
+  void Start(std::unique_ptr<network::PendingSharedURLLoaderFactory>
+                 pending_shared_url_loader_factory,
              const std::string& accept_language,
              const base::WeakPtr<IOBrowserUIInterface>& browser_ui,
              const std::string& locale,
@@ -112,15 +112,13 @@ class SpeechRecognizerOnIO : public content::SpeechRecognitionEventListener {
   int session_;
   base::string16 last_result_str_;
 
-  base::WeakPtrFactory<SpeechRecognizerOnIO> weak_factory_;
+  base::WeakPtrFactory<SpeechRecognizerOnIO> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SpeechRecognizerOnIO);
 };
 
 SpeechRecognizerOnIO::SpeechRecognizerOnIO()
-    : speech_timeout_(new base::OneShotTimer()),
-      session_(kInvalidSessionId),
-      weak_factory_(this) {}
+    : speech_timeout_(new base::OneShotTimer()), session_(kInvalidSessionId) {}
 
 SpeechRecognizerOnIO::~SpeechRecognizerOnIO() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
@@ -129,8 +127,8 @@ SpeechRecognizerOnIO::~SpeechRecognizerOnIO() {
 }
 
 void SpeechRecognizerOnIO::Start(
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        shared_url_loader_factory_info,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_shared_url_loader_factory,
     const std::string& accept_language,
     const base::WeakPtr<IOBrowserUIInterface>& browser_ui,
     const std::string& locale,
@@ -150,9 +148,9 @@ void SpeechRecognizerOnIO::Start(
   config.filter_profanities = true;
   config.accept_language = accept_language;
   if (!shared_url_loader_factory_) {
-    DCHECK(shared_url_loader_factory_info);
+    DCHECK(pending_shared_url_loader_factory);
     shared_url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-        std::move(shared_url_loader_factory_info));
+        std::move(pending_shared_url_loader_factory));
   }
   config.event_listener = weak_factory_.GetWeakPtr();
   // kInvalidUniqueID is not a valid render process, so the speech permission
@@ -184,7 +182,7 @@ void SpeechRecognizerOnIO::Stop() {
 
 void SpeechRecognizerOnIO::NotifyRecognitionStateChanged(
     SpeechRecognitionState new_state) {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&IOBrowserUIInterface::OnSpeechRecognitionStateChanged,
                      browser_ui_, new_state));
@@ -226,7 +224,7 @@ void SpeechRecognizerOnIO::OnRecognitionResults(
       final_count++;
     result_str += result->hypotheses[0]->utterance;
   }
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&IOBrowserUIInterface::OnSpeechResult, browser_ui_,
                      result_str, final_count == results.size()));
@@ -270,7 +268,7 @@ void SpeechRecognizerOnIO::OnAudioLevelsChange(int session_id,
   DCHECK_LE(0.0, noise_volume);
   DCHECK_GE(1.0, noise_volume);
   volume = std::max(0.0f, volume - noise_volume);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&IOBrowserUIInterface::OnSpeechSoundLevelChanged,
                      browser_ui_, volume));
@@ -293,26 +291,25 @@ void SpeechRecognizerOnIO::SetTimerForTest(
 SpeechRecognizer::SpeechRecognizer(
     VoiceResultDelegate* delegate,
     BrowserUiInterface* ui,
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        shared_url_loader_factory_info,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_shared_url_loader_factory,
     const std::string& accept_language,
     const std::string& locale)
     : delegate_(delegate),
       ui_(ui),
-      shared_url_loader_factory_info_(
-          std::move(shared_url_loader_factory_info)),
+      pending_shared_url_loader_factory_(
+          std::move(pending_shared_url_loader_factory)),
       accept_language_(accept_language),
       locale_(locale),
-      speech_recognizer_on_io_(std::make_unique<SpeechRecognizerOnIO>()),
-      weak_factory_(this) {
+      speech_recognizer_on_io_(std::make_unique<SpeechRecognizerOnIO>()) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
 SpeechRecognizer::~SpeechRecognizer() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (speech_recognizer_on_io_) {
-    content::BrowserThread::DeleteSoon(content::BrowserThread::IO, FROM_HERE,
-                                       speech_recognizer_on_io_.release());
+    base::DeleteSoon(FROM_HERE, {content::BrowserThread::IO},
+                     speech_recognizer_on_io_.release());
   }
 }
 
@@ -325,11 +322,11 @@ void SpeechRecognizer::Start() {
 
   // It is safe to use unretained because speech_recognizer_on_io_ only gets
   // deleted on IO thread when SpeechRecognizer is deleted.
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&SpeechRecognizerOnIO::Start,
                      base::Unretained(speech_recognizer_on_io_.get()),
-                     std::move(shared_url_loader_factory_info_),
+                     std::move(pending_shared_url_loader_factory_),
                      accept_language_, weak_factory_.GetWeakPtr(), locale_,
                      auth_scope, auth_token));
   if (ui_)
@@ -343,7 +340,7 @@ void SpeechRecognizer::Stop() {
 
   // It is safe to use unretained because speech_recognizer_on_io_ only gets
   // deleted on IO thread when SpeechRecognizer is deleted.
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&SpeechRecognizerOnIO::Stop,
                      base::Unretained(speech_recognizer_on_io_.get())));

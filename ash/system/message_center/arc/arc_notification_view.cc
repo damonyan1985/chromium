@@ -10,6 +10,7 @@
 #include "ash/system/message_center/arc/arc_notification_content_view.h"
 #include "ash/system/message_center/arc/arc_notification_item.h"
 #include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/ime/text_input_type.h"
@@ -22,13 +23,13 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/painter.h"
 
-DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ArcNotificationView*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ArcNotificationView*)
 
 namespace ash {
 
 DEFINE_UI_CLASS_PROPERTY_KEY(ArcNotificationView*,
                              kArcNotificationViewPropertyKey,
-                             nullptr);
+                             nullptr)
 
 // static
 ArcNotificationView* ArcNotificationView::FromView(views::View* view) {

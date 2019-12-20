@@ -26,7 +26,10 @@
 
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "services/network/public/mojom/ip_address_space.mojom-blink.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -34,33 +37,86 @@
 
 namespace blink {
 
+namespace {
+
+// Bucketize image metrics into percentage in the following fashion:
+// if an image's metrics is 0.1, it will be represented as 1 percent
+// if an image's metrics is 5, it will be represented as 50 percents.
+int BucketizeImageMetrics(double ratio) {
+  int ratio_percent = 10 * ratio;
+  if (ratio_percent < 0)
+    return 0;
+  return ratio_percent > 100 ? 100 : ratio_percent;
+}
+
+inline const char* GetImagePolicyHistogramName(
+    mojom::FeaturePolicyFeature feature) {
+  switch (feature) {
+    case mojom::FeaturePolicyFeature::kUnoptimizedLossyImages:
+      return "Blink.UseCounter.FeaturePolicy.LossyImageCompression";
+    case mojom::FeaturePolicyFeature::kUnoptimizedLosslessImages:
+      return "Blink.UseCounter.FeaturePolicy.LosslessImageCompression";
+    case mojom::FeaturePolicyFeature::kUnoptimizedLosslessImagesStrict:
+      return "Blink.UseCounter.FeaturePolicy.StrictLosslessImageCompression";
+    case mojom::FeaturePolicyFeature::kOversizedImages:
+      return "Blink.UseCounter.FeaturePolicy.ImageDownscalingRatio";
+    default:
+      NOTREACHED();
+      break;
+  }
+  return "";
+}
+
+}  // namespace
+
 // static
-std::vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
+WTF::Vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
     const InsecureNavigationsSet& set) {
   // The set is serialized as a sorted array. Sorting it makes it easy to know
   // if two serialized sets are equal.
-  std::vector<unsigned> serialized;
-  serialized.reserve(set.size());
+  WTF::Vector<unsigned> serialized;
+  serialized.ReserveCapacity(set.size());
   for (unsigned host : set)
-    serialized.push_back(host);
+    serialized.emplace_back(host);
   std::sort(serialized.begin(), serialized.end());
 
   return serialized;
 }
 
-SecurityContext::SecurityContext()
-    : sandbox_flags_(kSandboxNone),
-      address_space_(mojom::IPAddressSpace::kPublic),
+SecurityContext::SecurityContext(scoped_refptr<SecurityOrigin> origin,
+                                 WebSandboxFlags sandbox_flags,
+                                 std::unique_ptr<FeaturePolicy> feature_policy,
+                                 SecurityContextType context_type)
+    : sandbox_flags_(sandbox_flags),
+      security_origin_(std::move(origin)),
+      feature_policy_(std::move(feature_policy)),
+      address_space_(network::mojom::IPAddressSpace::kUnknown),
       insecure_request_policy_(kLeaveInsecureRequestsAlone),
-      require_safe_types_(false) {}
-
-SecurityContext::~SecurityContext() = default;
+      require_safe_types_(false),
+      context_type_(context_type) {}
 
 void SecurityContext::Trace(blink::Visitor* visitor) {
   visitor->Trace(content_security_policy_);
 }
 
 void SecurityContext::SetSecurityOrigin(
+    scoped_refptr<SecurityOrigin> security_origin) {
+  // Enforce that we don't change access, we might change the reference (via
+  // IsolatedCopy but we can't change the security policy).
+  CHECK(security_origin);
+  // The purpose of this check is to ensure that the SecurityContext does not
+  // change after script has executed in the ExecutionContext. If this is a
+  // RemoteSecurityContext, then there is no local script execution, so it is
+  // safe for the SecurityOrigin to change.
+  // Exempting null ExecutionContexts is also necessary because RemoteFrames and
+  // RemoteSecurityContexts do not change when a cross-origin navigation happens
+  // remotely.
+  CHECK(context_type_ == kRemote || !security_origin_ ||
+        security_origin_->CanAccess(security_origin.get()));
+  security_origin_ = std::move(security_origin);
+}
+
+void SecurityContext::SetSecurityOriginForTesting(
     scoped_refptr<SecurityOrigin> security_origin) {
   security_origin_ = std::move(security_origin);
 }
@@ -70,76 +126,14 @@ void SecurityContext::SetContentSecurityPolicy(
   content_security_policy_ = content_security_policy;
 }
 
-bool SecurityContext::IsSandboxed(SandboxFlag mask) const {
+bool SecurityContext::IsSandboxed(WebSandboxFlags mask) const {
   if (RuntimeEnabledFeatures::FeaturePolicyForSandboxEnabled()) {
-    switch (mask) {
-      case kSandboxAll:
-        NOTREACHED();
-        break;
-      case kSandboxTopNavigation:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kTopNavigation);
-      case kSandboxForms:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kFormSubmission);
-      case kSandboxScripts:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kScript);
-      case kSandboxPopups:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kPopups);
-      case kSandboxPointerLock:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kPointerLock);
-      case kSandboxOrientationLock:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kOrientationLock);
-      case kSandboxModals:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kModals);
-      case kSandboxPresentationController:
-        return !feature_policy_->IsFeatureEnabled(
-            mojom::FeaturePolicyFeature::kPresentation);
-      default:
-        // Any other flags fall through to the bitmask test below
-        break;
-    }
+    mojom::FeaturePolicyFeature feature =
+        FeaturePolicy::FeatureForSandboxFlag(mask);
+    if (feature != mojom::FeaturePolicyFeature::kNotFound)
+      return !feature_policy_->IsFeatureEnabled(feature);
   }
-  return sandbox_flags_ & mask;
-}
-
-void SecurityContext::EnforceSandboxFlags(SandboxFlags mask) {
-  ApplySandboxFlags(mask);
-}
-
-void SecurityContext::ApplySandboxFlags(SandboxFlags mask,
-                                        bool is_potentially_trustworthy) {
-  sandbox_flags_ |= mask;
-
-  if (IsSandboxed(kSandboxOrigin) && GetSecurityOrigin() &&
-      !GetSecurityOrigin()->IsOpaque()) {
-    scoped_refptr<SecurityOrigin> security_origin =
-        GetSecurityOrigin()->DeriveNewOpaqueOrigin();
-    security_origin->SetOpaqueOriginIsPotentiallyTrustworthy(
-        is_potentially_trustworthy);
-    SetSecurityOrigin(std::move(security_origin));
-    DidUpdateSecurityOrigin();
-  }
-}
-
-String SecurityContext::addressSpaceForBindings() const {
-  switch (address_space_) {
-    case mojom::IPAddressSpace::kPublic:
-      return "public";
-
-    case mojom::IPAddressSpace::kPrivate:
-      return "private";
-
-    case mojom::IPAddressSpace::kLocal:
-      return "local";
-  }
-  NOTREACHED();
-  return "public";
+  return (sandbox_flags_ & mask) != WebSandboxFlags::kNone;
 }
 
 void SecurityContext::SetRequireTrustedTypes() {
@@ -152,7 +146,7 @@ void SecurityContext::SetRequireTrustedTypesForTesting() {
   require_safe_types_ = true;
 }
 
-bool SecurityContext::RequireTrustedTypes() const {
+bool SecurityContext::TrustedTypesRequiredByPolicy() const {
   return require_safe_types_;
 }
 
@@ -161,22 +155,6 @@ void SecurityContext::SetFeaturePolicy(
   // This method should be called before a FeaturePolicy has been created.
   DCHECK(!feature_policy_);
   feature_policy_ = std::move(feature_policy);
-}
-
-void SecurityContext::InitializeFeaturePolicy(
-    const ParsedFeaturePolicy& parsed_header,
-    const ParsedFeaturePolicy& container_policy,
-    const FeaturePolicy* parent_feature_policy) {
-  report_only_feature_policy_ = nullptr;
-  if (!HasCustomizedFeaturePolicy()) {
-    feature_policy_ = FeaturePolicy::CreateFromParentPolicy(
-        nullptr, {}, security_origin_->ToUrlOrigin());
-    return;
-  }
-
-  feature_policy_ = FeaturePolicy::CreateFromParentPolicy(
-      parent_feature_policy, container_policy, security_origin_->ToUrlOrigin());
-  feature_policy_->SetHeaderPolicy(parsed_header);
 }
 
 // Uses the parent enforcing policy as the basis for the report-only policy.
@@ -189,39 +167,79 @@ void SecurityContext::AddReportOnlyFeaturePolicy(
   report_only_feature_policy_->SetHeaderPolicy(parsed_report_only_header);
 }
 
-bool SecurityContext::IsFeatureEnabled(mojom::FeaturePolicyFeature feature,
-                                       ReportOptions report_on_failure,
-                                       const String& message) const {
-  if (report_on_failure == ReportOptions::kReportOnFailure) {
-    // We are expecting a violation report in case the feature is disabled in
-    // the context. Therefore, this qualifies as a potential violation (i.e.,
-    // if the feature was disabled it would generate a report).
-    CountPotentialFeaturePolicyViolation(feature);
-  }
+void SecurityContext::SetDocumentPolicyForTesting(
+    std::unique_ptr<DocumentPolicy> document_policy) {
+  document_policy_ = std::move(document_policy);
+}
 
-  FeatureEnabledState state = GetFeatureEnabledState(feature);
+bool SecurityContext::IsFeatureEnabled(
+    mojom::FeaturePolicyFeature feature) const {
+  return IsFeatureEnabled(
+      feature, PolicyValue::CreateMaxPolicyValue(
+                   feature_policy_->GetFeatureList().at(feature).second));
+}
+
+bool SecurityContext::IsFeatureEnabled(
+    mojom::FeaturePolicyFeature feature,
+    PolicyValue threshold_value,
+    base::Optional<mojom::FeaturePolicyDisposition>* disposition) const {
+  // Use Document Policy to determine feature availability, but only if all of
+  // the following are true:
+  // * The DocumentPolicy RuntimeEnabledFeature is not disabled,
+  // * Document policy has been set on this object, and
+  // * Document policy infrastructure actually supports the feature.
+  // If any of those are false, assume true (enabled) here. Otherwise, check
+  // this object's policy.
+  bool document_policy_result =
+      !RuntimeEnabledFeatures::DocumentPolicyEnabled() || !document_policy_ ||
+      !document_policy_->IsFeatureSupported(feature) ||
+      document_policy_->IsFeatureEnabled(feature, threshold_value);
+
+  FeatureEnabledState state = GetFeatureEnabledState(feature, threshold_value);
   if (state == FeatureEnabledState::kEnabled)
-    return true;
-  if (report_on_failure == ReportOptions::kReportOnFailure) {
-    ReportFeaturePolicyViolation(
-        feature,
-        (state == FeatureEnabledState::kReportOnly
-             ? mojom::FeaturePolicyDisposition::kReport
-             : mojom::FeaturePolicyDisposition::kEnforce),
-        message);
+    return document_policy_result;
+  if (disposition) {
+    *disposition = (state == FeatureEnabledState::kReportOnly)
+                       ? mojom::FeaturePolicyDisposition::kReport
+                       : mojom::FeaturePolicyDisposition::kEnforce;
   }
-  return (state != FeatureEnabledState::kDisabled);
+  return (state != FeatureEnabledState::kDisabled) && document_policy_result;
 }
 
 FeatureEnabledState SecurityContext::GetFeatureEnabledState(
-    mojom::FeaturePolicyFeature feature) const {
+    mojom::FeaturePolicyFeature feature,
+    PolicyValue threshold_value) const {
   // The policy should always be initialized before checking it to ensure we
   // properly inherit the parent policy.
   DCHECK(feature_policy_);
 
-  if (feature_policy_->IsFeatureEnabled(feature)) {
+  // Log metrics for unoptimized-*-images and oversized-images policies.
+  if ((feature >= mojom::FeaturePolicyFeature::kUnoptimizedLossyImages &&
+       feature <=
+           mojom::FeaturePolicyFeature::kUnoptimizedLosslessImagesStrict) ||
+      feature == mojom::FeaturePolicyFeature::kOversizedImages) {
+    // Only log metrics if an image policy is specified.
+    // If an image policy is specified, the policy value would be less than the
+    // max value, otherwise by default the policy value is set to be the max
+    // value.
+    const auto max_value =
+        PolicyValue::CreateMaxPolicyValue(mojom::PolicyValueType::kDecDouble);
+    if (!feature_policy_->IsFeatureEnabled(feature, max_value) &&
+        threshold_value < max_value) {
+      STATIC_HISTOGRAM_POINTER_GROUP(
+          GetImagePolicyHistogramName(feature), static_cast<int>(feature),
+          static_cast<int>(
+              mojom::FeaturePolicyFeature::kUnoptimizedLosslessImagesStrict) +
+              1,
+          Add(BucketizeImageMetrics(threshold_value.DoubleValue())),
+          base::LinearHistogram::FactoryGet(
+              GetImagePolicyHistogramName(feature), 0, 100, 101, 0x1));
+    }
+  }
+  if (feature_policy_->IsFeatureEnabled(feature, threshold_value)) {
     if (report_only_feature_policy_ &&
-        !report_only_feature_policy_->IsFeatureEnabled(feature)) {
+        !report_only_feature_policy_->IsFeatureEnabled(feature,
+                                                       threshold_value)) {
       return FeatureEnabledState::kReportOnly;
     }
     return FeatureEnabledState::kEnabled;

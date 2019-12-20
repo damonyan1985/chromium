@@ -26,9 +26,8 @@
 // PeriodicWave represents a periodic audio waveform given by its Fourier coefficients.
 // See https://webaudio.github.io/web-audio-api/#periodicwave
 [
-    Constructor(BaseAudioContext context, optional PeriodicWaveOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface PeriodicWave {
+] interface PeriodicWave {
+  [RaisesException] constructor(BaseAudioContext context, optional PeriodicWaveOptions options);
 };

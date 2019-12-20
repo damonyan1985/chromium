@@ -14,15 +14,17 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.base.PageTransition;
@@ -47,7 +49,7 @@ public class PageInfoControllerTest {
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         mTestServer.stopAndDestroyServer();
     }
 
@@ -58,11 +60,13 @@ public class PageInfoControllerTest {
     @MediumTest
     @Feature({"PageInfoController"})
     @RetryOnFailure
-    public void testShow() throws InterruptedException {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
-            PageInfoController.show(mActivityTestRule.getActivity(),
-                    mActivityTestRule.getActivity().getActivityTab(), null,
-                    PageInfoController.OpenedFromSource.MENU);
+    public void testShow() {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Tab tab = mActivityTestRule.getActivity().getActivityTab();
+            PageInfoController.show(mActivityTestRule.getActivity(), tab.getWebContents(), null,
+                    PageInfoController.OpenedFromSource.MENU,
+                    /*offlinePageLoadUrlDelegate=*/
+                    new OfflinePageUtils.TabOfflinePageLoadUrlDelegate(tab));
         });
     }
 
@@ -73,15 +77,19 @@ public class PageInfoControllerTest {
     @MediumTest
     @Feature({"PageInfoController"})
     @RetryOnFailure
-    public void testPageInfoUrl() throws InterruptedException {
+    public void testPageInfoUrl() {
         String testUrl = mTestServer.getURLWithHostName("xn--allestrungen-9ib.ch", "/");
         mActivityTestRule.loadUrlInTab(
                 testUrl, PageTransition.TYPED, mActivityTestRule.getActivity().getActivityTab());
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Tab tab = mActivityTestRule.getActivity().getActivityTab();
             PageInfoController pageInfo = new PageInfoController(mActivityTestRule.getActivity(),
-                    mActivityTestRule.getActivity().getActivityTab(), ConnectionSecurityLevel.NONE,
-                    null, null, PageInfoController.OfflinePageState.NOT_OFFLINE_PAGE,
-                    PageInfoController.PreviewPageState.NOT_PREVIEW, null);
+                    tab.getWebContents(), ConnectionSecurityLevel.NONE, /*offlinePageUrl=*/null,
+                    /*offlinePageCreationDate=*/null,
+                    PageInfoController.OfflinePageState.NOT_OFFLINE_PAGE,
+                    PageInfoController.PreviewPageState.NOT_PREVIEW, /*publisher=*/null,
+                    /*offlinePageLoadUrlDelegate=*/
+                    new OfflinePageUtils.TabOfflinePageLoadUrlDelegate(tab));
             PageInfoView pageInfoView = pageInfo.getPageInfoViewForTesting();
             // Test that the title contains the Unicode hostname rather than strict equality, as
             // the test server will be bound to a random port.

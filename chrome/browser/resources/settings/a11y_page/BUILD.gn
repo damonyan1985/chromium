@@ -7,9 +7,18 @@ import("//third_party/closure_compiler/compile_js.gni")
 js_type_check("closure_compile") {
   deps = [
     ":a11y_page",
-    ":externs",
-    ":manage_a11y_page",
-    ":tts_subpage",
+    ":captions_browser_proxy",
+    ":captions_subpage",
+  ]
+}
+
+js_library("captions_subpage") {
+  deps = [
+    "../appearance_page:fonts_browser_proxy",
+    "../controls:settings_dropdown_menu",
+    "//ui/webui/resources/cr_elements/cr_slider:cr_slider",
+    "//ui/webui/resources/js:i18n_behavior",
+    "//ui/webui/resources/js:web_ui_listener_behavior",
   ]
 }
 
@@ -22,27 +31,8 @@ js_library("a11y_page") {
   ]
 }
 
-js_library("manage_a11y_page") {
+js_library("captions_browser_proxy") {
   deps = [
-    "..:route",
-    "//ui/webui/resources/js:load_time_data",
-    "//ui/webui/resources/js:web_ui_listener_behavior",
+    "//ui/webui/resources/js:cr",
   ]
-  externs_list = [ "$externs_path/settings_private.js" ]
-}
-
-js_library("tts_subpage") {
-  deps = [
-    ":externs",
-    "..:route",
-    "../controls:settings_slider",
-    "../languages_page:languages_browser_proxy",
-    "../settings_page:settings_animated_pages",
-    "//ui/webui/resources/js:i18n_behavior",
-    "//ui/webui/resources/js:load_time_data",
-    "//ui/webui/resources/js:web_ui_listener_behavior",
-  ]
-}
-
-js_library("externs") {
 }

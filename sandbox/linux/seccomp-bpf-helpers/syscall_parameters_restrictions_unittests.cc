@@ -5,14 +5,20 @@
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/elf.h>
 #include <sched.h>
+#include <sys/prctl.h>
+#include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/user.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "base/bind.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/system/sys_info.h"
@@ -53,6 +59,7 @@ class RestrictClockIdPolicy : public bpf_dsl::Policy {
     switch (sysno) {
       case __NR_clock_gettime:
       case __NR_clock_getres:
+      case __NR_clock_nanosleep:
         return RestrictClockID();
       default:
         return Allow();
@@ -79,10 +86,9 @@ BPF_TEST_C(ParameterRestrictions,
            RestrictClockIdPolicy) {
   CheckClock(CLOCK_MONOTONIC);
   CheckClock(CLOCK_MONOTONIC_COARSE);
+  CheckClock(CLOCK_MONOTONIC_RAW);
   CheckClock(CLOCK_PROCESS_CPUTIME_ID);
-#if defined(OS_ANDROID)
   CheckClock(CLOCK_BOOTTIME);
-#endif
   CheckClock(CLOCK_REALTIME);
   CheckClock(CLOCK_REALTIME_COARSE);
   CheckClock(CLOCK_THREAD_CPUTIME_ID);
@@ -93,12 +99,42 @@ BPF_TEST_C(ParameterRestrictions,
 #endif
 }
 
+void CheckClockNanosleep(clockid_t clockid) {
+  struct timespec ts;
+  struct timespec out_ts;
+  ts.tv_sec = 0;
+  ts.tv_nsec = 0;
+  clock_nanosleep(clockid, 0, &ts, &out_ts);
+}
+
+BPF_TEST_C(ParameterRestrictions,
+           clock_nanosleep_allowed,
+           RestrictClockIdPolicy) {
+  CheckClockNanosleep(CLOCK_MONOTONIC);
+  CheckClockNanosleep(CLOCK_MONOTONIC_COARSE);
+  CheckClockNanosleep(CLOCK_MONOTONIC_RAW);
+  CheckClockNanosleep(CLOCK_BOOTTIME);
+  CheckClockNanosleep(CLOCK_REALTIME);
+  CheckClockNanosleep(CLOCK_REALTIME_COARSE);
+}
+
 BPF_DEATH_TEST_C(ParameterRestrictions,
-                 clock_gettime_crash_monotonic_raw,
+                 clock_gettime_crash_clock_fd,
                  DEATH_SEGV_MESSAGE(sandbox::GetErrorMessageContentForTests()),
                  RestrictClockIdPolicy) {
   struct timespec ts;
-  syscall(SYS_clock_gettime, CLOCK_MONOTONIC_RAW, &ts);
+  syscall(SYS_clock_gettime, (~0) | CLOCKFD, &ts);
+}
+
+BPF_DEATH_TEST_C(ParameterRestrictions,
+                 clock_nanosleep_crash_clock_fd,
+                 DEATH_SEGV_MESSAGE(sandbox::GetErrorMessageContentForTests()),
+                 RestrictClockIdPolicy) {
+  struct timespec ts;
+  struct timespec out_ts;
+  ts.tv_sec = 0;
+  ts.tv_nsec = 0;
+  syscall(SYS_clock_nanosleep, (~0) | CLOCKFD, 0, &ts, &out_ts);
 }
 
 #if !defined(OS_ANDROID)
@@ -171,7 +207,7 @@ BPF_TEST_C(ParameterRestrictions,
   base::Thread getparam_thread("sched_getparam_thread");
   BPF_ASSERT(getparam_thread.Start());
   getparam_thread.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&SchedGetParamThread, &thread_run));
+      FROM_HERE, base::BindOnce(&SchedGetParamThread, &thread_run));
   BPF_ASSERT(thread_run.TimedWait(base::TimeDelta::FromMilliseconds(5000)));
   getparam_thread.Stop();
 }
@@ -240,6 +276,69 @@ BPF_DEATH_TEST_C(ParameterRestrictions,
                  RestrictGetrusagePolicy) {
   struct rusage usage;
   getrusage(RUSAGE_CHILDREN, &usage);
+}
+
+// The following ptrace() tests do not actually set up a tracer/tracee
+// relationship, so allowed operations return ESRCH errors. Blocked operations
+// are tested with death tests.
+
+class RestrictPtracePolicy : public bpf_dsl::Policy {
+ public:
+  RestrictPtracePolicy() = default;
+  ~RestrictPtracePolicy() override = default;
+
+  ResultExpr EvaluateSyscall(int sysno) const override {
+    switch (sysno) {
+      case __NR_ptrace:
+        return RestrictPtrace();
+      default:
+        return Allow();
+    }
+  }
+};
+
+BPF_TEST_C(ParameterRestrictions,
+           ptrace_getregs_allowed,
+           RestrictPtracePolicy) {
+#if defined(__arm__)
+  user_regs regs;
+#else
+  user_regs_struct regs;
+#endif
+  iovec iov;
+  iov.iov_base = &regs;
+  iov.iov_len = sizeof(regs);
+  errno = 0;
+  int rv = ptrace(PTRACE_GETREGSET, getpid(),
+                  reinterpret_cast<void*>(NT_PRSTATUS), &iov);
+  BPF_ASSERT_EQ(-1, rv);
+  BPF_ASSERT_EQ(ESRCH, errno);
+}
+
+BPF_DEATH_TEST_C(
+    ParameterRestrictions,
+    ptrace_syscall_blocked,
+    DEATH_SEGV_MESSAGE(sandbox::GetPtraceErrorMessageContentForTests()),
+    RestrictPtracePolicy) {
+  ptrace(PTRACE_SYSCALL, getpid(), nullptr, nullptr);
+}
+
+BPF_DEATH_TEST_C(
+    ParameterRestrictions,
+    ptrace_setregs_blocked,
+    DEATH_SEGV_MESSAGE(sandbox::GetPtraceErrorMessageContentForTests()),
+    RestrictPtracePolicy) {
+#if defined(__arm__)
+  user_regs regs{};
+#else
+  user_regs_struct regs{};
+#endif
+  iovec iov;
+  iov.iov_base = &regs;
+  iov.iov_len = sizeof(regs);
+  errno = 0;
+  ptrace(PTRACE_SETREGSET, getpid(), reinterpret_cast<void*>(NT_PRSTATUS),
+         &iov);
 }
 
 }  // namespace

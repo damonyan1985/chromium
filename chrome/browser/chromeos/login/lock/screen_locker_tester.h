@@ -5,22 +5,19 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_LOCK_SCREEN_LOCKER_TESTER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_LOCK_SCREEN_LOCKER_TESTER_H_
 
-#include <memory>
 #include <string>
+
+#include "base/macros.h"
 
 class AccountId;
 
 namespace chromeos {
 
-// ScreenLockerTester provides a high-level API to test the lock screen. This
-// API is meant to be representation independent.
+// ScreenLockerTester provides a high-level API to test the lock screen.
 class ScreenLockerTester {
  public:
-  // Create a new tester.
-  static std::unique_ptr<ScreenLockerTester> Create();
-
   ScreenLockerTester();
-  virtual ~ScreenLockerTester();
+  ~ScreenLockerTester();
 
   // Synchronously lock the device.
   void Lock();
@@ -30,11 +27,23 @@ class ScreenLockerTester {
                          const std::string& password);
 
   // Returns true if the screen is locked.
-  virtual bool IsLocked() = 0;
+  bool IsLocked();
+
+  // Returns true if Restart button is visible.
+  bool IsLockRestartButtonShown();
+
+  // Returns true if Shutdown button is visible.
+  bool IsLockShutdownButtonShown();
+
+  // Returns true if there is an auth error button on the lock screen.
+  bool IsAuthErrorBubbleShown();
 
   // Enters and submits the given password for the given account.
-  virtual void UnlockWithPassword(const AccountId& account_id,
-                                  const std::string& password) = 0;
+  void UnlockWithPassword(const AccountId& account_id,
+                          const std::string& password);
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ScreenLockerTester);
 };
 
 }  // namespace chromeos

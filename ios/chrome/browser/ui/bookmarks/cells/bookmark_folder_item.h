@@ -43,7 +43,7 @@ typedef NS_ENUM(NSInteger, TableViewBookmarkFolderAccessoryType) {
 
 // TableViewCell that displays BookmarkFolderItem data.
 @interface TableViewBookmarkFolderCell
-    : UITableViewCell<BookmarkTableCellTitleEditing>
+    : TableViewCell <BookmarkTableCellTitleEditing>
 
 // The leading constraint used to set the cell's leading indentation. The
 // default indentationLevel property doesn't affect any custom Cell subviews,
@@ -57,17 +57,6 @@ typedef NS_ENUM(NSInteger, TableViewBookmarkFolderAccessoryType) {
 // Accessory Type.
 @property(nonatomic, assign)
     TableViewBookmarkFolderAccessoryType bookmarkAccessoryType;
-@end
-
-// TableViewCell that displays BookmarkFolderItem data.
-@interface LegacyTableViewBookmarkFolderCell : UITableViewCell
-
-// Whether the cell is displaying a checkmark.
-@property(nonatomic, assign, getter=isChecked) BOOL checked;
-
-// Whether the cell is enabled for interaction.
-@property(nonatomic, assign, getter=isEnabled) BOOL enabled;
-
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_BOOKMARKS_CELLS_BOOKMARK_FOLDER_ITEM_H_

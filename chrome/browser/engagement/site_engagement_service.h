@@ -16,9 +16,10 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/engagement/site_engagement_details.mojom.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/blink/public/platform/site_engagement.mojom.h"
+#include "third_party/blink/public/mojom/site_engagement/site_engagement.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 namespace base {
@@ -26,8 +27,7 @@ class Clock;
 }
 
 namespace banners {
-FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest,
-                     ExperimentalFlowWebAppBannerNeedsEngagement);
+FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest, WebAppBannerNeedsEngagement);
 }
 
 namespace content {
@@ -36,6 +36,10 @@ class WebContents;
 
 namespace history {
 class HistoryService;
+}
+
+namespace web_app {
+class WebAppEngagementBrowserTest;
 }
 
 class GURL;
@@ -150,6 +154,14 @@ class SiteEngagementService : public KeyedService,
   // performance-critical code.
   std::vector<mojom::SiteEngagementDetails> GetAllDetails() const;
 
+  // Return an array of engagement score details for all origins which have
+  // had engagement since the specified time.
+  //
+  // Note that this method is quite expensive, so try to avoid calling it in
+  // performance-critical code.
+  std::vector<mojom::SiteEngagementDetails> GetAllDetailsEngagedInTimePeriod(
+      browsing_data::TimePeriod time_period) const;
+
   // Update the engagement score of |url| for a notification interaction.
   void HandleNotificationInteraction(const GURL& url);
 
@@ -186,9 +198,9 @@ class SiteEngagementService : public KeyedService,
   void AddPointsForTesting(const GURL& url, double points);
 
  private:
-  friend class BookmarkAppTest;
   friend class SiteEngagementObserver;
   friend class SiteEngagementServiceTest;
+  friend class web_app::WebAppEngagementBrowserTest;
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, CheckHistograms);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, CleanupEngagementScores);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest,
@@ -215,7 +227,7 @@ class SiteEngagementService : public KeyedService,
                            IncognitoEngagementService);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, GetScoreFromSettings);
   FRIEND_TEST_ALL_PREFIXES(banners::AppBannerManagerBrowserTest,
-                           ExperimentalFlowWebAppBannerNeedsEngagement);
+                           WebAppBannerNeedsEngagement);
   FRIEND_TEST_ALL_PREFIXES(AppBannerSettingsHelperTest, SiteEngagementTrigger);
   FRIEND_TEST_ALL_PREFIXES(HostedAppPWAOnlyTest, EngagementHistogram);
 
@@ -342,7 +354,7 @@ class SiteEngagementService : public KeyedService,
   // event, each observer's OnEngagementEvent method will be called.
   base::ObserverList<SiteEngagementObserver>::Unchecked observer_list_;
 
-  base::WeakPtrFactory<SiteEngagementService> weak_factory_;
+  base::WeakPtrFactory<SiteEngagementService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SiteEngagementService);
 };

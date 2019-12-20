@@ -10,11 +10,9 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/path_service.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
-#include "components/viz/common/features.h"
 #include "components/viz/common/switches.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -61,23 +59,25 @@ class HeadlessProtocolBrowserTest
     // components migration from the old web APIs.
     // After completion of the migration, we should remove this.
     // See crbug.com/911943 for detail.
-    command_line->AppendSwitchASCII("enable-blink-features", "HTMLImports");
+    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
+                                    "HTMLImports");
   }
 
  private:
   // HeadlessWebContentsObserver implementation.
-  void DevToolsTargetReady() override {
-    HeadlessAsyncDevTooledBrowserTest::DevToolsTargetReady();
+  void RunDevTooledTest() override {
+    browser_devtools_client_->SetRawProtocolListener(this);
     devtools_client_->GetRuntime()->GetExperimental()->AddObserver(this);
     devtools_client_->GetRuntime()->Enable();
     devtools_client_->GetRuntime()->GetExperimental()->AddBinding(
         headless::runtime::AddBindingParams::Builder()
             .SetName("sendProtocolMessage")
-            .Build());
-    browser_devtools_client_->SetRawProtocolListener(this);
+            .Build(),
+        base::BindOnce(&HeadlessProtocolBrowserTest::BindingCreated,
+                       base::Unretained(this)));
   }
 
-  void RunDevTooledTest() override {
+  void BindingCreated(std::unique_ptr<headless::runtime::AddBindingResult>) {
     base::ScopedAllowBlockingForTesting allow_blocking;
     base::FilePath src_dir;
     CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
@@ -104,7 +104,8 @@ class HeadlessProtocolBrowserTest
   // runtime::Observer implementation.
   void OnBindingCalled(const runtime::BindingCalledParams& params) override {
     std::string json_message = params.GetPayload();
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(json_message);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(json_message);
     const base::DictionaryValue* message_dict;
     const base::DictionaryValue* params_dict;
     std::string method;
@@ -158,13 +159,15 @@ class HeadlessProtocolBrowserTest
   }
 
   // HeadlessDevToolsClient::RawProtocolListener
-  bool OnProtocolMessage(const std::string& json_message,
+  bool OnProtocolMessage(base::span<const uint8_t> json_message,
                          const base::DictionaryValue& parsed_message) override {
-    SendMessageToJS(json_message);
+    SendMessageToJS(
+        base::StringPiece(reinterpret_cast<const char*>(json_message.data()),
+                          json_message.size()));
     return true;
   }
 
-  void SendMessageToJS(const std::string& message) {
+  void SendMessageToJS(base::StringPiece message) {
     if (test_finished_)
       return;
 
@@ -190,53 +193,68 @@ class HeadlessProtocolBrowserTest
   std::string script_name_;
 };
 
+// TODO(crbug.com/867447): The whole test suite is extremely flaky on Win dbg.
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define HEADLESS_PROTOCOL_TEST(TEST_NAME, SCRIPT_NAME)                        \
+  IN_PROC_BROWSER_TEST_F(HeadlessProtocolBrowserTest, DISABLED_##TEST_NAME) { \
+    test_folder_ = "/protocol/";                                              \
+    script_name_ = SCRIPT_NAME;                                               \
+    RunTest();                                                                \
+  }
+#else
 #define HEADLESS_PROTOCOL_TEST(TEST_NAME, SCRIPT_NAME)             \
   IN_PROC_BROWSER_TEST_F(HeadlessProtocolBrowserTest, TEST_NAME) { \
     test_folder_ = "/protocol/";                                   \
     script_name_ = SCRIPT_NAME;                                    \
     RunTest();                                                     \
   }
-
-#define LAYOUT_PROTOCOL_TEST(TEST_NAME, SCRIPT_NAME)               \
-  IN_PROC_BROWSER_TEST_F(HeadlessProtocolBrowserTest, TEST_NAME) { \
-    test_folder_ = "/";                                            \
-    script_name_ = SCRIPT_NAME;                                    \
-    RunTest();                                                     \
-  }
+#endif
 
 // Headless-specific tests
-HEADLESS_PROTOCOL_TEST(VirtualTimeAdvance, "emulation/virtual-time-advance.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeBasics, "emulation/virtual-time-basics.js");
+HEADLESS_PROTOCOL_TEST(VirtualTimeBasics, "emulation/virtual-time-basics.js")
 HEADLESS_PROTOCOL_TEST(VirtualTimeInterrupt,
-                       "emulation/virtual-time-interrupt.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeCrossProcessNavigation,
-                       "emulation/virtual-time-cross-process-navigation.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeDetachFrame,
-                       "emulation/virtual-time-detach-frame.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeNoBlock404, "emulation/virtual-time-404.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeLocalStorage,
-                       "emulation/virtual-time-local-storage.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimePendingScript,
-                       "emulation/virtual-time-pending-script.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeHtmlImport,
-                       "emulation/virtual-time-html-import.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeRedirect,
-                       "emulation/virtual-time-redirect.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeSessionStorage,
-                       "emulation/virtual-time-session-storage.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeStarvation,
-                       "emulation/virtual-time-starvation.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeVideo, "emulation/virtual-time-video.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeErrorLoop,
-                       "emulation/virtual-time-error-loop.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeFetchStream,
-                       "emulation/virtual-time-fetch-stream.js");
-HEADLESS_PROTOCOL_TEST(VirtualTimeDialogWhileLoading,
-                       "emulation/virtual-time-dialog-while-loading.js");
+                       "emulation/virtual-time-interrupt.js")
 
-// Flaky Test crbug.com/859382
-HEADLESS_PROTOCOL_TEST(DISABLED_VirtualTimeHistoryNavigation,
-                       "emulation/virtual-time-history-navigation.js");
+// Flaky on Linux, Mac & Win. TODO(crbug.com/930717): Re-enable.
+#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
+#define MAYBE_VirtualTimeCrossProcessNavigation \
+  DISABLED_VirtualTimeCrossProcessNavigation
+#else
+#define MAYBE_VirtualTimeCrossProcessNavigation \
+  VirtualTimeCrossProcessNavigation
+#endif
+HEADLESS_PROTOCOL_TEST(MAYBE_VirtualTimeCrossProcessNavigation,
+                       "emulation/virtual-time-cross-process-navigation.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeDetachFrame,
+                       "emulation/virtual-time-detach-frame.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeNoBlock404, "emulation/virtual-time-404.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeLocalStorage,
+                       "emulation/virtual-time-local-storage.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimePendingScript,
+                       "emulation/virtual-time-pending-script.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeHtmlImport,
+                       "emulation/virtual-time-html-import.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeRedirect,
+                       "emulation/virtual-time-redirect.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeSessionStorage,
+                       "emulation/virtual-time-session-storage.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeStarvation,
+                       "emulation/virtual-time-starvation.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeVideo, "emulation/virtual-time-video.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeErrorLoop,
+                       "emulation/virtual-time-error-loop.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeFetchStream,
+                       "emulation/virtual-time-fetch-stream.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeDialogWhileLoading,
+                       "emulation/virtual-time-dialog-while-loading.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeHistoryNavigation,
+                       "emulation/virtual-time-history-navigation.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeHistoryNavigationSameDoc,
+                       "emulation/virtual-time-history-navigation-same-doc.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeFetchKeepalive,
+                       "emulation/virtual-time-fetch-keepalive.js")
+HEADLESS_PROTOCOL_TEST(VirtualTimeDisposeWhileRunning,
+                       "emulation/virtual-time-dispose-while-running.js")
 
 // http://crbug.com/633321
 #if defined(OS_ANDROID)
@@ -247,11 +265,14 @@ HEADLESS_PROTOCOL_TEST(DISABLED_VirtualTimeHistoryNavigation,
 #define MAYBE_VirtualTimeTimerSuspend VirtualTimeTimerSuspend
 #endif
 HEADLESS_PROTOCOL_TEST(MAYBE_VirtualTimeTimerOrder,
-                       "emulation/virtual-time-timer-order.js");
+                       "emulation/virtual-time-timer-order.js")
 HEADLESS_PROTOCOL_TEST(MAYBE_VirtualTimeTimerSuspend,
-                       "emulation/virtual-time-timer-suspended.js");
+                       "emulation/virtual-time-timer-suspended.js")
 #undef MAYBE_VirtualTimeTimerOrder
 #undef MAYBE_VirtualTimeTimerSuspend
+
+HEADLESS_PROTOCOL_TEST(HeadlessSessionBasicsTest,
+                       "sessions/headless-session-basics.js")
 
 class HeadlessProtocolCompositorBrowserTest
     : public HeadlessProtocolBrowserTest {
@@ -283,24 +304,16 @@ class HeadlessProtocolCompositorBrowserTest
     for (auto* compositor_switch : compositor_switches) {
       command_line->AppendSwitch(compositor_switch);
     }
-
-    // In surface synchronization, child surface IDs are allocated by
-    // parents and new CompositorFrames only activate once all their child
-    // surfaces exist. In --run-all-compositor-stages-before-draw mode, this
-    // means that child surface initialization and resize fully propagates
-    // within a single BeginFrame.
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kEnableSurfaceSynchronization);
   }
-
- protected:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // BeginFrameControl is not supported on MacOS yet, see: https://cs.chromium.org
 // chromium/src/headless/lib/browser/protocol/target_handler.cc?
 // rcl=5811aa08e60ba5ac7622f029163213cfbdb682f7&l=32
-#if defined(OS_MACOSX)
+// TODO(crbug.com/954398): Suite is timeout-flaky on Windows.
+// TODO(crbug.com/1020046): Suite is flaky on TSan Linux.
+#if defined(OS_MACOSX) || defined(OS_WIN) || \
+    (defined(OS_LINUX) && defined(THREAD_SANITIZER))
 #define HEADLESS_PROTOCOL_COMPOSITOR_TEST(TEST_NAME, SCRIPT_NAME) \
   IN_PROC_BROWSER_TEST_F(HeadlessProtocolCompositorBrowserTest,   \
                          DISABLED_##TEST_NAME) {                  \
@@ -318,93 +331,107 @@ class HeadlessProtocolCompositorBrowserTest
 #endif
 
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(CompositorBasicRaf,
-                                  "emulation/compositor-basic-raf.js");
+                                  "emulation/compositor-basic-raf.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     CompositorImageAnimation,
-    "emulation/compositor-image-animation-test.js");
-HEADLESS_PROTOCOL_COMPOSITOR_TEST(CompositorCssAnimation,
-                                  "emulation/compositor-css-animation-test.js");
+    "emulation/compositor-image-animation-test.js")
+
+// Flaky on Linux. TODO(crbug.com/986027): Re-enable.
+#if defined(OS_LINUX)
+#define MAYBE_CompositorCssAnimation DISABLED_CompositorCssAnimation
+#else
+#define MAYBE_CompositorCssAnimation CompositorCssAnimation
+#endif
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(MAYBE_CompositorCssAnimation,
+                                  "emulation/compositor-css-animation-test.js")
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(
+    VirtualTimeCancelClientRedirect,
+    "emulation/virtual-time-cancel-client-redirect.js")
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(DoubleBeginFrame,
+                                  "emulation/double-begin-frame.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(VirtualTimeControllerTest,
-                                  "helpers/virtual-time-controller-test.js");
+                                  "helpers/virtual-time-controller-test.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererHelloWorld,
-                                  "sanity/renderer-hello-world.js");
+                                  "sanity/renderer-hello-world.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererOverrideTitleJsEnabled,
-    "sanity/renderer-override-title-js-enabled.js");
+    "sanity/renderer-override-title-js-enabled.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererOverrideTitleJsDisabled,
-    "sanity/renderer-override-title-js-disabled.js");
+    "sanity/renderer-override-title-js-disabled.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererJavaScriptConsoleErrors,
-    "sanity/renderer-javascript-console-errors.js");
+    "sanity/renderer-javascript-console-errors.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererDelayedCompletion,
-                                  "sanity/renderer-delayed-completion.js");
+                                  "sanity/renderer-delayed-completion.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererClientRedirectChain,
-                                  "sanity/renderer-client-redirect-chain.js");
+                                  "sanity/renderer-client-redirect-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererClientRedirectChainNoJs,
-    "sanity/renderer-client-redirect-chain-no-js.js");
+    "sanity/renderer-client-redirect-chain-no-js.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererServerRedirectChain,
-                                  "sanity/renderer-server-redirect-chain.js");
+                                  "sanity/renderer-server-redirect-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererServerRedirectToFailure,
-    "sanity/renderer-server-redirect-to-failure.js");
+    "sanity/renderer-server-redirect-to-failure.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererServerRedirectRelativeChain,
-    "sanity/renderer-server-redirect-relative-chain.js");
+    "sanity/renderer-server-redirect-relative-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererMixedRedirectChain,
-                                  "sanity/renderer-mixed-redirect-chain.js");
+                                  "sanity/renderer-mixed-redirect-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererFramesRedirectChain,
-                                  "sanity/renderer-frames-redirect-chain.js");
+                                  "sanity/renderer-frames-redirect-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererDoubleRedirect,
-                                  "sanity/renderer-double-redirect.js");
+                                  "sanity/renderer-double-redirect.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererRedirectAfterCompletion,
-    "sanity/renderer-redirect-after-completion.js");
-HEADLESS_PROTOCOL_COMPOSITOR_TEST(
-    RendererRedirect307PostMethod,
-    "sanity/renderer-redirect-307-post-method.js");
+    "sanity/renderer-redirect-after-completion.js")
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirect307PostMethod,
+                                  "sanity/renderer-redirect-307-post-method.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectPostChain,
-                                  "sanity/renderer-redirect-post-chain.js");
+                                  "sanity/renderer-redirect-post-chain.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirect307PutMethod,
-                                  "sanity/renderer-redirect-307-put-method.js");
+                                  "sanity/renderer-redirect-307-put-method.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirect303PutGet,
-                                  "sanity/renderer-redirect-303-put-get.js");
+                                  "sanity/renderer-redirect-303-put-get.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectBaseUrl,
-                                  "sanity/renderer-redirect-base-url.js");
+                                  "sanity/renderer-redirect-base-url.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectNonAsciiUrl,
-                                  "sanity/renderer-redirect-non-ascii-url.js");
+                                  "sanity/renderer-redirect-non-ascii-url.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectEmptyUrl,
-                                  "sanity/renderer-redirect-empty-url.js");
+                                  "sanity/renderer-redirect-empty-url.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectInvalidUrl,
-                                  "sanity/renderer-redirect-invalid-url.js");
+                                  "sanity/renderer-redirect-invalid-url.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectKeepsFragment,
-                                  "sanity/renderer-redirect-keeps-fragment.js");
+                                  "sanity/renderer-redirect-keeps-fragment.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererRedirectReplacesFragment,
-    "sanity/renderer-redirect-replaces-fragment.js");
+    "sanity/renderer-redirect-replaces-fragment.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererRedirectNewFragment,
-                                  "sanity/renderer-redirect-new-fragment.js");
+                                  "sanity/renderer-redirect-new-fragment.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererWindowLocationFragments,
-    "sanity/renderer-window-location-fragments.js");
+    "sanity/renderer-window-location-fragments.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererCookieSetFromJs,
-                                  "sanity/renderer-cookie-set-from-js.js");
+                                  "sanity/renderer-cookie-set-from-js.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(
     RendererCookieSetFromJsNoCookies,
-    "sanity/renderer-cookie-set-from-js-no-cookies.js");
+    "sanity/renderer-cookie-set-from-js-no-cookies.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererCookieUpdatedFromJs,
-                                  "sanity/renderer-cookie-updated-from-js.js");
+                                  "sanity/renderer-cookie-updated-from-js.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererInCrossOriginObject,
-                                  "sanity/renderer-in-cross-origin-object.js");
+                                  "sanity/renderer-in-cross-origin-object.js")
 
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererContentSecurityPolicy,
-                                  "sanity/renderer-content-security-policy.js");
+                                  "sanity/renderer-content-security-policy.js")
 
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererFrameLoadEvents,
-                                  "sanity/renderer-frame-load-events.js");
+                                  "sanity/renderer-frame-load-events.js")
 HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererCssUrlFilter,
-                                  "sanity/renderer-css-url-filter.js");
-HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererCanvas, "sanity/renderer-canvas.js");
+                                  "sanity/renderer-css-url-filter.js")
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererCanvas, "sanity/renderer-canvas.js")
+
+HEADLESS_PROTOCOL_COMPOSITOR_TEST(RendererOpacityAnimation,
+                                  "sanity/renderer-opacity-animation.js")
 
 }  // namespace headless

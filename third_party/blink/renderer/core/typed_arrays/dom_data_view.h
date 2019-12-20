@@ -17,10 +17,10 @@ class CORE_EXPORT DOMDataView final : public DOMArrayBufferView {
   typedef char ValueType;
 
   static DOMDataView* Create(DOMArrayBufferBase*,
-                             unsigned byte_offset,
-                             unsigned byte_length);
+                             size_t byte_offset,
+                             size_t byte_length);
 
-  DOMDataView(scoped_refptr<WTF::ArrayBufferView> data_view,
+  DOMDataView(scoped_refptr<ArrayBufferView> data_view,
               DOMArrayBufferBase* dom_array_buffer)
       : DOMArrayBufferView(std::move(data_view), dom_array_buffer) {}
 

@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/debug/stack_trace.h"
 #include "base/macros.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -100,12 +99,11 @@ class AudioStreamMonitorTest : public RenderViewHostTestHarness {
     EXPECT_CALL(
         mock_web_contents_delegate_,
         NavigationStateChanged(RenderViewHostTestHarness::web_contents(),
-                               INVALIDATE_TYPE_TAB))
+                               INVALIDATE_TYPE_AUDIO))
         .WillOnce(InvokeWithoutArgs(
-            this,
-            new_recently_audible
-                ? &AudioStreamMonitorTest::ExpectWasRecentlyAudible
-                : &AudioStreamMonitorTest::ExpectNotRecentlyAudible))
+            this, new_recently_audible
+                      ? &AudioStreamMonitorTest::ExpectWasRecentlyAudible
+                      : &AudioStreamMonitorTest::ExpectNotRecentlyAudible))
         .RetiresOnSaturation();
   }
 
@@ -113,12 +111,11 @@ class AudioStreamMonitorTest : public RenderViewHostTestHarness {
     EXPECT_CALL(
         mock_web_contents_delegate_,
         NavigationStateChanged(RenderViewHostTestHarness::web_contents(),
-                               INVALIDATE_TYPE_TAB))
+                               INVALIDATE_TYPE_AUDIO))
         .WillOnce(InvokeWithoutArgs(
-            this,
-            new_audible
-                ? &AudioStreamMonitorTest::ExpectIsCurrentlyAudible
-                : &AudioStreamMonitorTest::ExpectNotCurrentlyAudible))
+            this, new_audible
+                      ? &AudioStreamMonitorTest::ExpectIsCurrentlyAudible
+                      : &AudioStreamMonitorTest::ExpectNotCurrentlyAudible))
         .RetiresOnSaturation();
   }
 

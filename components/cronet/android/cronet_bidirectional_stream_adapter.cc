@@ -12,11 +12,12 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "components/cronet/android/cronet_jni_headers/CronetBidirectionalStream_jni.h"
 #include "components/cronet/android/cronet_url_request_context_adapter.h"
 #include "components/cronet/android/io_buffer_with_byte_buffer.h"
 #include "components/cronet/android/url_request_error.h"
 #include "components/cronet/metrics_util.h"
-#include "jni/CronetBidirectionalStream_jni.h"
+#include "net/base/http_user_agent_settings.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/bidirectional_stream_request_info.h"
@@ -26,9 +27,8 @@
 #include "net/http/http_transaction_factory.h"
 #include "net/http/http_util.h"
 #include "net/ssl/ssl_info.h"
-#include "net/third_party/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
-#include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
 #include "url/gurl.h"
 
@@ -441,8 +441,22 @@ CronetBidirectionalStreamAdapter::GetHeadersArray(
 
   std::vector<std::string> headers;
   for (const auto& header : header_block) {
-    headers.push_back(header.first.as_string());
-    headers.push_back(header.second.as_string());
+    std::string value = header.second.as_string();
+    size_t start = 0;
+    size_t end = 0;
+    // The do loop will split headers by '\0' so that applications can skip it.
+    do {
+      end = value.find('\0', start);
+      std::string split_value;
+      if (end != value.npos) {
+        split_value = value.substr(start, end - start);
+      } else {
+        split_value = value.substr(start);
+      }
+      headers.push_back(header.first.as_string());
+      headers.push_back(split_value);
+      start = end + 1;
+    } while (end != value.npos);
   }
   return base::android::ToJavaArrayOfStrings(env, headers);
 }

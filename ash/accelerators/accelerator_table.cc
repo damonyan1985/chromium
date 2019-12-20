@@ -75,7 +75,6 @@ const AcceleratorData kDebugAcceleratorData[] = {
     {true, ui::VKEY_O, kDebugModifier, DEBUG_SHOW_TOAST},
     {true, ui::VKEY_P, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN,
      DEBUG_TOGGLE_TOUCH_PAD},
-    {true, ui::VKEY_Q, kDebugModifier, DEBUG_SHOW_QUICK_LAUNCH},
     {true, ui::VKEY_T, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN,
      DEBUG_TOGGLE_TOUCH_SCREEN},
     {true, ui::VKEY_T, kDebugModifier, DEBUG_TOGGLE_TABLET_MODE},
@@ -120,6 +119,9 @@ const AcceleratorData kDeveloperAcceleratorData[] = {
     {true, ui::VKEY_W, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN, CYCLE_BACKWARD_MRU},
     {true, ui::VKEY_F, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN,
      TOGGLE_FULLSCREEN},
+    // TODO(wutao): Get a shortcut for the Ambient mode.
+    {true, ui::VKEY_A, ui::EF_COMMAND_DOWN | ui::EF_CONTROL_DOWN,
+     START_AMBIENT_MODE},
 };
 
 const size_t kDeveloperAcceleratorDataLength =
@@ -154,12 +156,16 @@ const AcceleratorAction kActionsAllowedAtLoginOrLockScreen[] = {
     KEYBOARD_BRIGHTNESS_UP,
     MAGNIFIER_ZOOM_IN,   // Control+F7
     MAGNIFIER_ZOOM_OUT,  // Control+F6
+    MEDIA_NEXT_TRACK,
+    MEDIA_PLAY_PAUSE,
+    MEDIA_PREV_TRACK,
     PRINT_UI_HIERARCHIES,
     ROTATE_SCREEN,
     SCALE_UI_DOWN,
     SCALE_UI_RESET,
     SCALE_UI_UP,
     SHOW_IME_MENU_BUBBLE,
+    START_AMBIENT_MODE,
     SWITCH_TO_LAST_USED_IME,
     SWITCH_TO_NEXT_IME,
     TAKE_PARTIAL_SCREENSHOT,
@@ -227,6 +233,7 @@ const AcceleratorAction kActionsAllowedAtModalWindow[] = {
     SCALE_UI_UP,
     SHOW_IME_MENU_BUBBLE,
     SHOW_SHORTCUT_VIEWER,
+    START_AMBIENT_MODE,
     SUSPEND,
     SWAP_PRIMARY_DISPLAY,
     SWITCH_TO_LAST_USED_IME,
@@ -325,8 +332,8 @@ const size_t kActionsAllowedInPinnedModeLength =
     base::size(kActionsAllowedInPinnedMode);
 
 const AcceleratorAction kActionsNeedingWindow[] = {
-    CYCLE_BACKWARD_MRU,
-    CYCLE_FORWARD_MRU,
+    // clang-format off
+    DESKS_MOVE_ACTIVE_ITEM,
     MOVE_ACTIVE_WINDOW_BETWEEN_DISPLAYS,
     ROTATE_WINDOW,
     TOGGLE_FULLSCREEN,
@@ -334,7 +341,7 @@ const AcceleratorAction kActionsNeedingWindow[] = {
     WINDOW_CYCLE_SNAP_LEFT,
     WINDOW_CYCLE_SNAP_RIGHT,
     WINDOW_MINIMIZE,
-    WINDOW_POSITION_CENTER,
+    // clang-format on
 };
 
 const size_t kActionsNeedingWindowLength = base::size(kActionsNeedingWindow);
@@ -357,6 +364,7 @@ const AcceleratorAction kActionsKeepingMenuOpen[] = {
     TAKE_SCREENSHOT,
     TAKE_WINDOW_SCREENSHOT,
     TOGGLE_APP_LIST,
+    TOGGLE_APP_LIST_FULLSCREEN,
     TOGGLE_CAPS_LOCK,
     TOGGLE_DICTATION,
     TOGGLE_DOCKED_MAGNIFIER,

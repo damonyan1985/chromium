@@ -8,7 +8,9 @@
 #import <UIKit/UIKit.h>
 
 @protocol LocationBarConsumer;
+class TemplateURLService;
 class WebStateList;
+class OverlayPresenter;
 class LocationBarModel;
 
 // A mediator object that updates the mediator when the web state changes.
@@ -22,9 +24,18 @@ class LocationBarModel;
 // state.
 @property(nonatomic, assign) WebStateList* webStateList;
 
+// The overlay presenter for OverlayModality::kWebContentArea.  This mediator
+// listens for overlay presentation events to determine whether the share button
+// should be enabled.
+@property(nonatomic, assign) OverlayPresenter* webContentAreaOverlayPresenter;
+
 // The location bar model used by this mediator to extract the current URL and
 // the security state.
 @property(nonatomic, assign, readonly) LocationBarModel* locationBarModel;
+
+// The templateURLService used by this mediator to extract whether the default
+// search engine supports search-by-image.
+@property(nonatomic, assign) TemplateURLService* templateURLService;
 
 // The consumer for this object. This can change during the lifetime of this
 // object and may be nil.

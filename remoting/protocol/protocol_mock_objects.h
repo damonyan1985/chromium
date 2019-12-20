@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/location.h"
 #include "base/macros.h"
@@ -158,6 +159,9 @@ class MockClientStub : public ClientStub {
   // CursorShapeStub mock implementation.
   MOCK_METHOD1(SetCursorShape, void(const CursorShapeInfo& cursor_shape));
 
+  // KeyboardLayoutStub mock implementation.
+  MOCK_METHOD1(SetKeyboardLayout, void(const KeyboardLayout& layout));
+
  private:
   DISALLOW_COPY_AND_ASSIGN(MockClientStub);
 };
@@ -179,11 +183,10 @@ class MockVideoStub : public VideoStub {
   ~MockVideoStub() override;
 
   MOCK_METHOD2(ProcessVideoPacketPtr,
-               void(const VideoPacket* video_packet,
-                    const base::Closure& done));
+               void(const VideoPacket* video_packet, base::OnceClosure* done));
   void ProcessVideoPacket(std::unique_ptr<VideoPacket> video_packet,
-                          const base::Closure& done) override {
-    ProcessVideoPacketPtr(video_packet.get(), done);
+                          base::OnceClosure done) override {
+    ProcessVideoPacketPtr(video_packet.get(), &done);
   }
 
  private:

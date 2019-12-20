@@ -14,9 +14,9 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/cronet/android/cronet_jni_headers/CronetUploadDataStream_jni.h"
 #include "components/cronet/android/cronet_url_request_adapter.h"
 #include "components/cronet/android/io_buffer_with_byte_buffer.h"
-#include "jni/CronetUploadDataStream_jni.h"
 
 using base::android::JavaParamRef;
 
@@ -86,22 +86,19 @@ void CronetUploadDataStreamAdapter::OnReadSucceeded(
   DCHECK(bytes_read > 0 || (final_chunk && bytes_read == 0));
 
   network_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&CronetUploadDataStream::OnReadSuccess,
-                            upload_data_stream_, bytes_read, final_chunk));
+      FROM_HERE, base::BindOnce(&CronetUploadDataStream::OnReadSuccess,
+                                upload_data_stream_, bytes_read, final_chunk));
 }
 
 void CronetUploadDataStreamAdapter::OnRewindSucceeded(
     JNIEnv* env,
     const JavaParamRef<jobject>& jcaller) {
-
   network_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&CronetUploadDataStream::OnRewindSuccess,
-                 upload_data_stream_));
+      FROM_HERE, base::BindOnce(&CronetUploadDataStream::OnRewindSuccess,
+                                upload_data_stream_));
 }
 
-void CronetUploadDataStreamAdapter::Destroy(JNIEnv* env,
-                                            const JavaParamRef<jobject>& jobj) {
+void CronetUploadDataStreamAdapter::Destroy(JNIEnv* env) {
   delete this;
 }
 

@@ -9,9 +9,10 @@
 #include <string>
 
 #include "base/memory/singleton.h"
+#include "base/observer_list.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
-namespace identity {
+namespace signin {
 class IdentityManager;
 }
 
@@ -21,21 +22,35 @@ class Profile;
 // Profiles.
 class IdentityManagerFactory : public BrowserContextKeyedServiceFactory {
  public:
-  static identity::IdentityManager* GetForProfile(Profile* profile);
-  static identity::IdentityManager* GetForProfileIfExists(
-      const Profile* profile);
+  class Observer : public base::CheckedObserver {
+   public:
+    // Called when a IdentityManager instance is created.
+    virtual void IdentityManagerCreated(
+        signin::IdentityManager* identity_manager) {}
+
+    // Called when a IdentityManager instance is being shut down. Observers
+    // of |identity_manager| should remove themselves at this point.
+    virtual void IdentityManagerShutdown(
+        signin::IdentityManager* identity_manager) {}
+
+   protected:
+    ~Observer() override {}
+  };
+
+  static signin::IdentityManager* GetForProfile(Profile* profile);
+  static signin::IdentityManager* GetForProfileIfExists(const Profile* profile);
 
   // Returns an instance of the IdentityManagerFactory singleton.
   static IdentityManagerFactory* GetInstance();
 
-  // Exposes BuildServiceInstanceFor() publicly for usage to unittests,
-  // returning an authenticated IdentityManager, useful specially in
-  // ChromeOS scenarios.
-  static std::unique_ptr<KeyedService>
-  BuildAuthenticatedServiceInstanceForTesting(const std::string& gaia_id,
-                                              const std::string& email,
-                                              const std::string& refresh_token,
-                                              content::BrowserContext* context);
+  // Ensures that IdentityManagerFactory and the factories on which it depends
+  // are built.
+  static void EnsureFactoryAndDependeeFactoriesBuilt();
+
+  // Methods to register or remove observers of IdentityManager
+  // creation/shutdown.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
 
  private:
   friend struct base::DefaultSingletonTraits<IdentityManagerFactory>;
@@ -46,6 +61,13 @@ class IdentityManagerFactory : public BrowserContextKeyedServiceFactory {
   // BrowserContextKeyedServiceFactory:
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* profile) const override;
+  void BrowserContextShutdown(content::BrowserContext* profile) override;
+  void RegisterProfilePrefs(
+      user_prefs::PrefRegistrySyncable* registry) override;
+
+  // List of observers. Checks that list is empty on destruction.
+  base::ObserverList<Observer, /*check_empty=*/true, /*allow_reentrancy=*/false>
+      observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(IdentityManagerFactory);
 };

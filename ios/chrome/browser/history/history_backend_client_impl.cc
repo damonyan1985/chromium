@@ -10,8 +10,8 @@
 #include "url/gurl.h"
 
 HistoryBackendClientImpl::HistoryBackendClientImpl(
-    bookmarks::ModelLoader* model_loader)
-    : model_loader_(model_loader) {}
+    scoped_refptr<bookmarks::ModelLoader> model_loader)
+    : model_loader_(std::move(model_loader)) {}
 
 HistoryBackendClientImpl::~HistoryBackendClientImpl() {
 }
@@ -45,10 +45,6 @@ std::vector<history::URLAndTitle> HistoryBackendClientImpl::GetPinnedURLs() {
         history::URLAndTitle{url_and_title.url, url_and_title.title});
   }
   return result;
-}
-
-bool HistoryBackendClientImpl::ShouldReportDatabaseError() {
-  return false;
 }
 
 bool HistoryBackendClientImpl::IsWebSafe(const GURL& url) {

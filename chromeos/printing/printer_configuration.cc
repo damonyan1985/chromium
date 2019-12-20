@@ -16,6 +16,11 @@
 
 namespace chromeos {
 
+bool Printer::PpdReference::IsFilled() const {
+  return autoconf || !user_supplied_ppd_url.empty() ||
+         !effective_make_and_model.empty();
+}
+
 // Returns true if the scheme is both valid and non-empty.
 bool IsSchemeValid(const url::Parsed& parsed) {
   return parsed.scheme.is_valid() && parsed.scheme.is_nonempty();
@@ -117,20 +122,6 @@ bool Printer::IsIppEverywhere() const {
   return ppd_reference_.autoconf;
 }
 
-bool Printer::RequiresIpResolution() const {
-  if (effective_uri_.empty() &&
-      base::StartsWith(id_, "zeroconf-", base::CompareCase::SENSITIVE)) {
-    // Check to see if |uri_| is a contains a ".local" hostname. This is to
-    // catch the case where a user edits the address of an existing configured
-    // zeroconf printer to a static IP address.
-    base::Optional<UriComponents> components_optional = ParseUri(uri_);
-    UriComponents uri_components = components_optional.value();
-    return base::EndsWith(uri_components.host(), ".local",
-                          base::CompareCase::SENSITIVE);
-  }
-  return false;
-}
-
 net::HostPortPair Printer::GetHostAndPort() const {
   if (uri_.empty()) {
     return net::HostPortPair();
@@ -199,8 +190,15 @@ bool Printer::HasNetworkProtocol() const {
   }
 }
 
-std::string Printer::UriForCups() const {
-  return effective_uri_.empty() ? uri_ : effective_uri_;
+bool Printer::IsUsbProtocol() const {
+  Printer::PrinterProtocol current_protocol = GetProtocol();
+  switch (current_protocol) {
+    case PrinterProtocol::kUsb:
+    case PrinterProtocol::kIppUsb:
+      return true;
+    default:
+      return false;
+  }
 }
 
 base::Optional<UriComponents> Printer::GetUriComponents() const {

@@ -39,11 +39,10 @@ class TestChromeContentRendererClient : public ChromeContentRendererClient {
  public:
   TestChromeContentRendererClient() {}
   ~TestChromeContentRendererClient() override {}
-  // Since visited_link_slave_ in ChromeContentRenderClient never get initiated,
-  // overrides VisitedLinkedHash() function to prevent crashing.
-  unsigned long long VisitedLinkHash(const char* canonical_url,
-                                     size_t length) override {
-    return 0LL;
+  // Since visited_link_reader_ in ChromeContentRenderClient never get
+  // initiated, overrides VisitedLinkedHash() function to prevent crashing.
+  uint64_t VisitedLinkHash(const char* canonical_url, size_t length) override {
+    return 0;
   }
 };
 
@@ -125,8 +124,9 @@ class PhishingClassifierTest : public ChromeRenderViewTest {
     feature_map_.Clear();
 
     classifier_->BeginClassification(
-        page_text, base::Bind(&PhishingClassifierTest::ClassificationFinished,
-                              base::Unretained(this)));
+        page_text,
+        base::BindOnce(&PhishingClassifierTest::ClassificationFinished,
+                       base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
   }
 

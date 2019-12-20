@@ -26,9 +26,11 @@ class MockTtsController : public TtsController {
 
   bool IsSpeaking() override { return false; }
 
-  void SpeakOrEnqueue(TtsUtterance* utterance) override {}
+  void SpeakOrEnqueue(std::unique_ptr<TtsUtterance> utterance) override {}
 
   void Stop() override {}
+
+  void Stop(const GURL& source_url) override {}
 
   void Pause() override {}
 
@@ -56,9 +58,13 @@ class MockTtsController : public TtsController {
 
   TtsEngineDelegate* GetTtsEngineDelegate() override { return nullptr; }
 
-  void SetTtsPlatform(TtsPlatform* tts_platform) override{};
+  void SetTtsPlatform(TtsPlatform* tts_platform) override {}
 
   int QueueSize() override { return 0; }
+
+  void StripSSML(
+      const std::string& utterance,
+      base::OnceCallback<void(const std::string&)> callback) override {}
 
  private:
   friend struct base::DefaultSingletonTraits<MockTtsController>;

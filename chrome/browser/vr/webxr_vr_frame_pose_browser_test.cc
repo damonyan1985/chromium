@@ -5,7 +5,9 @@
 #include "base/environment.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/vr/test/mock_openvr_device_hook_base.h"
+#include "chrome/browser/vr/test/mock_xr_device_hook_base.h"
+#include "chrome/browser/vr/test/multi_class_browser_test.h"
+#include "chrome/browser/vr/test/ui_utils.h"
 #include "chrome/browser/vr/test/webxr_vr_browser_test.h"
 
 #include <memory>
@@ -14,13 +16,15 @@ namespace vr {
 
 namespace {
 
+const float kIPD = 0.2f;
+
 struct Frame {
   device_test::mojom::SubmittedFrameDataPtr submitted;
   device_test::mojom::PoseFrameDataPtr pose;
   device_test::mojom::DeviceConfigPtr config;
 };
 
-class MyOpenVRMock : public MockOpenVRDeviceHookBase {
+class MyXRMock : public MockXRDeviceHookBase {
  public:
   void OnFrameSubmitted(
       device_test::mojom::SubmittedFrameDataPtr frame_data,
@@ -54,7 +58,7 @@ class MyOpenVRMock : public MockOpenVRDeviceHookBase {
 
   device_test::mojom::DeviceConfigPtr GetDeviceConfig() {
     auto config = device_test::mojom::DeviceConfig::New();
-    config->interpupillary_distance = 0.2f;
+    config->interpupillary_distance = kIPD;
     config->projection_left =
         device_test::mojom::ProjectionRaw::New(0.1f, 0.2f, 0.3f, 0.4f);
     config->projection_right =
@@ -80,7 +84,7 @@ unsigned int ParseColorFrameId(const device_test::mojom::ColorPtr& color) {
   return frame_id;
 }
 
-void MyOpenVRMock::OnFrameSubmitted(
+void MyXRMock::OnFrameSubmitted(
     device_test::mojom::SubmittedFrameDataPtr frame_data,
     device_test::mojom::XRTestHook::OnFrameSubmittedCallback callback) {
   unsigned int frame_id = ParseColorFrameId(frame_data->color);
@@ -97,7 +101,7 @@ void MyOpenVRMock::OnFrameSubmitted(
     wait_loop_ = nullptr;
   }
 
-  EXPECT_TRUE(!!last_immersive_frame_data)
+  ASSERT_TRUE(!!last_immersive_frame_data)
       << "Frame submitted without any frame data provided";
 
   // We expect a waitGetPoses, then 2 submits (one for each eye), so after 2
@@ -108,7 +112,7 @@ void MyOpenVRMock::OnFrameSubmitted(
   std::move(callback).Run();
 }
 
-void MyOpenVRMock::WaitGetMagicWindowPose(
+void MyXRMock::WaitGetMagicWindowPose(
     device_test::mojom::XRTestHook::WaitGetMagicWindowPoseCallback callback) {
   auto pose = device_test::mojom::PoseFrameData::New();
 
@@ -119,7 +123,7 @@ void MyOpenVRMock::WaitGetMagicWindowPose(
   std::move(callback).Run(std::move(pose));
 }
 
-void MyOpenVRMock::WaitGetPresentingPose(
+void MyXRMock::WaitGetPresentingPose(
     device_test::mojom::XRTestHook::WaitGetPresentingPoseCallback callback) {
   DLOG(ERROR) << "WaitGetPresentingPose: " << frame_id_;
 
@@ -157,18 +161,23 @@ std::string GetPoseAsString(const Frame& frame) {
 
 }  // namespace
 
-// Pixel test for WebVR/WebXR - start presentation, submit frames, get data back
-// out. Validates that submitted frames used expected pose.
-void TestPresentationPosesImpl(WebXrVrBrowserTestBase* t,
-                               std::string filename) {
-  MyOpenVRMock my_mock;
+// Pixel test for WebXR - start presentation, submit frames, get data back out.
+// Validates that submitted frames used expected pose.
+WEBXR_VR_ALL_RUNTIMES_BROWSER_TEST_F(TestPresentationPoses) {
+  // Disable frame-timeout UI to test what WebXR renders.
+  UiUtils::DisableFrameTimeoutForTesting();
+  MyXRMock my_mock;
 
   // Load the test page, and enter presentation.
-  t->LoadUrlAndAwaitInitialization(t->GetFileUrlForHtmlTestFile(filename));
+  t->LoadUrlAndAwaitInitialization(
+      t->GetFileUrlForHtmlTestFile("test_webxr_poses"));
+  ASSERT_TRUE(
+      t->RunJavaScriptAndExtractBoolOrFail("checkMagicWindowViewOffset()"))
+      << "view under Magic Window should not have any offset from frame";
   t->EnterSessionWithUserGestureOrFail();
 
   // Wait for JavaScript to submit at least one frame.
-  EXPECT_TRUE(
+  ASSERT_TRUE(
       t->PollJavaScriptBoolean("hasPresentedFrame", t->kPollTimeoutShort))
       << "No frame submitted";
 
@@ -178,8 +187,8 @@ void TestPresentationPosesImpl(WebXrVrBrowserTestBase* t,
   // Exit presentation.
   t->EndSessionOrFail();
 
-  // Stop hooking OpenVR, so we can safely analyze our cached data without
-  // incoming calls (there may be leftover mojo messages queued).
+  // Stop hooking the VR runtime so we can safely analyze our cached data
+  // without incoming calls (there may be leftover mojo messages queued).
   my_mock.StopHooking();
 
   // Analyze the submitted frames - check for a few things:
@@ -199,38 +208,38 @@ void TestPresentationPosesImpl(WebXrVrBrowserTestBase* t,
     // Validate that each frame is only seen once for each eye.
     DLOG(ERROR) << "Frame id: " << frame_id;
     if (data->eye == device_test::mojom::Eye::LEFT) {
-      EXPECT_TRUE(seen_left.find(frame_id) == seen_left.end())
+      ASSERT_TRUE(seen_left.find(frame_id) == seen_left.end())
           << "Frame for left eye submitted more than once";
       seen_left.insert(frame_id);
     } else {
-      EXPECT_TRUE(seen_right.find(frame_id) == seen_right.end())
+      ASSERT_TRUE(seen_right.find(frame_id) == seen_right.end())
           << "Frame for right eye submitted more than once";
       seen_right.insert(frame_id);
     }
 
     // Validate that frames arrive in order.
-    EXPECT_TRUE(frame_id >= max_frame_id) << "Frame received out of order";
+    ASSERT_TRUE(frame_id >= max_frame_id) << "Frame received out of order";
     max_frame_id = std::max(frame_id, max_frame_id);
 
     // Validate that the JavaScript-side cache of frames contains our submitted
     // frame.
-    EXPECT_TRUE(t->RunJavaScriptAndExtractBoolOrFail(
+    ASSERT_TRUE(t->RunJavaScriptAndExtractBoolOrFail(
         base::StringPrintf("checkFrameOccurred(%d)", frame_id)))
         << "JavaScript-side frame cache does not contain submitted frame";
 
     // Validate that the JavaScript-side cache of frames has the correct pose.
-    EXPECT_TRUE(t->RunJavaScriptAndExtractBoolOrFail(base::StringPrintf(
+    ASSERT_TRUE(t->RunJavaScriptAndExtractBoolOrFail(base::StringPrintf(
         "checkFramePose(%d, %s)", frame_id, GetPoseAsString(frame).c_str())))
         << "JavaScript-side frame cache has incorrect pose";
+
+    ASSERT_TRUE(t->RunJavaScriptAndExtractBoolOrFail(
+        base::StringPrintf("checkFrameLeftEyeIPD(%d, %f)", frame_id, kIPD / 2)))
+        << "JavaScript-side frame cache has incorrect eye position";
   }
 
   // Tell JavaScript that it is done with the test.
   t->ExecuteStepAndWait("finishTest()");
   t->EndTest();
-}
-
-IN_PROC_BROWSER_TEST_F(WebXrVrBrowserTestStandard, TestPresentationPoses) {
-  TestPresentationPosesImpl(this, "test_webxr_poses");
 }
 
 }  // namespace vr

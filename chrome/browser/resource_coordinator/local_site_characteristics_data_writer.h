@@ -25,11 +25,11 @@ class LocalSiteCharacteristicsDataWriter
   // SiteCharacteristicsDataWriter:
   void NotifySiteLoaded() override;
   void NotifySiteUnloaded() override;
-  void NotifySiteVisibilityChanged(TabVisibility visibility) override;
+  void NotifySiteVisibilityChanged(
+      performance_manager::TabVisibility visibility) override;
   void NotifyUpdatesFaviconInBackground() override;
   void NotifyUpdatesTitleInBackground() override;
   void NotifyUsesAudioInBackground() override;
-  void NotifyUsesNotificationsInBackground() override;
   void NotifyLoadTimePerformanceMeasurement(
       base::TimeDelta load_duration,
       base::TimeDelta cpu_usage_estimate,
@@ -48,13 +48,13 @@ class LocalSiteCharacteristicsDataWriter
   // characteristics data store.
   LocalSiteCharacteristicsDataWriter(
       scoped_refptr<internal::LocalSiteCharacteristicsDataImpl> impl,
-      TabVisibility tab_visibility);
+      performance_manager::TabVisibility tab_visibility);
 
   // The LocalSiteCharacteristicDataInternal object we delegate to.
   const scoped_refptr<internal::LocalSiteCharacteristicsDataImpl> impl_;
 
   // The visibility of the tab using this writer.
-  TabVisibility tab_visibility_;
+  performance_manager::TabVisibility tab_visibility_;
 
   // Indicates if the tab using this writer is loaded.
   bool is_loaded_;

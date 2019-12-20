@@ -21,6 +21,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
+#include "chrome/android/features/vr/jni_headers/VrShell_jni.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/android/vr/android_ui_gesture_target.h"
 #include "chrome/browser/android/vr/autocomplete_controller.h"
@@ -47,12 +48,12 @@
 #include "chrome/browser/vr/ui_test_input.h"
 #include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/browser/vr/vr_web_contents_observer.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/device_service.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_process_host.h"
@@ -63,16 +64,10 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
-#include "content/public/common/service_manager_connection.h"
 #include "content/public/common/url_constants.h"
-#include "device/vr/android/gvr/cardboard_gamepad_data_fetcher.h"
 #include "device/vr/android/gvr/gvr_device.h"
-#include "device/vr/android/gvr/gvr_gamepad_data_fetcher.h"
 #include "gpu/command_buffer/common/mailbox.h"
-#include "jni/VrShell_jni.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "ui/android/window_android.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/display/display.h"
@@ -86,6 +81,7 @@
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace vr {
@@ -149,17 +145,14 @@ VrShell::VrShell(JNIEnv* env,
                  int display_height_pixels,
                  bool pause_content,
                  bool low_density)
-    : web_vr_autopresentation_expected_(
-          ui_initial_state.web_vr_autopresentation_expected),
-      delegate_provider_(delegate),
+    : delegate_provider_(delegate),
       main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       reprojected_rendering_(reprojected_rendering),
       display_size_meters_(display_width_meters, display_height_meters),
       display_size_pixels_(display_width_pixels, display_height_pixels),
       gl_surface_created_event_(
           base::WaitableEvent::ResetPolicy::MANUAL,
-          base::WaitableEvent::InitialState::NOT_SIGNALED),
-      weak_ptr_factory_(this) {
+          base::WaitableEvent::InitialState::NOT_SIGNALED) {
   DVLOG(1) << __FUNCTION__ << "=" << this;
   DCHECK(g_vr_shell_instance == nullptr);
   g_vr_shell_instance = this;
@@ -181,12 +174,6 @@ VrShell::VrShell(JNIEnv* env,
 
   gl_thread_->Start();
 
-  if (ui_initial_state.in_web_vr ||
-      ui_initial_state.web_vr_autopresentation_expected) {
-    UMA_HISTOGRAM_BOOLEAN("VRAutopresentedWebVR",
-                          ui_initial_state.web_vr_autopresentation_expected);
-  }
-
   can_load_new_assets_ = AssetsLoader::GetInstance()->ComponentReady();
   if (!can_load_new_assets_) {
     waiting_for_assets_component_timer_.Start(
@@ -201,9 +188,8 @@ VrShell::VrShell(JNIEnv* env,
 
   UpdateVrAssetsComponent(g_browser_process->component_updater());
 
-  auto* connector =
-      content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  connector->BindInterface(device::mojom::kServiceName, &geolocation_config_);
+  content::GetDeviceService().BindGeolocationConfig(
+      geolocation_config_.BindNewPipeAndPassReceiver());
 }
 
 void VrShell::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -259,8 +245,7 @@ void VrShell::SwapContents(JNIEnv* env,
   if (web_contents_ && !SessionMetricsHelper::FromWebContents(web_contents_)) {
     SessionMetricsHelper::CreateForWebContents(
         web_contents_,
-        webvr_mode_ ? Mode::kWebXrVrPresentation : Mode::kVrBrowsingRegular,
-        web_vr_autopresentation_expected_);
+        webvr_mode_ ? Mode::kWebXrVrPresentation : Mode::kVrBrowsingRegular);
   }
 }
 
@@ -301,15 +286,6 @@ VrShell::~VrShell() {
   DVLOG(1) << __FUNCTION__ << "=" << this;
   content_surface_texture_ = nullptr;
   overlay_surface_texture_ = nullptr;
-  if (gvr_gamepad_source_active_) {
-    device::GamepadDataFetcherManager::GetInstance()->RemoveSourceFactory(
-        device::GAMEPAD_SOURCE_GVR);
-  }
-
-  if (cardboard_gamepad_source_active_) {
-    device::GamepadDataFetcherManager::GetInstance()->RemoveSourceFactory(
-        device::GAMEPAD_SOURCE_CARDBOARD);
-  }
 
   delegate_provider_->RemoveDelegate();
   {
@@ -419,9 +395,6 @@ void VrShell::CloseHostedDialog() {
 void VrShell::ToggleCardboardGamepad(bool enabled) {
   // Enable/disable updating gamepad state.
   if (cardboard_gamepad_source_active_ && !enabled) {
-    device::GamepadDataFetcherManager::GetInstance()->RemoveSourceFactory(
-        device::GAMEPAD_SOURCE_CARDBOARD);
-    cardboard_gamepad_data_fetcher_ = nullptr;
     cardboard_gamepad_source_active_ = false;
   }
 
@@ -429,10 +402,6 @@ void VrShell::ToggleCardboardGamepad(bool enabled) {
     device::GvrDevice* gvr_device = delegate_provider_->GetGvrDevice();
     if (!gvr_device)
       return;
-
-    device::GamepadDataFetcherManager::GetInstance()->AddFactory(
-        new device::CardboardGamepadDataFetcher::Factory(this,
-                                                         gvr_device->GetId()));
     cardboard_gamepad_source_active_ = true;
     if (pending_cardboard_trigger_) {
       OnTriggerEvent(nullptr, JavaParamRef<jobject>(nullptr), true);
@@ -441,37 +410,12 @@ void VrShell::ToggleCardboardGamepad(bool enabled) {
   }
 }
 
-void VrShell::ToggleGvrGamepad(bool enabled) {
-  // Enable/disable updating gamepad state.
-  if (enabled) {
-    DCHECK(!gvr_gamepad_source_active_);
-    device::GvrDevice* gvr_device = delegate_provider_->GetGvrDevice();
-    if (!gvr_device)
-      return;
-
-    device::GamepadDataFetcherManager::GetInstance()->AddFactory(
-        new device::GvrGamepadDataFetcher::Factory(this, gvr_device->GetId()));
-    gvr_gamepad_source_active_ = true;
-  } else {
-    DCHECK(gvr_gamepad_source_active_);
-    device::GamepadDataFetcherManager::GetInstance()->RemoveSourceFactory(
-        device::GAMEPAD_SOURCE_GVR);
-    gvr_gamepad_data_fetcher_ = nullptr;
-    gvr_gamepad_source_active_ = false;
-  }
-}
-
 void VrShell::OnTriggerEvent(JNIEnv* env,
                              const JavaParamRef<jobject>& obj,
                              bool touched) {
   // If we are running cardboard, update gamepad state.
   if (cardboard_gamepad_source_active_) {
-    device::CardboardGamepadData pad;
-    pad.timestamp = cardboard_gamepad_timer_++;
-    pad.is_screen_touching = touched;
-    if (cardboard_gamepad_data_fetcher_) {
-      cardboard_gamepad_data_fetcher_->SetGamepadData(pad);
-    }
+    cardboard_gamepad_timer_++;
   } else {
     pending_cardboard_trigger_ = touched;
   }
@@ -542,11 +486,11 @@ void VrShell::SetWebVrMode(JNIEnv* env,
   CreatePageInfo();
   ui_->SetWebVrMode(enabled);
 
-  if (!webvr_mode_ && !web_vr_autopresentation_expected_) {
-    AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(Mode::kVrBrowsing);
-  } else {
+  if (webvr_mode_) {
     AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(
         Mode::kWebXrVrPresentation);
+  } else {
+    AssetsLoader::GetInstance()->GetMetricsHelper()->OnEnter(Mode::kVrBrowsing);
   }
 }
 
@@ -577,22 +521,17 @@ void VrShell::OnLoadProgressChanged(JNIEnv* env,
 }
 
 void VrShell::OnTabListCreated(JNIEnv* env,
-                               const JavaParamRef<jobject>& obj,
-                               jobjectArray tabs,
-                               jobjectArray incognito_tabs) {
+                               const JavaRef<jobject>& obj,
+                               const JavaRef<jobjectArray>& tabs,
+                               const JavaRef<jobjectArray>& incognito_tabs) {
   incognito_tab_ids_.clear();
   regular_tab_ids_.clear();
-  size_t len = env->GetArrayLength(incognito_tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(
-        env, env->GetObjectArrayElement(incognito_tabs, i));
+  for (auto j_tab : incognito_tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     incognito_tab_ids_.insert(tab->GetAndroidId());
   }
 
-  len = env->GetArrayLength(tabs);
-  for (size_t i = 0; i < len; ++i) {
-    ScopedJavaLocalRef<jobject> j_tab(env, env->GetObjectArrayElement(tabs, i));
+  for (auto j_tab : tabs.ReadElements<jobject>()) {
     TabAndroid* tab = TabAndroid::GetNativeTab(env, j_tab);
     regular_tab_ids_.insert(tab->GetAndroidId());
   }
@@ -814,11 +753,16 @@ void VrShell::RecordVrStartAction(VrStartAction action) {
   }
 }
 
-void VrShell::RecordPresentationStartAction(PresentationStartAction action) {
+// TODO(https://crbug.com/965744): Rename below method to better reflect its
+// purpose (recording a start of immersive VR session).
+void VrShell::RecordPresentationStartAction(
+    PresentationStartAction action,
+    const device::mojom::XRRuntimeSessionOptions& options) {
+  DCHECK_EQ(options.mode, device::mojom::XRSessionMode::kImmersiveVr);
   SessionMetricsHelper* metrics_helper =
       SessionMetricsHelper::FromWebContents(web_contents_);
   if (metrics_helper)
-    metrics_helper->RecordPresentationStartAction(action);
+    metrics_helper->RecordPresentationStartAction(action, options);
 }
 
 void VrShell::ShowSoftInput(JNIEnv* env,
@@ -961,7 +905,7 @@ void VrShell::SetVoiceSearchActive(bool active) {
         this, ui_,
         content::BrowserContext::GetDefaultStoragePartition(profile)
             ->GetURLLoaderFactoryForBrowserProcessIOThread(),
-        profile->GetPrefs()->GetString(prefs::kAcceptLanguages),
+        profile->GetPrefs()->GetString(language::prefs::kAcceptLanguages),
         profile_locale));
   }
   if (active) {
@@ -1111,26 +1055,6 @@ void VrShell::ProcessDialogGesture(std::unique_ptr<InputEvent> event) {
   dialog_gesture_target_->DispatchInputEvent(std::move(event));
 }
 
-void VrShell::UpdateGamepadData(device::GvrGamepadData pad) {
-  if (gvr_gamepad_source_active_ != pad.connected)
-    ToggleGvrGamepad(pad.connected);
-
-  if (gvr_gamepad_data_fetcher_)
-    gvr_gamepad_data_fetcher_->SetGamepadData(pad);
-}
-
-void VrShell::RegisterGvrGamepadDataFetcher(
-    device::GvrGamepadDataFetcher* fetcher) {
-  DVLOG(1) << __FUNCTION__ << "(" << fetcher << ")";
-  gvr_gamepad_data_fetcher_ = fetcher;
-}
-
-void VrShell::RegisterCardboardGamepadDataFetcher(
-    device::CardboardGamepadDataFetcher* fetcher) {
-  DVLOG(1) << __FUNCTION__ << "(" << fetcher << ")";
-  cardboard_gamepad_data_fetcher_ = fetcher;
-}
-
 bool VrShell::HasDaydreamSupport(JNIEnv* env) {
   return Java_VrShell_hasDaydreamSupport(env, j_vr_shell_);
 }
@@ -1227,15 +1151,15 @@ void VrShell::SetPermissionInfo(const PermissionInfoList& permission_info_list,
   // page-specific potentiality, so we will not check for this, either.
   for (const auto& info : permission_info_list) {
     switch (info.type) {
-      case CONTENT_SETTINGS_TYPE_GEOLOCATION:
+      case ContentSettingsType::GEOLOCATION:
         potential_capturing_.location_access_enabled =
             info.setting == CONTENT_SETTING_ALLOW;
         break;
-      case CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
+      case ContentSettingsType::MEDIASTREAM_MIC:
         potential_capturing_.audio_capture_enabled =
             info.setting == CONTENT_SETTING_ALLOW;
         break;
-      case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
+      case ContentSettingsType::MEDIASTREAM_CAMERA:
         potential_capturing_.video_capture_enabled =
             info.setting == CONTENT_SETTING_ALLOW;
         break;
@@ -1350,13 +1274,11 @@ std::unique_ptr<PageInfo> VrShell::CreatePageInfo() {
 
   SecurityStateTabHelper* helper =
       SecurityStateTabHelper::FromWebContents(web_contents_);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
   return std::make_unique<PageInfo>(
       this, Profile::FromBrowserContext(web_contents_->GetBrowserContext()),
       TabSpecificContentSettings::FromWebContents(web_contents_), web_contents_,
-      entry->GetVirtualURL(), security_info);
+      entry->GetVirtualURL(), helper->GetSecurityLevel(),
+      *helper->GetVisibleSecurityState());
 }
 
 gfx::AcceleratedWidget VrShell::GetRenderSurface() {
@@ -1389,8 +1311,6 @@ jlong JNI_VrShell_Init(JNIEnv* env,
       has_or_can_request_record_audio_permission;
   ui_initial_state.assets_supported = AssetsLoader::AssetsSupported();
   ui_initial_state.is_standalone_vr_device = is_standalone_vr_device;
-  ui_initial_state.use_new_incognito_strings =
-      base::FeatureList::IsEnabled(features::kIncognitoStrings);
 
   return reinterpret_cast<intptr_t>(new VrShell(
       env, obj, ui_initial_state,

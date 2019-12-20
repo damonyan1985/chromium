@@ -7,6 +7,7 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -54,7 +55,7 @@ class OriginTest : public ::testing::Test {
     AddStandardScheme("standard-but-noaccess", SchemeType::SCHEME_WITH_HOST);
     AddNoAccessScheme("standard-but-noaccess");
   }
-  void TearDown() override { url::Shutdown(); }
+  void TearDown() override { url::ResetForTests(); }
 
   ::testing::AssertionResult DoEqualityComparisons(const url::Origin& a,
                                                    const url::Origin& b,
@@ -303,7 +304,6 @@ TEST_F(OriginTest, ConstructFromGURL) {
 
       // Registered URLs
       {"ftp://example.com/", "ftp", "example.com", 21},
-      {"gopher://example.com/", "gopher", "example.com", 70},
       {"ws://example.com/", "ws", "example.com", 80},
       {"wss://example.com/", "wss", "example.com", 443},
       {"wss://user:pass@example.com/", "wss", "example.com", 443},
@@ -353,9 +353,6 @@ TEST_F(OriginTest, ConstructFromGURL) {
        123},
       {"blob:https://example.com/guid-goes-here", "https", "example.com", 443},
       {"blob:http://u:p@example.com/guid-goes-here", "http", "example.com", 80},
-
-      // Gopher:
-      {"gopher://8u.9.Vx6", "gopher", "8u.9.vx6", 70},
   };
 
   for (const auto& test_case : cases) {
@@ -666,7 +663,7 @@ TEST_F(OriginTest, NonStandardSchemeWithAndroidWebViewHack) {
   EXPECT_EQ("cow", origin.scheme());
   EXPECT_EQ("", origin.host());
   EXPECT_EQ(0, origin.port());
-  Shutdown();
+  ResetForTests();
 }
 
 TEST_F(OriginTest, CanBeDerivedFrom) {
@@ -829,6 +826,37 @@ TEST_F(OriginTest, CanBeDerivedFrom) {
     EXPECT_EQ(test_case.expected_value,
               test_case.origin->CanBeDerivedFrom(GURL(test_case.url)));
   }
+}
+
+TEST_F(OriginTest, GetDebugString) {
+  Origin http_origin = Origin::Create(GURL("http://192.168.9.1"));
+  EXPECT_STREQ(http_origin.GetDebugString().c_str(), "http://192.168.9.1");
+
+  Origin http_opaque_origin = http_origin.DeriveNewOpaqueOrigin();
+  EXPECT_THAT(
+      http_opaque_origin.GetDebugString().c_str(),
+      ::testing::MatchesRegex(
+          "null \\[internally: \\(\\w*\\) derived from http://192.168.9.1\\]"));
+
+  Origin data_origin = Origin::Create(GURL("data:"));
+  EXPECT_STREQ(data_origin.GetDebugString().c_str(),
+               "null [internally: (nonce TBD) anonymous]");
+
+  // The nonce of the origin will be initialized if a new opaque origin is
+  // derived.
+  Origin data_derived_origin = data_origin.DeriveNewOpaqueOrigin();
+  EXPECT_THAT(
+      data_derived_origin.GetDebugString().c_str(),
+      ::testing::MatchesRegex("null \\[internally: \\(\\w*\\) anonymous\\]"));
+
+  Origin file_origin = Origin::Create(GURL("file:///etc/passwd"));
+  EXPECT_STREQ(file_origin.GetDebugString().c_str(),
+               "file:// [internally: file://]");
+
+  Origin file_server_origin =
+      Origin::Create(GURL("file://example.com/etc/passwd"));
+  EXPECT_STREQ(file_server_origin.GetDebugString().c_str(),
+               "file:// [internally: file://example.com]");
 }
 
 }  // namespace url

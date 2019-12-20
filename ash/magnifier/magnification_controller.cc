@@ -4,15 +4,17 @@
 
 #include "ash/magnifier/magnification_controller.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "ash/accelerators/accelerator_controller.h"
+#include "ash/accelerators/accelerator_controller_impl.h"
 #include "ash/accessibility/accessibility_delegate.h"
 #include "ash/display/root_window_transformers.h"
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/host/root_window_transformer.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/magnifier/magnifier_utils.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
@@ -35,7 +37,6 @@
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/keyboard/keyboard_controller.h"
 #include "ui/wm/core/compound_event_filter.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -176,11 +177,11 @@ void MagnificationController::SetEnabled(bool enabled) {
   // Keyboard overscroll creates layout issues with fullscreen magnification
   // so it needs to be disabled when magnification is enabled.
   // TODO(spqchan): Fix the keyboard overscroll issues.
-  auto config = keyboard::KeyboardController::Get()->keyboard_config();
+  auto config = keyboard::KeyboardUIController::Get()->keyboard_config();
   config.overscroll_behavior =
-      is_enabled_ ? keyboard::mojom::KeyboardOverscrollBehavior::kDisabled
-                  : keyboard::mojom::KeyboardOverscrollBehavior::kDefault;
-  keyboard::KeyboardController::Get()->UpdateKeyboardConfig(config);
+      is_enabled_ ? keyboard::KeyboardOverscrollBehavior::kDisabled
+                  : keyboard::KeyboardOverscrollBehavior::kDefault;
+  keyboard::KeyboardUIController::Get()->UpdateKeyboardConfig(config);
 }
 
 bool MagnificationController::IsEnabled() const {
@@ -490,14 +491,14 @@ void MagnificationController::OnTouchEvent(ui::TouchEvent* event) {
     SwitchTargetRootWindow(current_root, true);
 }
 
-ui::EventRewriteStatus MagnificationController::RewriteEvent(
+ui::EventDispatchDetails MagnificationController::RewriteEvent(
     const ui::Event& event,
-    std::unique_ptr<ui::Event>* rewritten_event) {
+    const Continuation continuation) {
   if (!IsEnabled())
-    return ui::EVENT_REWRITE_CONTINUE;
+    return SendEvent(continuation, &event);
 
   if (!event.IsTouchEvent())
-    return ui::EVENT_REWRITE_CONTINUE;
+    return SendEvent(continuation, &event);
 
   const ui::TouchEvent* touch_event = event.AsTouchEvent();
 
@@ -516,7 +517,7 @@ ui::EventRewriteStatus MagnificationController::RewriteEvent(
         touch_event_copy.unique_event_id(), false /* event_consumed */,
         false /* is_source_touch_event_set_non_blocking */);
   } else {
-    return ui::EVENT_REWRITE_DISCARD;
+    return DiscardEvent(continuation);
   }
 
   // User can change zoom level with two fingers pinch and pan around with two
@@ -547,12 +548,13 @@ ui::EventRewriteStatus MagnificationController::RewriteEvent(
       // TouchExplorationController confused. Send cancelled event for recorded
       // touch events to the next event rewriter here instead of rewriting an
       // event in the stream.
-      SendEventToEventSource(root_window_->GetHost()->GetEventSource(),
-                             &touch_cancel_event);
+      ui::EventDispatchDetails details =
+          SendEvent(continuation, &touch_cancel_event);
+      if (details.dispatcher_destroyed || details.target_destroyed)
+        return details;
     }
     press_event_map_.clear();
   }
-
   bool discard = consume_touch_event_;
 
   // Reset state once no point is touched on the screen.
@@ -570,16 +572,9 @@ ui::EventRewriteStatus MagnificationController::RewriteEvent(
   }
 
   if (discard)
-    return ui::EVENT_REWRITE_DISCARD;
+    return DiscardEvent(continuation);
 
-  return ui::EVENT_REWRITE_CONTINUE;
-}
-
-ui::EventRewriteStatus MagnificationController::NextDispatchEvent(
-    const ui::Event& last_event,
-    std::unique_ptr<ui::Event>* new_event) {
-  NOTREACHED();
-  return ui::EVENT_REWRITE_CONTINUE;
+  return SendEvent(continuation, &event);
 }
 
 bool MagnificationController::Redraw(const gfx::PointF& position,
@@ -641,7 +636,7 @@ bool MagnificationController::RedrawDIP(const gfx::PointF& position_in_dip,
   display::Display display =
       display::Screen::GetScreen()->GetDisplayNearestWindow(root_window_);
   std::unique_ptr<RootWindowTransformer> transformer(
-      CreateRootWindowTransformerForDisplay(root_window_, display));
+      CreateRootWindowTransformerForDisplay(display));
 
   // Inverse the transformation on the keyboard container so the keyboard will
   // remain zoomed out. Apply the same animation settings to it.
@@ -730,7 +725,7 @@ void MagnificationController::OnMouseMove(const gfx::Point& location) {
 
   // Reduce the bottom margin if the keyboard is visible.
   bool reduce_bottom_margin =
-      keyboard::KeyboardController::Get()->IsKeyboardVisible();
+      keyboard::KeyboardUIController::Get()->IsKeyboardVisible();
 
   MoveMagnifierWindowFollowPoint(mouse, margin, margin, margin, margin,
                                  reduce_bottom_margin);
@@ -908,8 +903,8 @@ void MagnificationController::MoveMagnifierWindowCenterPoint(
   gfx::Rect window_rect = GetViewportRect();
 
   // Reduce the viewport bounds if the keyboard is up.
-  if (keyboard::KeyboardController::Get()->IsEnabled()) {
-    gfx::Rect keyboard_rect = keyboard::KeyboardController::Get()
+  if (keyboard::KeyboardUIController::Get()->IsEnabled()) {
+    gfx::Rect keyboard_rect = keyboard::KeyboardUIController::Get()
                                   ->GetKeyboardWindow()
                                   ->GetBoundsInScreen();
     window_rect.set_height(window_rect.height() -

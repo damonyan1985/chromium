@@ -4,8 +4,12 @@
 
 #include "chromeos/components/drivefs/drivefs_search.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "net/base/network_change_notifier.h"
+#include "chromeos/components/drivefs/mojom/drivefs.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/network/public/cpp/network_connection_tracker.h"
 
 namespace drivefs {
 
@@ -21,8 +25,13 @@ bool IsCloudSharedWithMeQuery(const drivefs::mojom::QueryParametersPtr& query) {
 
 }  // namespace
 
-DriveFsSearch::DriveFsSearch(mojom::DriveFs* drivefs, const base::Clock* clock)
-    : drivefs_(drivefs), clock_(clock), weak_ptr_factory_(this) {}
+DriveFsSearch::DriveFsSearch(
+    mojom::DriveFs* drivefs,
+    network::NetworkConnectionTracker* network_connection_tracker,
+    const base::Clock* clock)
+    : drivefs_(drivefs),
+      network_connection_tracker_(network_connection_tracker),
+      clock_(clock) {}
 
 DriveFsSearch::~DriveFsSearch() = default;
 
@@ -39,16 +48,17 @@ mojom::QueryParameters::QuerySource DriveFsSearch::PerformSearch(
     }
   }
 
-  drivefs::mojom::SearchQueryPtr search;
+  mojo::Remote<drivefs::mojom::SearchQuery> search;
   drivefs::mojom::QueryParameters::QuerySource source = query->query_source;
-  if (net::NetworkChangeNotifier::IsOffline() &&
+  if (network_connection_tracker_->IsOffline() &&
       source != drivefs::mojom::QueryParameters::QuerySource::kLocalOnly) {
     // No point trying cloud query if we know we are offline.
     source = drivefs::mojom::QueryParameters::QuerySource::kLocalOnly;
     OnSearchDriveFs(std::move(search), std::move(query), std::move(callback),
                     drive::FILE_ERROR_NO_CONNECTION, {});
   } else {
-    drivefs_->StartSearchQuery(mojo::MakeRequest(&search), query.Clone());
+    drivefs_->StartSearchQuery(search.BindNewPipeAndPassReceiver(),
+                               query.Clone());
     auto* raw_search = search.get();
     raw_search->GetNextPage(base::BindOnce(
         &DriveFsSearch::OnSearchDriveFs, weak_ptr_factory_.GetWeakPtr(),
@@ -58,7 +68,7 @@ mojom::QueryParameters::QuerySource DriveFsSearch::PerformSearch(
 }
 
 void DriveFsSearch::OnSearchDriveFs(
-    drivefs::mojom::SearchQueryPtr search,
+    mojo::Remote<drivefs::mojom::SearchQuery> search,
     drivefs::mojom::QueryParametersPtr query,
     mojom::SearchQuery::GetNextPageCallback callback,
     drive::FileError error,

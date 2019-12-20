@@ -29,9 +29,9 @@ namespace media {
 namespace {
 
 #if defined(OS_WIN)
-#define IntToStringType base::IntToString16
+#define NumberToStringType base::NumberToString16
 #else
-#define IntToStringType base::IntToString
+#define NumberToStringType base::NumberToString
 #endif
 
 bool StreamTypeToStringType(AudioDebugRecordingStreamType stream_type,
@@ -58,9 +58,9 @@ void CreateWavFile(const base::FilePath& debug_recording_file_path,
     return;
   }
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(
           [](const base::FilePath& file_name) {
@@ -68,7 +68,7 @@ void CreateWavFile(const base::FilePath& debug_recording_file_path,
                                              base::File::FLAG_WRITE);
           },
           debug_recording_file_path.AddExtension(stream_type_str)
-              .AddExtension(IntToStringType(id))
+              .AddExtension(NumberToStringType(id))
               .AddExtension(FILE_PATH_LITERAL("wav"))),
       std::move(reply_callback));
 }

@@ -12,7 +12,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 
 const char* kFirstUserActionNewTaskHistogramName[] = {
     "FirstUserAction.BackgroundTimeNewTaskHandset",
@@ -197,8 +197,8 @@ bool FirstUserActionRecorder::ShouldProcessAction(
     return false;
   }
 
-  // Processed actions must either start with 'Mobile' or be in the
-  // |new_task_actions_| whitelist.
+  // Processed actions must either start with 'Mobile' or be explicitly allowed
+  // inkNewTaskActions.
   bool known_mobile_action =
       base::StartsWith(action_name, "Mobile", base::CompareCase::SENSITIVE) ||
       ArrayContainsString(kNewTaskActions, base::size(kNewTaskActions),

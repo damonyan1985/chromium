@@ -20,8 +20,9 @@
 #include "media/base/media_switches.h"
 #include "media/base/routing_token_callback.h"
 #include "media/blink/media_blink_export.h"
-#include "media/filters/context_3d.h"
-#include "media/mojo/interfaces/media_metrics_provider.mojom.h"
+#include "media/blink/power_status_helper.h"
+#include "media/mojo/mojom/media_metrics_provider.mojom.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "third_party/blink/public/platform/web_media_player.h"
 #include "third_party/blink/public/platform/web_video_frame_submitter.h"
 
@@ -52,8 +53,6 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   // Returns true if load will deferred. False if it will run immediately.
   using DeferLoadCB = base::RepeatingCallback<bool(base::OnceClosure)>;
 
-  using Context3DCB = base::Callback<Context3D()>;
-
   // Callback to obtain the media ContextProvider.
   // Requires being called on the media thread.
   // The argument callback is also called on the media thread as a reply.
@@ -65,7 +64,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   // AdjustAllocatedMemoryCB and the return value is the total number of bytes
   // used by objects external to V8.  Note: this value includes things that are
   // not the WebMediaPlayer!
-  typedef base::Callback<int64_t(int64_t)> AdjustAllocatedMemoryCB;
+  using AdjustAllocatedMemoryCB = base::RepeatingCallback<int64_t(int64_t)>;
 
   // |defer_load_cb|, |audio_renderer_sink|, |compositor_task_runner|, and
   // |context_3d_cb| may be null.
@@ -84,13 +83,14 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
       base::WeakPtr<MediaObserver> media_observer,
       bool enable_instant_source_buffer_gc,
       bool embedded_media_experience_enabled,
-      mojom::MediaMetricsProviderPtr metrics_provider,
+      mojo::PendingRemote<mojom::MediaMetricsProvider> metrics_provider,
       CreateSurfaceLayerBridgeCB bridge_callback,
       scoped_refptr<viz::ContextProvider> context_provider,
       blink::WebMediaPlayer::SurfaceLayerMode use_surface_layer_for_video,
       bool is_background_suspend_enabled,
       bool is_background_video_play_enabled,
-      bool is_background_video_track_optimization_supported);
+      bool is_background_video_track_optimization_supported,
+      std::unique_ptr<PowerStatusHelper> power_status_helper);
 
   ~WebMediaPlayerParams();
 
@@ -103,7 +103,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
 
   std::unique_ptr<MediaLog> take_media_log() { return std::move(media_log_); }
 
-  mojom::MediaMetricsProviderPtr take_metrics_provider() {
+  mojo::PendingRemote<mojom::MediaMetricsProvider> take_metrics_provider() {
     return std::move(metrics_provider_);
   }
 
@@ -173,6 +173,10 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
     return is_background_video_track_optimization_supported_;
   }
 
+  std::unique_ptr<PowerStatusHelper> TakePowerStatusHelper() {
+    return std::move(power_status_helper_);
+  }
+
  private:
   DeferLoadCB defer_load_cb_;
   scoped_refptr<SwitchableAudioRendererSink> audio_renderer_sink_;
@@ -189,7 +193,7 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   base::WeakPtr<MediaObserver> media_observer_;
   bool enable_instant_source_buffer_gc_;
   const bool embedded_media_experience_enabled_;
-  mojom::MediaMetricsProviderPtr metrics_provider_;
+  mojo::PendingRemote<mojom::MediaMetricsProvider> metrics_provider_;
   CreateSurfaceLayerBridgeCB create_bridge_callback_;
   scoped_refptr<viz::ContextProvider> context_provider_;
   blink::WebMediaPlayer::SurfaceLayerMode use_surface_layer_for_video_;
@@ -201,6 +205,8 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
   bool is_background_video_playback_enabled_ = true;
   // Whether background video optimization is supported on current platform.
   bool is_background_video_track_optimization_supported_ = true;
+
+  std::unique_ptr<PowerStatusHelper> power_status_helper_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebMediaPlayerParams);
 };

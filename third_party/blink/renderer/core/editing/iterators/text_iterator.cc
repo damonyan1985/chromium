@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
 
 #include <unicode/utf16.h>
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -36,7 +37,7 @@
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/text_control_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
@@ -46,11 +47,10 @@
 #include "third_party/blink/renderer/core/layout/layout_table_cell.h"
 #include "third_party/blink/renderer/core/layout/layout_table_row.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
-
-using namespace html_names;
 
 namespace {
 
@@ -78,14 +78,15 @@ TextIteratorBehavior AdjustBehaviorFlags<EditingInFlatTreeStrategy>(
 }
 
 static inline bool HasDisplayContents(const Node& node) {
-  return node.IsElementNode() && ToElement(node).HasDisplayContentsStyle();
+  auto* element = DynamicTo<Element>(node);
+  return element && element->HasDisplayContentsStyle();
 }
 
 // Checks if |advance()| skips the descendants of |node|, which is the case if
 // |node| is neither a shadow root nor the owner of a layout object.
 static bool NotSkipping(const Node& node) {
   return node.GetLayoutObject() || HasDisplayContents(node) ||
-         (node.IsShadowRoot() && node.OwnerShadowHost()->GetLayoutObject());
+         (IsA<ShadowRoot>(node) && node.OwnerShadowHost()->GetLayoutObject());
 }
 
 template <typename Strategy>
@@ -168,16 +169,17 @@ bool ShouldHandleChildren(const Node& node,
                           const TextIteratorBehavior& behavior) {
   // To support |TextIteratorEmitsImageAltText|, we don't traversal child
   // nodes, in flat tree.
-  if (IsHTMLImageElement(node))
+  if (IsA<HTMLImageElement>(node))
     return false;
   // Traverse internals of text control elements in flat tree only when
   // |EntersTextControls| flag is set.
   if (!behavior.EntersTextControls() && IsTextControl(node))
     return false;
 
-  if (node.IsElementNode()) {
-    if (auto* context = ToElement(node).GetDisplayLockContext())
-      return context->IsSearchable();
+  if (auto* element = DynamicTo<Element>(node)) {
+    if (auto* context = element->GetDisplayLockContext()) {
+      return context->IsActivatable(DisplayLockActivationReason::kSelection);
+    }
   }
   return true;
 }
@@ -238,11 +240,11 @@ TextIteratorAlgorithm<Strategy>::~TextIteratorAlgorithm() {
     return;
   const Document& document = OwnerDocument();
   if (behavior_.ForInnerText())
-    UseCounter::Count(document, WebFeature::kInnerTextWithShadowTree);
+    document.CountUse(WebFeature::kInnerTextWithShadowTree);
   if (behavior_.ForSelectionToString())
-    UseCounter::Count(document, WebFeature::kSelectionToStringWithShadowTree);
+    document.CountUse(WebFeature::kSelectionToStringWithShadowTree);
   if (behavior_.ForWindowFind())
-    UseCounter::Count(document, WebFeature::kWindowFindWithShadowTree);
+    document.CountUse(WebFeature::kWindowFindWithShadowTree);
 }
 
 template <typename Strategy>
@@ -308,26 +310,29 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
       node_ = nullptr;
       return;
     }
+    const bool locked =
+        DisplayLockUtilities::NearestLockedInclusiveAncestor(*node_);
 
     LayoutObject* layout_object = node_->GetLayoutObject();
-    if (!layout_object) {
-      if (node_->IsShadowRoot() || HasDisplayContents(*node_)) {
+    if (!layout_object || locked) {
+      if (!locked &&
+          (IsA<ShadowRoot>(node_.Get()) || HasDisplayContents(*node_))) {
         // Shadow roots or display: contents elements don't have LayoutObjects,
         // but we want to visit children anyway.
         iteration_progress_ = iteration_progress_ < kHandledNode
                                   ? kHandledNode
                                   : iteration_progress_;
-        handle_shadow_root_ = node_->IsShadowRoot();
+        handle_shadow_root_ = IsA<ShadowRoot>(node_.Get());
       } else {
         iteration_progress_ = kHandledChildren;
       }
     } else {
       // Enter author shadow roots, from youngest, if any and if necessary.
       if (iteration_progress_ < kHandledOpenShadowRoots) {
+        auto* element = DynamicTo<Element>(node_.Get());
         if (std::is_same<Strategy, EditingStrategy>::value &&
-            EntersOpenShadowRoots() && node_->IsElementNode() &&
-            ToElement(node_)->OpenShadowRoot()) {
-          ShadowRoot* youngest_shadow_root = ToElement(node_)->OpenShadowRoot();
+            EntersOpenShadowRoots() && element && element->OpenShadowRoot()) {
+          ShadowRoot* youngest_shadow_root = element->OpenShadowRoot();
           DCHECK(youngest_shadow_root->GetType() == ShadowRootType::V0 ||
                  youngest_shadow_root->GetType() == ShadowRootType::kOpen);
           node_ = youngest_shadow_root;
@@ -345,7 +350,7 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
         if (std::is_same<Strategy, EditingStrategy>::value &&
             EntersTextControls() && layout_object->IsTextControl()) {
           ShadowRoot* user_agent_shadow_root =
-              ToElement(node_)->UserAgentShadowRoot();
+              To<Element>(node_.Get())->UserAgentShadowRoot();
           DCHECK(user_agent_shadow_root->IsUserAgent());
           node_ = user_agent_shadow_root;
           iteration_progress_ = kHandledNone;
@@ -359,6 +364,7 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
       // Handle the current node according to its type.
       if (iteration_progress_ < kHandledNode) {
         if (!SkipsUnselectableContent() || layout_object->IsSelectable()) {
+          auto* html_element = DynamicTo<HTMLElement>(*node_);
           if (layout_object->IsText() &&
               node_->getNodeType() ==
                   Node::kTextNode) {  // FIXME: What about kCdataSectionNode?
@@ -367,12 +373,12 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
           } else if (layout_object &&
                      (layout_object->IsImage() ||
                       layout_object->IsLayoutEmbeddedContent() ||
-                      (node_ && node_->IsHTMLElement() &&
-                       (IsHTMLFormControlElement(ToHTMLElement(*node_)) ||
-                        IsHTMLLegendElement(ToHTMLElement(*node_)) ||
-                        IsHTMLImageElement(ToHTMLElement(*node_)) ||
-                        IsHTMLMeterElement(ToHTMLElement(*node_)) ||
-                        IsHTMLProgressElement(ToHTMLElement(*node_)))))) {
+                      (html_element &&
+                       (IsA<HTMLFormControlElement>(html_element) ||
+                        IsA<HTMLLegendElement>(html_element) ||
+                        IsA<HTMLImageElement>(html_element) ||
+                        IsA<HTMLMeterElement>(html_element) ||
+                        IsA<HTMLProgressElement>(html_element))))) {
             HandleReplacedElement();
           } else {
             HandleNonTextNode();
@@ -421,12 +427,12 @@ void TextIteratorAlgorithm<Strategy>::Advance() {
           // 4. Reached the top of a shadow root. If it's created by author,
           // then try to visit the next
           // sibling shadow root, if any.
-          if (!node_->IsShadowRoot()) {
+          const auto* shadow_root = DynamicTo<ShadowRoot>(node_.Get());
+          if (!shadow_root) {
             NOTREACHED();
             should_stop_ = true;
             return;
           }
-          const ShadowRoot* shadow_root = ToShadowRoot(node_);
           if (shadow_root->GetType() == ShadowRootType::V0 ||
               shadow_root->GetType() == ShadowRootType::kOpen) {
             // We are the shadow root; exit from here and go back to
@@ -477,7 +483,7 @@ void TextIteratorAlgorithm<Strategy>::HandleTextNode() {
 
   DCHECK_NE(last_text_node_, node_)
       << "We should never call HandleTextNode on the same node twice";
-  const Text* text = ToText(node_);
+  const auto* text = To<Text>(node_.Get());
   last_text_node_ = text;
 
   // TODO(editing-dev): Introduce a |DOMOffsetRange| class so that we can pass
@@ -498,15 +504,17 @@ void TextIteratorAlgorithm<Strategy>::HandleTextNode() {
 
 template <typename Strategy>
 bool TextIteratorAlgorithm<Strategy>::SupportsAltText(const Node& node) {
-  if (!node.IsHTMLElement())
+  const auto* element = DynamicTo<HTMLElement>(node);
+  if (!element)
     return false;
-  const HTMLElement& element = ToHTMLElement(node);
 
   // FIXME: Add isSVGImageElement.
-  if (IsHTMLImageElement(element))
+  if (IsA<HTMLImageElement>(*element))
     return true;
-  if (IsHTMLInputElement(element) &&
-      ToHTMLInputElement(node).type() == input_type_names::kImage)
+
+  auto* html_input_element = DynamicTo<HTMLInputElement>(element);
+  if (html_input_element &&
+      html_input_element->type() == input_type_names::kImage)
     return true;
   return false;
 }
@@ -551,7 +559,7 @@ void TextIteratorAlgorithm<Strategy>::HandleReplacedElement() {
   }
 
   if (EmitsImageAltText() && TextIterator::SupportsAltText(*node_)) {
-    text_state_.EmitAltText(ToHTMLElement(*node_));
+    text_state_.EmitAltText(To<HTMLElement>(*node_));
     return;
   }
   // TODO(editing-dev): We can remove |UpdateForReplacedElement()| call when
@@ -570,9 +578,10 @@ bool TextIteratorAlgorithm<Strategy>::ShouldEmitTabBeforeNode(
     return false;
 
   // Want a tab before every cell other than the first one
-  LayoutTableCell* rc = ToLayoutTableCell(r);
-  LayoutTable* t = rc->Table();
-  return t && (t->CellPreceding(*rc) || t->CellAbove(*rc));
+  const LayoutNGTableCellInterface* rc =
+      ToInterface<LayoutNGTableCellInterface>(r);
+  const LayoutNGTableInterface* t = rc->TableInterface();
+  return t && !t->IsFirstCell(*rc);
 }
 
 template <typename Strategy>
@@ -581,10 +590,11 @@ bool TextIteratorAlgorithm<Strategy>::ShouldEmitNewlineForNode(
     bool emits_original_text) {
   LayoutObject* layout_object = node.GetLayoutObject();
 
-  if (layout_object ? !layout_object->IsBR() : !IsHTMLBRElement(node))
+  if (layout_object ? !layout_object->IsBR() : !IsA<HTMLBRElement>(node))
     return false;
-  return emits_original_text || !(node.IsInShadowTree() &&
-                                  IsHTMLInputElement(*node.OwnerShadowHost()));
+  return emits_original_text ||
+         !(node.IsInShadowTree() &&
+           IsA<HTMLInputElement>(*node.OwnerShadowHost()));
 }
 
 static bool ShouldEmitNewlinesBeforeAndAfterNode(const Node& node) {
@@ -594,21 +604,30 @@ static bool ShouldEmitNewlinesBeforeAndAfterNode(const Node& node) {
   if (!r) {
     if (HasDisplayContents(node))
       return false;
-    return (node.HasTagName(kBlockquoteTag) || node.HasTagName(kDdTag) ||
-            node.HasTagName(kDivTag) || node.HasTagName(kDlTag) ||
-            node.HasTagName(kDtTag) || node.HasTagName(kH1Tag) ||
-            node.HasTagName(kH2Tag) || node.HasTagName(kH3Tag) ||
-            node.HasTagName(kH4Tag) || node.HasTagName(kH5Tag) ||
-            node.HasTagName(kH6Tag) || node.HasTagName(kHrTag) ||
-            node.HasTagName(kLiTag) || node.HasTagName(kListingTag) ||
-            node.HasTagName(kOlTag) || node.HasTagName(kPTag) ||
-            node.HasTagName(kPreTag) || node.HasTagName(kTrTag) ||
-            node.HasTagName(kUlTag));
+    return (node.HasTagName(html_names::kBlockquoteTag) ||
+            node.HasTagName(html_names::kDdTag) ||
+            node.HasTagName(html_names::kDivTag) ||
+            node.HasTagName(html_names::kDlTag) ||
+            node.HasTagName(html_names::kDtTag) ||
+            node.HasTagName(html_names::kH1Tag) ||
+            node.HasTagName(html_names::kH2Tag) ||
+            node.HasTagName(html_names::kH3Tag) ||
+            node.HasTagName(html_names::kH4Tag) ||
+            node.HasTagName(html_names::kH5Tag) ||
+            node.HasTagName(html_names::kH6Tag) ||
+            node.HasTagName(html_names::kHrTag) ||
+            node.HasTagName(html_names::kLiTag) ||
+            node.HasTagName(html_names::kListingTag) ||
+            node.HasTagName(html_names::kOlTag) ||
+            node.HasTagName(html_names::kPTag) ||
+            node.HasTagName(html_names::kPreTag) ||
+            node.HasTagName(html_names::kTrTag) ||
+            node.HasTagName(html_names::kUlTag));
   }
 
   // Need to make an exception for option and optgroup, because we want to
   // keep the legacy behavior before we added layoutObjects to them.
-  if (IsHTMLOptionElement(node) || IsHTMLOptGroupElement(node))
+  if (IsA<HTMLOptionElement>(node) || IsA<HTMLOptGroupElement>(node))
     return false;
 
   // Need to make an exception for table cells, because they are blocks, but we
@@ -619,8 +638,9 @@ static bool ShouldEmitNewlinesBeforeAndAfterNode(const Node& node) {
   // Need to make an exception for table row elements, because they are neither
   // "inline" or "LayoutBlock", but we want newlines for them.
   if (r->IsTableRow()) {
-    LayoutTable* t = ToLayoutTableRow(r)->Table();
-    if (t && !t->IsInline())
+    const LayoutNGTableInterface* t =
+        ToInterface<LayoutNGTableRowInterface>(r)->TableInterface();
+    if (t && !t->ToLayoutObject()->IsInline())
       return true;
   }
 
@@ -653,13 +673,13 @@ bool TextIteratorAlgorithm<Strategy>::ShouldEmitNewlineBeforeNode(
 }
 
 static bool ShouldEmitExtraNewlineForNode(const Node* node) {
-  // https://html.spec.whatwg.org/multipage/dom.html#the-innertext-idl-attribute
+  // https://html.spec.whatwg.org/C/#the-innertext-idl-attribute
   // Append two required linebreaks after a P element.
   LayoutObject* r = node->GetLayoutObject();
   if (!r || !r->IsBox())
     return false;
 
-  return node->HasTagName(kPTag);
+  return node->HasTagName(html_names::kPTag);
 }
 
 // Whether or not we should emit a character as we enter node_ (if it's a
@@ -716,8 +736,8 @@ bool TextIteratorAlgorithm<Strategy>::ShouldRepresentNodeOffsetZero() {
       node_->GetLayoutObject()->Style()->Visibility() !=
           EVisibility::kVisible ||
       (node_->GetLayoutObject()->IsLayoutBlockFlow() &&
-       !ToLayoutBlock(node_->GetLayoutObject())->Size().Height() &&
-       !IsHTMLBodyElement(*node_)))
+       !To<LayoutBlock>(node_->GetLayoutObject())->Size().Height() &&
+       !IsA<HTMLBodyElement>(*node_)))
     return false;
 
   // The startPos.isNotNull() check is needed because the start could be before
@@ -750,7 +770,7 @@ void TextIteratorAlgorithm<Strategy>::RepresentNodeOffsetZero() {
   // early-return style.
   // When we haven't been emitting any characters,
   // ShouldRepresentNodeOffsetZero() can create VisiblePositions, which is
-  // expensive. So, we perform the inexpensive checks on m_node to see if it
+  // expensive. So, we perform the inexpensive checks on |node_| to see if it
   // necessitates emitting a character first and will early return before
   // encountering ShouldRepresentNodeOffsetZero()s worse case behavior.
   if (ShouldEmitTabBeforeNode(*node_)) {
@@ -919,9 +939,9 @@ PositionTemplate<Strategy> TextIteratorAlgorithm<Strategy>::GetPositionBefore(
     return PositionTemplate<Strategy>(
         node, text_state_.PositionStartOffset() + char16_offset);
   }
-  if (node.IsTextNode()) {
+  if (auto* text_node = DynamicTo<Text>(node)) {
     if (text_state_.IsAfterPositionNode())
-      return PositionTemplate<Strategy>(node, ToText(node).length());
+      return PositionTemplate<Strategy>(node, text_node->length());
     return PositionTemplate<Strategy>(node, 0);
   }
   if (text_state_.IsAfterPositionNode())
@@ -950,10 +970,10 @@ PositionTemplate<Strategy> TextIteratorAlgorithm<Strategy>::GetPositionAfter(
     return PositionTemplate<Strategy>(
         node, text_state_.PositionStartOffset() + char16_offset + 1);
   }
-  if (node.IsTextNode()) {
+  if (auto* text_node = DynamicTo<Text>(node)) {
     if (text_state_.IsBeforePositionNode())
       return PositionTemplate<Strategy>(node, 0);
-    return PositionTemplate<Strategy>(node, ToText(node).length());
+    return PositionTemplate<Strategy>(node, text_node->length());
   }
   if (text_state_.IsBeforePositionNode())
     return PositionTemplate<Strategy>::BeforeNode(node);
@@ -997,40 +1017,6 @@ int TextIteratorAlgorithm<Strategy>::RangeLength(
     const EphemeralRangeTemplate<Strategy>& range,
     const TextIteratorBehavior& behavior) {
   return RangeLength(range.StartPosition(), range.EndPosition(), behavior);
-}
-
-template <typename Strategy>
-bool TextIteratorAlgorithm<Strategy>::IsBetweenSurrogatePair(
-    unsigned position) const {
-  return position > 0 && position < static_cast<unsigned>(length()) &&
-         U16_IS_LEAD(CharacterAt(position - 1)) &&
-         U16_IS_TRAIL(CharacterAt(position));
-}
-
-template <typename Strategy>
-int TextIteratorAlgorithm<Strategy>::CopyTextTo(ForwardsTextBuffer* output,
-                                                int position,
-                                                int min_length) const {
-  unsigned end = std::min(length(), position + min_length);
-  if (IsBetweenSurrogatePair(end))
-    ++end;
-  unsigned copied_length = end - position;
-  CopyCodeUnitsTo(output, position, copied_length);
-  return copied_length;
-}
-
-template <typename Strategy>
-int TextIteratorAlgorithm<Strategy>::CopyTextTo(ForwardsTextBuffer* output,
-                                                int position) const {
-  return CopyTextTo(output, position, length() - position);
-}
-
-template <typename Strategy>
-void TextIteratorAlgorithm<Strategy>::CopyCodeUnitsTo(
-    ForwardsTextBuffer* output,
-    unsigned position,
-    unsigned copy_length) const {
-  text_state_.AppendTextTo(output, position, copy_length);
 }
 
 // --------

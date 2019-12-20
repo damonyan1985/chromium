@@ -94,8 +94,7 @@ FakeMediaSource::FakeMediaSource(
       video_frame_rate_numerator_(video_config.max_frame_rate),
       video_frame_rate_denominator_(1),
       video_first_pts_(0),
-      video_first_pts_set_(false),
-      weak_factory_(this) {
+      video_first_pts_set_(false) {
   CHECK(output_audio_params_.IsValid());
   audio_bus_factory_.reset(
       new TestAudioBusFactory(audio_config.channels, audio_config.rtp_timebase,
@@ -240,10 +239,9 @@ void FakeMediaSource::Start(scoped_refptr<AudioFrameInput> audio_frame_input,
 
   if (!is_transcoding_audio() && !is_transcoding_video()) {
     // Send fake patterns.
-    task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&FakeMediaSource::SendNextFakeFrame,
-                   weak_factory_.GetWeakPtr()));
+    task_runner_->PostTask(FROM_HERE,
+                           base::BindOnce(&FakeMediaSource::SendNextFakeFrame,
+                                          weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -261,9 +259,9 @@ void FakeMediaSource::Start(scoped_refptr<AudioFrameInput> audio_frame_input,
   audio_converter_.reset(new media::AudioConverter(
       source_audio_params_, output_audio_params_, true));
   audio_converter_->AddInput(this);
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFrame, weak_factory_.GetWeakPtr()));
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&FakeMediaSource::SendNextFrame,
+                                        weak_factory_.GetWeakPtr()));
 }
 
 void FakeMediaSource::SendNextFakeFrame() {
@@ -312,8 +310,8 @@ void FakeMediaSource::SendNextFakeFrame() {
 
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFakeFrame,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&FakeMediaSource::SendNextFakeFrame,
+                     weak_factory_.GetWeakPtr()),
       video_time - elapsed_time);
 }
 
@@ -409,7 +407,8 @@ void FakeMediaSource::SendNextFrame() {
   // Send next send.
   task_runner_->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeMediaSource::SendNextFrame, weak_factory_.GetWeakPtr()),
+      base::BindOnce(&FakeMediaSource::SendNextFrame,
+                     weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(kAudioFrameMs));
 }
 

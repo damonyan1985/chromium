@@ -9,7 +9,6 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_writer.h"
-#include "chrome/browser/resource_coordinator/page_signal_receiver.h"
 #include "chrome/browser/resource_coordinator/tab_load_tracker.h"
 #include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -25,15 +24,8 @@ namespace resource_coordinator {
 // with a WebContents and forwards the appropriate events to it.
 class LocalSiteCharacteristicsWebContentsObserver
     : public content::WebContentsObserver,
-      public TabLoadTracker::Observer,
-      public PageSignalObserver {
+      public TabLoadTracker::Observer {
  public:
-  // Allows skipping the observer registration in the constructor for the
-  // unittests that don't have all the services enabled
-  // (e.g. PageSignalReceiver), these features should be tested in integration
-  // tests instead.
-  static void SkipObserverRegistrationForTesting();
-
   explicit LocalSiteCharacteristicsWebContentsObserver(
       content::WebContents* contents);
   ~LocalSiteCharacteristicsWebContentsObserver() override;
@@ -53,33 +45,18 @@ class LocalSiteCharacteristicsWebContentsObserver
                             LoadingState old_loading_state,
                             LoadingState new_loading_state) override;
 
-  // PageSignalObserver:
-  void OnNonPersistentNotificationCreated(
-      content::WebContents* web_contents,
-      const PageNavigationIdentity& page_navigation_id) override;
-  void OnLoadTimePerformanceEstimate(
-      content::WebContents* web_contents,
-      const PageNavigationIdentity& page_navigation_id,
-      base::TimeDelta load_duration,
-      base::TimeDelta cpu_usage_estimate,
-      uint64_t private_footprint_kb_estimate) override;
+  const url::Origin& writer_origin() const { return writer_origin_; }
 
   SiteCharacteristicsDataWriter* GetWriterForTesting() const {
     return writer_.get();
   }
-  url::Origin GetWriterOriginForTesting() const { return writer_origin_; }
   void ResetWriterForTesting() { writer_.reset(); }
-
-  void SetPageSignalReceiverForTesting(PageSignalReceiver* receiver) {
-    page_signal_receiver_ = receiver;
-  }
 
  private:
   enum class FeatureType {
     kTitleChange,
     kFaviconChange,
     kAudioUsage,
-    kNotificationUsage,
   };
 
   // Indicates if the feature usage event just received should be ignored.
@@ -96,7 +73,7 @@ class LocalSiteCharacteristicsWebContentsObserver
   void OnSiteLoaded();
 
   // Updates |backgrounded_time_| based on |visibility|.
-  void UpdateBackgroundedTime(TabVisibility visibility);
+  void UpdateBackgroundedTime(performance_manager::TabVisibility visibility);
 
   // The writer that processes the event received by this class.
   std::unique_ptr<SiteCharacteristicsDataWriter> writer_;
@@ -110,9 +87,6 @@ class LocalSiteCharacteristicsWebContentsObserver
   // always supposed to happen.
   bool first_time_favicon_set_ = false;
   bool first_time_title_set_ = false;
-
-  // The PageSignalReceiver observed by this instance.
-  PageSignalReceiver* page_signal_receiver_ = nullptr;
 
   // The time at which this tab switched to the loaded state, null if this tab
   // is not currently loaded.

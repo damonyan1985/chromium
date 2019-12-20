@@ -3,9 +3,6 @@
 <script src="../resources/common.js"></script>
 <script>
 waitUntilLoadedAndAutofocused();
-// We don't care a render tree of this test.
-if (window.testRunner)
-    testRunner.dumpAsTextWithPixelResults();
 </script>
 <style>
 body { overflow: hidden; }
@@ -13,6 +10,7 @@ body { overflow: hidden; }
 input {
     color: lime;
     text-indent: 1px;
+    width: 80px;
     zoom: 8;
 }
 

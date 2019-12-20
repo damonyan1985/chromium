@@ -32,7 +32,7 @@ namespace sandbox {
 //
 // Our replacement functions must handle both cases, and either proxy the call
 // to the parent over the IPC back-channel (see
-// https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md)
+// https://chromium.googlesource.com/chromium/src/+/master/docs/linux/sandbox_ipc.md)
 // or use dlsym with RTLD_NEXT to resolve the symbol, ignoring any symbols in
 // the current module. Use SetUseLocaltimeOverride() and SetAmZygoteOrRenderer()
 // below to control the mode of operation, which defaults using the dlsym
@@ -69,6 +69,9 @@ SANDBOX_EXPORT void SetUseLocaltimeOverride(bool enable);
 // Turns on/off the libc interception. Called by the zygote and inherited by it
 // children. |backchannel_fd| must be the fd to use for proxying calls.
 SANDBOX_EXPORT void SetAmZygoteOrRenderer(bool enable, int backchannel_fd);
+
+// Initializes libc interception. Must be called before sandbox lock down.
+SANDBOX_EXPORT void InitLibcLocaltimeFunctions();
 
 }  // namespace sandbox
 

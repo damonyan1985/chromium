@@ -22,6 +22,8 @@ class ObjectIdInvalidationMap;
 // keep track of registered handlers and which object ID registrations are
 // associated with which handlers, so implementors can just reuse the logic
 // here to dispatch invalidations and other interesting notifications.
+// TODO(crbug.com/1029481): Part of the legacy implementation of invalidations,
+// scheduled for deletion.
 class INVALIDATION_EXPORT DeprecatedInvalidatorRegistrar {
  public:
   DeprecatedInvalidatorRegistrar();
@@ -71,6 +73,8 @@ class INVALIDATION_EXPORT DeprecatedInvalidatorRegistrar {
   // objects id. This is used by the InvalidatorLogger to be able
   // to display every registered handlers and its objectsIds.
   std::map<std::string, ObjectIdSet> GetSanitizedHandlersIdsMap();
+
+  bool HasRegisteredHandlers() const;
 
   bool IsHandlerRegisteredForTest(const InvalidationHandler* handler) const;
 

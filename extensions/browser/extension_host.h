@@ -107,7 +107,6 @@ class ExtensionHost : public DeferredStartRenderHost,
   void RenderViewReady() override;
   void RenderProcessGone(base::TerminationStatus status) override;
   void DocumentAvailableInMainFrame() override;
-  void DidStartLoading() override;
   void DidStopLoading() override;
 
   // content::WebContentsDelegate:
@@ -126,11 +125,12 @@ class ExtensionHost : public DeferredStartRenderHost,
       content::MediaResponseCallback callback) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  blink::MediaStreamType type) override;
+                                  blink::mojom::MediaStreamType type) override;
   bool IsNeverVisible(content::WebContents* web_contents) override;
-  gfx::Size EnterPictureInPicture(content::WebContents* web_contents,
-                                  const viz::SurfaceId& surface_id,
-                                  const gfx::Size& natural_size) override;
+  content::PictureInPictureResult EnterPictureInPicture(
+      content::WebContents* web_contents,
+      const viz::SurfaceId& surface_id,
+      const gfx::Size& natural_size) override;
   void ExitPictureInPicture() override;
 
   // ExtensionRegistryObserver:
@@ -154,10 +154,6 @@ class ExtensionHost : public DeferredStartRenderHost,
  private:
   // DeferredStartRenderHost:
   void CreateRenderViewNow() override;
-  void AddDeferredStartRenderHostObserver(
-      DeferredStartRenderHostObserver* observer) override;
-  void RemoveDeferredStartRenderHostObserver(
-      DeferredStartRenderHostObserver* observer) override;
 
   // Message handlers.
   void OnEventAck(int event_id);
@@ -220,8 +216,6 @@ class ExtensionHost : public DeferredStartRenderHost,
   std::unique_ptr<base::ElapsedTimer> load_start_;
 
   base::ObserverList<ExtensionHostObserver>::Unchecked observer_list_;
-  base::ObserverList<DeferredStartRenderHostObserver>::Unchecked
-      deferred_start_render_host_observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionHost);
 };

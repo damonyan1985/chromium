@@ -9,18 +9,10 @@
 'use strict';
 
 /** @const */
-var BROWSER_SUPPORTS_TLS_CHANNEL_ID = true;
-
-/** @const */
 var HTTP_ORIGINS_ALLOWED = false;
 
 /** @const */
 var LOG_SAVER_EXTENSION_ID = 'fjajfjhkeibgmiggdfehjplbhmfkialk';
-
-// Singleton tracking available devices.
-var gnubbies = new Gnubbies();
-HidGnubbyDevice.register(gnubbies);
-UsbGnubbyDevice.register(gnubbies);
 
 var FACTORY_REGISTRY = (function() {
   var windowTimer = new WindowTimer();
@@ -28,13 +20,8 @@ var FACTORY_REGISTRY = (function() {
   return new FactoryRegistry(
       new XhrAppIdCheckerFactory(xhrTextFetcher),
       new CryptoTokenApprovedOrigin(), new CountdownTimerFactory(windowTimer),
-      new CryptoTokenOriginChecker(), new UsbHelper(), windowTimer,
-      xhrTextFetcher);
+      new CryptoTokenOriginChecker(), windowTimer);
 })();
-
-var DEVICE_FACTORY_REGISTRY = new DeviceFactoryRegistry(
-    new UsbGnubbyFactory(gnubbies), FACTORY_REGISTRY.getCountdownFactory(),
-    new GoogleCorpIndividualAttestation());
 
 /**
  * @param {*} request The received request
@@ -77,6 +64,15 @@ function defaultResponseCallback(request, sendResponse, response) {
  * @param {*} response The response to return.
  */
 function sendResponseToActiveTabOnly(request, sender, sendResponse, response) {
+  // For WebAuthn-proxied requests on Windows, dismissing the native Windows
+  // UI after a timeout races with the error being returned here. Hence, skip
+  // the focus check for all timeouts.
+  if (response.responseData &&
+      response.responseData.errorCode == ErrorCodes.TIMEOUT) {
+    defaultResponseCallback(request, sendResponse, response);
+    return;
+  }
+
   tabInForeground(sender.tab.id).then(function(result) {
     // If the tab is no longer in the foreground, drop the result: the user
     // is no longer interacting with the tab that originated the request.

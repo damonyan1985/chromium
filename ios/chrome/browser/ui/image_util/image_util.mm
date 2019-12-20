@@ -6,8 +6,6 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/ui/image_util/image_util.h"
-
-#include "third_party/google_toolbox_for_mac/src/iPhone/GTMUIImage+Resize.h"
 #include "ui/gfx/color_analysis.h"
 #include "ui/gfx/image/image.h"
 
@@ -24,10 +22,6 @@ NSString* kImageExtensionGIF = @"gif";
 NSString* kImageExtensionICO = @"ico";
 NSString* kImageExtensionWebP = @"webp";
 
-// Dimensions to use when downsizing an image for search-by-image.
-const CGFloat kSearchByImageMaxImageArea = 90000.0;
-const CGFloat kSearchByImageMaxImageWidth = 600.0;
-const CGFloat kSearchByImageMaxImageHeight = 400.0;
 }
 
 UIColor* DominantColorForImage(const gfx::Image& image, CGFloat opacity) {
@@ -112,18 +106,4 @@ NSString* GetImageUTIFromData(NSData* data) {
     kImageExtensionICO : (__bridge NSString*)kUTTypeICO
   };
   return dict[GetImageExtensionFromData(data)];
-}
-
-UIImage* ResizeImageForSearchByImage(UIImage* image) {
-  if (image &&
-      image.size.height * image.size.width > kSearchByImageMaxImageArea &&
-      (image.size.width > kSearchByImageMaxImageWidth ||
-       image.size.height > kSearchByImageMaxImageHeight)) {
-    CGSize newImageSize =
-        CGSizeMake(kSearchByImageMaxImageWidth, kSearchByImageMaxImageHeight);
-    image = [image gtm_imageByResizingToSize:newImageSize
-                         preserveAspectRatio:YES
-                                   trimToFit:NO];
-  }
-  return image;
 }

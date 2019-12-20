@@ -114,8 +114,8 @@ void MediaRouterIntegrationBrowserTest::ExecuteJavaScriptAPI(
   // Read the test result, the test result set by javascript is a
   // JSON string with the following format:
   // {"passed": "<true/false>", "errorMessage": "<error_message>"}
-  std::unique_ptr<base::Value> value =
-      base::JSONReader::Read(result, base::JSON_ALLOW_TRAILING_COMMAS);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(
+      result, base::JSON_ALLOW_TRAILING_COMMAS);
 
   // Convert to dictionary.
   base::DictionaryValue* dict_value = nullptr;
@@ -477,7 +477,7 @@ IN_PROC_BROWSER_TEST_F(MediaRouterIntegrationBrowserTest,
   // Increment web contents capturer count so it thinks capture has started.
   // This will allow the file tab to go fullscreen.
   content::WebContents* web_contents = GetActiveWebContents();
-  web_contents->IncrementCapturerCount(gfx::Size());
+  web_contents->IncrementCapturerCount(gfx::Size(), /* stay_hidden */ false);
 
   // Wait for capture poll timer to pick up change.
   Wait(base::TimeDelta::FromSeconds(3));

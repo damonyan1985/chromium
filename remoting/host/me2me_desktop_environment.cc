@@ -92,13 +92,13 @@ Me2MeDesktopEnvironment::Me2MeDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory,
+    base::WeakPtr<ClientSessionControl> client_session_control,
     const DesktopEnvironmentOptions& options)
     : BasicDesktopEnvironment(caller_task_runner,
                               video_capture_task_runner,
                               input_task_runner,
                               ui_task_runner,
-                              system_input_injector_factory,
+                              client_session_control,
                               options) {
   DCHECK(caller_task_runner->BelongsToCurrentThread());
 
@@ -172,13 +172,11 @@ Me2MeDesktopEnvironmentFactory::Me2MeDesktopEnvironmentFactory(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory)
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
     : BasicDesktopEnvironmentFactory(caller_task_runner,
                                      video_capture_task_runner,
                                      input_task_runner,
-                                     ui_task_runner,
-                                     system_input_injector_factory) {}
+                                     ui_task_runner) {}
 
 Me2MeDesktopEnvironmentFactory::~Me2MeDesktopEnvironmentFactory() {
 }
@@ -192,7 +190,7 @@ std::unique_ptr<DesktopEnvironment> Me2MeDesktopEnvironmentFactory::Create(
       new Me2MeDesktopEnvironment(caller_task_runner(),
                                   video_capture_task_runner(),
                                   input_task_runner(), ui_task_runner(),
-                                  system_input_injector_factory(), options));
+                                  client_session_control, options));
   if (!desktop_environment->InitializeSecurity(client_session_control)) {
     return nullptr;
   }

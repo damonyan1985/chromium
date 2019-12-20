@@ -8,25 +8,28 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/common/google_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/base/sync_prefs.h"
+#include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/driver/sync_service.h"
+#include "components/sync/driver/sync_user_settings.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #import "ios/chrome/browser/sync/sync_observer_bridge.h"
-#import "ios/chrome/browser/ui/settings/cells/encryption_item.h"
 #import "ios/chrome/browser/ui/settings/sync/sync_create_passphrase_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/sync/sync_encryption_passphrase_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_item.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_link_header_footer_item.h"
+#import "ios/chrome/browser/ui/table_view/cells/table_view_text_item.h"
 #import "ios/chrome/browser/ui/table_view/table_view_model.h"
 #include "ios/chrome/browser/ui/ui_feature_flags.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "url/gurl.h"
@@ -70,8 +73,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
     _browserState = browserState;
     syncer::SyncService* syncService =
         ProfileSyncServiceFactory::GetForBrowserState(_browserState);
-    _isUsingSecondaryPassphrase = syncService->IsEngineInitialized() &&
-                                  syncService->IsUsingSecondaryPassphrase();
+    _isUsingSecondaryPassphrase =
+        syncService->IsEngineInitialized() &&
+        syncService->GetUserSettings()->IsUsingSecondaryPassphrase();
     _syncObserver = std::make_unique<SyncObserverBridge>(self, syncService);
   }
   return self;
@@ -84,7 +88,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
   [self loadModel];
 }
 
-#pragma mark - SettingsRootCollectionViewController
+#pragma mark - SettingsRootTableViewController
 
 - (void)loadModel {
   [super loadModel];
@@ -106,7 +110,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 // Returns an account item.
 - (TableViewItem*)accountItem {
-  DCHECK(browser_sync::ProfileSyncService::IsSyncAllowedByFlag());
+  DCHECK(switches::IsSyncAllowedByFlag());
   NSString* text = l10n_util::GetNSString(IDS_SYNC_BASIC_ENCRYPTION_DATA);
   return [self itemWithType:ItemTypeAccount
                        text:text
@@ -116,7 +120,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 // Returns a passphrase item.
 - (TableViewItem*)passphraseItem {
-  DCHECK(browser_sync::ProfileSyncService::IsSyncAllowedByFlag());
+  DCHECK(switches::IsSyncAllowedByFlag());
   NSString* text = l10n_util::GetNSString(IDS_SYNC_FULL_ENCRYPTION_DATA);
   return [self itemWithType:ItemTypePassphrase
                        text:text
@@ -152,18 +156,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
   return footerView;
 }
 
-- (BOOL)tableView:(UITableView*)tableView
-    shouldHighlightRowAtIndexPath:(NSIndexPath*)indexPath {
-  TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
-  if (item.type == ItemTypePassphrase || item.type == ItemTypeAccount) {
-    EncryptionItem* encryptionItem =
-        base::mac::ObjCCastStrict<EncryptionItem>(item);
-    // Don't perform any action if the cell isn't enabled.
-    return encryptionItem.isEnabled;
-  }
-  return YES;
-}
-
 - (void)tableView:(UITableView*)tableView
     didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
   DCHECK_EQ(indexPath.section,
@@ -171,19 +163,13 @@ typedef NS_ENUM(NSInteger, ItemType) {
                 sectionForSectionIdentifier:SectionIdentifierEncryption]);
 
   TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
-  if ([item respondsToSelector:@selector(isEnabled)] &&
-      ![item performSelector:@selector(isEnabled)]) {
-    // Don't perform any action if the cell isn't enabled.
-    return;
-  }
-
   switch (item.type) {
     case ItemTypePassphrase: {
-      DCHECK(browser_sync::ProfileSyncService::IsSyncAllowedByFlag());
+      DCHECK(switches::IsSyncAllowedByFlag());
       syncer::SyncService* service =
           ProfileSyncServiceFactory::GetForBrowserState(_browserState);
       if (service->IsEngineInitialized() &&
-          !service->IsUsingSecondaryPassphrase()) {
+          !service->GetUserSettings()->IsUsingSecondaryPassphrase()) {
         SyncCreatePassphraseTableViewController* controller =
             [[SyncCreatePassphraseTableViewController alloc]
                 initWithBrowserState:_browserState];
@@ -210,7 +196,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
   syncer::SyncService* service =
       ProfileSyncServiceFactory::GetForBrowserState(_browserState);
   BOOL isNowUsingSecondaryPassphrase =
-      service->IsEngineInitialized() && service->IsUsingSecondaryPassphrase();
+      service->IsEngineInitialized() &&
+      service->GetUserSettings()->IsUsingSecondaryPassphrase();
   if (_isUsingSecondaryPassphrase != isNowUsingSecondaryPassphrase) {
     _isUsingSecondaryPassphrase = isNowUsingSecondaryPassphrase;
     [self reloadData];
@@ -223,10 +210,13 @@ typedef NS_ENUM(NSInteger, ItemType) {
                           text:(NSString*)text
                        checked:(BOOL)checked
                        enabled:(BOOL)enabled {
-  EncryptionItem* item = [[EncryptionItem alloc] initWithType:type];
+  TableViewTextItem* item = [[TableViewTextItem alloc] initWithType:type];
+  item.accessibilityTraits |= UIAccessibilityTraitButton;
   item.text = text;
   item.accessoryType = checked ? UITableViewCellAccessoryCheckmark
                                : UITableViewCellAccessoryNone;
+  item.textColor =
+      enabled ? UIColor.cr_labelColor : UIColor.cr_secondaryLabelColor;
   item.enabled = enabled;
   return item;
 }

@@ -8,7 +8,7 @@
 
 #include "base/strings/string_number_conversions.h"
 
-using base::IntToString;
+using base::NumberToString;
 
 namespace content {
 
@@ -76,13 +76,10 @@ std::string AXContentNodeData::ToString() const {
   std::string result = AXNodeData::ToString();
 
   for (auto iter : content_int_attributes) {
-    std::string value = IntToString(iter.second);
+    std::string value = NumberToString(iter.second);
     switch (iter.first) {
       case AX_CONTENT_ATTR_CHILD_ROUTING_ID:
         result += " child_routing_id=" + value;
-        break;
-      case AX_CONTENT_ATTR_CHILD_BROWSER_PLUGIN_INSTANCE_ID:
-        result += " child_browser_plugin_instance_id=" + value;
         break;
       case AX_CONTENT_INT_ATTRIBUTE_LAST:
         NOTREACHED();
@@ -106,9 +103,9 @@ std::string AXContentTreeData::ToString() const {
   std::string result = AXTreeData::ToString();
 
   if (routing_id != -1)
-    result += " routing_id=" + IntToString(routing_id);
+    result += " routing_id=" + NumberToString(routing_id);
   if (parent_routing_id != -1)
-    result += " parent_routing_id=" + IntToString(parent_routing_id);
+    result += " parent_routing_id=" + NumberToString(parent_routing_id);
 
   return result;
 }

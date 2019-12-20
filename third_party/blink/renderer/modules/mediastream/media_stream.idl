@@ -26,12 +26,12 @@
 // https://w3c.github.io/mediacapture-main/#idl-def-mediastream
 
 [
-    ActiveScriptWrappable,
-    Constructor,
-    Constructor(MediaStream stream),
-    Constructor(sequence<MediaStreamTrack> tracks),
-    ConstructorCallWith=ExecutionContext
+    Exposed=Window,
+    ActiveScriptWrappable
 ] interface MediaStream : EventTarget {
+    [CallWith=ExecutionContext] constructor();
+    [CallWith=ExecutionContext] constructor(MediaStream stream);
+    [CallWith=ExecutionContext] constructor(sequence<MediaStreamTrack> tracks);
     readonly attribute DOMString id;
     sequence<MediaStreamTrack> getAudioTracks();
     sequence<MediaStreamTrack> getVideoTracks();

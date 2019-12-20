@@ -36,12 +36,12 @@ class UserBoardViewMojo : public UserBoardView {
   void SetAuthType(const AccountId& account_id,
                    proximity_auth::mojom::AuthType auth_type,
                    const base::string16& initial_value) override;
-  void Bind(UserSelectionScreen* screen) override{};
-  void Unbind() override{};
+  void Bind(UserSelectionScreen* screen) override {}
+  void Unbind() override {}
   base::WeakPtr<UserBoardView> GetWeakPtr() override;
 
  private:
-  base::WeakPtrFactory<UserBoardViewMojo> weak_factory_;
+  base::WeakPtrFactory<UserBoardViewMojo> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UserBoardViewMojo);
 };

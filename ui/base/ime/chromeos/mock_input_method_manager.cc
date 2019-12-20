@@ -9,7 +9,7 @@
 namespace chromeos {
 namespace input_method {
 
-MockInputMethodManager::State::State() {}
+MockInputMethodManager::State::State() = default;
 
 scoped_refptr<InputMethodManager::State> MockInputMethodManager::State::Clone()
     const {
@@ -112,12 +112,12 @@ const GURL& MockInputMethodManager::State::GetInputViewUrl() const {
   return GURL::EmptyGURL();
 }
 
-MockInputMethodManager::State::~State() {}
+MockInputMethodManager::State::~State() = default;
 
 MockInputMethodManager::MockInputMethodManager()
     : features_enabled_state_(InputMethodManager::FEATURE_ALL) {}
 
-MockInputMethodManager::~MockInputMethodManager() {}
+MockInputMethodManager::~MockInputMethodManager() = default;
 
 InputMethodManager::UISessionState MockInputMethodManager::GetUISessionState() {
   return InputMethodManager::STATE_BROWSER_SCREEN;
@@ -148,6 +148,9 @@ MockInputMethodManager::GetSupportedInputMethods() const {
 
 void MockInputMethodManager::ActivateInputMethodMenuItem(
     const std::string& key) {}
+
+void MockInputMethodManager::ConnectInputEngineManager(
+    mojo::PendingReceiver<chromeos::ime::mojom::InputEngineManager> receiver) {}
 
 bool MockInputMethodManager::IsISOLevel5ShiftUsedByCurrentInputMethod() const {
   return false;
@@ -199,7 +202,7 @@ void MockInputMethodManager::NotifyImeMenuItemsChanged(
 
 void MockInputMethodManager::MaybeNotifyImeMenuActivationChanged() {}
 
-void MockInputMethodManager::OverrideKeyboardKeyset(mojom::ImeKeyset keyset) {}
+void MockInputMethodManager::OverrideKeyboardKeyset(ImeKeyset keyset) {}
 
 void MockInputMethodManager::SetImeMenuFeatureEnabled(ImeMenuFeature feature,
                                                       bool enabled) {

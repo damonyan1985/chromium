@@ -24,7 +24,7 @@ class TranslateURLFetcher;
 
 class TranslateScript {
  public:
-  typedef base::Callback<void(bool, const std::string&)> RequestCallback;
+  using RequestCallback = base::OnceCallback<void(bool, const std::string&)>;
 
   TranslateScript();
   virtual ~TranslateScript();
@@ -45,7 +45,7 @@ class TranslateScript {
   // Fetches the JS translate script (the script that is injected in the page
   // to translate it). |is_incognito| is used during the fetch to determine
   // which variations headers to add.
-  void Request(const RequestCallback& callback, bool is_incognito);
+  void Request(RequestCallback callback, bool is_incognito);
 
   // Returns the URL to be used to load the translate script.
   static GURL GetTranslateScriptURL();
@@ -96,7 +96,7 @@ class TranslateScript {
   typedef std::vector<RequestCallback> RequestCallbackList;
   RequestCallbackList callback_list_;
 
-  base::WeakPtrFactory<TranslateScript> weak_method_factory_;
+  base::WeakPtrFactory<TranslateScript> weak_method_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TranslateScript);
 };

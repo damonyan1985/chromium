@@ -27,15 +27,12 @@
 #include "components/sync/engine/sync_backend_registrar.h"
 #include "components/sync/engine/sync_credentials.h"
 #include "components/sync/engine/sync_manager_factory.h"
-
-class GURL;
+#include "url/gurl.h"
 
 namespace syncer {
 
-class CancelationSignal;
 class HttpPostProviderFactory;
 class SyncEngineHost;
-class SyncManagerFactory;
 class UnrecoverableErrorHandler;
 
 // The interface into the sync engine, which is the part of sync that performs
@@ -44,10 +41,10 @@ class UnrecoverableErrorHandler;
 // interface will handle crossing threads if necessary.
 class SyncEngine : public ModelTypeConfigurer {
  public:
-  using Status = SyncStatus;
+  using AllNodesCallback =
+      base::OnceCallback<void(ModelType, std::unique_ptr<base::ListValue>)>;
   using HttpPostProviderFactoryGetter =
-      base::OnceCallback<std::unique_ptr<HttpPostProviderFactory>(
-          CancelationSignal*)>;
+      base::OnceCallback<std::unique_ptr<HttpPostProviderFactory>()>;
 
   // Utility struct for holding initialization options.
   struct InitParams {
@@ -58,36 +55,30 @@ class SyncEngine : public ModelTypeConfigurer {
     scoped_refptr<base::SequencedTaskRunner> sync_task_runner;
     SyncEngineHost* host = nullptr;
     std::unique_ptr<SyncBackendRegistrar> registrar;
-    std::vector<std::unique_ptr<SyncEncryptionHandler::Observer>>
-        encryption_observer_proxies;
+    std::unique_ptr<SyncEncryptionHandler::Observer> encryption_observer_proxy;
     scoped_refptr<ExtensionsActivity> extensions_activity;
     WeakHandle<JsEventHandler> event_handler;
     GURL service_url;
-    std::string sync_user_agent;
     SyncEngine::HttpPostProviderFactoryGetter http_factory_getter;
-    SyncCredentials credentials;
+    CoreAccountId authenticated_account_id;
     std::string invalidator_client_id;
     std::unique_ptr<SyncManagerFactory> sync_manager_factory;
-    bool delete_sync_data_folder = false;
     bool enable_local_sync_backend = false;
     base::FilePath local_sync_backend_folder;
     std::string restored_key_for_bootstrapping;
     std::string restored_keystore_key_for_bootstrapping;
     std::unique_ptr<EngineComponentsFactory> engine_components_factory;
     WeakHandle<UnrecoverableErrorHandler> unrecoverable_error_handler;
-    base::Closure report_unrecoverable_error_function;
-    std::unique_ptr<SyncEncryptionHandler::NigoriState> saved_nigori_state;
+    base::RepeatingClosure report_unrecoverable_error_function;
     std::map<ModelType, int64_t> invalidation_versions;
 
-    // Non-authoritative values from prefs, to be compared with the Directory's
-    // counterparts.
+    // Initial authoritative values (usually read from prefs).
     std::string cache_guid;
     std::string birthday;
     std::string bag_of_chips;
 
-    // Define the polling intervals. Must not be zero.
-    base::TimeDelta short_poll_interval;
-    base::TimeDelta long_poll_interval;
+    // Define the polling interval. Must not be zero.
+    base::TimeDelta poll_interval;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(InitParams);
@@ -102,6 +93,9 @@ class SyncEngine : public ModelTypeConfigurer {
   // |saved_nigori_state| is optional nigori state to restore from a previous
   // engine instance. May be null.
   virtual void Initialize(InitParams params) = 0;
+
+  // Returns whether the asynchronous initialization process has finished.
+  virtual bool IsInitialized() const = 0;
 
   // Inform the engine to trigger a sync cycle for |types|.
   virtual void TriggerRefresh(const ModelTypeSet& types) = 0;
@@ -136,6 +130,15 @@ class SyncEngine : public ModelTypeConfigurer {
   // are no pending keys.
   virtual void SetDecryptionPassphrase(const std::string& passphrase) = 0;
 
+  // Analogous to SetDecryptionPassphrase but specifically for
+  // TRUSTED_VAULT_PASSPHRASE: it provides new decryption keys that could
+  // allow decrypting pending Nigori keys. Notifies observers of the result of
+  // the operation via OnTrustedVaultKeyAccepted if the provided keys
+  // successfully decrypted pending keys. |done_cb| is invoked at the very end.
+  virtual void AddTrustedVaultDecryptionKeys(
+      const std::vector<std::string>& keys,
+      base::OnceClosure done_cb) = 0;
+
   // Kick off shutdown procedure. Attempts to cut short any long-lived or
   // blocking sync thread tasks so that the shutdown on sync thread task that
   // we're about to post won't have to wait very long.
@@ -154,7 +157,7 @@ class SyncEngine : public ModelTypeConfigurer {
   virtual UserShare* GetUserShare() const = 0;
 
   // Called from any thread to obtain current detailed status information.
-  virtual Status GetDetailedStatus() = 0;
+  virtual SyncStatus GetDetailedStatus() = 0;
 
   // Determines if the underlying sync engine has made any local changes to
   // items that have not yet been synced with the server.
@@ -185,17 +188,17 @@ class SyncEngine : public ModelTypeConfigurer {
   // Disables the sending of directory type debug counters.
   virtual void DisableDirectoryTypeDebugInfoForwarding() = 0;
 
-  // See SyncManager::ClearServerData.
-  virtual void ClearServerData(const base::Closure& callback) = 0;
-
   // Notify the syncer that the cookie jar has changed.
   // See SyncManager::OnCookieJarChanged.
   virtual void OnCookieJarChanged(bool account_mismatch,
                                   bool empty_jar,
-                                  const base::Closure& callback) = 0;
+                                  base::OnceClosure callback) = 0;
 
   // Enables/Disables invalidations for session sync related datatypes.
   virtual void SetInvalidationsForSessionsEnabled(bool enabled) = 0;
+
+  // Returns a ListValue representing Nigori node.
+  virtual void GetNigoriNodeForDebugging(AllNodesCallback callback) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SyncEngine);

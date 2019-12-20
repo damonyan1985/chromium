@@ -13,6 +13,7 @@ Polymer({
   is: 'settings-personalization-options',
 
   behaviors: [
+    PrefsBehavior,
     WebUIListenerBehavior,
   ],
 
@@ -27,8 +28,6 @@ Polymer({
      * @type {!PrivacyPageVisibility}
      */
     pageVisibility: Object,
-
-    unifiedConsentEnabled: Boolean,
 
     /** @type {settings.SyncStatus} */
     syncStatus: Object,
@@ -48,7 +47,28 @@ Polymer({
 
     /** @private */
     showRestart_: Boolean,
+
+    /** @private */
+    showRestartToast_: Boolean,
     // </if>
+
+    /** @private */
+    showSignoutDialog_: Boolean,
+
+    /** @private */
+    syncFirstSetupInProgress_: {
+      type: Boolean,
+      value: false,
+      computed: 'computeSyncFirstSetupInProgress_(syncStatus)',
+    },
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeSyncFirstSetupInProgress_: function() {
+    return !!this.syncStatus && !!this.syncStatus.firstSetupInProgress;
   },
 
   /** @override */
@@ -96,14 +116,19 @@ Polymer({
       this.showRestart_ = true;
     }
   },
+  // </if>
 
+  // <if expr="_google_chrome">
   /**
-   * @param {!Event} e
+   * @param {!Event} event
    * @private
    */
-  onRestartTap_: function(e) {
-    e.stopPropagation();
-    settings.LifetimeBrowserProxyImpl.getInstance().restart();
+  onUseSpellingServiceToggle_: function(event) {
+    // If turning on using the spelling service, automatically turn on
+    // spellcheck so that the spelling service can run.
+    if (event.target.checked) {
+      this.setPrefValue('browser.enable_spellchecking', true);
+    }
   },
   // </if>
 
@@ -112,10 +137,10 @@ Polymer({
    * @private
    */
   showSpellCheckControl_: function() {
-    return !this.unifiedConsentEnabled ||
-        (!!this.prefs.spellcheck &&
-         /** @type {!Array<string>} */
-         (this.prefs.spellcheck.dictionaries.value).length > 0);
+    return (
+        !!this.prefs.spellcheck &&
+        /** @type {!Array<string>} */
+        (this.prefs.spellcheck.dictionaries.value).length > 0);
   },
 
   /**
@@ -124,9 +149,48 @@ Polymer({
    */
   shouldShowDriveSuggest_: function() {
     return loadTimeData.getBoolean('driveSuggestAvailable') &&
-        !!this.unifiedConsentEnabled && !!this.syncStatus &&
-        !!this.syncStatus.signedIn &&
+        !!this.syncStatus && !!this.syncStatus.signedIn &&
         this.syncStatus.statusAction !== settings.StatusAction.REAUTHENTICATE;
+  },
+
+  /** @private */
+  onSigninAllowedChange_: function() {
+    if (this.syncStatus.signedIn && !this.$$('#signinAllowedToggle').checked) {
+      // Switch the toggle back on and show the signout dialog.
+      this.$$('#signinAllowedToggle').checked = true;
+      this.showSignoutDialog_ = true;
+    } else {
+      /** @type {!SettingsToggleButtonElement} */ (
+          this.$$('#signinAllowedToggle'))
+          .sendPrefChange();
+      this.showRestartToast_ = true;
+    }
+
+    this.browserProxy_.recordSettingsPageHistogram(
+        settings.SettingsPageInteractions.PRIVACY_CHROME_SIGN_IN);
+  },
+
+  /** @private */
+  onSignoutDialogClosed_: function() {
+    if (/** @type {!SettingsSignoutDialogElement} */ (
+            this.$$('settings-signout-dialog'))
+            .wasConfirmed()) {
+      this.$$('#signinAllowedToggle').checked = false;
+      /** @type {!SettingsToggleButtonElement} */ (
+          this.$$('#signinAllowedToggle'))
+          .sendPrefChange();
+      this.showRestartToast_ = true;
+    }
+    this.showSignoutDialog_ = false;
+  },
+
+  /**
+   * @param {!Event} e
+   * @private
+   */
+  onRestartTap_: function(e) {
+    e.stopPropagation();
+    settings.LifetimeBrowserProxyImpl.getInstance().restart();
   },
 });
 })();

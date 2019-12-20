@@ -5,7 +5,7 @@
 /**
  * Utilities for volume manager implementation.
  */
-var volumeManagerUtil = {};
+const volumeManagerUtil = {};
 
 /**
  * Time in milliseconds that we wait a response for general volume operations
@@ -40,8 +40,8 @@ volumeManagerUtil.TIMEOUT_STR_RESOLVE_ISOLATED_ENTRIES =
  *
  * @param {string} error Status string usually received from APIs.
  */
-volumeManagerUtil.validateError = function(error) {
-  for (var key in VolumeManagerCommon.VolumeError) {
+volumeManagerUtil.validateError = error => {
+  for (const key in VolumeManagerCommon.VolumeError) {
     if (error === VolumeManagerCommon.VolumeError[key]) {
       return;
     }
@@ -56,15 +56,11 @@ volumeManagerUtil.validateError = function(error) {
  * instance for the volume.
  * @return {!Promise<!VolumeInfo>} Promise settled with the VolumeInfo instance.
  */
-volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
-  var localizedLabel;
+volumeManagerUtil.createVolumeInfo = volumeMetadata => {
+  let localizedLabel;
   switch (volumeMetadata.volumeType) {
     case VolumeManagerCommon.VolumeType.DOWNLOADS:
-      if (util.isMyFilesVolumeEnabled()) {
-        localizedLabel = str('MY_FILES_ROOT_LABEL');
-      } else {
-        localizedLabel = str('DOWNLOADS_DIRECTORY_LABEL');
-      }
+      localizedLabel = str('MY_FILES_ROOT_LABEL');
       break;
     case VolumeManagerCommon.VolumeType.DRIVE:
       localizedLabel = str('DRIVE_DIRECTORY_LABEL');
@@ -97,18 +93,16 @@ volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
       break;
   }
 
-  console.debug(
-      'Requesting file system: ' + volumeMetadata.volumeType + ' ' +
-      volumeMetadata.volumeId);
+  console.debug(`Getting file system '${volumeMetadata.volumeId}'`);
   return util
       .timeoutPromise(
-          new Promise(function(resolve, reject) {
+          new Promise((resolve, reject) => {
             chrome.fileSystem.requestFileSystem(
                 {
                   volumeId: volumeMetadata.volumeId,
                   writable: !volumeMetadata.isReadOnly
                 },
-                function(isolatedFileSystem) {
+                isolatedFileSystem => {
                   if (chrome.runtime.lastError) {
                     reject(chrome.runtime.lastError.message);
                   } else {
@@ -121,18 +115,18 @@ volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
               volumeMetadata.volumeId)
       .then(
           /** @param {!FileSystem} isolatedFileSystem */
-          function(isolatedFileSystem) {
+          isolatedFileSystem => {
             // Since File System API works on isolated entries only, we need to
             // convert it back to external one.
             // TODO(mtomasz): Make Files app work on isolated entries.
             return util.timeoutPromise(
-                new Promise(function(resolve, reject) {
+                new Promise((resolve, reject) => {
                   chrome.fileManagerPrivate.resolveIsolatedEntries(
-                      [isolatedFileSystem.root], function(entries) {
+                      [isolatedFileSystem.root], entries => {
                         if (chrome.runtime.lastError) {
                           reject(chrome.runtime.lastError.message);
                         } else if (!entries[0]) {
-                          reject('Resolving for external context failed.');
+                          reject('Resolving for external context failed');
                         } else {
                           resolve(entries[0].filesystem);
                         }
@@ -144,8 +138,8 @@ volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
           })
       .then(
           /** @param {!FileSystem} fileSystem */
-          function(fileSystem) {
-            console.debug('File system obtained: ' + volumeMetadata.volumeId);
+          fileSystem => {
+            console.debug(`Got file system '${volumeMetadata.volumeId}'`);
             if (volumeMetadata.volumeType ===
                 VolumeManagerCommon.VolumeType.DRIVE) {
               // After file system is mounted, we "read" drive grand root
@@ -154,10 +148,9 @@ volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
               // it fails, accessing to some path later will just become
               // a fast-fetch and it re-triggers full-feed fetch.
               fileSystem.root.createReader().readEntries(
-                  function() { /* do nothing */ },
-                  function(error) {
+                  () => {/* do nothing */}, error => {
                     console.warn(
-                        'Triggering full feed fetch has failed: ' + error.name);
+                        `Triggering full feed fetch has failed: ${error.name}`);
                   });
             }
             return new VolumeInfoImpl(
@@ -178,10 +171,9 @@ volumeManagerUtil.createVolumeInfo = function(volumeMetadata) {
           })
       .catch(
           /** @param {*} error */
-          function(error) {
-            console.warn(
-                'Failed to mount a file system: ' + volumeMetadata.volumeId +
-                ' because of: ' + (error.stack || error));
+          error => {
+            console.error(`Cannot mount file system '${
+                volumeMetadata.volumeId}': ${error.stack || error}`);
 
             // TODO(crbug/847729): Report a mount error via UMA.
 

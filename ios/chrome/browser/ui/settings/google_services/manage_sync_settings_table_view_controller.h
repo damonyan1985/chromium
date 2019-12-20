@@ -7,10 +7,12 @@
 
 #import "ios/chrome/browser/ui/settings/settings_root_table_view_controller.h"
 
+#import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/ui/settings/google_services/manage_sync_settings_consumer.h"
 
 @class ManageSyncSettingsTableViewController;
 @protocol ManageSyncSettingsTableViewControllerModelDelegate;
+@protocol ManageSyncSettingsServiceDelegate;
 
 // Delegate for presentation events related to
 // ManageSyncSettingsTableViewController.
@@ -30,9 +32,13 @@
 @property(nonatomic, weak)
     id<ManageSyncSettingsTableViewControllerPresentationDelegate>
         presentationDelegate;
+// Model delegate.
 @property(nonatomic, weak)
     id<ManageSyncSettingsTableViewControllerModelDelegate>
         modelDelegate;
+// Service delegate.
+@property(nonatomic, weak) id<ManageSyncSettingsServiceDelegate>
+    serviceDelegate;
 
 @end
 

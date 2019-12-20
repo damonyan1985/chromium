@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/public/interfaces/constants.mojom.h"
-#include "ash/public/interfaces/system_tray_test_api.test-mojom-test-utils.h"
-#include "ash/public/interfaces/system_tray_test_api.test-mojom.h"
+#include "ash/public/cpp/system_tray_test_api.h"
 #include "chrome/browser/chromeos/first_run/first_run.h"
 #include "chrome/browser/chromeos/first_run/first_run_controller.h"
 #include "chrome/browser/chromeos/first_run/step_names.h"
 #include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/common/service_manager_connection.h"
 #include "content/public/test/test_utils.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "ui/aura/window.h"
 #include "ui/events/event_handler.h"
 #include "ui/events/test/event_generator.h"
@@ -65,17 +61,14 @@ class FirstRunUIBrowserTest : public InProcessBrowserTest,
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
-    // Connect to the ash test interface.
-    content::ServiceManagerConnection::GetForProcess()
-        ->GetConnector()
-        ->BindInterface(ash::mojom::kServiceName, &tray_test_api_);
+    tray_test_api_ = ash::SystemTrayTestApi::Create();
   }
 
   // FirstRunActor::Delegate overrides.
   void OnActorInitialized() override {
     initialized_ = true;
-    if (!on_initialized_callback_.is_null())
-      on_initialized_callback_.Run();
+    if (on_initialized_callback_)
+      std::move(on_initialized_callback_).Run();
     controller()->OnActorInitialized();
   }
 
@@ -85,8 +78,8 @@ class FirstRunUIBrowserTest : public InProcessBrowserTest,
 
   void OnStepShown(const std::string& step_name) override {
     current_step_name_ = step_name;
-    if (!on_step_shown_callback_.is_null())
-      on_step_shown_callback_.Run();
+    if (on_step_shown_callback_)
+      std::move(on_step_shown_callback_).Run();
     controller()->OnStepShown(step_name);
   }
 
@@ -98,8 +91,8 @@ class FirstRunUIBrowserTest : public InProcessBrowserTest,
 
   void OnActorFinalized() override {
     finalized_ = true;
-    if (!on_finalized_callback_.is_null())
-      on_finalized_callback_.Run();
+    if (on_finalized_callback_)
+      std::move(on_finalized_callback_).Run();
     controller()->OnActorFinalized();
   }
 
@@ -140,12 +133,11 @@ class FirstRunUIBrowserTest : public InProcessBrowserTest,
     }
   }
 
-  void WaitUntilCalled(base::Closure* callback) {
+  void WaitUntilCalled(base::OnceClosure* callback) {
     scoped_refptr<content::MessageLoopRunner> runner =
         new content::MessageLoopRunner;
     *callback = runner->QuitClosure();
     runner->Run();
-    callback->Reset();
   }
 
   test::JSChecker& js() { return js_; }
@@ -154,27 +146,18 @@ class FirstRunUIBrowserTest : public InProcessBrowserTest,
     return FirstRunController::GetInstanceForTest();
   }
 
-  bool IsTrayBubbleOpen() {
-    bool is_open = false;
-    ash::mojom::SystemTrayTestApiAsyncWaiter wait_for(tray_test_api_.get());
-    wait_for.IsTrayBubbleOpen(&is_open);
-    return is_open;
-  }
+  bool IsTrayBubbleOpen() { return tray_test_api_->IsTrayBubbleOpen(); }
 
   views::Widget* GetOverlayWidget() { return controller()->widget_.get(); }
 
-  void FlushForTesting() {
-    controller()->first_run_helper_ptr_.FlushForTesting();
-  }
-
  private:
-  ash::mojom::SystemTrayTestApiPtr tray_test_api_;
+  std::unique_ptr<ash::SystemTrayTestApi> tray_test_api_;
   std::string current_step_name_;
   bool initialized_;
   bool finalized_;
-  base::Closure on_initialized_callback_;
-  base::Closure on_step_shown_callback_;
-  base::Closure on_finalized_callback_;
+  base::OnceClosure on_initialized_callback_;
+  base::OnceClosure on_step_shown_callback_;
+  base::OnceClosure on_finalized_callback_;
   test::JSChecker js_;
 };
 
@@ -182,12 +165,10 @@ IN_PROC_BROWSER_TEST_F(FirstRunUIBrowserTest, FirstRunFlow) {
   LaunchTutorial();
   WaitForInitialization();
   WaitForStep(first_run::kAppListStep);
-  FlushForTesting();
   EXPECT_FALSE(IsTrayBubbleOpen());
 
   AdvanceStep();
   WaitForStep(first_run::kTrayStep);
-  FlushForTesting();
   EXPECT_TRUE(IsTrayBubbleOpen());
 
   AdvanceStep();
@@ -206,7 +187,6 @@ IN_PROC_BROWSER_TEST_F(FirstRunUIBrowserTest, ModalWindowDoesNotBlock) {
   LaunchTutorial();
   WaitForInitialization();
   WaitForStep(first_run::kAppListStep);
-  FlushForTesting();
 
   // Simulate the browser opening a modal dialog.
   views::Widget* modal_dialog = views::DialogDelegate::CreateDialogWidget(
@@ -235,7 +215,6 @@ IN_PROC_BROWSER_TEST_F(FirstRunUIBrowserTest, EscapeCancelsTutorial) {
   WaitForStep(first_run::kAppListStep);
   AdvanceStep();
   WaitForStep(first_run::kTrayStep);
-  FlushForTesting();
   EXPECT_TRUE(IsTrayBubbleOpen());
 
   // Press the escape key.

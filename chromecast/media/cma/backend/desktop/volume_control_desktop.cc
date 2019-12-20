@@ -14,7 +14,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
 #include "base/numerics/ranges.h"
 #include "base/synchronization/lock.h"
@@ -39,7 +39,7 @@ class VolumeControlInternal {
     }
 
     base::Thread::Options options;
-    options.message_loop_type = base::MessageLoop::TYPE_IO;
+    options.message_pump_type = base::MessagePumpType::IO;
     thread_.StartWithOptions(options);
   }
 
@@ -62,7 +62,9 @@ class VolumeControlInternal {
     return volumes_[type];
   }
 
-  void SetVolume(AudioContentType type, float level) {
+  void SetVolume(media::VolumeChangeSource source,
+                 AudioContentType type,
+                 float level) {
     if (type == AudioContentType::kOther) {
       NOTREACHED() << "Can't set volume for content type kOther";
       return;
@@ -71,7 +73,7 @@ class VolumeControlInternal {
     level = base::ClampToRange(level, 0.0f, 1.0f);
     thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&VolumeControlInternal::SetVolumeOnThread,
-                                  base::Unretained(this), type, level));
+                                  base::Unretained(this), source, type, level));
   }
 
   bool IsMuted(AudioContentType type) {
@@ -79,7 +81,9 @@ class VolumeControlInternal {
     return muted_[type];
   }
 
-  void SetMuted(AudioContentType type, bool muted) {
+  void SetMuted(media::VolumeChangeSource source,
+                AudioContentType type,
+                bool muted) {
     if (type == AudioContentType::kOther) {
       NOTREACHED() << "Can't set mute state for content type kOther";
       return;
@@ -87,11 +91,13 @@ class VolumeControlInternal {
 
     thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&VolumeControlInternal::SetMutedOnThread,
-                                  base::Unretained(this), type, muted));
+                                  base::Unretained(this), source, type, muted));
   }
 
  private:
-  void SetVolumeOnThread(AudioContentType type, float level) {
+  void SetVolumeOnThread(media::VolumeChangeSource source,
+                         AudioContentType type,
+                         float level) {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     DCHECK(type != AudioContentType::kOther);
 
@@ -106,12 +112,14 @@ class VolumeControlInternal {
     {
       base::AutoLock lock(observer_lock_);
       for (VolumeObserver* observer : volume_observers_) {
-        observer->OnVolumeChange(type, level);
+        observer->OnVolumeChange(source, type, level);
       }
     }
   }
 
-  void SetMutedOnThread(AudioContentType type, bool muted) {
+  void SetMutedOnThread(media::VolumeChangeSource source,
+                        AudioContentType type,
+                        bool muted) {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     DCHECK(type != AudioContentType::kOther);
 
@@ -126,7 +134,7 @@ class VolumeControlInternal {
     {
       base::AutoLock lock(observer_lock_);
       for (VolumeObserver* observer : volume_observers_) {
-        observer->OnMuteChange(type, muted);
+        observer->OnMuteChange(source, type, muted);
       }
     }
   }
@@ -174,8 +182,10 @@ float VolumeControl::GetVolume(AudioContentType type) {
 }
 
 // static
-void VolumeControl::SetVolume(AudioContentType type, float level) {
-  GetVolumeControl().SetVolume(type, level);
+void VolumeControl::SetVolume(media::VolumeChangeSource source,
+                              AudioContentType type,
+                              float level) {
+  GetVolumeControl().SetVolume(source, type, level);
 }
 
 // static
@@ -184,8 +194,10 @@ bool VolumeControl::IsMuted(AudioContentType type) {
 }
 
 // static
-void VolumeControl::SetMuted(AudioContentType type, bool muted) {
-  GetVolumeControl().SetMuted(type, muted);
+void VolumeControl::SetMuted(media::VolumeChangeSource source,
+                             AudioContentType type,
+                             bool muted) {
+  GetVolumeControl().SetMuted(source, type, muted);
 }
 
 // static
@@ -202,9 +214,6 @@ float VolumeControl::DbFSToVolume(float db) {
   db = base::ClampToRange(db, kMinVolumeDbfs, kMaxVolumeDbfs);
   return (db - kMinVolumeDbfs) / (kMaxVolumeDbfs - kMinVolumeDbfs);
 }
-
-// static
-void VolumeControl::SetPowerSaveMode(bool power_save_on) {}
 
 }  // namespace media
 }  // namespace chromecast

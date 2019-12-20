@@ -4,18 +4,14 @@
 
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 
-#include <utility>
-
 #include "base/logging.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
-#include "components/infobars/core/infobar_delegate.h"
 #include "ios/chrome/browser/infobars/infobar_utils.h"
-#include "ios/web/public/navigation_item.h"
-#include "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/navigation_context.h"
-#import "ios/web/public/web_state/web_state.h"
-#include "ui/base/page_transition_types.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#include "ios/web/public/navigation/navigation_manager.h"
+#import "ios/web/public/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -37,7 +33,8 @@ infobars::InfoBarDelegate::NavigationDetails CreateNavigationDetails(
   navigation_details.is_reload =
       ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD);
   navigation_details.is_redirect = ui::PageTransitionIsRedirect(transition);
-
+  navigation_details.is_form_submission =
+      ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_FORM_SUBMIT);
   return navigation_details;
 }
 
@@ -75,7 +72,10 @@ void InfoBarManagerImpl::DidFinishNavigation(
     web::WebState* web_state,
     web::NavigationContext* navigation_context) {
   DCHECK_EQ(web_state_, web_state);
-  if (navigation_context->HasCommitted()) {
+  // TODO(crbug.com/931841): Remove GetLastCommittedItem nil check once
+  // HasComitted has been fixed.
+  if (navigation_context->HasCommitted() &&
+      web_state->GetNavigationManager()->GetLastCommittedItem()) {
     OnNavigation(CreateNavigationDetails(
         web_state->GetNavigationManager()->GetLastCommittedItem(),
         navigation_context->IsSameDocument()));
@@ -98,3 +98,5 @@ void InfoBarManagerImpl::OpenURL(const GURL& url,
                                       /*is_renderer_initiated=*/false);
   web_state_->OpenURL(params);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(InfoBarManagerImpl)

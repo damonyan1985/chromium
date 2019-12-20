@@ -2,6 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+let lastChanged = null;
+let lastFocused = null;
+const restartButton = $('experiment-restart-button');
+
+/** @type {?function():void} */
+let experimentalFeaturesResolver = null;
+
+/** @type {!Promise} */
+const experimentalFeaturesReady = new Promise(resolve => {
+  experimentalFeaturesResolver = resolve;
+});
+
 /**
  * This variable structure is here to document the structure that the template
  * expects to correctly populate the page.
@@ -11,72 +23,118 @@
  * Takes the |experimentalFeaturesData| input argument which represents data
  * about all the current feature entries and populates the html jstemplate with
  * that data. It expects an object structure like the above.
- * @param {Object} experimentalFeaturesData Information about all experiments.
- *     See returnFlagsExperiments() for the structure of this object.
+ * @param {!ExperimentalFeaturesData} experimentalFeaturesData Information about
+ *     all experiments. See returnFlagsExperiments() for the structure of this
+ * object.
  */
 function renderTemplate(experimentalFeaturesData) {
-  // This is the javascript code that processes the template:
-  jstProcess(new JsEvalContext(experimentalFeaturesData), $('flagsTemplate'));
+  const templateToProcess = jstGetTemplate('tab-content-available-template');
+  const context = new JsEvalContext(experimentalFeaturesData);
+  const content = $('tab-content-available');
+
+  // Duplicate the template into the content area.
+  // This prevents the misrendering of available flags when the template
+  // is rerendered. Example - resetting flags.
+  content.textContent = '';
+  content.appendChild(templateToProcess);
+
+  // Process the templates: available / unavailable flags.
+  jstProcess(context, templateToProcess);
+
+  // Unavailable flags are not shown on iOS.
+  const unavailableTemplate = $('tab-content-unavailable');
+  if (unavailableTemplate) {
+    jstProcess(context, $('tab-content-unavailable'));
+  }
+
+  showRestartToast(experimentalFeaturesData.needsRestart);
 
   // Add handlers to dynamically created HTML elements.
-  var elements = document.getElementsByClassName('experiment-select');
-  for (var i = 0; i < elements.length; ++i) {
-    elements[i].onchange = function() {
-      handleSelectExperimentalFeatureChoice(this, this.selectedIndex);
+  let elements = document.getElementsByClassName('experiment-select');
+  for (const element of elements) {
+    element.onchange = function() {
+      const selectElement = /** @type {!HTMLSelectElement} */ (element);
+      handleSelectExperimentalFeatureChoice(
+          selectElement, selectElement.selectedIndex);
+      lastChanged = element;
       return false;
     };
+    registerFocusEvents(element);
   }
 
   elements = document.getElementsByClassName('experiment-enable-disable');
-  for (var i = 0; i < elements.length; ++i) {
-    elements[i].onchange = function() {
-      handleEnableExperimentalFeature(this,
-          this.options[this.selectedIndex].value == 'enabled');
+  for (const element of elements) {
+    element.onchange = function() {
+      const selectElement = /** @type {!HTMLSelectElement} */ (element);
+      handleEnableExperimentalFeature(
+          selectElement,
+          selectElement.options[selectElement.selectedIndex].value ==
+              'enabled');
+      lastChanged = selectElement;
       return false;
     };
+    registerFocusEvents(element);
   }
 
   elements = document.getElementsByClassName('experiment-origin-list-value');
-  for (var i = 0; i < elements.length; ++i) {
-    elements[i].onchange = function() {
-      handleSetOriginListFlag(this, this.value);
+  for (const element of elements) {
+    element.onchange = function() {
+      handleSetOriginListFlag(element, element.value);
       return false;
     };
   }
 
-  var element = $('experiment-restart-button');
-  assert(element || cr.isIOS);
-  if (element) {
-    element.onclick = restartBrowser;
+  assert(restartButton || cr.isIOS);
+  if (restartButton) {
+    restartButton.onclick = restartBrowser;
   }
 
   // Tab panel selection.
-  var tabEls = document.getElementsByClassName('tab');
-  for (var i = 0; i < tabEls.length; ++i) {
+  const tabEls = document.getElementsByClassName('tab');
+  for (let i = 0; i < tabEls.length; ++i) {
     tabEls[i].addEventListener('click', function(e) {
       e.preventDefault();
-      for (var j= 0; j < tabEls.length; ++j) {
+      for (let j = 0; j < tabEls.length; ++j) {
         tabEls[j].parentNode.classList.toggle('selected', tabEls[j] == this);
+        tabEls[j].setAttribute('aria-selected', tabEls[j] == this);
       }
+      FlagSearch.getInstance().announceSearchResults();
     });
   }
 
-  var smallScreenCheck = window.matchMedia('(max-width: 480px)');
+  const smallScreenCheck = window.matchMedia('(max-width: 480px)');
   // Toggling of experiment description overflow content on smaller screens.
-  elements = document.querySelectorAll('.experiment .flex:first-child');
-  for (var i = 0; i < elements.length; ++i) {
-    elements[i].onclick = function(e) {
-      if (smallScreenCheck.matches) {
-        this.classList.toggle('expand');
-      }
-    };
+  if(smallScreenCheck.matches){
+    elements = document.querySelectorAll('.experiment .flex:first-child');
+    for (const element of elements) {
+      element.onclick = () => element.classList.toggle('expand');
+    }
   }
 
   $('experiment-reset-all').onclick = resetAllFlags;
 
   highlightReferencedFlag();
-  var search = FlagSearch.getInstance();
+  const search = FlagSearch.getInstance();
   search.init();
+}
+
+/**
+ * Add events to an element in order to keep track of the last focused element.
+ * Focus restart button if a previous focus target has been set and tab key
+ * pressed.
+ * @param {Element} el Element to bind events to.
+ */
+function registerFocusEvents(el) {
+  el.addEventListener('keydown', function(e) {
+    if (lastChanged && e.key == 'Tab' && !e.shiftKey) {
+      lastFocused = lastChanged;
+      e.preventDefault();
+      restartButton.focus();
+    }
+  });
+  el.addEventListener('blur', function() {
+    lastChanged = null;
+  });
 }
 
 /**
@@ -87,7 +145,7 @@ function renderTemplate(experimentalFeaturesData) {
  */
 function highlightReferencedFlag() {
   if (window.location.hash) {
-    var el = document.querySelector(window.location.hash);
+    const el = document.querySelector(window.location.hash);
     if (el && !el.classList.contains('referenced')) {
       // Unhighlight whatever's highlighted.
       if (document.querySelector('.referenced')) {
@@ -99,7 +157,9 @@ function highlightReferencedFlag() {
       // Switch to unavailable tab if the flag is in this section.
       if ($('tab-content-unavailable').contains(el)) {
         $('tab-available').parentNode.classList.remove('selected');
+        $('tab-available').setAttribute('aria-selected', 'false');
         $('tab-unavailable').parentNode.classList.add('selected');
+        $('tab-unavailable').setAttribute('aria-selected', 'true');
       }
       el.scrollIntoView();
     }
@@ -107,34 +167,83 @@ function highlightReferencedFlag() {
 }
 
 /**
- * Asks the C++ FlagsDOMHandler to get details about the available experimental
- * features and return detailed data about the configuration. The
- * FlagsDOMHandler should reply to returnFlagsExperiments() (below).
+ * Gets details and configuration about the available features. The
+ * |returnExperimentalFeatures()| will be called with reply.
  */
 function requestExperimentalFeaturesData() {
   chrome.send('requestExperimentalFeatures');
 }
 
-/**
- * Asks the C++ FlagsDOMHandler to restart the browser (restoring tabs).
- */
+/** Restart browser and restore tabs. */
 function restartBrowser() {
   chrome.send('restartBrowser');
 }
 
 /**
- * Reset all flags to their default values and refresh the UI.
- */
+ * Cause a text string to be announced by screen readers
+ * @param {string} text The text that should be announced.
+*/
+function announceStatus(text) {
+  $('screen-reader-status-message').innerHTML = '';
+  setTimeout(function() {
+    $('screen-reader-status-message').innerHTML = text;
+  }, 100);
+}
+
+/** Reset all flags to their default values and refresh the UI. */
 function resetAllFlags() {
-  // Asks the C++ FlagsDOMHandler to reset all flags to default values.
   chrome.send('resetAllFlags');
+  FlagSearch.getInstance().clearSearch();
+  announceStatus(loadTimeData.getString("reset-acknowledged"));
+  showRestartToast(true);
   requestExperimentalFeaturesData();
 }
 
 /**
+ * Show the restart toast.
+ * @param {boolean} show Setting to toggle showing / hiding the toast.
+ */
+function showRestartToast(show) {
+  $('needs-restart').classList.toggle('show', show);
+  const restartButton = $('experiment-restart-button');
+  if (restartButton) {
+    restartButton.setAttribute("tabindex", show ? '9' : '-1');
+  }
+  if (show) {
+    $('needs-restart').setAttribute("role", "alert");
+  }
+}
+
+/**
+ * @typedef {{
+ *    internal_name: string,
+ *    name: string,
+ *    description: string,
+ *    enabled: boolean,
+ *    is_default: boolean,
+ *    choices: ?Array<{internal_name: string, description: string, selected:
+ * boolean}>, supported_platforms: !Array<string>
+ * }}
+ */
+let Feature;
+
+/**
+ * @typedef {{
+ *  supportedFeatures: !Array<!Feature>,
+ *  unsupportedFeatures: !Array<!Feature>,
+ *  needsRestart: boolean,
+ *  showBetaChannelPromotion: boolean,
+ *  showDevChannelPromotion: boolean,
+ *  showOwnerWarning: boolean
+ * }}
+ */
+let ExperimentalFeaturesData;
+
+/**
  * Called by the WebUI to re-populate the page with data representing the
  * current state of all experimental features.
- * @param {Object} experimentalFeaturesData Information about all experimental
+ * @param {ExperimentalFeaturesData} experimentalFeaturesData Information about
+ *     all experimental
  *    features in the following format:
  *   {
  *     supportedFeatures: [
@@ -171,7 +280,7 @@ function resetAllFlags() {
  *   }
  */
 function returnExperimentalFeatures(experimentalFeaturesData) {
-  var bodyContainer = $('body-container');
+  const bodyContainer = $('body-container');
   renderTemplate(experimentalFeaturesData);
 
   if (experimentalFeaturesData.showBetaChannelPromotion) {
@@ -180,11 +289,16 @@ function returnExperimentalFeatures(experimentalFeaturesData) {
     $('channel-promo-dev').hidden = false;
   }
 
+  $('promos').hidden = !experimentalFeaturesData.showBetaChannelPromotion &&
+      !experimentalFeaturesData.showDevChannelPromotion;
+
   bodyContainer.style.visibility = 'visible';
-  var ownerWarningDiv = $('owner-warning');
+  const ownerWarningDiv = $('owner-warning');
   if (ownerWarningDiv) {
     ownerWarningDiv.hidden = !experimentalFeaturesData.showOwnerWarning;
   }
+
+  experimentalFeaturesResolver();
 }
 
 /**
@@ -195,32 +309,34 @@ function returnExperimentalFeatures(experimentalFeaturesData) {
  * @param {number} index The selected option index.
  */
 function experimentChangesUiUpdates(node, index) {
-  var selected = node.options[index];
-  var experimentContainerEl = $(node.internal_name).firstElementChild;
-  var isDefault =
+  const selected = node.options[index];
+  /** @suppress {missingProperties} */
+  const experimentContainerEl = $(node.internal_name).firstElementChild;
+  const isDefault =
       ("default" in selected.dataset && selected.dataset.default == "1") ||
       (!("default" in selected.dataset) && index === 0);
   experimentContainerEl.classList.toggle('experiment-default', isDefault);
   experimentContainerEl.classList.toggle('experiment-switched', !isDefault);
 
-  $('needs-restart').classList.add('show');
+  showRestartToast(true);
 }
 
 /**
  * Handles a 'enable' or 'disable' button getting clicked.
  * @param {HTMLElement} node The node for the experiment being changed.
  * @param {boolean} enable Whether to enable or disable the experiment.
+ * @suppress {missingProperties}
  */
 function handleEnableExperimentalFeature(node, enable) {
-  // Tell the C++ FlagsDOMHandler to enable/disable the experiment.
   chrome.send('enableExperimentalFeature', [String(node.internal_name),
                                             String(enable)]);
   experimentChangesUiUpdates(node, enable ? 1 : 0);
 }
 
+/** @suppress {missingProperties} */
 function handleSetOriginListFlag(node, value) {
   chrome.send('setOriginListFlag', [String(node.internal_name), String(value)]);
-  $('needs-restart').classList.add('show');
+  showRestartToast(true);
 }
 
 /**
@@ -228,27 +344,42 @@ function handleSetOriginListFlag(node, value) {
  * specified index.
  * @param {HTMLElement} node The node for the experiment being changed.
  * @param {number} index The index of the option that was selected.
+ * @suppress {missingProperties}
  */
 function handleSelectExperimentalFeatureChoice(node, index) {
-  // Tell the C++ FlagsDOMHandler to enable the selected choice.
   chrome.send('enableExperimentalFeature',
               [String(node.internal_name) + '@' + index, 'true']);
   experimentChangesUiUpdates(node, index);
 }
 
+/** @type {!FlagSearch.SearchContent} */
+const emptySearchContent = Object.freeze({
+  link: null,
+  title: null,
+  description: null,
+});
+
 /**
  * Handles in page searching. Matches against the experiment flag name.
+ * @constructor
  */
-var FlagSearch = function() {
+const FlagSearch = function() {
   FlagSearch.instance_ = this;
 
-  this.experiments_ = Object.assign({}, FlagSearch.SearchContent);
-  this.unavailableExperiments_ = Object.assign({}, FlagSearch.SearchContent);
+  /** @private {!FlagSearch.SearchContent} */
+  this.experiments_ = /** @type {FlagSearch.SearchContent} */ (
+      Object.assign({}, emptySearchContent));
+
+  /** @private {!FlagSearch.SearchContent} */
+  this.unavailableExperiments_ = /** @type {FlagSearch.SearchContent} */ (
+      Object.assign({}, emptySearchContent));
 
   this.searchBox_ = $('search');
-  this.noMatchMsg_ = document.querySelectorAll('.no-match');
+  this.noMatchMsg_ = document.querySelectorAll('.tab-content .no-match');
 
+  /** @private {?number} */
   this.searchIntervalId_ = null;
+
   this.initialized = false;
 };
 
@@ -257,13 +388,13 @@ FlagSearch.SEARCH_DEBOUNCE_TIME_MS = 150;
 
 /**
  * Object definition for storing the elements which are searched on.
- * @typedef {Object<string, HTMLElement[]>}
+ * @typedef {{
+ *   description: ?NodeList<!HTMLElement>,
+ *   link: ?NodeList<!HTMLElement>,
+ *   title: ?NodeList<!HTMLElement>
+ * }}
  */
-FlagSearch.SearchContent = {
-  link: [],
-  title: [],
-  description: []
-};
+FlagSearch.SearchContent;
 
 /**
  * Get the singleton instance of FlagSearch.
@@ -283,22 +414,25 @@ FlagSearch.prototype = {
    * collates the text elements used for string matching.
    */
   init: function() {
-    this.experiments_.link =
-        document.querySelectorAll('#tab-content-available .permalink');
-    this.experiments_.title =
-        document.querySelectorAll('#tab-content-available .experiment-name');
-    this.experiments_.description =
-        document.querySelectorAll('#tab-content-available p');
+    this.experiments_.link = /** @type {!NodeList<!HTMLElement>} */ (
+        document.querySelectorAll('#tab-content-available .permalink'));
+    this.experiments_.title = /** @type {!NodeList<!HTMLElement>} */ (
+        document.querySelectorAll('#tab-content-available .experiment-name'));
+    this.experiments_.description = /** @type {!NodeList<!HTMLElement>} */ (
+        document.querySelectorAll('#tab-content-available p'));
 
-    this.unavailableExperiments_.link =
-        document.querySelectorAll('#tab-content-unavailable .permalink');
+    this.unavailableExperiments_.link = /** @type {!NodeList<!HTMLElement>} */ (
+        document.querySelectorAll('#tab-content-unavailable .permalink'));
     this.unavailableExperiments_.title =
-        document.querySelectorAll('#tab-content-unavailable .experiment-name');
+        /** @type {!NodeList<!HTMLElement>} */ (document.querySelectorAll(
+            '#tab-content-unavailable .experiment-name'));
     this.unavailableExperiments_.description =
-        document.querySelectorAll('#tab-content-unavailable p');
+        /** @type {!NodeList<!HTMLElement>} */ (
+            document.querySelectorAll('#tab-content-unavailable p'));
 
     if (!this.initialized) {
-      this.searchBox_.addEventListener('keyup', this.debounceSearch.bind(this));
+      this.searchBox_.addEventListener('input', this.debounceSearch.bind(this));
+
       document.querySelector('.clear-search').addEventListener('click',
           this.clearSearch.bind(this));
 
@@ -348,9 +482,9 @@ FlagSearch.prototype = {
    */
   highlightMatchInElement: function(searchTerm, el) {
     // Experiment container.
-    var parentEl = el.parentNode.parentNode.parentNode;
-    var text = el.textContent;
-    var match = text.toLowerCase().indexOf(searchTerm);
+    const parentEl = el.parentNode.parentNode.parentNode;
+    const text = el.textContent;
+    const match = text.toLowerCase().indexOf(searchTerm);
 
     parentEl.classList.toggle('hidden', match == -1);
 
@@ -364,18 +498,18 @@ FlagSearch.prototype = {
       el.textContent = '';
 
       if (match > 0) {
-        var textNodePrefix =
+        const textNodePrefix =
             document.createTextNode(text.substring(0, match));
         el.appendChild(textNodePrefix);
       }
 
-      var matchEl = document.createElement('mark');
+      const matchEl = document.createElement('mark');
       matchEl.textContent = text.substr(match, searchTerm.length);
       el.appendChild(matchEl);
 
-      var matchSuffix = text.substring(match + searchTerm.length);
+      const matchSuffix = text.substring(match + searchTerm.length);
       if (matchSuffix) {
-        var textNodeSuffix = document.createTextNode(matchSuffix);
+        const textNodeSuffix = document.createTextNode(matchSuffix);
         el.appendChild(textNodeSuffix);
       }
     } else {
@@ -395,8 +529,8 @@ FlagSearch.prototype = {
    * @return {number} The number of matches found.
    */
   highlightAllMatches: function(searchContent, searchTerm) {
-    var matches = 0;
-    for (var i = 0, j = searchContent.link.length; i < j; i++) {
+    let matches = 0;
+    for (let i = 0, j = searchContent.link.length; i < j; i++) {
       if (this.highlightMatchInElement(searchTerm, searchContent.title[i])) {
         this.resetHighlights(searchContent.description[i],
             searchContent.description[i].textContent);
@@ -430,36 +564,56 @@ FlagSearch.prototype = {
 
   /**
    * Performs a search against the experiment title, description, permalink.
-   * @param {Event} e
    */
-  doSearch: function(e) {
-    var searchTerm =
-        this.searchBox_.value.trim().toLowerCase();
+  doSearch: function() {
+    const searchTerm = this.searchBox_.value.trim().toLowerCase();
 
     if (searchTerm || searchTerm == '') {
       document.body.classList.toggle('searching', searchTerm);
       // Available experiments
-      this.noMatchMsg_[0].classList.toggle('hidden',
-          this.highlightAllMatches(this.experiments_, searchTerm));
+      this.noMatchMsg_[0].classList.toggle(
+          'hidden',
+          this.highlightAllMatches(this.experiments_, searchTerm) > 0);
       // Unavailable experiments
-      this.noMatchMsg_[1].classList.toggle('hidden',
-          this.highlightAllMatches(this.unavailableExperiments_, searchTerm));
+      this.noMatchMsg_[1].classList.toggle(
+          'hidden',
+          this.highlightAllMatches(this.unavailableExperiments_, searchTerm) >
+              0);
+      this.announceSearchResults();
     }
 
     this.searchIntervalId_ = null;
   },
 
-  /**
-   * Debounces the search to improve performance and prevent too many searches
-   * from being initiated.
-   * @param {Event} e
-   */
-  debounceSearch: function(e) {
-    // Don't search if the search term did not change.
-    if (this.searchValue_ == this.searchBox_.value) {
+  announceSearchResults: function() {
+    const searchTerm = this.searchBox_.value.trim().toLowerCase();
+    if (!searchTerm) {
       return;
     }
 
+    let tabAvailable = true;
+    const tabEls = document.getElementsByClassName('tab');
+    for (let i = 0; i < tabEls.length; ++i) {
+      if (tabEls[i].parentNode.classList.contains('selected')) {
+        tabAvailable = tabEls[i].id == 'tab-available';
+      }
+    }
+    const seletedTabId =
+        tabAvailable ? '#tab-content-available' : '#tab-content-unavailable';
+    const queryString = seletedTabId + ' .experiment:not(.hidden)';
+    const total = document.querySelectorAll(queryString).length;
+    if (total) {
+      announceStatus((total == 1) ?
+          loadTimeData.getStringF("searchResultsSingular", searchTerm) :
+          loadTimeData.getStringF("searchResultsPlural", total, searchTerm));
+    }
+  },
+
+  /**
+   * Debounces the search to improve performance and prevent too many searches
+   * from being initiated.
+   */
+  debounceSearch: function() {
     if (this.searchIntervalId_) {
       clearTimeout(this.searchIntervalId_);
     }
@@ -468,10 +622,26 @@ FlagSearch.prototype = {
   }
 };
 
+/**
+ * Allows the restart button to jump back to the previously focused experiment
+ * in the list instead of going to the top of the page.
+ */
+function setupRestartButton() {
+  restartButton.addEventListener('keydown', function(e) {
+    if (e.shiftKey && e.key == 'Tab' && lastFocused) {
+      e.preventDefault();
+      lastFocused.focus();
+    }
+  });
+  restartButton.addEventListener('blur', () => {
+    lastFocused = null;
+  });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   // Get and display the data upon loading.
   requestExperimentalFeaturesData();
-
+  setupRestartButton();
   cr.ui.FocusOutlineManager.forDocument(document);
 });
 

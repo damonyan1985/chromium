@@ -9,10 +9,13 @@
 #include "ios/chrome/browser/application_context.h"
 #import "ios/chrome/browser/ui/authentication/authentication_constants.h"
 #import "ios/chrome/browser/ui/authentication/unified_consent/identity_picker_view.h"
+#import "ios/chrome/browser/ui/authentication/unified_consent/unified_consent_constants.h"
 #import "ios/chrome/browser/ui/authentication/unified_consent/unified_consent_view_controller_delegate.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/util/label_link_controller.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/UIColor+cr_semantic_colors.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #include "ios/chrome/common/string_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
@@ -24,22 +27,10 @@
 #error "This file requires ARC support."
 #endif
 
-NSString* const kUnifiedConsentScrollViewIdentifier =
-    @"kUnifiedConsentScrollViewIdentifier";
-
 namespace {
 
-// Sizes.
-// Size of the small icons next to the text.
-const CGFloat kIconSize = 16.;
-
-// Horizontal margin between the small icon and the text next to it.
-const CGFloat kIconTextMargin = 16.;
-// Horizontal margin on the left part of the separator.
-const CGFloat kLeftSeparatorMargin =
-    kAuthenticationHorizontalMargin + kIconSize + kIconTextMargin;
 // Vertical margin the main title and the identity picker.
-const CGFloat KTitlePickerMargin = 17.;
+const CGFloat kTitlePickerMargin = 16.;
 // Vertical margin above the first text and after the last text.
 const CGFloat kVerticalTextMargin = 22.;
 // Vertical margin between texts.
@@ -49,16 +40,6 @@ const CGFloat kVerticalSeparatorTextMargin = 16.;
 
 // URL for the Settings link.
 const char* const kSettingsSyncURL = "internal://settings-sync";
-
-// Assistant icon name.
-NSString* const kAssistantIconName = @"ic_assistant";
-// Google icon name.
-NSString* const kGoogleIconName = @"ic_google";
-// Settings icon name.
-NSString* const kSettingsIconName = @"ic_settings";
-// Sync complete icon name.
-NSString* const kSyncCompleteIconName = @"ic_sync_complete";
-
 }  // namespace
 
 @interface UnifiedConsentViewController ()<UIScrollViewDelegate> {
@@ -78,6 +59,12 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
 @property(nonatomic, strong) NSLayoutConstraint* noIdentityConstraint;
 // Constraint when identityPickerView is visible.
 @property(nonatomic, strong) NSLayoutConstraint* withIdentityConstraint;
+// Constraint for the maximum height of the header view (also used to hide the
+// the header view if needed).
+@property(nonatomic, strong) NSLayoutConstraint* headerViewMaxHeightConstraint;
+// Constraint for the proportiortional size of the header view.
+@property(nonatomic, strong)
+    NSLayoutConstraint* headerViewProportionalHeightConstraint;
 // Settings link controller.
 @property(nonatomic, strong) LabelLinkController* settingsLinkController;
 // Label related to customize sync text.
@@ -167,27 +154,23 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
   // areas (like the status bar).
   UIView* imageBackgroundView = [[UIView alloc] initWithFrame:CGRectZero];
   imageBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
-  imageBackgroundView.backgroundColor =
-      UIColorFromRGB(kAuthenticationHeaderBackgroundColor);
   [container addSubview:imageBackgroundView];
 
   // Header image.
   UIImageView* headerImageView = [[UIImageView alloc] initWithFrame:CGRectZero];
   headerImageView.translatesAutoresizingMaskIntoConstraints = NO;
   headerImageView.image = [UIImage imageNamed:kAuthenticationHeaderImageName];
+  headerImageView.contentMode = UIViewContentModeScaleAspectFit;
+  headerImageView.clipsToBounds = YES;
   [container addSubview:headerImageView];
 
   // Title.
-  UILabel* title = [[UILabel alloc] initWithFrame:CGRectZero];
-  title.translatesAutoresizingMaskIntoConstraints = NO;
-  title.text = l10n_util::GetNSString(IDS_IOS_ACCOUNT_UNIFIED_CONSENT_TITLE);
-  _consentStringIds.push_back(IDS_IOS_ACCOUNT_UNIFIED_CONSENT_TITLE);
-  title.textColor =
-      [UIColor colorWithWhite:0 alpha:kAuthenticationTitleColorAlpha];
-  title.font = [UIFont preferredFontForTextStyle:kAuthenticationTitleFontStyle];
-  title.numberOfLines = 0;
+  UILabel* title =
+      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_TITLE
+                       fontStyle:kAuthenticationTitleFontStyle
+                       textColor:UIColor.cr_labelColor
+                      parentView:container];
 
-  [container addSubview:title];
   // Identity picker view.
   self.identityPickerView =
       [[IdentityPickerView alloc] initWithFrame:CGRectZero];
@@ -197,36 +180,32 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
                     forControlEvents:UIControlEventTouchUpInside];
   [container addSubview:self.identityPickerView];
 
-  // Sync bookmark label.
-  UILabel* syncBookmarkLabel =
-      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_SYNC_DATA
-                    withIconName:kSyncCompleteIconName
-          iconVerticallyCentered:YES
+  // Sync title and subtitle.
+  UILabel* syncTitleLabel =
+      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_SYNC_TITLE
+                       fontStyle:kAuthenticationTextFontStyle
+                       textColor:UIColor.cr_labelColor
                       parentView:container];
-  // Get more personalized label.
-  UILabel* morePersonalizedLabel =
-      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_PERSONALIZED
-                    withIconName:kAssistantIconName
-          iconVerticallyCentered:YES
+
+  UILabel* syncSubtitleLabel =
+      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_SYNC_SUBTITLE
+                       fontStyle:kAuthenticationTextFontStyle
+                       textColor:UIColor.cr_secondaryLabelColor
                       parentView:container];
-  // Powerful Google label.
-  UILabel* powerfulGoogleLabel =
-      [self addLabelWithStringId:IDS_IOS_ACCOUNT_UNIFIED_CONSENT_BETTER_BROWSER
-                    withIconName:kGoogleIconName
-          iconVerticallyCentered:YES
-                      parentView:container];
+
   // Separator.
   UIView* separator = [[UIView alloc] initWithFrame:CGRectZero];
   separator.translatesAutoresizingMaskIntoConstraints = NO;
-  separator.backgroundColor =
-      [UIColor colorWithWhite:0 alpha:kAuthenticationSeparatorColorAlpha];
+  separator.backgroundColor = UIColor.cr_secondarySystemBackgroundColor;
   [container addSubview:separator];
+
   // Customize label.
   self.openSettingsStringId = IDS_IOS_ACCOUNT_UNIFIED_CONSENT_SETTINGS;
-  self.customizeSyncLabel = [self addLabelWithStringId:self.openSettingsStringId
-                                          withIconName:kSettingsIconName
-                                iconVerticallyCentered:NO
-                                            parentView:container];
+  self.customizeSyncLabel =
+      [self addLabelWithStringId:self.openSettingsStringId
+                       fontStyle:kAuthenticationTextFontStyle
+                       textColor:UIColor.cr_secondaryLabelColor
+                      parentView:container];
 
   // Layouts
   NSDictionary* views = @{
@@ -236,21 +215,17 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
     @"container" : container,
     @"scrollview" : self.scrollView,
     @"separator" : separator,
-    @"synctext" : syncBookmarkLabel,
-    @"personalizedtext" : morePersonalizedLabel,
-    @"powerfultext" : powerfulGoogleLabel,
-    @"customizesynctext" : self.customizeSyncLabel,
+    @"synctitle" : syncTitleLabel,
+    @"syncsubtitle" : syncSubtitleLabel,
+    @"customizesync" : self.customizeSyncLabel,
   };
   NSDictionary* metrics = @{
-    @"TitlePickerMargin" : @(KTitlePickerMargin),
+    @"TitlePickerMargin" : @(kTitlePickerMargin),
     @"HMargin" : @(kAuthenticationHorizontalMargin),
     @"VBetweenText" : @(kVerticalBetweenTextMargin),
     @"VSeparatorText" : @(kVerticalSeparatorTextMargin),
-    @"LeftSeparMrg" : @(kLeftSeparatorMargin),
     @"VTextMargin" : @(kVerticalTextMargin),
     @"SeparatorHeight" : @(kAuthenticationSeparatorHeight),
-    @"HeaderHeight" : @(kAuthenticationHeaderImageHeight),
-    @"HeaderWidth" : @(kAuthenticationHeaderImageWidth),
     @"HeaderTitleMargin" : @(kAuthenticationHeaderTitleMargin),
   };
   NSArray* constraints = @[
@@ -259,36 +234,49 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
     @"H:|[container]|",
     @"H:|-(HMargin)-[title]-(HMargin)-|",
     @"H:|-(HMargin)-[picker]-(HMargin)-|",
-    @"H:|-(LeftSeparMrg)-[separator]-(HMargin)-|",
+    @"H:|-(HMargin)-[separator]-(HMargin)-|",
+    @"H:|-(HMargin)-[synctitle]-(HMargin)-|",
+    @"H:|-(HMargin)-[syncsubtitle]-(HMargin)-|",
+    @"H:|-(HMargin)-[customizesync]-(HMargin)-|",
     // Vertical constraints.
     @"V:|[scrollview]|",
     @"V:|[container]|",
     @"V:|[header]-(HeaderTitleMargin)-[title]-(TitlePickerMargin)-[picker]",
-    @"V:[synctext]-(VBetweenText)-[personalizedtext]",
-    @"V:[personalizedtext]-(VBetweenText)-[powerfultext]",
-    @"V:[powerfultext]-(VTextMargin)-[separator]",
-    @"V:[separator]-(VSeparatorText)-[customizesynctext]-(VTextMargin)-|",
+    @"V:[synctitle]-[syncsubtitle]-(VBetweenText)-[separator]",
+    @"V:[separator]-(VSeparatorText)-[customizesync]-(VTextMargin)-|",
     // Size constraints.
-    @"H:[header(HeaderWidth)]",
-    @"V:[header(HeaderHeight)]",
     @"V:[separator(SeparatorHeight)]",
   ];
   ApplyVisualConstraintsWithMetrics(constraints, views, metrics);
-  // Header image horizonatally centered.
-  [headerImageView.centerXAnchor
-      constraintEqualToAnchor:self.view.centerXAnchor]
-      .active = YES;
+
+  // Adding constraints for header image.
+  AddSameCenterXConstraint(self.view, headerImageView);
+  // |headerView| fills 20% of |view|, capped at
+  // |kAuthenticationHeaderImageHeight|.
+  self.headerViewProportionalHeightConstraint = [headerImageView.heightAnchor
+      constraintEqualToAnchor:self.view.heightAnchor
+                   multiplier:0.2];
+  self.headerViewProportionalHeightConstraint.priority =
+      UILayoutPriorityDefaultHigh;
+  self.headerViewProportionalHeightConstraint.active = YES;
+  self.headerViewMaxHeightConstraint = [headerImageView.heightAnchor
+      constraintLessThanOrEqualToConstant:kAuthenticationHeaderImageHeight];
+  self.headerViewMaxHeightConstraint.active = YES;
+  [self updateHeaderViewConstraints];
+
   // Adding constraints with or without identity.
   self.noIdentityConstraint =
-      [syncBookmarkLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor
-                                                  constant:kVerticalTextMargin];
-  self.withIdentityConstraint = [syncBookmarkLabel.topAnchor
+      [syncTitleLabel.topAnchor constraintEqualToAnchor:title.bottomAnchor
+                                               constant:kVerticalTextMargin];
+  self.withIdentityConstraint = [syncTitleLabel.topAnchor
       constraintEqualToAnchor:self.identityPickerView.bottomAnchor
                      constant:kVerticalTextMargin];
+
   // Adding constraints for the container.
   id<LayoutGuideProvider> safeArea = self.view.safeAreaLayoutGuide;
   [container.widthAnchor constraintEqualToAnchor:safeArea.widthAnchor].active =
       YES;
+
   // Adding constraints for |imageBackgroundView|.
   AddSameCenterXConstraint(self.view, imageBackgroundView);
   [imageBackgroundView.widthAnchor
@@ -317,7 +305,6 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
   [self.delegate unifiedConsentViewControllerViewDidAppear:self];
 }
 
-// Updates the scroll view content inset, used by pre iOS 11.
 - (void)viewWillTransitionToSize:(CGSize)size
        withTransitionCoordinator:
            (id<UIViewControllerTransitionCoordinator>)coordinator {
@@ -328,6 +315,11 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
         [self updateScrollViewAndImageBackgroundView];
       }
                       completion:nil];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
+  [super traitCollectionDidChange:previousTraitCollection];
+  [self updateHeaderViewConstraints];
 }
 
 - (void)didMoveToParentViewController:(UIViewController*)parent {
@@ -360,56 +352,21 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
 
 #pragma mark - Private
 
-// Adds an icon and a label, into |parentView|, next to each other with the
-// constraints between the icon and the label.
-// If |iconVerticallyCentered| is true, the |icon| is vertically centered with
-// the label. Otherwise, it the |icon| is vertically aligned with the first line
-// of the label.
+// Adds label with title |stringId| into |parentView|.
 - (UILabel*)addLabelWithStringId:(int)stringId
-                    withIconName:(NSString*)iconName
-          iconVerticallyCentered:(BOOL)iconVerticallyCentered
+                       fontStyle:(UIFontTextStyle)fontStyle
+                       textColor:(UIColor*)textColor
                       parentView:(UIView*)parentView {
   DCHECK(stringId);
-  DCHECK(iconName);
   DCHECK(parentView);
   UILabel* label = [[UILabel alloc] initWithFrame:CGRectZero];
   label.translatesAutoresizingMaskIntoConstraints = NO;
-  label.font = [UIFont preferredFontForTextStyle:kAuthenticationTextFontStyle];
+  label.font = [UIFont preferredFontForTextStyle:fontStyle];
+  label.textColor = textColor;
   label.text = l10n_util::GetNSString(stringId);
   _consentStringIds.push_back(stringId);
-  label.textColor =
-      [UIColor colorWithWhite:0 alpha:kAuthenticationTextColorAlpha];
   label.numberOfLines = 0;
   [parentView addSubview:label];
-  UIImageView* image = [[UIImageView alloc] initWithFrame:CGRectZero];
-  image.image = [UIImage imageNamed:iconName];
-  image.translatesAutoresizingMaskIntoConstraints = NO;
-  [parentView addSubview:image];
-  NSDictionary* views = NSDictionaryOfVariableBindings(label, image);
-  NSArray* constraints = @[
-    @"H:|-(HMargin)-[image]-(IconTextMargin)-[label]-(HMargin)-|",
-    @"H:[image(IconSize)]",
-    @"V:[image(IconSize)]",
-  ];
-  NSDictionary* metrics = @{
-    @"HMargin" : @(kAuthenticationHorizontalMargin),
-    @"IconSize" : @(kIconSize),
-    @"IconTextMargin" : @(kIconTextMargin),
-  };
-  ApplyVisualConstraintsWithMetrics(constraints, views, metrics);
-  if (iconVerticallyCentered) {
-    AddSameCenterYConstraint(label, image);
-  } else {
-    // |icon| should be aligned to first line of |label|. This has to be done
-    // according to the middle of the cap height of the font.
-    // The cap height position is based on the ascender.
-    UIFont* font = label.font;
-    [image.centerYAnchor
-        constraintEqualToAnchor:label.topAnchor
-                       constant:font.ascender - font.capHeight +
-                                font.capHeight / 2.]
-        .active = YES;
-  }
   return label;
 }
 
@@ -432,9 +389,11 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
                                             action:^(const GURL& URL) {
                                               [weakSelf openSettings];
                                             }];
+    [self.settingsLinkController setLinkColor:[UIColor colorNamed:kBlueColor]];
     [self.settingsLinkController
-        setLinkColor:[[MDCPalette cr_bluePalette] tint500]];
-    [self.settingsLinkController addLinkWithRange:range url:URL];
+        addLinkWithRange:range
+                     url:URL
+         accessibilityID:kAdvancedSigninSettingsLinkIdentifier];
   }
 }
 
@@ -460,6 +419,17 @@ NSString* const kSyncCompleteIconName = @"ic_sync_complete";
 - (void)sendDidReachBottomIfReached {
   if (self.isScrolledToBottom) {
     [self.delegate unifiedConsentViewControllerDidReachBottom:self];
+  }
+}
+
+// Updates the header view constraints based on the height class traits of
+// |view|.
+- (void)updateHeaderViewConstraints {
+  if (IsCompactHeight(self)) {
+    self.headerViewMaxHeightConstraint.constant = 0;
+  } else {
+    self.headerViewMaxHeightConstraint.constant =
+        kAuthenticationHeaderImageHeight;
   }
 }
 

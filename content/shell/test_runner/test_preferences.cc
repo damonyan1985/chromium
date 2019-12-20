@@ -18,7 +18,6 @@ TestPreferences::TestPreferences() {
 void TestPreferences::Reset() {
   default_font_size = 16;
   minimum_font_size = 0;
-  xss_auditor_enabled = false;
   allow_file_access_from_file_urls = true;
   allow_running_of_insecure_content = true;
   default_text_encoding_name = WebString::FromUTF8("ISO-8859-1");
@@ -29,10 +28,7 @@ void TestPreferences::Reset() {
   loads_images_automatically = true;
   plugins_enabled = true;
   caret_browsing_enabled = false;
-
-  // Allow those web tests running as local files, i.e. under
-  // web_tests/http/tests/local, to access http server.
-  allow_universal_access_from_file_urls = true;
+  allow_universal_access_from_file_urls = false;
 
 #if defined(OS_MACOSX)
   editing_behavior = WebSettings::EditingBehavior::kMac;

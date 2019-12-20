@@ -16,7 +16,7 @@ void FakeCompositorFrameSinkClient::DidReceiveCompositorFrameAck(
 
 void FakeCompositorFrameSinkClient::OnBeginFrame(
     const BeginFrameArgs& args,
-    const base::flat_map<uint32_t, gfx::PresentationFeedback>& feedbacks) {}
+    const FrameTimingDetailsMap& timing_details) {}
 
 void FakeCompositorFrameSinkClient::ReclaimResources(
     const std::vector<ReturnedResource>& resources) {
@@ -31,4 +31,9 @@ void FakeCompositorFrameSinkClient::InsertResources(
                              resources.end());
 }
 
-};  // namespace viz
+mojo::PendingRemote<mojom::CompositorFrameSinkClient>
+FakeCompositorFrameSinkClient::BindInterfaceRemote() {
+  return receiver_.BindNewPipeAndPassRemote();
+}
+
+}  // namespace viz

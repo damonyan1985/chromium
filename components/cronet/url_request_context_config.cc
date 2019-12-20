@@ -24,16 +24,18 @@
 #include "net/cert/ct_policy_status.h"
 #include "net/cert/do_nothing_ct_verifier.h"
 #include "net/cert/multi_threaded_cert_verifier.h"
+#include "net/dns/context_host_resolver.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/mapped_host_resolver.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties.h"
+#include "net/log/net_log.h"
 #include "net/nqe/network_quality_estimator_params.h"
 #include "net/quic/quic_utils_chromium.h"
 #include "net/reporting/reporting_policy.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/ssl/ssl_key_logger_impl.h"
-#include "net/third_party/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/url_request/url_request_context_builder.h"
 
 #if BUILDFLAG(ENABLE_REPORTING)
@@ -66,6 +68,11 @@ const char kQuicGoAwaySessionsOnIpChange[] = "goaway_sessions_on_ip_change";
 const char kQuicAllowServerMigration[] = "allow_server_migration";
 const char kQuicMigrateSessionsOnNetworkChangeV2[] =
     "migrate_sessions_on_network_change_v2";
+const char kQuicMigrateIdleSessions[] = "migrate_idle_sessions";
+const char kQuicRetransmittableOnWireTimeoutMilliseconds[] =
+    "retransmittable_on_wire_timeout_milliseconds";
+const char kQuicIdleSessionMigrationPeriodSeconds[] =
+    "idle_session_migration_period_seconds";
 const char kQuicMaxTimeOnNonDefaultNetworkSeconds[] =
     "max_time_on_non_default_network_seconds";
 const char kQuicMaxMigrationsToNonDefaultNetworkOnWriteError[] =
@@ -84,6 +91,7 @@ const char kQuicHostWhitelist[] = "host_whitelist";
 const char kQuicEnableSocketRecvOptimization[] =
     "enable_socket_recv_optimization";
 const char kQuicVersion[] = "quic_version";
+const char kQuicFlags[] = "set_quic_flags";
 
 // AsyncDNS experiment dictionary name.
 const char kAsyncDnsFieldTrialName[] = "AsyncDNS";
@@ -146,6 +154,8 @@ const char kDisableIPv6OnWifi[] = "disable_ipv6_on_wifi";
 
 const char kSSLKeyLogFile[] = "ssl_key_log_file";
 
+const char kGoAwayOnPathDegrading[] = "go_away_on_path_degrading";
+
 // "goaway_sessions_on_ip_change" is default on for iOS unless overrided via
 // experimental options explicitly.
 #if defined(OS_IOS)
@@ -172,7 +182,7 @@ std::string SerializeJFVHeader(const base::Value& value) {
 
 std::vector<URLRequestContextConfig::PreloadedNelAndReportingHeader>
 ParseNetworkErrorLoggingHeaders(
-    const base::Value::ListStorage& preloaded_headers_config) {
+    base::Value::ConstListView preloaded_headers_config) {
   std::vector<URLRequestContextConfig::PreloadedNelAndReportingHeader> result;
   for (const auto& preloaded_header_config : preloaded_headers_config) {
     if (!preloaded_header_config.is_dict())
@@ -197,9 +207,9 @@ ParseNetworkErrorLoggingHeaders(
   return result;
 }
 
-quic::QuicTransportVersionVector ParseQuicVersions(
+quic::ParsedQuicVersionVector ParseQuicVersions(
     const std::string& quic_versions) {
-  quic::QuicTransportVersionVector supported_versions;
+  quic::ParsedQuicVersionVector supported_versions;
   quic::QuicTransportVersionVector all_supported_versions =
       quic::AllSupportedTransportVersions();
 
@@ -208,7 +218,8 @@ quic::QuicTransportVersionVector ParseQuicVersions(
     auto it = all_supported_versions.begin();
     while (it != all_supported_versions.end()) {
       if (quic::QuicVersionToString(*it) == version) {
-        supported_versions.push_back(*it);
+        supported_versions.push_back(
+            quic::ParsedQuicVersion(quic::PROTOCOL_QUIC_CRYPTO, *it));
         // Remove the supported version to deduplicate versions extracted from
         // |quic_versions|.
         all_supported_versions.erase(it);
@@ -283,15 +294,13 @@ URLRequestContextConfig::~URLRequestContextConfig() {}
 void URLRequestContextConfig::ParseAndSetExperimentalOptions(
     net::URLRequestContextBuilder* context_builder,
     net::HttpNetworkSession::Params* session_params,
-    net::NetLog* net_log) {
+    net::QuicParams* quic_params) {
   if (experimental_options.empty())
     return;
 
-  DCHECK(net_log);
-
   DVLOG(1) << "Experimental Options:" << experimental_options;
   std::unique_ptr<base::Value> options =
-      base::JSONReader::Read(experimental_options);
+      base::JSONReader::ReadDeprecated(experimental_options);
 
   if (!options) {
     DCHECK(false) << "Parsing experimental options failed: "
@@ -330,23 +339,23 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
 
       std::string quic_version_string;
       if (quic_args->GetString(kQuicVersion, &quic_version_string)) {
-        quic::QuicTransportVersionVector supported_versions =
+        quic::ParsedQuicVersionVector supported_versions =
             ParseQuicVersions(quic_version_string);
         if (!supported_versions.empty())
-          session_params->quic_supported_versions = supported_versions;
+          quic_params->supported_versions = supported_versions;
       }
 
       std::string quic_connection_options;
       if (quic_args->GetString(kQuicConnectionOptions,
                                &quic_connection_options)) {
-        session_params->quic_connection_options =
+        quic_params->connection_options =
             net::ParseQuicConnectionOptions(quic_connection_options);
       }
 
       std::string quic_client_connection_options;
       if (quic_args->GetString(kQuicClientConnectionOptions,
                                &quic_client_connection_options)) {
-        session_params->quic_client_connection_options =
+        quic_params->client_connection_options =
             net::ParseQuicConnectionOptions(quic_client_connection_options);
       }
 
@@ -355,7 +364,7 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
       bool quic_store_server_configs_in_properties = false;
       if (quic_args->GetBoolean(kQuicStoreServerConfigsInProperties,
                                 &quic_store_server_configs_in_properties)) {
-        session_params->quic_max_server_configs_stored_in_properties =
+        quic_params->max_server_configs_stored_in_properties =
             net::kDefaultMaxQuicServerEntries;
       }
 
@@ -363,37 +372,39 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
       if (quic_args->GetInteger(
               kQuicMaxServerConfigsStoredInProperties,
               &quic_max_server_configs_stored_in_properties)) {
-        session_params->quic_max_server_configs_stored_in_properties =
+        quic_params->max_server_configs_stored_in_properties =
             static_cast<size_t>(quic_max_server_configs_stored_in_properties);
       }
 
       int quic_idle_connection_timeout_seconds = 0;
       if (quic_args->GetInteger(kQuicIdleConnectionTimeoutSeconds,
                                 &quic_idle_connection_timeout_seconds)) {
-        session_params->quic_idle_connection_timeout_seconds =
-            quic_idle_connection_timeout_seconds;
+        quic_params->idle_connection_timeout =
+            base::TimeDelta::FromSeconds(quic_idle_connection_timeout_seconds);
       }
 
       int quic_max_time_before_crypto_handshake_seconds = 0;
       if (quic_args->GetInteger(
               kQuicMaxTimeBeforeCryptoHandshakeSeconds,
               &quic_max_time_before_crypto_handshake_seconds)) {
-        session_params->quic_max_time_before_crypto_handshake_seconds =
-            quic_max_time_before_crypto_handshake_seconds;
+        quic_params->max_time_before_crypto_handshake =
+            base::TimeDelta::FromSeconds(
+                quic_max_time_before_crypto_handshake_seconds);
       }
 
       int quic_max_idle_time_before_crypto_handshake_seconds = 0;
       if (quic_args->GetInteger(
               kQuicMaxIdleTimeBeforeCryptoHandshakeSeconds,
               &quic_max_idle_time_before_crypto_handshake_seconds)) {
-        session_params->quic_max_idle_time_before_crypto_handshake_seconds =
-            quic_max_idle_time_before_crypto_handshake_seconds;
+        quic_params->max_idle_time_before_crypto_handshake =
+            base::TimeDelta::FromSeconds(
+                quic_max_idle_time_before_crypto_handshake_seconds);
       }
 
       bool quic_close_sessions_on_ip_change = false;
       if (quic_args->GetBoolean(kQuicCloseSessionsOnIpChange,
                                 &quic_close_sessions_on_ip_change)) {
-        session_params->quic_close_sessions_on_ip_change =
+        quic_params->close_sessions_on_ip_change =
             quic_close_sessions_on_ip_change;
         if (quic_close_sessions_on_ip_change &&
             kDefaultQuicGoAwaySessionsOnIpChange) {
@@ -401,33 +412,38 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
           // are mutually exclusive. Turn off the goaway option which is
           // default on for iOS if "close_sessions_on_ip_change" is set via
           // experimental options.
-          session_params->quic_goaway_sessions_on_ip_change = false;
+          quic_params->goaway_sessions_on_ip_change = false;
         }
       }
 
       bool goaway_sessions_on_ip_change;
       if (quic_args->GetBoolean(kQuicGoAwaySessionsOnIpChange,
                                 &goaway_sessions_on_ip_change)) {
-        session_params->quic_goaway_sessions_on_ip_change =
+        quic_params->goaway_sessions_on_ip_change =
             goaway_sessions_on_ip_change;
+      }
+
+      bool go_away_on_path_degrading = false;
+      if (quic_args->GetBoolean(kGoAwayOnPathDegrading,
+                                &go_away_on_path_degrading)) {
+        quic_params->go_away_on_path_degrading = go_away_on_path_degrading;
       }
 
       bool quic_allow_server_migration = false;
       if (quic_args->GetBoolean(kQuicAllowServerMigration,
                                 &quic_allow_server_migration)) {
-        session_params->quic_allow_server_migration =
-            quic_allow_server_migration;
+        quic_params->allow_server_migration = quic_allow_server_migration;
       }
 
       std::string quic_user_agent_id;
       if (quic_args->GetString(kQuicUserAgentId, &quic_user_agent_id)) {
-        session_params->quic_user_agent_id = quic_user_agent_id;
+        quic_params->user_agent_id = quic_user_agent_id;
       }
 
       bool quic_enable_socket_recv_optimization = false;
       if (quic_args->GetBoolean(kQuicEnableSocketRecvOptimization,
                                 &quic_enable_socket_recv_optimization)) {
-        session_params->quic_enable_socket_recv_optimization =
+        quic_params->enable_socket_recv_optimization =
             quic_enable_socket_recv_optimization;
       }
 
@@ -437,75 +453,106 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
       int quic_max_migrations_to_non_default_network_on_path_degrading = 0;
       if (quic_args->GetBoolean(kQuicMigrateSessionsOnNetworkChangeV2,
                                 &quic_migrate_sessions_on_network_change_v2)) {
-        session_params->quic_migrate_sessions_on_network_change_v2 =
+        quic_params->migrate_sessions_on_network_change_v2 =
             quic_migrate_sessions_on_network_change_v2;
         if (quic_args->GetInteger(
                 kQuicMaxTimeOnNonDefaultNetworkSeconds,
                 &quic_max_time_on_non_default_network_seconds)) {
-          session_params->quic_max_time_on_non_default_network =
+          quic_params->max_time_on_non_default_network =
               base::TimeDelta::FromSeconds(
                   quic_max_time_on_non_default_network_seconds);
         }
         if (quic_args->GetInteger(
                 kQuicMaxMigrationsToNonDefaultNetworkOnWriteError,
                 &quic_max_migrations_to_non_default_network_on_write_error)) {
-          session_params
-              ->quic_max_migrations_to_non_default_network_on_write_error =
+          quic_params->max_migrations_to_non_default_network_on_write_error =
               quic_max_migrations_to_non_default_network_on_write_error;
         }
         if (quic_args->GetInteger(
                 kQuicMaxMigrationsToNonDefaultNetworkOnPathDegrading,
                 &quic_max_migrations_to_non_default_network_on_path_degrading)) {
-          session_params
-              ->quic_max_migrations_to_non_default_network_on_path_degrading =
+          quic_params->max_migrations_to_non_default_network_on_path_degrading =
               quic_max_migrations_to_non_default_network_on_path_degrading;
+        }
+      }
+      bool quic_migrate_idle_sessions = false;
+      int quic_idle_session_migration_period_seconds = 0;
+      if (quic_args->GetBoolean(kQuicMigrateIdleSessions,
+                                &quic_migrate_idle_sessions)) {
+        quic_params->migrate_idle_sessions = quic_migrate_idle_sessions;
+        if (quic_args->GetInteger(
+                kQuicIdleSessionMigrationPeriodSeconds,
+                &quic_idle_session_migration_period_seconds)) {
+          quic_params->idle_session_migration_period =
+              base::TimeDelta::FromSeconds(
+                  quic_idle_session_migration_period_seconds);
         }
       }
 
       bool quic_migrate_sessions_early_v2 = false;
       if (quic_args->GetBoolean(kQuicMigrateSessionsEarlyV2,
                                 &quic_migrate_sessions_early_v2)) {
-        session_params->quic_migrate_sessions_early_v2 =
-            quic_migrate_sessions_early_v2;
+        quic_params->migrate_sessions_early_v2 = quic_migrate_sessions_early_v2;
+      }
+
+      int quic_retransmittable_on_wire_timeout_milliseconds = 0;
+      if (quic_args->GetInteger(
+              kQuicRetransmittableOnWireTimeoutMilliseconds,
+              &quic_retransmittable_on_wire_timeout_milliseconds)) {
+        quic_params->retransmittable_on_wire_timeout =
+            base::TimeDelta::FromMilliseconds(
+                quic_retransmittable_on_wire_timeout_milliseconds);
       }
 
       bool quic_retry_on_alternate_network_before_handshake = false;
       if (quic_args->GetBoolean(
               kQuicRetryOnAlternateNetworkBeforeHandshake,
               &quic_retry_on_alternate_network_before_handshake)) {
-        session_params->quic_retry_on_alternate_network_before_handshake =
+        quic_params->retry_on_alternate_network_before_handshake =
             quic_retry_on_alternate_network_before_handshake;
       }
 
       bool quic_race_stale_dns_on_connection = false;
       if (quic_args->GetBoolean(kQuicRaceStaleDNSOnConnection,
                                 &quic_race_stale_dns_on_connection)) {
-        session_params->quic_race_stale_dns_on_connection =
+        quic_params->race_stale_dns_on_connection =
             quic_race_stale_dns_on_connection;
       }
 
       bool quic_disable_bidirectional_streams = false;
       if (quic_args->GetBoolean(kQuicDisableBidirectionalStreams,
                                 &quic_disable_bidirectional_streams)) {
-        session_params->quic_disable_bidirectional_streams =
+        quic_params->disable_bidirectional_streams =
             quic_disable_bidirectional_streams;
       }
 
       bool quic_race_cert_verification = false;
       if (quic_args->GetBoolean(kQuicRaceCertVerification,
                                 &quic_race_cert_verification)) {
-        session_params->quic_race_cert_verification =
-            quic_race_cert_verification;
+        quic_params->race_cert_verification = quic_race_cert_verification;
       }
 
-      std::string quic_host_whitelist;
-      if (quic_args->GetString(kQuicHostWhitelist, &quic_host_whitelist)) {
+      std::string quic_host_allowlist;
+      if (quic_args->GetString(kQuicHostWhitelist, &quic_host_allowlist)) {
         std::vector<std::string> host_vector =
-            base::SplitString(quic_host_whitelist, ",", base::TRIM_WHITESPACE,
+            base::SplitString(quic_host_allowlist, ",", base::TRIM_WHITESPACE,
                               base::SPLIT_WANT_ALL);
-        session_params->quic_host_whitelist.clear();
+        session_params->quic_host_allowlist.clear();
         for (const std::string& host : host_vector) {
-          session_params->quic_host_whitelist.insert(host);
+          session_params->quic_host_allowlist.insert(host);
+        }
+      }
+
+      std::string quic_flags;
+      if (quic_args->GetString(kQuicFlags, &quic_flags)) {
+        for (const auto& flag :
+             base::SplitString(quic_flags, ",", base::TRIM_WHITESPACE,
+                               base::SPLIT_WANT_ALL)) {
+          std::vector<std::string> tokens = base::SplitString(
+              flag, "=", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+          if (tokens.size() != 2)
+            continue;
+          SetQuicFlagByName(tokens[0], tokens[1]);
         }
       }
 
@@ -643,20 +690,23 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
 
   if (async_dns_enable || stale_dns_enable || host_resolver_rules_enable ||
       disable_ipv6_on_wifi) {
-    CHECK(net_log) << "All DNS-related experiments require NetLog.";
     std::unique_ptr<net::HostResolver> host_resolver;
+    net::HostResolver::ManagerOptions host_resolver_manager_options;
+    host_resolver_manager_options.insecure_dns_client_enabled =
+        async_dns_enable;
+    host_resolver_manager_options.check_ipv6_on_wifi = !disable_ipv6_on_wifi;
+    // TODO(crbug.com/934402): Consider using a shared HostResolverManager for
+    // Cronet HostResolvers.
     if (stale_dns_enable) {
       DCHECK(!disable_ipv6_on_wifi);
       host_resolver.reset(new StaleHostResolver(
-          net::HostResolver::CreateDefaultResolverImpl(net_log),
+          net::HostResolver::CreateStandaloneContextResolver(
+              net::NetLog::Get(), std::move(host_resolver_manager_options)),
           stale_dns_options));
     } else {
-      host_resolver = net::HostResolver::CreateDefaultResolver(net_log);
+      host_resolver = net::HostResolver::CreateStandaloneResolver(
+          net::NetLog::Get(), std::move(host_resolver_manager_options));
     }
-    if (disable_ipv6_on_wifi)
-      host_resolver->SetNoIPv6OnWifi(true);
-    if (async_dns_enable)
-      host_resolver->SetDnsClientEnabled(true);
     if (host_resolver_rules_enable) {
       std::unique_ptr<net::MappedHostResolver> remapped_resolver(
           new net::MappedHostResolver(std::move(host_resolver)));
@@ -685,10 +735,7 @@ void URLRequestContextConfig::ParseAndSetExperimentalOptions(
 }
 
 void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
-    net::URLRequestContextBuilder* context_builder,
-    net::NetLog* net_log) {
-  DCHECK(net_log);
-
+    net::URLRequestContextBuilder* context_builder) {
   std::string config_cache;
   if (http_cache != DISABLED) {
     net::URLRequestContextBuilder::HttpCacheParams cache_params;
@@ -710,16 +757,19 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
   net::HttpNetworkSession::Params session_params;
   session_params.enable_http2 = enable_spdy;
   session_params.enable_quic = enable_quic;
+  auto quic_context = std::make_unique<net::QuicContext>();
   if (enable_quic) {
-    session_params.quic_user_agent_id = quic_user_agent_id;
+    quic_context->params()->user_agent_id = quic_user_agent_id;
     // Note goaway sessions on ip change will be turned on by default
     // for iOS unless overrided via experiemental options.
-    session_params.quic_goaway_sessions_on_ip_change =
+    quic_context->params()->goaway_sessions_on_ip_change =
         kDefaultQuicGoAwaySessionsOnIpChange;
   }
 
-  ParseAndSetExperimentalOptions(context_builder, &session_params, net_log);
+  ParseAndSetExperimentalOptions(context_builder, &session_params,
+                                 quic_context->params());
   context_builder->set_http_network_session_params(session_params);
+  context_builder->set_quic_context(std::move(quic_context));
 
   if (mock_cert_verifier)
     context_builder->SetCertVerifier(std::move(mock_cert_verifier));

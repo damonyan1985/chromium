@@ -10,6 +10,7 @@
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/script_executor.h"
 #include "extensions/common/api/extension_types.h"
+#include "extensions/common/extension_l10n_util.h"
 #include "extensions/common/host_id.h"
 
 namespace extensions {
@@ -17,7 +18,7 @@ namespace extensions {
 // Base class for javascript code injection.
 // This is used by both chrome.webview.executeScript and
 // chrome.tabs.executeScript.
-class ExecuteCodeFunction : public UIThreadExtensionFunction {
+class ExecuteCodeFunction : public ExtensionFunction {
  public:
   ExecuteCodeFunction();
 
@@ -87,6 +88,7 @@ class ExecuteCodeFunction : public UIThreadExtensionFunction {
       const std::string& extension_id,
       const base::FilePath& extension_path,
       const std::string& extension_default_locale,
+      extension_l10n_util::GzippedMessagesPermission gzip_permission,
       bool might_require_localization,
       std::string* data);
 
@@ -100,6 +102,7 @@ class ExecuteCodeFunction : public UIThreadExtensionFunction {
       const std::string& extension_id,
       const base::FilePath& extension_path,
       const std::string& extension_default_locale,
+      extension_l10n_util::GzippedMessagesPermission gzip_permission,
       bool might_require_localization);
 
   // Run in UI thread.  Code string contains the code to be executed. Returns

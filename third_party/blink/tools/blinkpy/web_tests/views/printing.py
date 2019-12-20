@@ -79,7 +79,7 @@ class Printer(object):
     def print_config(self, port):
         self._print_default("Using port '%s'" % port.name())
         self._print_default('Test configuration: %s' % port.test_configuration())
-        self._print_default('View the test results at file://%s/results.html' % port.results_directory())
+        self._print_default('View the test results at file://%s/results.html' % port.artifacts_directory())
         if self._options.order == 'random':
             self._print_default('Using random order with seed: %d' % self._options.seed)
 
@@ -121,14 +121,7 @@ class Printer(object):
 
     def _print_expected_results_of_type(self, run_results, result_type, result_type_str, tests_with_result_type_callback):
         tests = tests_with_result_type_callback(result_type)
-        now = run_results.tests_by_timeline[test_expectations.NOW]
-        wontfix = run_results.tests_by_timeline[test_expectations.WONTFIX]
-
-        # We use a fancy format string in order to print the data out in a
-        # nicely-aligned table.
-        fmtstr = ('Expect: %%5d %%-8s (%%%dd now, %%%dd wontfix)'
-                  % (self._num_digits(now), self._num_digits(wontfix)))
-        self._print_debug(fmtstr % (len(tests), result_type_str, len(tests & now), len(tests & wontfix)))
+        self._print_debug('Expect: %5d %-8s' % (len(tests), result_type_str))
 
     def _num_digits(self, num):
         ndigits = 1
@@ -275,11 +268,10 @@ class Printer(object):
 
         base = port.lookup_virtual_test_base(test_name)
         if base:
-            args = ' '.join(port.lookup_virtual_test_args(test_name))
-            reference_args = ' '.join(port.lookup_virtual_reference_args(test_name))
             self._print_default(' base: %s' % base)
-            self._print_default(' args: %s' % args)
-            self._print_default(' reference_args: %s' % reference_args)
+        args = port.args_for_test(test_name)
+        if args:
+            self._print_default(' args: %s' % ' '.join(args))
 
         references = port.reference_files(test_name)
         if references:

@@ -5,7 +5,6 @@
 #ifndef CC_LAYERS_SURFACE_LAYER_H_
 #define CC_LAYERS_SURFACE_LAYER_H_
 
-#include "base/macros.h"
 #include "cc/cc_export.h"
 #include "cc/layers/deadline_policy.h"
 #include "cc/layers/layer.h"
@@ -27,6 +26,9 @@ class CC_EXPORT SurfaceLayer : public Layer {
   static scoped_refptr<SurfaceLayer> Create();
   static scoped_refptr<SurfaceLayer> Create(UpdateSubmissionStateCB);
 
+  SurfaceLayer(const SurfaceLayer&) = delete;
+  SurfaceLayer& operator=(const SurfaceLayer&) = delete;
+
   void SetSurfaceId(const viz::SurfaceId& surface_id,
                     const DeadlinePolicy& deadline_policy);
   void SetOldestAcceptableFallback(const viz::SurfaceId& surface_id);
@@ -38,11 +40,16 @@ class CC_EXPORT SurfaceLayer : public Layer {
     return stretch_content_to_fill_bounds_;
   }
 
+  void SetUnoccludedForHitTesting(bool unoccluded);
+  bool UnoccludedForHitTesting() const { return unoccluded_for_hit_testing_; }
+
   void SetSurfaceHitTestable(bool surface_hit_testable);
 
   void SetHasPointerEventsNone(bool has_pointer_events_none);
 
-  void SetMayContainVideo(bool);
+  void SetIsReflection(bool is_reflection);
+
+  void SetMayContainVideo(bool may_contain_video);
 
   // Layer overrides.
   std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
@@ -83,13 +90,21 @@ class CC_EXPORT SurfaceLayer : public Layer {
   // be surface hit testable (e.g., a surface layer created by video).
   bool surface_hit_testable_ = false;
 
+  // For an out-of-process iframe, indicates whether any other content in the
+  // embedding page occludes the iframe, which will necessitate a hit test in
+  // the renderer process to target input events. A `true` values means the
+  // surface is guaranteed *not* to be occluded; a `false` value means we cannot
+  // make that guarantee.
+  bool unoccluded_for_hit_testing_ = false;
+
   // Whether or not the surface can accept pointer events. It is set to true if
   // the frame owner has pointer-events: none property.
   // TODO(sunxd): consider renaming it to oopif_has_pointer_events_none_ for
   // disambiguation.
   bool has_pointer_events_none_ = false;
 
-  DISALLOW_COPY_AND_ASSIGN(SurfaceLayer);
+  // This surface layer is reflecting the root surface of another display.
+  bool is_reflection_ = false;
 };
 
 }  // namespace cc

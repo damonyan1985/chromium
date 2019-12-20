@@ -105,32 +105,58 @@ PaintInvalidationReason RasterInvalidator::ChunkPropertiesChanged(
   // Treat the chunk property as changed if the effect node pointer is
   // different, or the effect node's value changed between the layer state and
   // the chunk state.
-  if (new_chunk_state.Effect() != old_chunk_state.Effect() ||
-      new_chunk_state.Effect()->Changed(layer_state,
-                                        new_chunk_state.Transform()))
+  if (&new_chunk_state.Effect() != &old_chunk_state.Effect() ||
+      new_chunk_state.Effect().Changed(
+          PaintPropertyChangeType::kChangedOnlySimpleValues, layer_state,
+          &new_chunk_state.Transform()))
     return PaintInvalidationReason::kPaintProperty;
 
   // Check for accumulated clip rect change, if the clip rects are tight.
   if (new_chunk_info.chunk_to_layer_clip.IsTight() &&
       old_chunk_info.chunk_to_layer_clip.IsTight()) {
-    if (new_chunk_info.chunk_to_layer_clip ==
-        old_chunk_info.chunk_to_layer_clip)
+    const auto& new_clip_rect = new_chunk_info.chunk_to_layer_clip.Rect();
+    const auto& old_clip_rect = old_chunk_info.chunk_to_layer_clip.Rect();
+    if (new_clip_rect == old_clip_rect)
       return PaintInvalidationReason::kNone;
     // Ignore differences out of the current layer bounds.
-    if (ClipByLayerBounds(new_chunk_info.chunk_to_layer_clip.Rect()) ==
-        ClipByLayerBounds(old_chunk_info.chunk_to_layer_clip.Rect()))
+    auto new_clip_in_layer_bounds = ClipByLayerBounds(new_clip_rect);
+    auto old_clip_in_layer_bounds = ClipByLayerBounds(old_clip_rect);
+    if (new_clip_in_layer_bounds == old_clip_in_layer_bounds)
       return PaintInvalidationReason::kNone;
+
+    // Clip changed and may have visual effect, so we need raster invalidation.
+    if (!new_clip_in_layer_bounds.Contains(new_chunk_info.bounds_in_layer) ||
+        !old_clip_in_layer_bounds.Contains(old_chunk_info.bounds_in_layer)) {
+      // If the chunk is not fully covered by the clip rect, we have to do full
+      // invalidation instead of incremental because the delta parts of the
+      // layer bounds may not cover all changes caused by the clip change.
+      // This can happen because of pixel snapping, raster effect outset, etc.
+      return PaintInvalidationReason::kPaintProperty;
+    }
+    // Otherwise we just invalidate the delta parts of the layer bounds.
     return PaintInvalidationReason::kIncremental;
   }
 
   // Otherwise treat the chunk property as changed if the clip node pointer is
   // different, or the clip node's value changed between the layer state and the
   // chunk state.
-  if (new_chunk_state.Clip() != old_chunk_state.Clip() ||
-      new_chunk_state.Clip()->Changed(layer_state, new_chunk_state.Transform()))
+  if (&new_chunk_state.Clip() != &old_chunk_state.Clip() ||
+      new_chunk_state.Clip().Changed(
+          PaintPropertyChangeType::kChangedOnlySimpleValues, layer_state,
+          &new_chunk_state.Transform()))
     return PaintInvalidationReason::kPaintProperty;
 
   return PaintInvalidationReason::kNone;
+}
+
+// Skip the chunk for raster invalidation if it contains only one non-drawing
+// display item. We could also skip chunks containing all non-drawing display
+// items, but single non-drawing item is more common, e.g. scroll hit test.
+bool ShouldSkipForRasterInvalidation(const PaintArtifact& paint_artifact,
+                                     const PaintChunk& paint_chunk) {
+  return paint_chunk.size() == 1 &&
+         !paint_artifact.GetDisplayItemList()[paint_chunk.begin_index]
+              .DrawsContent();
 }
 
 // Generates raster invalidations by checking changes (appearing, disappearing,
@@ -157,6 +183,9 @@ void RasterInvalidator::GenerateRasterInvalidations(
   size_t max_matched_old_index = 0;
   for (auto it = new_chunks.begin(); it != new_chunks.end(); ++it) {
     const auto& new_chunk = *it;
+    if (ShouldSkipForRasterInvalidation(new_paint_artifact, new_chunk))
+      continue;
+
     mapper.SwitchToChunk(new_chunk);
     auto& new_chunk_info = new_chunks_info.emplace_back(*this, mapper, it);
 
@@ -256,8 +285,7 @@ void RasterInvalidator::IncrementallyInvalidateChunk(
   SkRegion diff(old_chunk_info.bounds_in_layer);
   diff.op(new_chunk_info.bounds_in_layer, SkRegion::kXOR_Op);
   for (SkRegion::Iterator it(diff); !it.done(); it.next()) {
-    const SkIRect& r = it.rect();
-    AddRasterInvalidation(IntRect(r.x(), r.y(), r.width(), r.height()), client,
+    AddRasterInvalidation(IntRect(it.rect()), client,
                           PaintInvalidationReason::kIncremental, kClientIsNew);
   }
 }
@@ -312,6 +340,8 @@ void RasterInvalidator::Generate(
     ChunkToLayerMapper mapper(layer_state, layer_bounds.OffsetFromOrigin(),
                               visual_rect_subpixel_offset);
     for (auto it = paint_chunks.begin(); it != paint_chunks.end(); ++it) {
+      if (ShouldSkipForRasterInvalidation(*new_paint_artifact, *it))
+        continue;
       mapper.SwitchToChunk(*it);
       new_chunks_info.emplace_back(*this, mapper, it);
     }

@@ -38,7 +38,7 @@ typedef DOMString PartialString;
 [Custom] callback PartialCallbackType = void (PartialString value);
 [
     ImplementedAs=TestInterfacePartial,
-    RuntimeEnabled=PartialFeatureName
+    RuntimeEnabled=PartialRuntimeFeature
 ] partial interface TestInterface {
     const unsigned short PARTIAL_UNSIGNED_SHORT = 0;
     const double PARTIAL_DOUBLE = 3.14;
@@ -56,4 +56,8 @@ typedef DOMString PartialString;
     void partialVoidMethodPartialCallbackTypeArg(PartialCallbackType partialCallbackTypeArg);
 
     [SecureContext] attribute long partialSecureContextLongAttribute;
+
+    attribute DOMString -dashed-attribute;
+    attribute DOMString -webkit-cased-attribute;
+    attribute DOMString underline_attribute;
 };

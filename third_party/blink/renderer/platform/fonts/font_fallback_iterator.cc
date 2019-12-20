@@ -12,14 +12,6 @@
 
 namespace blink {
 
-scoped_refptr<FontFallbackIterator> FontFallbackIterator::Create(
-    const FontDescription& description,
-    scoped_refptr<FontFallbackList> fallback_list,
-    FontFallbackPriority font_fallback_priority) {
-  return base::AdoptRef(new FontFallbackIterator(
-      description, std::move(fallback_list), font_fallback_priority));
-}
-
 FontFallbackIterator::FontFallbackIterator(
     const FontDescription& description,
     scoped_refptr<FontFallbackList> fallback_list,
@@ -192,10 +184,12 @@ scoped_refptr<FontDataForRangeSet> FontFallbackIterator::Next(
   }
 
   if (RangeSetContributesForHint(hint_list, current_segmented_face.get())) {
-    const SimpleFontData* font_data = current_segmented_face->FontData();
-    if (const CustomFontData* custom_font_data = font_data->GetCustomFontData())
-      custom_font_data->BeginLoadIfNeeded();
-    if (!font_data->IsLoading())
+    const SimpleFontData* current_segmented_face_font_data =
+        current_segmented_face->FontData();
+    if (const CustomFontData* current_segmented_face_custom_font_data =
+            current_segmented_face_font_data->GetCustomFontData())
+      current_segmented_face_custom_font_data->BeginLoadIfNeeded();
+    if (!current_segmented_face_font_data->IsLoading())
       return UniqueOrNext(current_segmented_face, hint_list);
     tracked_loading_range_sets_.push_back(current_segmented_face);
   }

@@ -49,7 +49,8 @@ ProcessData* MemoryDetails::ChromeBrowser() {
 
 void MemoryDetails::CollectProcessData(
     const std::vector<ProcessMemoryInformation>& child_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // Clear old data.
   process_data_[0].processes.clear();
@@ -100,7 +101,7 @@ void MemoryDetails::CollectProcessData(
   } while (::Process32Next(snapshot.Get(), &process_entry));
 
   // Finally return to the browser thread.
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&MemoryDetails::CollectChildInfoOnUIThread, this));
+      base::BindOnce(&MemoryDetails::CollectChildInfoOnUIThread, this));
 }

@@ -9,7 +9,4 @@ namespace features {
 const base::Feature kCredentialManager{"CredentialManager",
                                        base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kPasswordGeneration{"PasswordGeneration",
-                                        base::FEATURE_DISABLED_BY_DEFAULT};
-
 }  // namespace features

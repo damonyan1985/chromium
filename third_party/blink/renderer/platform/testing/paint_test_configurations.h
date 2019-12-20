@@ -12,41 +12,51 @@
 namespace blink {
 
 enum {
-  kBlinkGenPropertyTrees = 1 << 0,
-  kCompositeAfterPaint = 1 << 1,
-  kUnderInvalidationChecking = 1 << 2,
+  kCompositeAfterPaint = 1 << 0,
+  kUnderInvalidationChecking = 1 << 1,
+  kFastBorderRadius = 1 << 2,
+  kDoNotCompositeTrivial3D = 1 << 3,
 };
 
 class PaintTestConfigurations
     : public testing::WithParamInterface<unsigned>,
-      private ScopedBlinkGenPropertyTreesForTest,
       private ScopedCompositeAfterPaintForTest,
-      private ScopedPaintUnderInvalidationCheckingForTest {
+      private ScopedPaintUnderInvalidationCheckingForTest,
+      private ScopedFastBorderRadiusForTest {
  public:
   PaintTestConfigurations()
-      : ScopedBlinkGenPropertyTreesForTest(GetParam() & kBlinkGenPropertyTrees),
-        ScopedCompositeAfterPaintForTest(GetParam() & kCompositeAfterPaint),
-        ScopedPaintUnderInvalidationCheckingForTest(
-            GetParam() & kUnderInvalidationChecking) {}
+      : ScopedCompositeAfterPaintForTest(GetParam() & kCompositeAfterPaint),
+        ScopedPaintUnderInvalidationCheckingForTest(GetParam() &
+                                                    kUnderInvalidationChecking),
+        ScopedFastBorderRadiusForTest(GetParam() & kFastBorderRadius) {}
   ~PaintTestConfigurations() {
     // Must destruct all objects before toggling back feature flags.
     WebHeap::CollectAllGarbageForTesting();
   }
 };
 
-#define INSTANTIATE_PAINT_TEST_CASE_P(test_class) \
-  INSTANTIATE_TEST_CASE_P(                        \
-      All, test_class,                            \
-      ::testing::Values(0, kBlinkGenPropertyTrees, kCompositeAfterPaint))
+#define INSTANTIATE_PAINT_TEST_SUITE_P(test_class) \
+  INSTANTIATE_TEST_SUITE_P(All, test_class,        \
+                           ::testing::Values(0, kCompositeAfterPaint))
 
-#define INSTANTIATE_CAP_TEST_CASE_P(test_class) \
-  INSTANTIATE_TEST_CASE_P(All, test_class,      \
-                          ::testing::Values(kCompositeAfterPaint))
+#define INSTANTIATE_CAP_TEST_SUITE_P(test_class) \
+  INSTANTIATE_TEST_SUITE_P(All, test_class,      \
+                           ::testing::Values(kCompositeAfterPaint))
 
-#define INSTANTIATE_LAYER_LIST_TEST_CASE_P(test_class) \
-  INSTANTIATE_TEST_CASE_P(                             \
-      All, test_class,                                 \
-      ::testing::Values(kBlinkGenPropertyTrees, kCompositeAfterPaint))
+#define INSTANTIATE_LAYER_LIST_TEST_SUITE_P(test_class) \
+  INSTANTIATE_TEST_SUITE_P(                             \
+      All, test_class,                                  \
+      ::testing::Values(0, kCompositeAfterPaint, kFastBorderRadius))
+
+#define INSTANTIATE_SCROLL_HIT_TEST_SUITE_P(test_class) \
+  INSTANTIATE_TEST_SUITE_P(All, test_class,             \
+                           ::testing::Values(0, kCompositeAfterPaint))
+
+#define INSTANTIATE_DO_NOT_COMPOSITE_TRIVIAL_3D_P(test_class)              \
+  INSTANTIATE_TEST_SUITE_P(                                                \
+      All, test_class,                                                     \
+      ::testing::Values(0, kCompositeAfterPaint, kDoNotCompositeTrivial3D, \
+                        kCompositeAfterPaint | kDoNotCompositeTrivial3D))
 
 }  // namespace blink
 

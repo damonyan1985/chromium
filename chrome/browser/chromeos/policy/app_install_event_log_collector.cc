@@ -64,8 +64,7 @@ AppInstallEventLogCollector::AppInstallEventLogCollector(
       profile_(profile),
       online_(GetOnlineState()),
       pending_packages_(pending_packages) {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
   content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
   // Might not be available in unit test.
   arc::ArcPolicyBridge* const policy_bridge =
@@ -84,8 +83,7 @@ AppInstallEventLogCollector::~AppInstallEventLogCollector() {
   if (app_prefs) {
     app_prefs->RemoveObserver(this);
   }
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
   content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(this);
   arc::ArcPolicyBridge* const policy_bridge =
       arc::ArcPolicyBridge::GetForBrowserContext(profile_);
@@ -184,6 +182,31 @@ void AppInstallEventLogCollector::OnCloudDpsFailed(
   event->set_clouddps_response(static_cast<int>(reason));
   delegate_->Add(package_name, true /* gather_disk_space_info */,
                  std::move(event));
+}
+
+void AppInstallEventLogCollector::OnReportDirectInstall(
+    base::Time time,
+    const std::set<std::string>& package_names) {
+  for (const std::string& package_name : package_names) {
+    auto event = std::make_unique<em::AppInstallReportLogEvent>();
+    event->set_event_type(em::AppInstallReportLogEvent::DIRECT_INSTALL);
+    SetTimestampFromTime(event.get(), time);
+    delegate_->Add(package_name, true /* gather_disk_space_info */,
+                   std::move(event));
+  }
+}
+
+void AppInstallEventLogCollector::OnReportForceInstallMainLoopFailed(
+    base::Time time,
+    const std::set<std::string>& package_names) {
+  for (const std::string& package_name : package_names) {
+    auto event = std::make_unique<em::AppInstallReportLogEvent>();
+    event->set_event_type(
+        em::AppInstallReportLogEvent::CLOUDDPC_MAIN_LOOP_FAILED);
+    SetTimestampFromTime(event.get(), time);
+    delegate_->Add(package_name, true /* gather_disk_space_info */,
+                   std::move(event));
+  }
 }
 
 void AppInstallEventLogCollector::OnInstallationStarted(

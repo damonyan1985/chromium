@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {assertInstanceof} from 'chrome://resources/js/assert.m.js';
+
 /**
  * Helper class to be used as the super class of all custom elements in
  * chrome://omnibox.
  * @abstract
  */
-class OmniboxElement extends HTMLElement {
+export class OmniboxElement extends HTMLElement {
   /** @param {string} templateId */
   constructor(templateId) {
     super();
@@ -38,9 +40,8 @@ class OmniboxElement extends HTMLElement {
   }
 
   /**
-   * Get an element that's known to exist by query. We use this instead of just
-   * calling querySelector because this lets us satisfy the JSCompiler type
-   * system.
+   * Get an element that's known to exist by query. Unlike querySelector, this
+   * satisfies the JSCompiler type system.
    * @private
    * @param {string} query
    * @param {!Node=} context

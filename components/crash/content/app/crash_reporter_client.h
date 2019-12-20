@@ -109,7 +109,8 @@ class CrashReporterClient {
   // to fallback to default handler.
   // WARNING: this handler runs in a compromised context. It may not call into
   // libc nor allocate memory normally.
-  virtual bool HandleCrashDump(const char* crashdump_filename);
+  virtual bool HandleCrashDump(const char* crashdump_filename,
+                               uint64_t crash_pid);
 #endif
 
   // The location where minidump files should be written. Returns true if
@@ -156,7 +157,7 @@ class CrashReporterClient {
   // Used by WebView to sample crashes without generating the unwanted dumps. If
   // the returned value is less than 100, crash dumping will be sampled to that
   // percentage.
-  virtual unsigned int GetCrashDumpPercentageForWebView();
+  virtual unsigned int GetCrashDumpPercentage();
 
   // Returns true if |ptype| was set to a value to override the default `ptype`
   // annotation used for the browser process.

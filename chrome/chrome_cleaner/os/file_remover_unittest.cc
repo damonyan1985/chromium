@@ -16,12 +16,12 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/scoped_path_override.h"
+#include "base/test/task_environment.h"
 #include "chrome/chrome_cleaner/ipc/mojo_task_runner.h"
 #include "chrome/chrome_cleaner/logging/proto/removal_status.pb.h"
 #include "chrome/chrome_cleaner/os/disk_util.h"
@@ -30,6 +30,7 @@
 #include "chrome/chrome_cleaner/os/pre_fetched_paths.h"
 #include "chrome/chrome_cleaner/os/system_util.h"
 #include "chrome/chrome_cleaner/os/whitelisted_directory.h"
+#include "chrome/chrome_cleaner/test/child_process_logger.h"
 #include "chrome/chrome_cleaner/test/file_remover_test_util.h"
 #include "chrome/chrome_cleaner/test/reboot_deletion_helper.h"
 #include "chrome/chrome_cleaner/test/resources/grit/test_resources.h"
@@ -66,7 +67,6 @@ class FileRemoverTest : public ::testing::Test {
             /*digest_verifier=*/nullptr,
             /*archiver=*/nullptr,
             LayeredServiceProviderWrapper(),
-            /*deletion_allowed_paths=*/{},
             base::BindRepeating(&FileRemoverTest::RebootRequired,
                                 base::Unretained(this))) {
     FileRemovalStatusUpdater::GetInstance()->Clear();
@@ -97,9 +97,20 @@ class FileRemoverTest : public ::testing::Test {
   }
 
   FileRemover default_file_remover_;
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   bool reboot_required_ = false;
 };
+
+bool CreateNetworkedFile(const base::FilePath& path) {
+  chrome_cleaner::CreateEmptyFile(path);
+
+  // Fake an attribute that would be present on a networked file.
+  // FILE_ATTRIBUTE_OFFLINE was chosen as FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+  // and FILE_ATTRIBUTE_RECALL_ON_OPEN do not seem to be user-settable.
+  const DWORD attr = ::GetFileAttributes(path.value().c_str());
+  return ::SetFileAttributesW(path.value().c_str(),
+                              attr | FILE_ATTRIBUTE_OFFLINE);
+}
 
 }  // namespace
 
@@ -150,7 +161,7 @@ TEST_F(FileRemoverTest, NoKnownFileRemoval) {
   FileRemover remover(
       DigestVerifier::CreateFromResource(IDS_TEST_SAMPLE_DLL_DIGEST),
       /*archiver=*/nullptr, LayeredServiceProviderWrapper(),
-      /*deletion_allowed_paths=*/{}, base::DoNothing::Repeatedly());
+      base::DoNothing::Repeatedly());
 
   // Copy the sample DLL to the temp folder.
   base::FilePath dll_path = GetSampleDLLPath();
@@ -190,7 +201,6 @@ TEST_F(FileRemoverTest, NoLSPRemoval) {
   lsp.AddProvider(kGUID1, provider_path);
 
   FileRemover remover(/*digest_verifier=*/nullptr, /*archiver=*/nullptr, lsp,
-                      /*deletion_allowed_paths=*/{},
                       base::DoNothing::Repeatedly());
 
   TestBlacklistedRemoval(&remover, provider_path);
@@ -202,24 +212,33 @@ TEST_F(FileRemoverTest, CanRemoveAbsolutePath) {
 }
 
 TEST_F(FileRemoverTest, NoRelativePathRemoval) {
-  EXPECT_EQ(ValidationStatus::FORBIDDEN,
+  EXPECT_EQ(ValidationStatus::UNSAFE,
             default_file_remover_.CanRemove(base::FilePath(L"bar.txt")));
 }
 
 TEST_F(FileRemoverTest, NoDriveRemoval) {
-  EXPECT_EQ(ValidationStatus::FORBIDDEN,
+  EXPECT_EQ(ValidationStatus::UNSAFE,
             default_file_remover_.CanRemove(base::FilePath(L"C:")));
   EXPECT_EQ(ValidationStatus::FORBIDDEN,
             default_file_remover_.CanRemove(base::FilePath(L"C:\\")));
+}
+
+TEST_F(FileRemoverTest, NoNetworkedRemoval) {
+  base::ScopedTempDir temp;
+  ASSERT_TRUE(temp.CreateUniqueTempDir());
+
+  base::FilePath path = temp.GetPath().Append(kRemoveFile1);
+  CreateNetworkedFile(path);
+
+  EXPECT_EQ(ValidationStatus::FORBIDDEN, default_file_remover_.CanRemove(path));
 }
 
 TEST_F(FileRemoverTest, NoPathTraversal) {
   EXPECT_EQ(
       ValidationStatus::FORBIDDEN,
       default_file_remover_.CanRemove(base::FilePath(L"C:\\foo\\..\\bar")));
-  EXPECT_EQ(
-      ValidationStatus::FORBIDDEN,
-      default_file_remover_.CanRemove(base::FilePath(L"..\\foo\\bar.dll")));
+  EXPECT_EQ(ValidationStatus::UNSAFE, default_file_remover_.CanRemove(
+                                          base::FilePath(L"..\\foo\\bar.dll")));
 }
 
 TEST_F(FileRemoverTest, CorrectPathTraversalDetection) {
@@ -371,60 +390,6 @@ TEST_F(FileRemoverTest, RegisterPostRebootRemoval_Directories) {
             REMOVAL_STATUS_BLACKLISTED_FOR_REMOVAL);
 }
 
-TEST_F(FileRemoverTest, NotActiveFileType) {
-  base::ScopedTempDir temp;
-  ASSERT_TRUE(temp.CreateUniqueTempDir());
-  base::FilePath path = temp.GetPath().Append(L"temp_file.txt");
-  ASSERT_TRUE(
-      CreateFileInFolder(path.DirName(), path.BaseName().value().c_str()));
-
-  EXPECT_EQ(ValidationStatus::INACTIVE,
-            FileRemover::IsFileRemovalAllowed(path, {}, {}));
-  VerifyRemoveNowSuccess(path, &default_file_remover_);
-  EXPECT_EQ(REMOVAL_STATUS_NOT_REMOVED_INACTIVE_EXTENSION,
-            FileRemovalStatusUpdater::GetInstance()->GetRemovalStatus(path));
-  EXPECT_TRUE(base::PathExists(path));
-}
-
-TEST_F(FileRemoverTest, NotActiveFileAllowed) {
-  base::ScopedTempDir temp;
-  ASSERT_TRUE(temp.CreateUniqueTempDir());
-  base::FilePath path = temp.GetPath().Append(L"temp_file.txt");
-  ASSERT_TRUE(
-      CreateFileInFolder(path.DirName(), path.BaseName().value().c_str()));
-
-  FileRemover remover(/*digest_verifier=*/nullptr, /*archiver=*/nullptr,
-                      LayeredServiceProviderWrapper(), {path.value().c_str()},
-                      base::DoNothing::Repeatedly());
-
-  EXPECT_EQ(ValidationStatus::ALLOWED, FileRemover::IsFileRemovalAllowed(
-                                           path, {path.value().c_str()}, {}));
-  VerifyRemoveNowSuccess(path, &remover);
-  EXPECT_EQ(REMOVAL_STATUS_REMOVED,
-            FileRemovalStatusUpdater::GetInstance()->GetRemovalStatus(path));
-  EXPECT_FALSE(base::PathExists(path));
-}
-
-TEST_F(FileRemoverTest, DosMzExecutable) {
-  base::ScopedTempDir temp;
-  ASSERT_TRUE(temp.CreateUniqueTempDir());
-  base::FilePath path = temp.GetPath().Append(L"temp_file.txt");
-  constexpr char kMzExecutable[] = "MZ executable";
-  CreateFileWithContent(path, kMzExecutable, sizeof(kMzExecutable));
-  ASSERT_TRUE(base::PathExists(path));
-
-  FileRemover remover(/*digest_verifier=*/nullptr, /*archiver=*/nullptr,
-                      LayeredServiceProviderWrapper(), {path.value().c_str()},
-                      base::DoNothing::Repeatedly());
-
-  EXPECT_EQ(ValidationStatus::ALLOWED,
-            FileRemover::IsFileRemovalAllowed(path, {}, {}));
-  VerifyRemoveNowSuccess(path, &remover);
-  EXPECT_EQ(REMOVAL_STATUS_REMOVED,
-            FileRemovalStatusUpdater::GetInstance()->GetRemovalStatus(path));
-  EXPECT_FALSE(base::PathExists(path));
-}
-
 namespace {
 
 constexpr char kTestPassword[] = "1234";
@@ -434,30 +399,56 @@ constexpr wchar_t kTestExpectArchiveName[] =
     L"temp_file.exe_"
     L"A591A6D40BF420404A011733CFB7B190D62C65BF0BCDA32B57B277D9AD9F146E.zip";
 
+class LoggedZipArchiverSandboxSetupHooks : public ZipArchiverSandboxSetupHooks {
+ public:
+  explicit LoggedZipArchiverSandboxSetupHooks(
+      scoped_refptr<MojoTaskRunner> mojo_task_runner,
+      base::OnceClosure connection_error_handler,
+      chrome_cleaner::ChildProcessLogger* child_process_logger)
+      : ZipArchiverSandboxSetupHooks(std::move(mojo_task_runner),
+                                     std::move(connection_error_handler)),
+        child_process_logger_(child_process_logger) {}
+
+  ResultCode UpdateSandboxPolicy(sandbox::TargetPolicy* policy,
+                                 base::CommandLine* command_line) override {
+    child_process_logger_->UpdateSandboxPolicy(policy);
+    return ZipArchiverSandboxSetupHooks::UpdateSandboxPolicy(policy,
+                                                             command_line);
+  }
+
+ private:
+  chrome_cleaner::ChildProcessLogger* child_process_logger_;
+};
+
 class FileRemoverQuarantineTest : public base::MultiProcessTest,
                                   public ::testing::WithParamInterface<bool> {
  public:
   void SetUp() override {
     use_reboot_removal_ = GetParam();
 
+    ASSERT_TRUE(child_process_logger_.Initialize());
+
     scoped_refptr<MojoTaskRunner> mojo_task_runner = MojoTaskRunner::Create();
-    ZipArchiverSandboxSetupHooks setup_hooks(
+    LoggedZipArchiverSandboxSetupHooks setup_hooks(
         mojo_task_runner.get(), base::BindOnce([] {
           FAIL() << "ZipArchiver sandbox connection error";
-        }));
-    ASSERT_EQ(RESULT_CODE_SUCCESS,
-              StartSandboxTarget(MakeCmdLine("FileRemoverQuarantineTargetMain"),
-                                 &setup_hooks, SandboxType::kTest));
+        }),
+        &child_process_logger_);
+    ResultCode result_code =
+        StartSandboxTarget(MakeCmdLine("FileRemoverQuarantineTargetMain"),
+                           &setup_hooks, SandboxType::kTest);
+    if (result_code != RESULT_CODE_SUCCESS)
+      child_process_logger_.DumpLogs();
+    ASSERT_EQ(RESULT_CODE_SUCCESS, result_code);
 
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
     auto zip_archiver = std::make_unique<SandboxedZipArchiver>(
-        mojo_task_runner, setup_hooks.TakeZipArchiverPtr(), temp_dir_.GetPath(),
-        kTestPassword);
+        mojo_task_runner, setup_hooks.TakeZipArchiverRemote(),
+        temp_dir_.GetPath(), kTestPassword);
     file_remover_ = std::make_unique<FileRemover>(
         /*digest_verifier=*/nullptr, std::move(zip_archiver),
-        LayeredServiceProviderWrapper(), FilePathSet(),
-        base::DoNothing::Repeatedly());
+        LayeredServiceProviderWrapper(), base::DoNothing::Repeatedly());
   }
 
  protected:
@@ -481,9 +472,10 @@ class FileRemoverQuarantineTest : public base::MultiProcessTest,
   }
 
   bool use_reboot_removal_ = false;
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<FileRemover> file_remover_;
+  chrome_cleaner::ChildProcessLogger child_process_logger_;
 };
 
 }  // namespace
@@ -512,6 +504,17 @@ TEST_P(FileRemoverQuarantineTest, QuarantineFile) {
   const base::FilePath expected_archive_path =
       temp_dir_.GetPath().Append(kTestExpectArchiveName);
   EXPECT_TRUE(base::PathExists(expected_archive_path));
+}
+
+TEST_P(FileRemoverQuarantineTest, QuarantinesNotActiveFiles) {
+  base::FilePath path = temp_dir_.GetPath().Append(L"temp_file.txt");
+  CreateFileWithContent(path, kTestContent, strlen(kTestContent));
+
+  EXPECT_EQ(ValidationStatus::ALLOWED, file_remover_->CanRemove(path));
+
+  DoAndExpectCorrespondingRemoval(path);
+  EXPECT_EQ(QUARANTINE_STATUS_QUARANTINED,
+            FileRemovalStatusUpdater::GetInstance()->GetQuarantineStatus(path));
 }
 
 TEST_P(FileRemoverQuarantineTest, FailToQuarantine) {
@@ -614,9 +617,23 @@ TEST_P(FileRemoverQuarantineTest, DoNotQuarantineNonDefaultFileStream) {
                 stream_path));
 }
 
-INSTANTIATE_TEST_CASE_P(All,
-                        FileRemoverQuarantineTest,
-                        testing::Bool(),
-                        GetParamNameForTest());
+TEST_P(FileRemoverQuarantineTest, LongFileName) {
+  base::string16 long_filename;
+  for (int i = 0; i < 20; ++i)
+    long_filename += L"0123456789";
+  long_filename += L".exe";
+
+  const base::FilePath path = temp_dir_.GetPath().Append(long_filename);
+  CreateFileWithContent(path, kTestContent, strlen(kTestContent));
+
+  DoAndExpectCorrespondingRemoval(path);
+  EXPECT_EQ(QUARANTINE_STATUS_QUARANTINED,
+            FileRemovalStatusUpdater::GetInstance()->GetQuarantineStatus(path));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         FileRemoverQuarantineTest,
+                         testing::Bool(),
+                         GetParamNameForTest());
 
 }  // namespace chrome_cleaner

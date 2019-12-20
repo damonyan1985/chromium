@@ -48,6 +48,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       'setProtocolDefault',
       'updateIncognitoStatus',
       'clearEtldPlus1DataAndCookies',
+      'recordAction',
     ]);
 
     /** @private {boolean} */
@@ -93,7 +94,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       cr.webUIListenerCallback('contentSettingCategoryChanged', type);
     }
     for (const type in this.prefs_.exceptions) {
-      let exceptionList = this.prefs_.exceptions[type];
+      const exceptionList = this.prefs_.exceptions[type];
       for (let i = 0; i < exceptionList.length; ++i) {
         cr.webUIListenerCallback(
             'contentSettingSitePermissionChanged', type,
@@ -101,7 +102,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       }
     }
     for (const type in this.prefs_.chooserExceptions) {
-      let chooserExceptionList = this.prefs_.chooserExceptions[type];
+      const chooserExceptionList = this.prefs_.chooserExceptions[type];
       for (let i = 0; i < chooserExceptionList.length; ++i) {
         cr.webUIListenerCallback(
             'contentSettingChooserPermissionChanged', type);
@@ -166,8 +167,8 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   /** @override */
   setOriginPermissions(origin, contentTypes, blanketSetting) {
     for (let i = 0; i < contentTypes.length; ++i) {
-      let type = contentTypes[i];
-      let exceptionList = this.prefs_.exceptions[type];
+      const type = contentTypes[i];
+      const exceptionList = this.prefs_.exceptions[type];
       for (let j = 0; j < exceptionList.length; ++j) {
         let effectiveSetting = blanketSetting;
         if (blanketSetting == settings.ContentSetting.DEFAULT) {
@@ -203,7 +204,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
     });
 
     const origins_array = [...origins_set];
-    let result = [];
+    const result = [];
     origins_array.forEach((origin, index) => {
       // Functionality to get the eTLD+1 from an origin exists only on the
       // C++ side, so just do an (incorrect) approximate extraction here.
@@ -212,14 +213,21 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
       urlParts = urlParts.slice(Math.max(urlParts.length - 2, 0));
       const etldPlus1Name = urlParts.join('.');
 
-      let existing = result.find(siteGroup => {
+      const existing = result.find(siteGroup => {
         return siteGroup.etldPlus1 == etldPlus1Name;
       });
 
+      const mockUsage = index * 100;
+
+      // TODO(https://crbug.com/1021606): Add test where existing evaluates to
+      // true.
       if (existing) {
-        existing.origins.push(test_util.createOriginInfo(origin));
+        const originInfo =
+            test_util.createOriginInfo(origin, {usage: mockUsage});
+        existing.origins.push(originInfo);
       } else {
-        const entry = test_util.createSiteGroup(etldPlus1Name, [origin]);
+        const entry =
+            test_util.createSiteGroup(etldPlus1Name, [origin], mockUsage);
         result.push(entry);
       }
     });
@@ -236,7 +244,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   /** @override */
   getDefaultValueForContentType(contentType) {
     this.methodCalled('getDefaultValueForContentType', contentType);
-    let pref = this.prefs_.defaults[contentType];
+    const pref = this.prefs_.defaults[contentType];
     assert(pref != undefined, 'Pref is missing for ' + contentType);
     return Promise.resolve(pref);
   }
@@ -270,21 +278,36 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
     // permission, however the test stores the permissions with the setting
     // category, so we need to get the content settings type that pertains to
     // this chooser type.
-    let setting = test_util.getContentSettingsTypeFromChooserType(chooserType);
+    const setting =
+        test_util.getContentSettingsTypeFromChooserType(chooserType);
     assert(
         settings != null,
         'ContentSettingsType mapping missing for ' + chooserType);
 
-    let pref = this.prefs_.chooserExceptions[setting];
+    // Create a deep copy of the pref so that the chooser-exception-list element
+    // is able update the UI appropriately when incognito mode is toggled.
+    const pref =
+        JSON.parse(JSON.stringify(this.prefs_.chooserExceptions[setting]));
     assert(pref != undefined, 'Pref is missing for ' + chooserType);
 
     if (this.hasIncognito_) {
-      const incognitoElements = [];
       for (let i = 0; i < pref.length; ++i) {
-        // Copy |pref[i]| to avoid changing the original |pref[i]|.
-        incognitoElements.push(Object.assign({}, pref[i], {incognito: true}));
+        const incognitoElements = [];
+        for (let j = 0; j < pref[i].sites.length; ++j) {
+          // Skip preferences that are not controlled by policy since opening an
+          // incognito session does not automatically grant permission to
+          // chooser exceptions that have been granted in the main session.
+          if (pref[i].sites[j].source != settings.SiteSettingSource.POLICY) {
+            continue;
+          }
+
+          // Copy |sites[i]| to avoid changing the original |sites[i]|.
+          const incognitoSite = Object.assign({}, pref[i].sites[j]);
+          incognitoElements.push(
+              Object.assign(incognitoSite, {incognito: true}));
+        }
+        pref[i].sites.push(...incognitoElements);
       }
-      pref.push(...incognitoElements);
     }
 
     this.methodCalled('getChooserExceptionList', chooserType);
@@ -346,7 +369,7 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
     contentTypes.forEach(function(contentType) {
       let setting;
       let source;
-      let isSet = this.prefs_.exceptions[contentType].some(originPrefs => {
+      const isSet = this.prefs_.exceptions[contentType].some(originPrefs => {
         if (originPrefs.origin == origin) {
           setting = originPrefs.setting;
           source = originPrefs.source;
@@ -443,5 +466,10 @@ class TestSiteSettingsPrefsBrowserProxy extends TestBrowserProxy {
   /** @override */
   clearEtldPlus1DataAndCookies() {
     this.methodCalled('clearEtldPlus1DataAndCookies');
+  }
+
+  /** @override */
+  recordAction() {
+    this.methodCalled('recordAction');
   }
 }

@@ -123,6 +123,8 @@ function AudioPlayer(container) {
         unmute: strings['MEDIA_PLAYER_UNMUTE_BUTTON_LABEL'],
         volumeSlider: strings['MEDIA_PLAYER_VOLUME_SLIDER_LABEL']
       };
+      this.player_.ariaExpandArtworkLabel =
+          strings['AUDIO_PLAYER_ARTWORK_EXPAND_BUTTON_LABEL'];
     }.bind(this));
 
     this.volumeManager_.addEventListener('externally-unmounted',
@@ -181,7 +183,7 @@ AudioPlayer.prototype.load = function(playlist) {
   // playlist member is not changed after entries are resolved.
   window.appState = /** @type {Playlist} */ (
       JSON.parse(JSON.stringify(playlist)));  // cloning
-  util.saveAppState();
+  appUtil.saveAppState();
 
   this.isPlaylistExpanded_ = this.player_.playlistExpanded;
   this.isTrackInfoExpanded_ = this.player_.trackInfoExpanded;
@@ -268,8 +270,8 @@ AudioPlayer.prototype.onExternallyUnmounted_ = function(event) {
     return;
   }
 
-  if (this.volumeManager_.getVolumeInfo(this.selectedEntry_) ===
-      event.volumeInfo) {
+  event = /** @type {!ExternallyUnmountedEvent} */ (event);
+  if (this.volumeManager_.getVolumeInfo(this.selectedEntry_) === event.detail) {
     window.close();
   }
 };
@@ -307,7 +309,7 @@ AudioPlayer.prototype.select_ = function(newTrack) {
 
     window.appState.position = this.currentTrackIndex_;
     window.appState.time = 0;
-    util.saveAppState();
+    appUtil.saveAppState();
 
     var entry = this.entries_[this.currentTrackIndex_];
 
@@ -550,7 +552,7 @@ AudioPlayer.prototype.onPlaylistExpandedChanged_ = function(newValue) {
 
     // Saves new state.
     window.appState.playlistExpanded = newValue;
-    util.saveAppState();
+    appUtil.saveAppState();
   }
 };
 
@@ -584,7 +586,7 @@ AudioPlayer.prototype.onTrackInfoExpandedChanged_ = function(newValue) {
 
     // Saves new state.
     window.appState.isTrackInfoExpanded_ = newValue;
-    util.saveAppState();
+    appUtil.saveAppState();
   }
 };
 
@@ -686,7 +688,7 @@ AudioPlayer.TrackInfo.prototype.setMetadata = function(
  * initializeAudioPlayer: loads the audio player.
  */
 function initializeAudioPlayer() {
-  AudioPlayer.load();
+  window.HTMLImports.whenReady(AudioPlayer.load);
 }
 
 if (document.readyState === 'loading') {

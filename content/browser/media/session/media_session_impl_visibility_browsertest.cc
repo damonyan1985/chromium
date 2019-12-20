@@ -207,15 +207,16 @@ VisibilityTestData kTestParams[] = {
 
 }  // anonymous namespace
 
-IN_PROC_BROWSER_TEST_P(MediaSessionImplVisibilityBrowserTest, TestEntryPoint) {
+IN_PROC_BROWSER_TEST_P(MediaSessionImplVisibilityBrowserTest,
+                       DISABLED_TestEntryPoint) {
   StartPlayer();
   MaybePausePlayer();
   HideTab();
   CheckSessionStateAfterHide();
 }
 
-INSTANTIATE_TEST_CASE_P(MediaSessionImplVisibilityBrowserTestInstances,
-                        MediaSessionImplVisibilityBrowserTest,
-                        ::testing::ValuesIn(kTestParams));
+INSTANTIATE_TEST_SUITE_P(MediaSessionImplVisibilityBrowserTestInstances,
+                         MediaSessionImplVisibilityBrowserTest,
+                         ::testing::ValuesIn(kTestParams));
 
 }  // namespace content

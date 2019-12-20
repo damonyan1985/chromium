@@ -33,7 +33,7 @@ MachineLevelUserCloudPolicyManager::MachineLevelUserCloudPolicyManager(
                          std::string(),
                          store.get(),
                          task_runner,
-                         network_connection_tracker_getter),
+                         std::move(network_connection_tracker_getter)),
       store_(std::move(store)),
       external_data_manager_(std::move(external_data_manager)),
       policy_dir_(policy_dir) {}
@@ -50,8 +50,9 @@ void MachineLevelUserCloudPolicyManager::Connect(
 
   CreateComponentCloudPolicyService(
       dm_protocol::kChromeMachineLevelExtensionCloudPolicyType,
-      policy_dir_.Append(kComponentPolicyCache), client.get(),
-      schema_registry());
+      policy_dir_.Append(kComponentPolicyCache),
+      // Component cloud policies use the same source of Chrome ones.
+      store()->source(), client.get(), schema_registry());
   core()->Connect(std::move(client));
   core()->StartRefreshScheduler();
   core()->TrackRefreshDelayPref(local_state,
@@ -64,8 +65,39 @@ bool MachineLevelUserCloudPolicyManager::IsClientRegistered() {
   return client() && client()->is_registered();
 }
 
+void MachineLevelUserCloudPolicyManager::AddClientObserver(
+    CloudPolicyClient::Observer* observer) {
+  if (client())
+    client()->AddObserver(observer);
+}
+
+void MachineLevelUserCloudPolicyManager::RemoveClientObserver(
+    CloudPolicyClient::Observer* observer) {
+  if (client())
+    client()->RemoveObserver(observer);
+}
+
+void MachineLevelUserCloudPolicyManager::DisconnectAndRemovePolicy() {
+  if (external_data_manager_)
+    external_data_manager_->Disconnect();
+
+  core()->Disconnect();
+
+  // store_->Clear() will publish the updated, empty policy. The component
+  // policy service must be cleared before OnStoreLoaded() is issued, so that
+  // component policies are also empty at CheckAndPublishPolicy().
+  ClearAndDestroyComponentCloudPolicyService();
+
+  // When the |store_| is cleared, it informs the |external_data_manager_| that
+  // all external data references have been removed, causing the
+  // |external_data_manager_| to clear its cache as well.
+  store_->Clear();
+}
+
 void MachineLevelUserCloudPolicyManager::Init(SchemaRegistry* registry) {
   DVLOG(1) << "Machine level cloud policy manager initialized";
+  // Call to grand-parent's Init() instead of parent's is intentional.
+  // NOLINTNEXTLINE(bugprone-parent-virtual-call)
   ConfigurationPolicyProvider::Init(registry);
 
   store()->AddObserver(this);

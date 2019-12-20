@@ -18,7 +18,7 @@ import android.content.Context;
 import android.os.Bundle;
 
 import org.junit.Before;
-import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -32,13 +32,13 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.multidex.ShadowMultiDex;
 
-import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.JniMocker;
+import org.chromium.chrome.browser.DeviceConditions;
+import org.chromium.chrome.browser.ShadowDeviceConditions;
 import org.chromium.chrome.browser.background_task_scheduler.NativeBackgroundTask;
 import org.chromium.chrome.browser.init.BrowserParts;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
-import org.chromium.chrome.browser.offlinepages.DeviceConditions;
-import org.chromium.chrome.browser.offlinepages.ShadowDeviceConditions;
 import org.chromium.components.background_task_scheduler.BackgroundTask.TaskFinishedCallback;
 import org.chromium.components.background_task_scheduler.BackgroundTaskScheduler;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
@@ -91,11 +91,16 @@ public class PrefetchBackgroundTaskUnitTest {
     public static final int HIGH_BATTERY_LEVEL = 75;
     public static final int LOW_BATTERY_LEVEL = 25;
     public static final boolean METERED = true;
+    public static final boolean SCREEN_ON_AND_UNLOCKED = true;
 
+    @Rule
+    public JniMocker mocker = new JniMocker();
     @Spy
     private PrefetchBackgroundTask mPrefetchBackgroundTask = new PrefetchBackgroundTask();
     @Mock
     private ChromeBrowserInitializer mChromeBrowserInitializer;
+    @Mock
+    private PrefetchBackgroundTask.Natives mPrefetchBackgroundTaskJniMock;
     @Captor
     ArgumentCaptor<BrowserParts> mBrowserParts;
     private FakeBackgroundTaskScheduler mFakeTaskScheduler;
@@ -103,20 +108,17 @@ public class PrefetchBackgroundTaskUnitTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
+        mocker.mock(PrefetchBackgroundTaskJni.TEST_HOOKS, mPrefetchBackgroundTaskJniMock);
         doNothing().when(mChromeBrowserInitializer).handlePreNativeStartup(any(BrowserParts.class));
-        try {
-            doAnswer(new Answer<Void>() {
-                @Override
-                public Void answer(InvocationOnMock invocation) {
-                    mBrowserParts.getValue().finishNativeInitialization();
-                    return null;
-                }
-            })
-                    .when(mChromeBrowserInitializer)
-                    .handlePostNativeStartup(eq(true), mBrowserParts.capture());
-        } catch (ProcessInitException ex) {
-            fail("Unexpected exception while initializing mock of ChromeBrowserInitializer.");
-        }
+        doAnswer(new Answer<Void>() {
+            @Override
+            public Void answer(InvocationOnMock invocation) {
+                mBrowserParts.getValue().finishNativeInitialization();
+                return null;
+            }
+        })
+                .when(mChromeBrowserInitializer)
+                .handlePostNativeStartup(eq(true), mBrowserParts.capture());
 
         ChromeBrowserInitializer.setForTesting(mChromeBrowserInitializer);
 
@@ -127,10 +129,10 @@ public class PrefetchBackgroundTaskUnitTest {
                 return Boolean.TRUE;
             }
         })
-                .when(mPrefetchBackgroundTask)
-                .nativeStartPrefetchTask(any());
-        doReturn(true).when(mPrefetchBackgroundTask).nativeOnStopTask(1);
-        doReturn(null).when(mPrefetchBackgroundTask).getProfile();
+                .when(mPrefetchBackgroundTaskJniMock)
+                .startPrefetchTask(mPrefetchBackgroundTask);
+
+        doReturn(true).when(mPrefetchBackgroundTaskJniMock).onStopTask(1, mPrefetchBackgroundTask);
 
         mFakeTaskScheduler = new FakeBackgroundTaskScheduler();
         BackgroundTaskSchedulerFactory.setSchedulerForTesting(mFakeTaskScheduler);
@@ -148,15 +150,13 @@ public class PrefetchBackgroundTaskUnitTest {
                              + additionalDelaySeconds),
                 scheduledTask.getOneOffInfo().getWindowStartTimeMs());
         assertEquals(true, scheduledTask.isPersisted());
-        assertEquals(TaskInfo.NETWORK_TYPE_UNMETERED, scheduledTask.getRequiredNetworkType());
+        assertEquals(TaskInfo.NetworkType.UNMETERED, scheduledTask.getRequiredNetworkType());
     }
 
     /**
      * Tests that the background task is scheduled when limitless prefetching is enabled:
      * the waiting delay is shorter but the provided backoff time should be respected.
-     * TODO(https://crbug.com/803584): fix limitless mode or fully remove it.
      */
-    @Ignore
     @Test
     public void scheduleTaskLimitless() {
         final int additionalDelaySeconds = 20;
@@ -164,10 +164,12 @@ public class PrefetchBackgroundTaskUnitTest {
         TaskInfo scheduledTask =
                 mFakeTaskScheduler.getTaskInfo(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID);
         assertNotNull(scheduledTask);
-        assertEquals(TimeUnit.SECONDS.toMillis(additionalDelaySeconds),
+        assertEquals(TimeUnit.SECONDS.toMillis(
+                             PrefetchBackgroundTaskScheduler.LIMITLESS_START_DELAY_SECONDS
+                             + additionalDelaySeconds),
                 scheduledTask.getOneOffInfo().getWindowStartTimeMs());
         assertEquals(true, scheduledTask.isPersisted());
-        assertEquals(TaskInfo.NETWORK_TYPE_ANY, scheduledTask.getRequiredNetworkType());
+        assertEquals(TaskInfo.NetworkType.ANY, scheduledTask.getRequiredNetworkType());
     }
 
     @Test
@@ -195,9 +197,9 @@ public class PrefetchBackgroundTaskUnitTest {
                 TaskParameters.create(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID).build();
 
         // Setup battery conditions with no power connected.
-        DeviceConditions deviceConditions =
-                new DeviceConditions(!POWER_CONNECTED, HIGH_BATTERY_LEVEL - 1,
-                        ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED);
+        DeviceConditions deviceConditions = new DeviceConditions(!POWER_CONNECTED,
+                HIGH_BATTERY_LEVEL - 1, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON,
+                !METERED, SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditions);
 
         mPrefetchBackgroundTask.onStartTask(null, params, new TaskFinishedCallback() {
@@ -215,9 +217,7 @@ public class PrefetchBackgroundTaskUnitTest {
     /**
      * Tests that the background task is correctly started when conditions are sufficient for
      * limitless prefetching.
-     * TODO(https://crbug.com/803584): fix limitless mode or fully remove it.
      */
-    @Ignore
     @Test
     public void createNativeTaskLimitless() {
         final ArrayList<Boolean> reschedules = new ArrayList<>();
@@ -229,7 +229,8 @@ public class PrefetchBackgroundTaskUnitTest {
 
         // Setup battery conditions with no power connected.
         DeviceConditions deviceConditions = new DeviceConditions(!POWER_CONNECTED,
-                0 /* battery level */, ConnectionType.CONNECTION_2G, !POWER_SAVE_MODE_ON, METERED);
+                0 /* battery level */, ConnectionType.CONNECTION_2G, !POWER_SAVE_MODE_ON, METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditions);
 
         mPrefetchBackgroundTask.onStartTask(null, params, new TaskFinishedCallback() {
@@ -245,10 +246,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testBatteryLow() throws Exception {
+    public void testBatteryLow() {
         // Setup low battery conditions with no power connected.
         DeviceConditions deviceConditionsLowBattery = new DeviceConditions(!POWER_CONNECTED,
-                LOW_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, METERED);
+                LOW_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsLowBattery);
 
         // Check impact on starting before native loaded.
@@ -266,10 +268,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testBatteryHigh() throws Exception {
+    public void testBatteryHigh() {
         // Setup high battery conditions with no power connected.
         DeviceConditions deviceConditionsHighBattery = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsHighBattery);
 
         // Check impact on starting before native loaded.
@@ -287,10 +290,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testNoNetwork() throws Exception {
+    public void testNoNetwork() {
         // Setup no network conditions.
         DeviceConditions deviceConditionsNoNetwork = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_NONE, !POWER_SAVE_MODE_ON, !METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_NONE, !POWER_SAVE_MODE_ON, !METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsNoNetwork);
 
         // Check impact on starting before native loaded.
@@ -310,15 +314,13 @@ public class PrefetchBackgroundTaskUnitTest {
     /**
      * Tests that the background task is not started (rescheduled) when there's no connection and
      * limitless prefetching is enabled.
-     * TODO(https://crbug.com/803584): fix limitless mode or fully remove it.
      */
-    @Ignore
     @Test
-    public void testNoNetworkLimitless() throws Exception {
+    public void testNoNetworkLimitless() {
         // Setup no network conditions.
-        DeviceConditions deviceConditionsNoNetwork =
-                new DeviceConditions(!POWER_CONNECTED, 0 /* battery level */,
-                        ConnectionType.CONNECTION_NONE, !POWER_SAVE_MODE_ON, !METERED);
+        DeviceConditions deviceConditionsNoNetwork = new DeviceConditions(!POWER_CONNECTED,
+                0 /* battery level */, ConnectionType.CONNECTION_NONE, !POWER_SAVE_MODE_ON,
+                !METERED, SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsNoNetwork);
 
         // Check impact on starting before native loaded.
@@ -339,10 +341,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testUnmeteredWifiNetwork() throws Exception {
+    public void testUnmeteredWifiNetwork() {
         // Setup unmetered wifi conditions.
         DeviceConditions deviceConditionsUnmeteredWifi = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsUnmeteredWifi);
 
         // Check impact on starting before native loaded.
@@ -360,10 +363,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testMeteredWifiNetwork() throws Exception {
+    public void testMeteredWifiNetwork() {
         // Setup metered wifi conditions.
         DeviceConditions deviceConditionsMeteredWifi = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsMeteredWifi);
 
         // Check impact on starting before native loaded.
@@ -381,10 +385,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void test2GNetwork() throws Exception {
+    public void test2GNetwork() {
         // Setup metered 2g connection conditions.
         DeviceConditions deviceConditions2G = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_2G, !POWER_SAVE_MODE_ON, METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_2G, !POWER_SAVE_MODE_ON, METERED,
+                SCREEN_ON_AND_UNLOCKED);
         // TODO(petewil): this test name and the condition below do not match.
         ShadowDeviceConditions.setCurrentConditions(deviceConditions2G);
 
@@ -403,11 +408,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testBluetoothNetwork() throws Exception {
+    public void testBluetoothNetwork() {
         // Setup bluetooth connection conditions.
-        DeviceConditions deviceConditionsBluetooth =
-                new DeviceConditions(!POWER_CONNECTED, HIGH_BATTERY_LEVEL,
-                        ConnectionType.CONNECTION_BLUETOOTH, !POWER_SAVE_MODE_ON, !METERED);
+        DeviceConditions deviceConditionsBluetooth = new DeviceConditions(!POWER_CONNECTED,
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_BLUETOOTH, !POWER_SAVE_MODE_ON,
+                !METERED, SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsBluetooth);
 
         // Check impact on starting before native loaded.
@@ -425,15 +430,15 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testOnStopAfterCallback() throws Exception {
+    public void testOnStopAfterCallback() {
         final ArrayList<Boolean> reschedules = new ArrayList<>();
         TaskParameters params =
                 TaskParameters.create(TaskIds.OFFLINE_PAGES_PREFETCH_JOB_ID).build();
 
         // Conditions should be appropriate for running the task.
-        DeviceConditions deviceConditions =
-                new DeviceConditions(POWER_CONNECTED, HIGH_BATTERY_LEVEL - 1,
-                        ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON, !METERED);
+        DeviceConditions deviceConditions = new DeviceConditions(POWER_CONNECTED,
+                HIGH_BATTERY_LEVEL - 1, ConnectionType.CONNECTION_WIFI, !POWER_SAVE_MODE_ON,
+                !METERED, SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditions);
 
         mPrefetchBackgroundTask.onStartTask(null, params, new TaskFinishedCallback() {
@@ -450,10 +455,11 @@ public class PrefetchBackgroundTaskUnitTest {
     }
 
     @Test
-    public void testPowerSaverOn() throws Exception {
+    public void testPowerSaverOn() {
         // Setup power save mode, battery is high, wifi, not plugged in.
         DeviceConditions deviceConditionsPowerSave = new DeviceConditions(!POWER_CONNECTED,
-                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, POWER_SAVE_MODE_ON, !METERED);
+                HIGH_BATTERY_LEVEL, ConnectionType.CONNECTION_WIFI, POWER_SAVE_MODE_ON, !METERED,
+                SCREEN_ON_AND_UNLOCKED);
         ShadowDeviceConditions.setCurrentConditions(deviceConditionsPowerSave);
 
         // Check impact on starting before native loaded.

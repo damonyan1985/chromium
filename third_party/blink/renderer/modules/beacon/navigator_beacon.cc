@@ -9,12 +9,13 @@
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/form_data.h"
 #include "third_party/blink/renderer/core/loader/ping_loader.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_view.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/cors/cors.h"
 
 namespace blink {
@@ -84,8 +85,18 @@ bool NavigatorBeacon::SendBeaconImpl(
   bool allowed;
 
   if (data.IsArrayBufferView()) {
-    allowed = PingLoader::SendBeacon(GetSupplementable()->GetFrame(), url,
-                                     data.GetAsArrayBufferView().View());
+    auto* data_view = data.GetAsArrayBufferView().View();
+    if (!base::CheckedNumeric<wtf_size_t>(data_view->byteLengthAsSizeT())
+             .IsValid()) {
+      // At the moment the PingLoader::SendBeacon implementation cannot deal
+      // with huge ArrayBuffers.
+      exception_state.ThrowRangeError(
+          "The data provided to sendBeacon() exceeds the maximally possible "
+          "length, which is 4294967295.");
+      return false;
+    }
+    allowed =
+        PingLoader::SendBeacon(GetSupplementable()->GetFrame(), url, data_view);
   } else if (data.IsBlob()) {
     Blob* blob = data.GetAsBlob();
     if (!cors::IsCorsSafelistedContentType(blob->type())) {

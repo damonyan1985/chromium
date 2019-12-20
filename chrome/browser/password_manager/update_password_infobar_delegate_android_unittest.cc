@@ -14,7 +14,7 @@
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/fake_form_fetcher.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
-#include "components/password_manager/core/browser/password_manager.h"
+#include "components/password_manager/core/browser/password_save_manager_impl.h"
 #include "components/password_manager/core/browser/stub_form_saver.h"
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 #include "components/password_manager/core/browser/stub_password_manager_driver.h"
@@ -22,6 +22,7 @@
 #include "ui/base/l10n/l10n_util.h"
 
 using password_manager::PasswordFormManager;
+using password_manager::PasswordSaveManagerImpl;
 
 namespace {
 
@@ -61,9 +62,9 @@ class UpdatePasswordInfoBarDelegateTest
 
   password_manager::StubPasswordManagerClient client_;
   password_manager::StubPasswordManagerDriver driver_;
-  password_manager::PasswordManager password_manager_;
 
   autofill::PasswordForm test_form_;
+  autofill::FormData observed_form_;
 
  private:
   password_manager::FakeFormFetcher fetcher_;
@@ -71,11 +72,24 @@ class UpdatePasswordInfoBarDelegateTest
   DISALLOW_COPY_AND_ASSIGN(UpdatePasswordInfoBarDelegateTest);
 };
 
-UpdatePasswordInfoBarDelegateTest::UpdatePasswordInfoBarDelegateTest()
-    : password_manager_(&client_) {
+UpdatePasswordInfoBarDelegateTest::UpdatePasswordInfoBarDelegateTest() {
   test_form_.origin = GURL("https://example.com");
   test_form_.username_value = base::ASCIIToUTF16("username");
   test_form_.password_value = base::ASCIIToUTF16("12345");
+
+  // Create a simple sign-in form.
+  observed_form_.url = test_form_.origin;
+  autofill::FormFieldData field;
+  field.form_control_type = "text";
+  field.value = test_form_.username_value;
+  observed_form_.fields.push_back(field);
+  field.form_control_type = "password";
+  field.value = test_form_.password_value;
+  observed_form_.fields.push_back(field);
+
+  // Turn off waiting for server predictions in order to avoid dealing with
+  // posted tasks in PasswordFormManager.
+  PasswordFormManager::set_wait_for_server_predictions_for_filling(false);
 }
 
 void UpdatePasswordInfoBarDelegateTest::SetUp() {
@@ -93,10 +107,11 @@ void UpdatePasswordInfoBarDelegateTest::TearDown() {
 std::unique_ptr<password_manager::PasswordFormManager>
 UpdatePasswordInfoBarDelegateTest::CreateTestFormManager() {
   auto manager = std::make_unique<password_manager::PasswordFormManager>(
-      &password_manager_, &client_, driver_.AsWeakPtr(), test_form(),
-      std::make_unique<password_manager::StubFormSaver>(), &fetcher_);
-  manager->Init(nullptr);
-  manager->ProvisionallySave(test_form());
+      &client_, driver_.AsWeakPtr(), observed_form_, &fetcher_,
+      std::make_unique<PasswordSaveManagerImpl>(
+          std::make_unique<password_manager::StubFormSaver>()),
+      nullptr /* metrics_recorder */);
+  manager->ProvisionallySave(observed_form_, &driver_, nullptr);
   return manager;
 }
 

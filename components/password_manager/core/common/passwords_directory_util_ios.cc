@@ -16,7 +16,8 @@ namespace password_manager {
 namespace {
 // Synchronously deletes passwords directoy.
 void DeletePasswordsDirectorySync() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::FilePath downloads_directory;
   if (GetPasswordsDirectory(&downloads_directory)) {
     // It is assumed that deleting the directory always succeeds.
@@ -34,10 +35,11 @@ bool GetPasswordsDirectory(base::FilePath* directory_path) {
 }
 
 void DeletePasswordsDirectory() {
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
-                            base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
-                           base::BindOnce(&DeletePasswordsDirectorySync));
+  base::PostTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      base::BindOnce(&DeletePasswordsDirectorySync));
 }
 
 }  // namespace password_manager

@@ -4,16 +4,19 @@
 
 #include "chrome/browser/task_manager/providers/arc/arc_process_task.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
-#include "components/arc/common/process.mojom.h"
+#include "components/arc/arc_util.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
+#include "components/arc/mojom/process.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/child_process_host.h"
@@ -74,8 +77,7 @@ ArcProcessTask::ArcProcessTask(arc::ArcProcess arc_process)
            arc_process.process_name(),
            nullptr /* icon */,
            arc_process.pid()),
-      arc_process_(std::move(arc_process)),
-      weak_ptr_factory_(this) {
+      arc_process_(std::move(arc_process)) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   StartIconLoading();
 }
@@ -130,6 +132,10 @@ bool ArcProcessTask::IsKillable() {
   return !arc_process_.IsPersistent();
 }
 
+bool ArcProcessTask::IsRunningInVM() const {
+  return arc::IsArcVmEnabled();
+}
+
 void ArcProcessTask::Kill() {
   auto* process_instance = ARC_GET_INSTANCE_FOR_METHOD(
       arc::ArcServiceManager::Get()->arc_bridge_service()->process(),
@@ -153,9 +159,9 @@ void ArcProcessTask::OnConnectionReady() {
   // Instead of calling into StartIconLoading() directly, return to the main
   // loop first to make sure other ArcBridgeService observers are notified.
   // Otherwise, arc::ArcIntentHelperBridge::GetActivityIcon() may fail again.
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::Bind(&ArcProcessTask::StartIconLoading,
-                                      weak_ptr_factory_.GetWeakPtr()));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&ArcProcessTask::StartIconLoading,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ArcProcessTask::SetProcessState(arc::mojom::ProcessState process_state) {

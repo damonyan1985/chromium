@@ -138,6 +138,8 @@ void ConnectionManager::UpdateConnectionStatus() {
     connection_establisher_->TearDownConnection(
         *enabled_pwa_url_, GetCurrentServiceWorkerContext());
     GetCurrentServiceWorkerContext()->RemoveObserver(this);
+    active_version_id_.reset();
+    prev_active_version_id_.reset();
   }
 
   enabled_pwa_url_ = updated_pwa_url;
@@ -163,7 +165,7 @@ base::Optional<GURL> ConnectionManager::GenerateEnabledPwaUrl() {
 
   // Return the installed app URL if the PWA is installed.
   base::Optional<GURL> installed_url =
-      android_sms_app_manager_->GetInstalledAppUrl();
+      android_sms_app_manager_->GetCurrentAppUrl();
   if (installed_url)
     return installed_url;
 

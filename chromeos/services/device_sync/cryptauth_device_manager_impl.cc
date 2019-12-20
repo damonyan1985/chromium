@@ -5,10 +5,10 @@
 #include "chromeos/services/device_sync/cryptauth_device_manager_impl.h"
 
 #include <stddef.h>
-#include <stdexcept>
-#include <utility>
 
 #include <memory>
+#include <stdexcept>
+#include <utility>
 
 #include "base/base64url.h"
 #include "base/bind.h"
@@ -57,6 +57,7 @@ const char kExternalDeviceKeyDeviceType[] = "device_type";
 const char kExternalDeviceKeyBeaconSeeds[] = "beacon_seeds";
 const char kExternalDeviceKeyArcPlusPlus[] = "arc_plus_plus";
 const char kExternalDeviceKeyPixelPhone[] = "pixel_phone";
+const char kExternalDeviceKeyNoPiiDeviceName[] = "no_pii_device_name";
 
 // Keys for cryptauth::ExternalDeviceInfo's BeaconSeed.
 const char kExternalDeviceKeyBeaconSeedData[] = "beacon_seed_data";
@@ -265,6 +266,15 @@ std::unique_ptr<base::DictionaryValue> UnlockKeyToDictionary(
     dictionary->SetBoolean(kExternalDeviceKeyPixelPhone, device.pixel_phone());
   }
 
+  if (device.has_no_pii_device_name()) {
+    std::string no_pii_device_name_b64;
+    base::Base64UrlEncode(device.no_pii_device_name(),
+                          base::Base64UrlEncodePolicy::INCLUDE_PADDING,
+                          &no_pii_device_name_b64);
+    dictionary->SetString(kExternalDeviceKeyNoPiiDeviceName,
+                          no_pii_device_name_b64);
+  }
+
   // In the case that the CryptAuth server is not yet serving SoftwareFeatures,
   // but only the deprecated booleans, |unlock_key| and
   // |mobile_hotspot_supported|, pass in the legacy values in order to correctly
@@ -374,28 +384,25 @@ void AddSoftwareFeaturesToExternalDevice(
   // these deprecated fields, instead of software features. To work around this,
   // these pref values are migrated to software features locally.
   if (old_unlock_key_value_from_prefs) {
-    if (!base::ContainsValue(
-            external_device->supported_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
+    if (!base::Contains(external_device->supported_software_features(),
+                        SoftwareFeatureEnumToString(
+                            cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
       external_device->add_supported_software_features(
           SoftwareFeatureEnumToString(
               cryptauth::SoftwareFeature::EASY_UNLOCK_HOST));
     }
-    if (!base::ContainsValue(
-            external_device->enabled_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
+    if (!base::Contains(external_device->enabled_software_features(),
+                        SoftwareFeatureEnumToString(
+                            cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
       external_device->add_enabled_software_features(
           SoftwareFeatureEnumToString(
               cryptauth::SoftwareFeature::EASY_UNLOCK_HOST));
     }
   }
   if (old_mobile_hotspot_supported_from_prefs) {
-    if (!base::ContainsValue(
-            external_device->supported_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::MAGIC_TETHER_HOST))) {
+    if (!base::Contains(external_device->supported_software_features(),
+                        SoftwareFeatureEnumToString(
+                            cryptauth::SoftwareFeature::MAGIC_TETHER_HOST))) {
       external_device->add_supported_software_features(
           SoftwareFeatureEnumToString(
               cryptauth::SoftwareFeature::MAGIC_TETHER_HOST));
@@ -484,6 +491,17 @@ bool DictionaryToUnlockKey(const base::DictionaryValue& dictionary,
   if (dictionary.GetBoolean(kExternalDeviceKeyPixelPhone, &pixel_phone))
     external_device->set_pixel_phone(pixel_phone);
 
+  std::string no_pii_device_name_b64;
+  if (dictionary.GetString(kExternalDeviceKeyNoPiiDeviceName,
+                           &no_pii_device_name_b64)) {
+    std::string no_pii_device_name;
+    if (base::Base64UrlDecode(no_pii_device_name_b64,
+                              base::Base64UrlDecodePolicy::REQUIRE_PADDING,
+                              &no_pii_device_name)) {
+      external_device->set_no_pii_device_name(no_pii_device_name);
+    }
+  }
+
   bool unlock_key = false;
   dictionary.GetBoolean(kExternalDeviceKeyUnlockKey, &unlock_key);
   bool mobile_hotspot_supported = false;
@@ -556,8 +574,7 @@ CryptAuthDeviceManagerImpl::CryptAuthDeviceManagerImpl(
       cryptauth_client_factory_(cryptauth_client_factory),
       gcm_manager_(gcm_manager),
       pref_service_(pref_service),
-      scheduler_(CreateSyncScheduler(this)),
-      weak_ptr_factory_(this) {
+      scheduler_(CreateSyncScheduler(this)) {
   UpdateUnlockKeysFromPrefs();
 }
 
@@ -624,10 +641,9 @@ std::vector<cryptauth::ExternalDeviceInfo>
 CryptAuthDeviceManagerImpl::GetUnlockKeys() const {
   std::vector<cryptauth::ExternalDeviceInfo> unlock_keys;
   for (const auto& device : synced_devices_) {
-    if (base::ContainsValue(
-            device.enabled_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
+    if (base::Contains(device.enabled_software_features(),
+                       SoftwareFeatureEnumToString(
+                           cryptauth::SoftwareFeature::EASY_UNLOCK_HOST))) {
       unlock_keys.push_back(device);
     }
   }
@@ -638,10 +654,9 @@ std::vector<cryptauth::ExternalDeviceInfo>
 CryptAuthDeviceManagerImpl::GetPixelUnlockKeys() const {
   std::vector<cryptauth::ExternalDeviceInfo> unlock_keys;
   for (const auto& device : synced_devices_) {
-    if (base::ContainsValue(
-            device.enabled_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::EASY_UNLOCK_HOST)) &&
+    if (base::Contains(device.enabled_software_features(),
+                       SoftwareFeatureEnumToString(
+                           cryptauth::SoftwareFeature::EASY_UNLOCK_HOST)) &&
         device.pixel_phone()) {
       unlock_keys.push_back(device);
     }
@@ -653,10 +668,9 @@ std::vector<cryptauth::ExternalDeviceInfo>
 CryptAuthDeviceManagerImpl::GetTetherHosts() const {
   std::vector<cryptauth::ExternalDeviceInfo> tether_hosts;
   for (const auto& device : synced_devices_) {
-    if (base::ContainsValue(
-            device.supported_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::MAGIC_TETHER_HOST))) {
+    if (base::Contains(device.supported_software_features(),
+                       SoftwareFeatureEnumToString(
+                           cryptauth::SoftwareFeature::MAGIC_TETHER_HOST))) {
       tether_hosts.push_back(device);
     }
   }
@@ -667,10 +681,9 @@ std::vector<cryptauth::ExternalDeviceInfo>
 CryptAuthDeviceManagerImpl::GetPixelTetherHosts() const {
   std::vector<cryptauth::ExternalDeviceInfo> tether_hosts;
   for (const auto& device : synced_devices_) {
-    if (base::ContainsValue(
-            device.supported_software_features(),
-            SoftwareFeatureEnumToString(
-                cryptauth::SoftwareFeature::MAGIC_TETHER_HOST)) &&
+    if (base::Contains(device.supported_software_features(),
+                       SoftwareFeatureEnumToString(
+                           cryptauth::SoftwareFeature::MAGIC_TETHER_HOST)) &&
         device.pixel_phone())
       tether_hosts.push_back(device);
   }
@@ -738,7 +751,9 @@ void CryptAuthDeviceManagerImpl::OnGetMyDevicesFailure(
   RecordDeviceSyncResult(false /* success */);
 }
 
-void CryptAuthDeviceManagerImpl::OnResyncMessage() {
+void CryptAuthDeviceManagerImpl::OnResyncMessage(
+    const base::Optional<std::string>& session_id,
+    const base::Optional<CryptAuthFeatureType>& feature_type) {
   ForceSyncNow(cryptauth::INVOCATION_REASON_SERVER_INITIATED);
 }
 

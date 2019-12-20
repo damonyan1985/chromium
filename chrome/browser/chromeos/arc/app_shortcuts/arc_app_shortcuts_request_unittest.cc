@@ -9,13 +9,14 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind_test_util.h"
 #include "chrome/browser/chromeos/arc/app_shortcuts/arc_app_shortcut_item.h"
 #include "chrome/browser/chromeos/arc/icon_decode_request.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace arc {
@@ -40,7 +41,7 @@ class ArcAppShortcutsRequestTest : public testing::Test {
   std::unique_ptr<TestingProfile> profile_;
   ArcAppTest arc_app_test_;
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcAppShortcutsRequestTest);
 };

@@ -14,12 +14,6 @@
 #include "base/component_export.h"
 #include "base/macros.h"
 
-namespace ash {
-namespace network_icon {
-class NetworkIconTest;
-}  // namespace network_icon
-}  // namesapce ash
-
 namespace base {
 class Value;
 }
@@ -124,7 +118,7 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) ManagedState {
 
  private:
   friend class NetworkStateHandler;
-  friend class ash::network_icon::NetworkIconTest;
+  friend class NetworkStateTestHelper;
   friend class chromeos::tether::NetworkListSorterTest;
 
   ManagedType managed_type_;
@@ -137,10 +131,10 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) ManagedState {
   std::string type_;  // shill::kTypeProperty
 
   // Set to true when the an update has been received.
-  bool update_received_;
+  bool update_received_ = false;
 
   // Tracks when an update has been requested.
-  bool update_requested_;
+  bool update_requested_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ManagedState);
 };

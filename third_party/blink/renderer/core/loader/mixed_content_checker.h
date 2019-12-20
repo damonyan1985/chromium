@@ -45,6 +45,7 @@
 namespace blink {
 
 class ConsoleMessage;
+class ExecutionContext;
 class FetchClientSettingsObject;
 class Frame;
 class FrameFetchContext;
@@ -53,6 +54,7 @@ class KURL;
 class ResourceResponse;
 class SecurityOrigin;
 class SourceLocation;
+class WebContentSettingsClient;
 class WorkerFetchContext;
 
 // Checks resource loads for mixed content. If PlzNavigate is enabled then this
@@ -69,7 +71,6 @@ class CORE_EXPORT MixedContentChecker final {
  public:
   static bool ShouldBlockFetch(LocalFrame*,
                                mojom::RequestContextType,
-                               network::mojom::RequestContextFrameType,
                                ResourceRequest::RedirectStatus,
                                const KURL&,
                                SecurityViolationReportingPolicy =
@@ -95,7 +96,9 @@ class CORE_EXPORT MixedContentChecker final {
                                     SecurityViolationReportingPolicy::kReport);
 
   static bool ShouldAutoupgrade(HttpsState context_https_state,
-                                WebMixedContentContextType type);
+                                mojom::RequestContextType type,
+                                WebContentSettingsClient* settings_client,
+                                const KURL& url);
 
   static void CheckMixedPrivatePublic(LocalFrame*,
                                       const AtomicString& resource_ip_address);
@@ -104,15 +107,8 @@ class CORE_EXPORT MixedContentChecker final {
       LocalFrame*,
       const ResourceRequest&);
 
-  // Returns the frame that should be considered the effective frame
-  // for a mixed content check for the given frame type.
-  static Frame* EffectiveFrameForFrameType(
-      LocalFrame*,
-      network::mojom::RequestContextFrameType);
-
   static void HandleCertificateError(LocalFrame*,
                                      const ResourceResponse&,
-                                     network::mojom::RequestContextFrameType,
                                      mojom::RequestContextType);
 
   // Receive information about mixed content found externally.
@@ -128,18 +124,22 @@ class CORE_EXPORT MixedContentChecker final {
       const KURL& main_resource_url,
       const KURL& mixed_content_url);
 
-  static ConsoleMessage* CreateConsoleMessageAboutWebSocketAutoupgrade(
-      const KURL& main_resource_url,
-      const KURL& mixed_content_url);
+  // Upgrade the insecure requests.
+  // https://w3c.github.io/webappsec-upgrade-insecure-requests/
+  // Upgrading itself is done based on |fetch_client_settings_object|.
+  // |execution_context_for_logging| is used only for logging, use counters,
+  // UKM-related things.
+  static void UpgradeInsecureRequest(
+      ResourceRequest&,
+      const FetchClientSettingsObject* fetch_client_settings_object,
+      ExecutionContext* execution_context_for_logging,
+      network::mojom::RequestContextFrameType,
+      WebContentSettingsClient* settings_client);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(MixedContentCheckerTest, HandleCertificateError);
 
-  static Frame* InWhichFrameIsContentMixed(
-      Frame*,
-      network::mojom::RequestContextFrameType,
-      const KURL&,
-      const LocalFrame*);
+  static Frame* InWhichFrameIsContentMixed(LocalFrame*, const KURL&);
 
   static ConsoleMessage* CreateConsoleMessageAboutFetch(
       const KURL&,

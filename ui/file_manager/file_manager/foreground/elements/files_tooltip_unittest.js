@@ -2,91 +2,57 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/** @const {Array<string>} */
-const testPage = [
-  '<style type="text/css">',
-  ' button {',
-  '   display: flex;',
-  '   height: 32px;',
-  '   margin: 30px;',
-  '   width: 32px;',
-  ' }',
-  '',
-  ' #container {',
-  '   display: flex;',
-  '   justify-content: space-between;',
-  ' }',
-  '',
-  ' files-tooltip {',
-  '   background: yellow;',
-  '   box-sizing: border-box;',
-  '   position: absolute;',
-  '   text-align: center;',
-  '   width: 100px;',
-  ' }',
-  '</style>',
-  '',
-  '<!-- Targets for tooltip testing. -->',
-  '<div id="container">',
-  '  <button id="chocolate" aria-label="Chocolate!"></button>',
-  '  <button id="cherries" aria-label="Cherries!"></button>',
-  '</div>',
-  '',
-  '<!-- Button without a tooltip. -->',
-  '<button id="other"></button>',
-  '',
-  '<!-- Polymer files tooltip element. -->',
-  '<files-tooltip></files-tooltip>',
-  '',
-];
+/** @type {Element} */
+let chocolateButton;
 
 /** @type {Element} */
-var chocolateButton;
+let cherriesButton;
 
 /** @type {Element} */
-var cherriesButton;
-
-/** @type {Element} */
-var otherButton;
+let otherButton;
 
 /** @type {FilesTooltip|Element} */
-var tooltip;
+let tooltip;
 
-function setUpPage() {
-  console.log('setUpPage');
+const bodyContent = `
+  <style type="text/css">
+   button {
+     display: flex;
+     height: 32px;
+     margin: 30px;
+     width: 32px;
+   }
 
-  const importElements = (src) => {
-    var link = document.createElement('link');
-    link.rel = 'import';
-    link.onload = onLinkLoaded;
-    document.head.appendChild(link);
-    const sourceRoot = '../../../../../../../../';
-    link.href = sourceRoot + src;
-  };
+   #container {
+     display: flex;
+     justify-content: space-between;
+   }
 
-  let linksLoaded = 0;
+   files-tooltip {
+     background: yellow;
+     box-sizing: border-box;
+     position: absolute;
+     text-align: center;
+     width: 100px;
+   }
+  </style>
 
-  const onLinkLoaded = () => {
-    if (++linksLoaded < 2) {
-      return;
-    }
-    document.body.innerHTML += testPage.join('\n');
-    window.waitUser = false;
-  };
+  <!-- Targets for tooltip testing. -->
+  <div id="container">
+    <button id="chocolate" aria-label="Chocolate!"></button>
+    <button id="cherries" aria-label="Cherries!"></button>
+  </div>
 
-  const polymer =
-      'third_party/polymer/v1_0/components-chromium/polymer/polymer.html';
-  importElements(polymer);
+  <!-- Button without a tooltip. -->
+  <button id="other"></button>
 
-  const filesTooltip =
-      'ui/file_manager/file_manager/foreground/elements/files_tooltip.html';
-  importElements(filesTooltip);
+  <!-- Polymer files tooltip element. -->
+  <files-tooltip></files-tooltip>
 
-  // Make the test harness pause until out test page is fully loaded.
-  window.waitUser = true;
-}
+`;
 
 function setUp() {
+  document.body.innerHTML += bodyContent;
   chocolateButton = document.querySelector('#chocolate');
   cherriesButton = document.querySelector('#cherries');
   otherButton = document.querySelector('#other');
@@ -96,8 +62,8 @@ function setUp() {
 }
 
 function waitForMutation(target) {
-  return new Promise(function(fulfill, reject) {
-    var observer = new MutationObserver(function(mutations) {
+  return new Promise((fulfill, reject) => {
+    const observer = new MutationObserver(mutations => {
       observer.disconnect();
       fulfill();
     });
@@ -109,70 +75,90 @@ function testFocus(callback) {
   chocolateButton.focus();
 
   return reportPromise(
-    waitForMutation(tooltip).then(function() {
-      assertEquals('Chocolate!', tooltip.textContent.trim());
-      assertTrue(!!tooltip.getAttribute('visible'));
-      assertEquals('4px', tooltip.style.left);
-      assertEquals('70px', tooltip.style.top);
+      waitForMutation(tooltip)
+          .then(() => {
+            const label = tooltip.shadowRoot.querySelector('#label');
+            assertEquals('Chocolate!', label.textContent.trim());
+            assertTrue(!!tooltip.getAttribute('visible'));
+            assertEquals('4px', tooltip.style.left);
+            assertEquals('70px', tooltip.style.top);
 
-      cherriesButton.focus();
-      return waitForMutation(tooltip);
-    }).then(function() {
-      assertEquals('Cherries!', tooltip.textContent.trim());
-      assertTrue(!!tooltip.getAttribute('visible'));
-      var expectedLeft = document.body.offsetWidth - tooltip.offsetWidth + 'px';
-      assertEquals(expectedLeft, tooltip.style.left);
-      assertEquals('70px', tooltip.style.top);
+            cherriesButton.focus();
+            return waitForMutation(tooltip);
+          })
+          .then(() => {
+            const label = tooltip.shadowRoot.querySelector('#label');
+            assertEquals('Cherries!', label.textContent.trim());
+            assertTrue(!!tooltip.getAttribute('visible'));
+            const expectedLeft =
+                document.body.offsetWidth - tooltip.offsetWidth + 'px';
+            assertEquals(expectedLeft, tooltip.style.left);
+            assertEquals('70px', tooltip.style.top);
 
-      otherButton.focus();
-      return waitForMutation(tooltip);
-    }).then(function() {
-      assertFalse(!!tooltip.getAttribute('visible'));
-    }), callback);
+            otherButton.focus();
+            return waitForMutation(tooltip);
+          })
+          .then(() => {
+            assertFalse(!!tooltip.getAttribute('visible'));
+          }),
+      callback);
 }
 
 function testHover(callback) {
   chocolateButton.dispatchEvent(new MouseEvent('mouseover'));
 
   return reportPromise(
-    waitForMutation(tooltip).then(function() {
-      assertEquals('Chocolate!', tooltip.textContent.trim());
-      assertTrue(!!tooltip.getAttribute('visible'));
-      assertEquals('4px', tooltip.style.left);
-      assertEquals('70px', tooltip.style.top);
+      waitForMutation(tooltip)
+          .then(() => {
+            const label = tooltip.shadowRoot.querySelector('#label');
+            assertEquals('Chocolate!', label.textContent.trim());
+            assertTrue(!!tooltip.getAttribute('visible'));
+            assertEquals(tooltip.getAttribute('aria-hidden'), 'false');
+            assertEquals('4px', tooltip.style.left);
+            assertEquals('70px', tooltip.style.top);
 
-      chocolateButton.dispatchEvent(new MouseEvent('mouseout'));
-      cherriesButton.dispatchEvent(new MouseEvent('mouseover'));
-      return waitForMutation(tooltip);
-    }).then(function() {
-      assertEquals('Cherries!', tooltip.textContent.trim());
-      assertTrue(!!tooltip.getAttribute('visible'));
-      var expectedLeft = document.body.offsetWidth - tooltip.offsetWidth + 'px';
-      assertEquals(expectedLeft, tooltip.style.left);
-      assertEquals('70px', tooltip.style.top);
+            chocolateButton.dispatchEvent(new MouseEvent('mouseout'));
+            cherriesButton.dispatchEvent(new MouseEvent('mouseover'));
+            return waitForMutation(tooltip);
+          })
+          .then(() => {
+            const label = tooltip.shadowRoot.querySelector('#label');
+            assertEquals('Cherries!', label.textContent.trim());
+            assertTrue(!!tooltip.getAttribute('visible'));
+            const expectedLeft =
+                document.body.offsetWidth - tooltip.offsetWidth + 'px';
+            assertEquals(expectedLeft, tooltip.style.left);
+            assertEquals('70px', tooltip.style.top);
 
-      cherriesButton.dispatchEvent(new MouseEvent('mouseout'));
-      return waitForMutation(tooltip);
-    }).then(function() {
-      assertFalse(!!tooltip.getAttribute('visible'));
-    }), callback);
+            cherriesButton.dispatchEvent(new MouseEvent('mouseout'));
+            return waitForMutation(tooltip);
+          })
+          .then(() => {
+            assertFalse(!!tooltip.getAttribute('visible'));
+          }),
+      callback);
 }
 
 function testClickHides(callback) {
   chocolateButton.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
 
   return reportPromise(
-    waitForMutation(tooltip).then(function() {
-      assertEquals('Chocolate!', tooltip.textContent.trim());
-      assertTrue(!!tooltip.getAttribute('visible'));
+      waitForMutation(tooltip)
+          .then(() => {
+            const label = tooltip.shadowRoot.querySelector('#label');
+            assertEquals('Chocolate!', label.textContent.trim());
+            assertTrue(!!tooltip.getAttribute('visible'));
 
-      // Hiding here is synchronous. Dispatch the event asynchronously, so the
-      // mutation observer is started before hiding.
-      setTimeout(function() {
-        document.body.dispatchEvent(new MouseEvent('mousedown'));
-      });
-      return waitForMutation(tooltip);
-    }).then(function() {
-      assertFalse(!!tooltip.getAttribute('visible'));
-    }), callback);
+            // Hiding here is synchronous. Dispatch the event asynchronously,
+            // so the mutation observer is started before hiding.
+            setTimeout(() => {
+              document.body.dispatchEvent(new MouseEvent('mousedown'));
+            });
+            return waitForMutation(tooltip);
+          })
+          .then(() => {
+            assertFalse(!!tooltip.getAttribute('visible'));
+            assertEquals(tooltip.getAttribute('aria-hidden'), 'true');
+          }),
+      callback);
 }

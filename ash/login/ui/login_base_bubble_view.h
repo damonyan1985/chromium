@@ -17,7 +17,7 @@ namespace ash {
 class LoginBubbleHandler;
 
 // Base bubble view for login screen bubbles.
-class ASH_EXPORT LoginBaseBubbleView : public views::BubbleDialogDelegateView,
+class ASH_EXPORT LoginBaseBubbleView : public views::View,
                                        public ui::LayerAnimationObserver {
  public:
   // Without specifying a parent_window, the bubble will default to being in the
@@ -30,8 +30,6 @@ class ASH_EXPORT LoginBaseBubbleView : public views::BubbleDialogDelegateView,
   void Show();
   void Hide();
 
-  bool IsVisible();
-
   // Returns the button responsible for opening this bubble.
   virtual LoginButton* GetBubbleOpener() const;
 
@@ -40,29 +38,49 @@ class ASH_EXPORT LoginBaseBubbleView : public views::BubbleDialogDelegateView,
   // Change the persistence of the bubble.
   virtual void SetPersistent(bool persistent);
 
-  // views::BubbleDialogDelegateView:
-  void OnBeforeBubbleWidgetInit(views::Widget::InitParams* params,
-                                views::Widget* widget) const override;
-  int GetDialogButtons() const override;
+  // Determine the position of the bubble prior to showing.
+  virtual gfx::Point CalculatePosition();
+
   void SetAnchorView(views::View* anchor_view);
+  views::View* GetAnchorView() const { return anchor_view_; }
 
   // ui::LayerAnimationObserver:
   void OnLayerAnimationEnded(ui::LayerAnimationSequence* sequence) override;
-  void OnLayerAnimationAborted(ui::LayerAnimationSequence* sequence) override{};
+  void OnLayerAnimationAborted(ui::LayerAnimationSequence* sequence) override {}
   void OnLayerAnimationScheduled(
-      ui::LayerAnimationSequence* sequence) override{};
+      ui::LayerAnimationSequence* sequence) override {}
 
   // views::View:
   gfx::Size CalculatePreferredSize() const override;
+  void Layout() override;
+  void OnBlur() override;
 
-  // views::WidgetObserver:
-  void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
-  void OnWidgetBoundsChanged(views::Widget* widget,
-                             const gfx::Rect& new_bounds) override;
+ protected:
+  enum class PositioningStrategy {
+    // Try to show bubble on the right side of the anchor, if there is no space
+    // show on the left side.
+    kShowOnRightSideOrLeftSide,
+    // Try to show bubble on the left side of the anchor, if there is no space
+    // show on the right side.
+    kShowOnLeftSideOrRightSide,
+  };
+  // Returns calculated position using default positioning strategies.
+  gfx::Point CalculatePositionUsingDefaultStrategy(PositioningStrategy strategy,
+                                                   int horizontal_padding,
+                                                   int vertical_padding) const;
+
+  // Return area where bubble could be shown in.
+  gfx::Rect GetBoundsAvailableToShowBubble() const;
 
  private:
+  // Return bounds of the anchors root view. This bounds excludes virtual
+  // keyboard.
+  gfx::Rect GetRootViewBounds() const;
+  // Return bounds of working area. This bounds excludes shelf.
+  gfx::Rect GetWorkArea() const;
   void ScheduleAnimation(bool visible);
-  void EnsureInScreen();
+
+  views::View* anchor_view_;
 
   std::unique_ptr<LoginBubbleHandler> bubble_handler_;
 

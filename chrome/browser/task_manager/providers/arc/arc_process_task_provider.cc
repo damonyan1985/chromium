@@ -18,7 +18,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/chromeos/arc/process/arc_process_service.h"
-#include "components/arc/common/process.mojom.h"
+#include "components/arc/mojom/process.mojom.h"
 
 namespace task_manager {
 
@@ -34,8 +34,7 @@ using arc::ArcProcess;
 using base::Process;
 using base::ProcessId;
 
-ArcProcessTaskProvider::ArcProcessTaskProvider()
-    : is_updating_(false), weak_ptr_factory_(this) {}
+ArcProcessTaskProvider::ArcProcessTaskProvider() : is_updating_(false) {}
 
 ArcProcessTaskProvider::~ArcProcessTaskProvider() {}
 
@@ -86,15 +85,22 @@ void ArcProcessTaskProvider::UpdateProcessList(
 }
 
 void ArcProcessTaskProvider::OnUpdateAppProcessList(
-    std::vector<ArcProcess> processes) {
+    OptionalArcProcessList processes) {
+  if (!processes) {
+    VLOG(2) << "ARC process instance is not ready.";
+    ScheduleNextAppRequest();
+    return;
+  }
+
   TRACE_EVENT0("browser", "ArcProcessTaskProvider::OnUpdateAppProcessList");
-  UpdateProcessList(&nspid_to_task_, std::move(processes));
+  UpdateProcessList(&nspid_to_task_, std::move(*processes));
   ScheduleNextAppRequest();
 }
 
 void ArcProcessTaskProvider::OnUpdateSystemProcessList(
-    std::vector<ArcProcess> processes) {
-  UpdateProcessList(&nspid_to_sys_task_, std::move(processes));
+    OptionalArcProcessList processes) {
+  if (processes)
+    UpdateProcessList(&nspid_to_sys_task_, std::move(*processes));
   ScheduleNextSystemRequest();
 }
 
@@ -103,12 +109,12 @@ void ArcProcessTaskProvider::RequestAppProcessList() {
       arc::ArcProcessService::Get();
   auto callback = base::Bind(&ArcProcessTaskProvider::OnUpdateAppProcessList,
                              weak_ptr_factory_.GetWeakPtr());
-  if (!arc_process_service ||
-      !arc_process_service->RequestAppProcessList(callback)) {
+  if (!arc_process_service) {
     VLOG(2) << "ARC process instance is not ready.";
     ScheduleNextAppRequest();
     return;
   }
+  arc_process_service->RequestAppProcessList(callback);
 }
 
 void ArcProcessTaskProvider::RequestSystemProcessList() {

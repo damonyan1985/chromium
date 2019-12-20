@@ -10,12 +10,11 @@
 #include "ash/login/ui/login_public_account_user_view.h"
 #include "ash/login/ui/login_user_view.h"
 #include "ash/login/ui/non_accessible_view.h"
-#include "ash/public/interfaces/user_info.mojom.h"
-#include "ash/wallpaper/wallpaper_controller_observer.h"
+#include "ash/public/cpp/session/user_info.h"
+#include "ash/public/cpp/wallpaper_controller.h"
+#include "ash/public/cpp/wallpaper_controller_observer.h"
 
 namespace ash {
-
-class WallpaperController;
 
 // Displays the big user view in the login screen. This is a container view
 // which has one of the following views as its only child:
@@ -25,20 +24,24 @@ class ASH_EXPORT LoginBigUserView : public NonAccessibleView,
                                     public WallpaperControllerObserver {
  public:
   LoginBigUserView(
-      const mojom::LoginUserInfoPtr& user,
+      const LoginUserInfo& user,
       const LoginAuthUserView::Callbacks& auth_user_callbacks,
       const LoginPublicAccountUserView::Callbacks& public_account_callbacks);
   ~LoginBigUserView() override;
 
-  // Base on the user type, call CreateAuthUser or CreatePublicAccount;
-  void CreateChildView(const mojom::LoginUserInfoPtr& user);
+  // Base on the user type, call CreateAuthUser or CreatePublicAccount.
+  void CreateChildView(const LoginUserInfo& user);
 
   // Update the displayed name, icon, etc to that of |user|.
-  void UpdateForUser(const mojom::LoginUserInfoPtr& user);
+  void UpdateForUser(const LoginUserInfo& user);
 
-  const mojom::LoginUserInfoPtr& GetCurrentUser() const;
+  // Safe to call in any state.
+  const LoginUserInfo& GetCurrentUser() const;
+
+  // Safe to call in any state.
   LoginUserView* GetUserView();
 
+  // Safe to call in any state.
   bool IsAuthEnabled() const;
 
   LoginPublicAccountUserView* public_account() { return public_account_; }
@@ -53,11 +56,12 @@ class ASH_EXPORT LoginBigUserView : public NonAccessibleView,
  private:
   // Create LoginAuthUserView and add it as child view.
   // |public_account_| will be deleted if exists to ensure the single child.
-  void CreateAuthUser(const mojom::LoginUserInfoPtr& user);
+  void CreateAuthUser(const LoginUserInfo& user);
 
   // Create LoginPublicAccountUserView and add it as child view.
-  // |auth_user_| will be deleted if exists to ensure the single child.
-  void CreatePublicAccount(const mojom::LoginUserInfoPtr& user);
+  // |auth_user_| will be deleted if exists to ensure the
+  // single child.
+  void CreatePublicAccount(const LoginUserInfo& user);
 
   // Either |auth_user_| or |public_account_| must be null.
   LoginPublicAccountUserView* public_account_ = nullptr;
@@ -66,7 +70,8 @@ class ASH_EXPORT LoginBigUserView : public NonAccessibleView,
   LoginAuthUserView::Callbacks auth_user_callbacks_;
   LoginPublicAccountUserView::Callbacks public_account_callbacks_;
 
-  ScopedObserver<WallpaperController, LoginBigUserView> observer_{this};
+  ScopedObserver<WallpaperController, WallpaperControllerObserver> observer_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(LoginBigUserView);
 };

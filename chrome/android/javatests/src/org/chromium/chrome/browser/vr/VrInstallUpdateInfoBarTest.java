@@ -21,6 +21,7 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.test.params.ParameterAnnotations.ClassParameter;
 import org.chromium.base.test.params.ParameterAnnotations.UseRunnerDelegate;
 import org.chromium.base.test.params.ParameterSet;
@@ -50,8 +51,9 @@ import java.util.concurrent.Callable;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR is only supported on K+
+@CommandLineFlags.
+Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-features=LogJsConsoleMessages"})
+@MinAndroidSdkLevel(Build.VERSION_CODES.LOLLIPOP) // WebVR is only supported on L+
 @Restriction(RESTRICTION_TYPE_SVR)
 public class VrInstallUpdateInfoBarTest {
     @ClassParameter
@@ -81,17 +83,18 @@ public class VrInstallUpdateInfoBarTest {
         } else if (checkerReturnCompatibility == VrCoreCompatibility.VR_OUT_OF_DATE
                 || checkerReturnCompatibility == VrCoreCompatibility.VR_NOT_AVAILABLE) {
             // Out of date and missing cases are the same, but with different text
-            String expectedMessage, expectedButton;
+            String expectedMessage;
+            String expectedButton;
             if (checkerReturnCompatibility == VrCoreCompatibility.VR_OUT_OF_DATE) {
-                expectedMessage = mVrTestRule.getActivity().getString(
-                        R.string.vr_services_check_infobar_update_text);
-                expectedButton = mVrTestRule.getActivity().getString(
-                        R.string.vr_services_check_infobar_update_button);
+                expectedMessage = ContextUtils.getApplicationContext().getString(
+                        org.chromium.chrome.vr.R.string.vr_services_check_infobar_update_text);
+                expectedButton = ContextUtils.getApplicationContext().getString(
+                        org.chromium.chrome.vr.R.string.vr_services_check_infobar_update_button);
             } else {
-                expectedMessage = mVrTestRule.getActivity().getString(
-                        R.string.vr_services_check_infobar_install_text);
-                expectedButton = mVrTestRule.getActivity().getString(
-                        R.string.vr_services_check_infobar_install_button);
+                expectedMessage = ContextUtils.getApplicationContext().getString(
+                        org.chromium.chrome.vr.R.string.vr_services_check_infobar_install_text);
+                expectedButton = ContextUtils.getApplicationContext().getString(
+                        org.chromium.chrome.vr.R.string.vr_services_check_infobar_install_button);
             }
             VrInfoBarUtils.expectInfoBarPresent(mVrTestRule, true);
             TextView tempView = (TextView) decorView.findViewById(R.id.infobar_message);
@@ -116,7 +119,7 @@ public class VrInstallUpdateInfoBarTest {
     @Test
     @MediumTest
     @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
-    public void testInfoBarNotPresentWhenVrServicesCurrent() throws InterruptedException {
+    public void testInfoBarNotPresentWhenVrServicesCurrent() {
         infoBarTestHelper(VrCoreCompatibility.VR_READY);
     }
 
@@ -125,8 +128,10 @@ public class VrInstallUpdateInfoBarTest {
      */
     @Test
     @MediumTest
-    @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
-    public void testInfoBarPresentWhenVrServicesOutdated() throws InterruptedException {
+    @XrActivityRestriction({XrActivityRestriction.SupportedActivity.CTA,
+            XrActivityRestriction.SupportedActivity.CCT})
+    public void
+    testInfoBarPresentWhenVrServicesOutdated() {
         infoBarTestHelper(VrCoreCompatibility.VR_OUT_OF_DATE);
     }
 
@@ -135,8 +140,10 @@ public class VrInstallUpdateInfoBarTest {
      */
     @Test
     @MediumTest
-    @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
-    public void testInfoBarPresentWhenVrServicesMissing() throws InterruptedException {
+    @XrActivityRestriction({XrActivityRestriction.SupportedActivity.CTA,
+            XrActivityRestriction.SupportedActivity.CCT})
+    public void
+    testInfoBarPresentWhenVrServicesMissing() {
         infoBarTestHelper(VrCoreCompatibility.VR_NOT_AVAILABLE);
     }
 
@@ -147,7 +154,7 @@ public class VrInstallUpdateInfoBarTest {
     @Test
     @MediumTest
     @XrActivityRestriction({XrActivityRestriction.SupportedActivity.ALL})
-    public void testInfoBarNotPresentWhenVrServicesNotSupported() throws InterruptedException {
+    public void testInfoBarNotPresentWhenVrServicesNotSupported() {
         infoBarTestHelper(VrCoreCompatibility.VR_NOT_SUPPORTED);
     }
 
@@ -158,7 +165,7 @@ public class VrInstallUpdateInfoBarTest {
     @Test
     @MediumTest
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
-    public void testKeyboardInstallUpgradePromptUrlBar() throws InterruptedException {
+    public void testKeyboardInstallUpgradePromptUrlBar() {
         testKeyboardInstallUpgradeImpl(UserFriendlyElementName.URL);
     }
 
@@ -169,12 +176,11 @@ public class VrInstallUpdateInfoBarTest {
     @Test
     @MediumTest
     @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
-    public void testKeyboardInstallUpgradePromptWebInput() throws InterruptedException {
+    public void testKeyboardInstallUpgradePromptWebInput() {
         testKeyboardInstallUpgradeImpl(UserFriendlyElementName.CONTENT_QUAD);
     }
 
-    private void testKeyboardInstallUpgradeImpl(final int uiElementToClick)
-            throws InterruptedException {
+    private void testKeyboardInstallUpgradeImpl(final int uiElementToClick) {
         mVrTestRule.loadUrl(
                 VrBrowserTestFramework.getFileUrlForHtmlTestFile("test_web_input_editing"),
                 PAGE_LOAD_TIMEOUT_S);

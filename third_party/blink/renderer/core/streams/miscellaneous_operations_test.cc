@@ -98,7 +98,7 @@ v8::Local<v8::Value> CreateFromFunctionAndGetResult(
     v8::Local<v8::Value> argv[] = nullptr) {
   String js = String("({start: ") + function_definition + "})" + '\0';
   ScriptValue underlying_value =
-      EvalWithPrintingError(scope, WTF::StringUTF8Adaptor(js).Data());
+      EvalWithPrintingError(scope, js.Utf8().c_str());
   auto underlying_object = underlying_value.V8Value().As<v8::Object>();
   auto* algo = CreateAlgorithmFromUnderlyingMethod(
       scope->GetScriptState(), underlying_object, "start",
@@ -169,6 +169,86 @@ TEST(MiscellaneousOperationsTest, CreateAlgorithmPassBoth) {
       extra_arg, 1, argv));
 }
 
+TEST(MiscellaneousOperationsTest, CreateStartAlgorithmNoMethod) {
+  V8TestingScope scope;
+  auto underlying_object = v8::Object::New(scope.GetIsolate());
+  v8::Local<v8::Value> controller = v8::Undefined(scope.GetIsolate());
+  auto* algo = CreateStartAlgorithm(scope.GetScriptState(), underlying_object,
+                                    "underlyingSink.start", controller);
+  ASSERT_TRUE(algo);
+  auto maybe_result = algo->Run(scope.GetScriptState(), ASSERT_NO_EXCEPTION);
+  ASSERT_FALSE(maybe_result.IsEmpty());
+  auto result = maybe_result.ToLocalChecked();
+  ASSERT_EQ(result->State(), v8::Promise::kFulfilled);
+  EXPECT_TRUE(result->Result()->IsUndefined());
+}
+
+TEST(MiscellaneousOperationsTest, CreateStartAlgorithmNullMethod) {
+  V8TestingScope scope;
+  auto underlying_object = v8::Object::New(scope.GetIsolate());
+  underlying_object
+      ->Set(scope.GetContext(), V8String(scope.GetIsolate(), "start"),
+            v8::Null(scope.GetIsolate()))
+      .Check();
+  v8::Local<v8::Value> controller = v8::Undefined(scope.GetIsolate());
+  auto* algo = CreateStartAlgorithm(scope.GetScriptState(), underlying_object,
+                                    "underlyingSink.start", controller);
+  ASSERT_TRUE(algo);
+  ExceptionState exception_state(scope.GetIsolate(),
+                                 ExceptionState::kExecutionContext, "", "");
+  auto maybe_result = algo->Run(scope.GetScriptState(), exception_state);
+  EXPECT_TRUE(exception_state.HadException());
+  EXPECT_TRUE(maybe_result.IsEmpty());
+}
+
+TEST(MiscellaneousOperationsTest, CreateStartAlgorithmThrowingMethod) {
+  V8TestingScope scope;
+  ScriptValue underlying_value = EvalWithPrintingError(&scope,
+                                                       R"(({
+  start() {
+    throw new Error();
+  }
+}))");
+  ASSERT_TRUE(underlying_value.IsObject());
+  auto underlying_object = underlying_value.V8Value().As<v8::Object>();
+  v8::Local<v8::Value> controller = v8::Undefined(scope.GetIsolate());
+  auto* algo = CreateStartAlgorithm(scope.GetScriptState(), underlying_object,
+                                    "underlyingSink.start", controller);
+  ASSERT_TRUE(algo);
+  ExceptionState exception_state(scope.GetIsolate(),
+                                 ExceptionState::kExecutionContext, "", "");
+  auto maybe_result = algo->Run(scope.GetScriptState(), exception_state);
+  EXPECT_TRUE(exception_state.HadException());
+  EXPECT_TRUE(maybe_result.IsEmpty());
+}
+
+TEST(MiscellaneousOperationsTest, CreateStartAlgorithmReturningController) {
+  V8TestingScope scope;
+  ScriptValue underlying_value = EvalWithPrintingError(&scope,
+                                                       R"(({
+  start(controller) {
+    return controller;
+  }
+}))");
+  ASSERT_TRUE(underlying_value.IsObject());
+  auto underlying_object = underlying_value.V8Value().As<v8::Object>();
+  // In a real stream, |controller| is never a promise, but nothing in
+  // CreateStartAlgorithm() requires this. By making it a promise, we can verify
+  // that a promise returned from start is passed through as-is.
+  v8::Local<v8::Value> controller =
+      v8::Promise::Resolver::New(scope.GetContext())
+          .ToLocalChecked()
+          ->GetPromise();
+  auto* algo = CreateStartAlgorithm(scope.GetScriptState(), underlying_object,
+                                    "underlyingSink.start", controller);
+  ASSERT_TRUE(algo);
+  auto maybe_result = algo->Run(scope.GetScriptState(), ASSERT_NO_EXCEPTION);
+  EXPECT_FALSE(maybe_result.IsEmpty());
+  v8::Local<v8::Value> result = maybe_result.ToLocalChecked();
+  ASSERT_TRUE(result->IsPromise());
+  ASSERT_EQ(result, controller);
+}
+
 TEST(MiscellaneousOperationsTest, CallOrNoop1NoMethod) {
   V8TestingScope scope;
   auto underlying_object = v8::Object::New(scope.GetIsolate());
@@ -215,6 +295,27 @@ TEST(MiscellaneousOperationsTest, CallOrNoop1CheckCalled) {
   auto result = maybe_result.ToLocalChecked();
   ASSERT_TRUE(result->IsBoolean());
   EXPECT_TRUE(result.As<v8::Boolean>()->Value());
+}
+
+TEST(MiscellaneousOperationsTest, CallOrNoop1ThrowingMethod) {
+  V8TestingScope scope;
+  ScriptValue underlying_value = EvalWithPrintingError(&scope,
+                                                       R"(({
+  transform(...args) {
+    throw false;
+  }
+}))");
+  ASSERT_TRUE(underlying_value.IsObject());
+  auto underlying_object = underlying_value.V8Value().As<v8::Object>();
+  v8::Local<v8::Value> arg0 = v8::Number::New(scope.GetIsolate(), 17);
+  ExceptionState exception_state(scope.GetIsolate(),
+                                 ExceptionState::kUnknownContext, "", "");
+  auto maybe_result =
+      CallOrNoop1(scope.GetScriptState(), underlying_object, "transform",
+                  "transformer.transform", arg0, exception_state);
+  ASSERT_TRUE(exception_state.HadException());
+  EXPECT_TRUE(maybe_result.IsEmpty());
+  EXPECT_TRUE(exception_state.GetException()->IsBoolean());
 }
 
 v8::Local<v8::Promise> PromiseCallFromText(V8TestingScope* scope,

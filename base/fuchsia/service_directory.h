@@ -17,9 +17,10 @@
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
-#include "base/threading/thread_checker.h"
 
-typedef struct svc_dir svc_dir_t;
+namespace sys {
+class OutgoingDirectory;
+}  // namespace sys
 
 namespace base {
 namespace fuchsia {
@@ -31,20 +32,27 @@ namespace fuchsia {
 // implementation is destroyed. GetDefault() should be used to get the default
 // ServiceDirectory for the current process. The default instance exports
 // services via a channel supplied at process creation time.
+// Debug services are published to a "debug" sub-directory only accessible by
+// other services via the Hub.
 //
-// Not thread-safe. All methods must be called on the thread that created the
-// object.
+// TODO(crbug.com/974072): Currently this class is just a wrapper around
+// sys::OutgoingDirectory. Migrate all code to use sys::OutgoingDirectory and
+// remove this class.
 class BASE_EXPORT ServiceDirectory {
  public:
-  // Callback called to connect incoming requests.
-  using ConnectServiceCallback = RepeatingCallback<void(zx::channel channel)>;
-
   // Responds to service requests over the supplied |request| channel.
   explicit ServiceDirectory(
       fidl::InterfaceRequest<::fuchsia::io::Directory> request);
 
-  // TODO(https://crbug.com/920920): Clean up callers and remove this synonym.
-  explicit ServiceDirectory(zx::channel request);
+  // Wraps a sys::OutgoingDirectory. The |directory| must outlive
+  // the ServiceDirectory object.
+  explicit ServiceDirectory(sys::OutgoingDirectory* directory);
+
+  // Creates an uninitialized ServiceDirectory instance. Initialize must be
+  // called on the instance before any services can be registered. Unless you
+  // need separate construction & initialization for a ServiceDirectory member,
+  // use the all-in-one constructor above.
+  ServiceDirectory();
 
   ~ServiceDirectory();
 
@@ -52,39 +60,15 @@ class BASE_EXPORT ServiceDirectory {
   // publishes services to the directory provided by the process creator.
   static ServiceDirectory* GetDefault();
 
-  template <typename Interface>
-  void AddService(
-      RepeatingCallback<fidl::InterfaceRequest<Interface>> connect_callback) {
-    AddService(Interface::Name_,
-               BindRepeating([connect_callback](zx::channel request) {
-                 connect_callback.Run(
-                     fidl::InterfaceRequest<Interface>(std::move(request)));
-               }));
-  }
-  void RemoveService(StringPiece name);
-  void RemoveAllServices();
+  // Configures an uninitialized ServiceDirectory instance to service the
+  // supplied |directory_request| channel.
+  void Initialize(fidl::InterfaceRequest<::fuchsia::io::Directory> request);
 
-  // Passes requests for |name| through to a generic |connect_callback|.
-  // This is used only when proxying requests for interfaces not known at
-  // compile-time. Use the type-safe APIs above whenever possible.
-  void AddServiceUnsafe(StringPiece name,
-                        ConnectServiceCallback connect_callback);
-
-  // TODO(https://crbug.com/920920): Clean up callers and remove this synonym.
-  void AddService(StringPiece name, ConnectServiceCallback connect_callback) {
-    AddServiceUnsafe(name, std::move(connect_callback));
-  }
+  sys::OutgoingDirectory* outgoing_directory() { return directory_; }
 
  private:
-  // Called by |svc_dir_| to handle service requests.
-  static void HandleConnectRequest(void* context,
-                                   const char* service_name,
-                                   zx_handle_t service_request);
-
-  THREAD_CHECKER(thread_checker_);
-
-  svc_dir_t* svc_dir_ = nullptr;
-  flat_map<std::string, ConnectServiceCallback> services_;
+  std::unique_ptr<sys::OutgoingDirectory> owned_directory_;
+  sys::OutgoingDirectory* directory_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceDirectory);
 };

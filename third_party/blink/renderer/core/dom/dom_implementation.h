@@ -39,10 +39,6 @@ class CORE_EXPORT DOMImplementation final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMImplementation* Create(Document& document) {
-    return MakeGarbageCollected<DOMImplementation>(document);
-  }
-
   explicit DOMImplementation(Document&);
 
   // DOM methods & attributes for DOMImplementation
@@ -66,7 +62,6 @@ class CORE_EXPORT DOMImplementation final : public ScriptWrappable {
 
   static bool IsXMLMIMEType(const String&);
   static bool IsTextMIMEType(const String&);
-  static bool IsJSONMIMEType(const String&);
 
   void Trace(Visitor*) override;
 

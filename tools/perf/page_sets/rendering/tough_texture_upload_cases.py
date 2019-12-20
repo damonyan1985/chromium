@@ -56,3 +56,6 @@ class LargeTextureUploadsPage(ToughTextureUploadPage):
 class ExtraLargeTextureUploadsPage(ToughTextureUploadPage):
   BASE_NAME = 'extra_large_texture_uploads'
   URL = 'file://../tough_texture_upload_cases/extra_large_texture_uploads.html'
+  TAGS = ToughTextureUploadPage.TAGS + [
+    story_tags.REPRESENTATIVE_MOBILE
+  ]

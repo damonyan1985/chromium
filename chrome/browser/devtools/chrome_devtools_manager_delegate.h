@@ -17,6 +17,7 @@
 #include "chrome/browser/devtools/protocol/protocol.h"
 #include "content/public/browser/devtools_agent_host_observer.h"
 #include "content/public/browser/devtools_manager_delegate.h"
+#include "net/base/host_port_pair.h"
 
 class ChromeDevToolsSession;
 using RemoteLocations = std::set<net::HostPortPair>;
@@ -59,8 +60,8 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   void Inspect(content::DevToolsAgentHost* agent_host) override;
   void HandleCommand(content::DevToolsAgentHost* agent_host,
                      content::DevToolsAgentHostClient* client,
-                     std::unique_ptr<base::DictionaryValue> command_dict,
-                     const std::string& message,
+                     const std::string& method,
+                     base::span<const uint8_t> message,
                      NotHandledCallback callback) override;
   std::string GetTargetType(content::WebContents* web_contents) override;
   std::string GetTargetTitle(content::WebContents* web_contents) override;

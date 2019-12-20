@@ -29,9 +29,22 @@ AccessibilityDelegate* TestShellDelegate::CreateAccessibilityDelegate() {
   return new DefaultAccessibilityDelegate;
 }
 
-ws::InputDeviceControllerClient*
-TestShellDelegate::GetInputDeviceControllerClient() {
-  return nullptr;
+bool TestShellDelegate::CanGoBack(gfx::NativeWindow window) const {
+  return can_go_back_;
+}
+
+void TestShellDelegate::BindNavigableContentsFactory(
+    mojo::PendingReceiver<content::mojom::NavigableContentsFactory> receiver) {}
+
+void TestShellDelegate::BindMultiDeviceSetup(
+    mojo::PendingReceiver<chromeos::multidevice_setup::mojom::MultiDeviceSetup>
+        receiver) {
+  if (multidevice_setup_binder_)
+    multidevice_setup_binder_.Run(std::move(receiver));
+}
+
+void TestShellDelegate::SetCanGoBack(bool can_go_back) {
+  can_go_back_ = can_go_back;
 }
 
 }  // namespace ash

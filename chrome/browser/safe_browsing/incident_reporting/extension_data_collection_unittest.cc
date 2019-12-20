@@ -23,7 +23,7 @@
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
@@ -100,7 +100,7 @@ void ExtensionTestingProfile::AddExtension(std::string extension_id,
   extension_prefs_->UpdateExtensionPref(
       extension_id, "install_time",
       std::make_unique<base::Value>(
-          base::Int64ToString(install_time.ToInternalValue())));
+          base::NumberToString(install_time.ToInternalValue())));
   extension_prefs_->UpdateExtensionPref(
       extension_id, "state", std::make_unique<base::Value>(state_value));
 }
@@ -144,6 +144,8 @@ class ExtensionDataCollectionTest : public testing::Test {
     // UserManager should be destroyed before TestingBrowserProcess as it
     // uses it in destructor.
     test_user_manager_.reset();
+    // Finish any pending tasks before deleting the TestingBrowserProcess.
+    task_environment_.RunUntilIdle();
 #endif
     profile_manager_.reset();
     TestingBrowserProcess::DeleteInstance();
@@ -153,7 +155,7 @@ class ExtensionDataCollectionTest : public testing::Test {
   std::unique_ptr<ExtensionTestingProfile> CreateProfile(
       SafeBrowsingDisposition safe_browsing_opt_in) {
     std::string profile_name("profile");
-    profile_name.append(base::IntToString(++profile_number_));
+    profile_name.append(base::NumberToString(++profile_number_));
 
     // Create prefs for the profile and safe browsing preferences accordingly.
     std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> prefs(
@@ -174,10 +176,13 @@ class ExtensionDataCollectionTest : public testing::Test {
         std::string(),                    // supervised_user_id
         TestingProfile::TestingFactories());
 
-    return std::make_unique<ExtensionTestingProfile>(profile);
+    auto testing_profile = std::make_unique<ExtensionTestingProfile>(profile);
+    task_environment_.RunUntilIdle();
+
+    return testing_profile;
   }
 
-  content::TestBrowserThreadBundle browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:

@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction_factory.h"
 
-#include "third_party/blink/renderer/bindings/core/v8/file_or_usv_string.h"
+#include "third_party/blink/renderer/bindings/core/v8/file_or_usv_string_or_form_data.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
 #include "third_party/blink/renderer/core/html/custom/custom_element_reaction.h"
@@ -23,7 +23,7 @@ class CustomElementUpgradeReaction final : public CustomElementReaction {
   void Invoke(Element& element) override {
     // Don't call Upgrade() if it's already upgraded. Multiple upgrade reactions
     // could be enqueued because the state changes in step 10 of upgrades.
-    // https://html.spec.whatwg.org/multipage/scripting.html#upgrades
+    // https://html.spec.whatwg.org/C/#upgrades
     if (element.GetCustomElementState() == CustomElementState::kUndefined) {
       // Don't upgrade elements inside an invisible-static tree, unless it was
       // triggered by CustomElementRegistry::upgrade.
@@ -183,36 +183,36 @@ class CustomElementFormResetCallbackReaction final
 
 // ----------------------------------------------------------------
 
-class CustomElementDisabledStateChangedCallbackReaction final
+class CustomElementFormDisabledCallbackReaction final
     : public CustomElementReaction {
  public:
-  CustomElementDisabledStateChangedCallbackReaction(
-      CustomElementDefinition& definition,
-      bool is_disabled)
+  CustomElementFormDisabledCallbackReaction(CustomElementDefinition& definition,
+                                            bool is_disabled)
       : CustomElementReaction(definition), is_disabled_(is_disabled) {
-    DCHECK(definition.HasDisabledStateChangedCallback());
+    DCHECK(definition.HasFormDisabledCallback());
   }
 
  private:
   void Invoke(Element& element) override {
-    definition_->RunDisabledStateChangedCallback(element, is_disabled_);
+    definition_->RunFormDisabledCallback(element, is_disabled_);
   }
 
   bool is_disabled_;
 
-  DISALLOW_COPY_AND_ASSIGN(CustomElementDisabledStateChangedCallbackReaction);
+  DISALLOW_COPY_AND_ASSIGN(CustomElementFormDisabledCallbackReaction);
 };
 
 // ----------------------------------------------------------------
 
-class CustomElementRestoreValueCallbackReaction final
+class CustomElementFormStateRestoreCallbackReaction final
     : public CustomElementReaction {
  public:
-  CustomElementRestoreValueCallbackReaction(CustomElementDefinition& definition,
-                                            const FileOrUSVString& value,
-                                            const String& mode)
+  CustomElementFormStateRestoreCallbackReaction(
+      CustomElementDefinition& definition,
+      const FileOrUSVStringOrFormData& value,
+      const String& mode)
       : CustomElementReaction(definition), value_(value), mode_(mode) {
-    DCHECK(definition.HasRestoreValueCallback());
+    DCHECK(definition.HasFormStateRestoreCallback());
     DCHECK(mode == "restore" || mode == "autocomplete");
   }
 
@@ -223,13 +223,13 @@ class CustomElementRestoreValueCallbackReaction final
 
  private:
   void Invoke(Element& element) override {
-    definition_->RunRestoreValueCallback(element, value_, mode_);
+    definition_->RunFormStateRestoreCallback(element, value_, mode_);
   }
 
-  FileOrUSVString value_;
+  FileOrUSVStringOrFormData value_;
   String mode_;
 
-  DISALLOW_COPY_AND_ASSIGN(CustomElementRestoreValueCallbackReaction);
+  DISALLOW_COPY_AND_ASSIGN(CustomElementFormStateRestoreCallbackReaction);
 };
 
 // ----------------------------------------------------------------
@@ -283,19 +283,18 @@ CustomElementReaction& CustomElementReactionFactory::CreateFormReset(
       definition);
 }
 
-CustomElementReaction& CustomElementReactionFactory::CreateDisabledStateChanged(
+CustomElementReaction& CustomElementReactionFactory::CreateFormDisabled(
     CustomElementDefinition& definition,
     bool is_disabled) {
-  return *MakeGarbageCollected<
-      CustomElementDisabledStateChangedCallbackReaction>(definition,
-                                                         is_disabled);
+  return *MakeGarbageCollected<CustomElementFormDisabledCallbackReaction>(
+      definition, is_disabled);
 }
 
-CustomElementReaction& CustomElementReactionFactory::CreateRestoreValue(
+CustomElementReaction& CustomElementReactionFactory::CreateFormStateRestore(
     CustomElementDefinition& definition,
-    const FileOrUSVString& value,
+    const FileOrUSVStringOrFormData& value,
     const String& mode) {
-  return *MakeGarbageCollected<CustomElementRestoreValueCallbackReaction>(
+  return *MakeGarbageCollected<CustomElementFormStateRestoreCallbackReaction>(
       definition, value, mode);
 }
 

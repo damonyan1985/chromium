@@ -21,12 +21,17 @@ class ShelfWindowTargeter : public ::wm::EasyResizeWindowTargeter,
                             public aura::WindowObserver,
                             public ShelfObserver {
  public:
-  ShelfWindowTargeter(aura::Window* container, Shelf* shelf);
+  ShelfWindowTargeter(aura::Window* container,
+                      Shelf* shelf,
+                      bool extend_touch_for_auto_hidden_shelf);
   ~ShelfWindowTargeter() override;
 
  private:
   // ::wm::EasyResizeWindowTargeter:
   bool ShouldUseExtendedBounds(const aura::Window* window) const override;
+  bool GetHitTestRects(aura::Window* target,
+                       gfx::Rect* hit_test_rect_mouse,
+                       gfx::Rect* hit_test_rect_touch) const override;
 
   // aura::WindowObserver:
   void OnWindowDestroying(aura::Window* window) override;
@@ -35,6 +40,13 @@ class ShelfWindowTargeter : public ::wm::EasyResizeWindowTargeter,
   void WillChangeVisibilityState(ShelfVisibilityState new_state) override;
 
   Shelf* shelf_;
+
+  // Whether the touch hit area should be extended beyond the window top when
+  // the shelf is in auto-hide state (to make targeting hidden shelf easier).
+  // This should be set for shelf container only, to prevent other widgets
+  // positioned below display bounds (e.g. hidden hotseat widget) from handling
+  // touch events instead of the shelf.
+  const bool extend_touch_area_for_auto_hidden_shelf_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfWindowTargeter);
 };

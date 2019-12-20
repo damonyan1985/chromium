@@ -110,7 +110,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, MAYBE_FocusTest) {
   EXPECT_NE(dialog2->GetContentsView(), focus_manager->GetFocusedView());
 
   // Activating the previous tab should bring focus to the dialog.
-  browser()->tab_strip_model()->ActivateTabAt(tab_with_dialog, false);
+  browser()->tab_strip_model()->ActivateTabAt(tab_with_dialog);
   EXPECT_FALSE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
   EXPECT_EQ(dialog2->GetContentsView(), focus_manager->GetFocusedView());
 
@@ -134,7 +134,13 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabCloseTest) {
 
 // Tests that the tab-modal window is hidden when an other tab is selected and
 // shown when its tab is selected again.
-IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabSwitchTest) {
+// Flaky on ASAN builds (https://crbug.com/997634)
+#if defined(ADDRESS_SANITIZER)
+#define MAYBE_TabSwitchTest DISABLED_TabSwitchTest
+#else
+#define MAYBE_TabSwitchTest TabSwitchTest
+#endif
+IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, MAYBE_TabSwitchTest) {
   std::unique_ptr<TestDialog> dialog =
       ShowModalDialog(browser()->tab_strip_model()->GetActiveWebContents());
   EXPECT_TRUE(dialog->GetWidget()->IsVisible());

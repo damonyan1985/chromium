@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/streams/queue_with_sizes.h"
 
+#include <math.h>
+
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
@@ -21,7 +23,7 @@ bool IsFiniteNonNegativeNumber(double v) {
 }  // namespace
 
 class QueueWithSizes::ValueSizePair final
-    : public GarbageCollectedFinalized<ValueSizePair> {
+    : public GarbageCollected<ValueSizePair> {
  public:
   ValueSizePair(v8::Local<v8::Value> value, double size, v8::Isolate* isolate)
       : value_(isolate, value), size_(size) {}
@@ -40,7 +42,6 @@ class QueueWithSizes::ValueSizePair final
 };
 
 QueueWithSizes::QueueWithSizes() = default;
-QueueWithSizes::~QueueWithSizes() = default;
 
 v8::Local<v8::Value> QueueWithSizes::DequeueValue(v8::Isolate* isolate) {
   DCHECK(!queue_.empty());

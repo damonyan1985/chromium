@@ -11,23 +11,38 @@
 
 const mockVolumeManager = new MockVolumeManager();
 
-// Create drive /root/ immediately.
-/** @type {MockFileSystem} */ (
-    mockVolumeManager
-        .getCurrentProfileVolumeInfo(VolumeManagerCommon.VolumeType.DRIVE)
-        .fileSystem)
-    .populate(['/root/', '/team_drives/', '/Computers/']);
-
 /**
  * Suppress compiler warning for overwriting chrome.fileManagerPrivate.
  * @suppress {checkTypes}
  */
 chrome.fileManagerPrivate = {
+  CrostiniEventType: {
+    ENABLE: 'enable',
+    DISABLE: 'disable',
+    SHARE: 'share',
+    UNSHARE: 'unshare',
+  },
   Verb: {
     OPEN_WITH: 'open_with',
     ADD_TO: 'add_to',
     PACK_WITH: 'pack_with',
     SHARE_WITH: 'share_with',
+  },
+  SearchType: {
+    ALL: 'ALL',
+    SHARED_WITH_ME: 'SHARED_WITH_ME',
+    EXCLUDE_DIRECTORIES: 'EXCLUDE_DIRECTORIES',
+    OFFLINE: 'OFFLINE',
+  },
+  DriveConnectionStateType: {
+    ONLINE: 'ONLINE',
+    OFFLINE: 'OFFLINE',
+    METERED: 'METERED',
+  },
+  DriveOfflineReason: {
+    NOT_READY: 'NOT_READY',
+    NO_NETWORK: 'NO_NETWORK',
+    NO_SERVICE: 'NO_SERVICE',
   },
   currentId_: 'test@example.com',
   displayedId_: 'test@example.com',
@@ -37,6 +52,8 @@ chrome.fileManagerPrivate = {
     searchSuggestEnabled: true,
     timezone: 'Australia/Sydney',
     use24hourClock: false,
+    arcEnabled: false,
+    arcRemovableMediaAccessEnabled: false,
   },
   profiles_: [{
     displayName: 'Test User',
@@ -46,7 +63,6 @@ chrome.fileManagerPrivate = {
   token_: 'token',
   SourceRestriction: {
     ANY_SOURCE: 'any_source',
-    NATIVE_OR_DRIVE_SOURCE: 'native_or_drive_source',
     NATIVE_SOURCE: 'native_source',
   },
   addFileWatch: (entry, callback) => {
@@ -87,9 +103,9 @@ chrome.fileManagerPrivate = {
     }
     setTimeout(callback, 0, results);
   },
-  getCrostiniSharedPaths: (callback) => {
+  getCrostiniSharedPaths: (observeFirstForSession, vmName, callback) => {
     // Returns Entry[], firstForSession.
-    setTimeout(callback, 0, true, []);
+    setTimeout(callback, 0, [], observeFirstForSession);
   },
   getLinuxPackageInfo: (entry, callback) => {
     // Returns chrome.fileManagerPrivate.LinuxPackageInfo.
@@ -135,13 +151,7 @@ chrome.fileManagerPrivate = {
   grantAccess: (entryUrls, callback) => {
     setTimeout(callback, 0);
   },
-  crostiniEnabled_: true,
-  isCrostiniEnabled: (callback) => {
-    setTimeout(callback, 0, chrome.fileManagerPrivate.crostiniEnabled_);
-  },
-  isUMAEnabled: (callback) => {
-    setTimeout(callback, 0, false);
-  },
+  importCrostiniImage: (entry) => {},
   // Simulate startup of vm and container by taking 1s.
   mountCrostiniDelay_: 1000,
   mountCrostini: (callback) => {
@@ -152,7 +162,7 @@ chrome.fileManagerPrivate = {
   },
   onAppsUpdated: new test.Event(),
   onCopyProgress: new test.Event(),
-  onCrostiniSharedPathsChanged: new test.Event(),
+  onCrostiniChanged: new test.Event(),
   onDeviceChanged: new test.Event(),
   onDirectoryChanged: new test.Event(),
   onDriveConnectionStatusChanged: new test.Event(),
@@ -181,15 +191,15 @@ chrome.fileManagerPrivate = {
     setTimeout(callback, 0, entries);
   },
   searchDriveMetadata: (searchParams, callback) => {
-    // Returns chrome.fileManagerPrivate.SearchResult[].
-    // chrome.fileManagerPrivate.SearchResult { entry: Entry,
+    // Returns chrome.fileManagerPrivate.DriveMetadataSearchResult[].
+    // chrome.fileManagerPrivate.DriveMetadataSearchResult { entry: Entry,
     // highlightedBaseName: string }
     setTimeout(callback, 0, []);
   },
-  sharePathsWithCrostini: (entries, persist, callback) => {
+  sharePathsWithCrostini: (vmName, entries, persist, callback) => {
     setTimeout(callback, 0);
   },
-  unsharePathWithCrostini: (entry, callback) => {
+  unsharePathWithCrostini: (vmName, entry, callback) => {
     setTimeout(callback, 0);
   },
   nextCopyId_: 0,

@@ -31,6 +31,7 @@ import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.minidump_uploader.CrashTestRule;
 import org.chromium.components.minidump_uploader.CrashTestRule.MockCrashReportingPermissionManager;
 import org.chromium.components.minidump_uploader.MinidumpUploadCallable;
+import org.chromium.components.minidump_uploader.MinidumpUploadCallable.MinidumpUploadStatus;
 import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
@@ -152,24 +153,24 @@ public class MinidumpUploadServiceTest {
     @Test
     @SmallTest
     @Feature({"Android-AppBase"})
-    public void testUploadCrash() throws IOException, InterruptedException {
+    public void testUploadCrash() throws IOException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_SUCCESS, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.SUCCESS, false));
         runUploadCrashTest(callables);
     }
 
     @Test
     @SmallTest
     @Feature({"Android-AppBase"})
-    public void testUploadCrashWithThreeFails() throws IOException, InterruptedException {
+    public void testUploadCrashWithThreeFails() throws IOException {
         // Create |MAX_TRIES_ALLOWED| callables.
         final List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         for (int i = 0; i < MinidumpUploadService.MAX_TRIES_ALLOWED; i++) {
-            callables.add(new CountedMinidumpUploadCallable("chromium_renderer-111.dmp1.try" + i,
-                    MinidumpUploadCallable.UPLOAD_FAILURE, true));
+            callables.add(new CountedMinidumpUploadCallable(
+                    "chromium_renderer-111.dmp1.try" + i, MinidumpUploadStatus.FAILURE, true));
         }
         runUploadCrashTest(callables);
     }
@@ -177,29 +178,29 @@ public class MinidumpUploadServiceTest {
     @Test
     @SmallTest
     @Feature({"Android-AppBase"})
-    public void testUploadCrashWithOneFailWithNetwork() throws IOException, InterruptedException {
+    public void testUploadCrashWithOneFailWithNetwork() throws IOException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, true));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.FAILURE, true));
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try1", MinidumpUploadCallable.UPLOAD_SUCCESS, true));
+                "chromium_renderer-111.dmp1.try1", MinidumpUploadStatus.SUCCESS, true));
         runUploadCrashTest(callables);
     }
 
     @Test
     @SmallTest
     @Feature({"Android-AppBase"})
-    public void testUploadCrashWithOneFailNoNetwork() throws IOException, InterruptedException {
+    public void testUploadCrashWithOneFailNoNetwork() throws IOException {
         List<CountedMinidumpUploadCallable> callables =
                 new ArrayList<CountedMinidumpUploadCallable>();
         callables.add(new CountedMinidumpUploadCallable(
-                "chromium_renderer-111.dmp1.try0", MinidumpUploadCallable.UPLOAD_FAILURE, false));
+                "chromium_renderer-111.dmp1.try0", MinidumpUploadStatus.FAILURE, false));
         runUploadCrashTest(callables);
     }
 
     private void runUploadCrashTest(final List<CountedMinidumpUploadCallable> callables)
-            throws IOException, InterruptedException {
+            throws IOException {
         // The JobScheduler API is used on Android M+.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
 
@@ -497,7 +498,7 @@ public class MinidumpUploadServiceTest {
     @Test
     @SmallTest
     @Feature({"Android-AppBase"})
-    public void testHandleForceUploadCrash_FileDoesntExist_WithJobScheduler() throws IOException {
+    public void testHandleForceUploadCrash_FileDoesntExist_WithJobScheduler() {
         // The JobScheduler API is only available as of Android M.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 

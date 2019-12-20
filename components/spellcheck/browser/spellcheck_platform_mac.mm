@@ -151,7 +151,8 @@ void UpdateSpellingPanelWithMisspelledWord(const base::string16& word) {
                     waitUntilDone:YES];
 }
 
-bool PlatformSupportsLanguage(const std::string& current_language) {
+void PlatformSupportsLanguage(const std::string& current_language,
+                              base::OnceCallback<void(bool)> callback) {
   // First, convert the language to an OS X language code.
   NSString* mac_lang_code = ConvertLanguageCodeToMac(current_language);
 
@@ -159,17 +160,21 @@ bool PlatformSupportsLanguage(const std::string& current_language) {
   NSArray* availableLanguages = [SharedSpellChecker() availableLanguages];
 
   // Return true if the given language is supported by OS X.
-  return [availableLanguages containsObject:mac_lang_code];
+  std::move(callback).Run([availableLanguages containsObject:mac_lang_code]);
 }
 
-void SetLanguage(const std::string& lang_to_set) {
+void SetLanguage(const std::string& lang_to_set,
+                 base::OnceCallback<void(bool)> callback) {
   // Do not set any language right now, since Chrome should honor the
   // system spellcheck settings. (http://crbug.com/166046)
   // Fix this once Chrome actually allows setting a spellcheck language
   // in chrome://settings.
   //  NSString* NS_lang_to_set = ConvertLanguageCodeToMac(lang_to_set);
   //  [SharedSpellChecker() setLanguage:NS_lang_to_set];
+  std::move(callback).Run(true);
 }
+
+void DisableLanguage(const std::string& lang_to_disable) {}
 
 static int last_seen_tag_;
 

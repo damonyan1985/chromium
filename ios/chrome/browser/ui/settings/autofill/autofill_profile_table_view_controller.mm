@@ -15,11 +15,11 @@
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/ui/settings/autofill/autofill_constants.h"
 #import "ios/chrome/browser/ui/settings/autofill/autofill_profile_edit_table_view_controller.h"
-#import "ios/chrome/browser/ui/settings/cells/autofill_data_item.h"
+#import "ios/chrome/browser/ui/settings/autofill/cells/autofill_data_item.h"
 #import "ios/chrome/browser/ui/settings/cells/settings_switch_cell.h"
 #import "ios/chrome/browser/ui/settings/cells/settings_switch_item.h"
-#import "ios/chrome/browser/ui/settings/cells/settings_text_item.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_cells_constants.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_detail_text_item.h"
 #import "ios/chrome/browser/ui/table_view/cells/table_view_link_header_footer_item.h"
@@ -27,14 +27,13 @@
 #import "ios/chrome/browser/ui/table_view/table_view_model.h"
 #include "ios/chrome/browser/ui/ui_feature_flags.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
+#import "ios/chrome/common/colors/semantic_color_names.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-NSString* const kAutofillProfileTableViewID = @"kAutofillProfileTableViewID";
 
 namespace {
 
@@ -104,7 +103,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
   self.tableView.accessibilityIdentifier = kAutofillProfileTableViewID;
   self.tableView.estimatedSectionFooterHeight =
       kTableViewHeaderFooterViewHeight;
-  [self updateEditButton];
+  [self updateUIForEditState];
   [self loadModel];
 }
 
@@ -206,8 +205,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
   return [self localProfilesExist];
 }
 
-- (void)editButtonPressed {
-  [super editButtonPressed];
+- (void)updateUIForEditState {
+  [super updateUIForEditState];
   [self setSwitchItemEnabled:!self.tableView.editing
                     itemType:ItemTypeAutofillAddressSwitch];
 }
@@ -349,18 +348,18 @@ typedef NS_ENUM(NSInteger, ItemType) {
     [self setEditing:NO animated:NO];
   }
 
-  [self updateEditButton];
+  [self updateUIForEditState];
   [self reloadData];
 }
 
 #pragma mark - Getters and Setter
 
 - (BOOL)isAutofillProfileEnabled {
-  return autofill::prefs::IsProfileAutofillEnabled(_browserState->GetPrefs());
+  return autofill::prefs::IsAutofillProfileEnabled(_browserState->GetPrefs());
 }
 
 - (void)setAutofillProfileEnabled:(BOOL)isEnabled {
-  return autofill::prefs::SetProfileAutofillEnabled(_browserState->GetPrefs(),
+  return autofill::prefs::SetAutofillProfileEnabled(_browserState->GetPrefs(),
                                                     isEnabled);
 }
 
@@ -415,7 +414,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
               [strongSelf.tableView isEditing]) {
             [strongSelf setEditing:NO animated:YES];
           }
-          [strongSelf updateEditButton];
+          [strongSelf updateUIForEditState];
           strongSelf->_deletionInProgress = NO;
         }];
   } else {

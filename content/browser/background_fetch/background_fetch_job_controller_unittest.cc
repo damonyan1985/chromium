@@ -124,6 +124,7 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
           request_counter++, std::move(request_ptr),
           /* has_request_body= */ false);
       request->InitializeDownloadGuid();
+      request->set_can_populate_body(true);
       request_infos.push_back(request);
     }
 
@@ -187,7 +188,7 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
         browser_context(),
         base::WrapRefCounted(embedded_worker_test_helper()->context_wrapper()),
         base::WrapRefCounted(partition->GetCacheStorageContext()),
-        /* quota_manager_proxy= */ nullptr);
+        /* quota_manager_proxy= */ nullptr, devtools_context());
   }
 
   void TearDown() override {
@@ -219,7 +220,8 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
 
  private:
   void DidUpdateProgress(
-      const blink::mojom::BackgroundFetchRegistration& registration) {
+      const std::string& unique_id,
+      const blink::mojom::BackgroundFetchRegistrationData& registration) {
     last_downloaded_ = registration.downloaded;
 
     if (job_progress_closure_)
@@ -375,6 +377,33 @@ TEST_F(BackgroundFetchJobControllerTest, MultipleRequestsJobWithMixedContent) {
   EXPECT_EQ(JobCompletionStatus::kCompleted,
             GetCompletionStatus(registration_id));
   EXPECT_TRUE(requests[1]->IsResultSuccess());
+}
+
+TEST_F(BackgroundFetchJobControllerTest, InProgressBytes) {
+  BackgroundFetchRegistrationId registration_id;
+
+  auto requests = CreateRegistrationForRequests(
+      &registration_id,
+      {{GURL("https://example.com/upload?id=1"), "PUT"},
+       {GURL("https://example.com/upload?id=2"), "PUT"}},
+      /* auto_complete_requests= */ true);
+
+  std::unique_ptr<BackgroundFetchJobController> controller =
+      CreateJobController(registration_id, requests.size());
+
+  controller->StartRequest(requests[0], base::DoNothing());
+  controller->StartRequest(requests[1], base::DoNothing());
+
+  // Send fake update event.
+  controller->DidUpdateRequest(requests[0]->download_guid(),
+                               /* uploaded_bytes= */ 10u,
+                               /* downloaded_bytes= */ 20u);
+  controller->DidUpdateRequest(requests[1]->download_guid(),
+                               /* uploaded_bytes= */ 30u,
+                               /* downloaded_bytes= */ 40u);
+
+  EXPECT_EQ(controller->GetInProgressDownloadedBytes(), 20u + 40u);
+  EXPECT_EQ(controller->GetInProgressUploadedBytes(), 10u + 30u);
 }
 
 TEST_F(BackgroundFetchJobControllerTest, Abort) {

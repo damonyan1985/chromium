@@ -7,9 +7,11 @@
 
 #include <utility>
 
+#include "base/enterprise_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 
 namespace update_client {
@@ -37,16 +39,16 @@ std::unique_ptr<UpdaterState::Attributes> UpdaterState::GetState(
 
 #if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS))
 void UpdaterState::ReadState() {
-  is_enterprise_managed_ = IsEnterpriseManaged();
+  is_enterprise_managed_ = base::IsMachineExternallyManaged();
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   updater_name_ = GetUpdaterName();
   updater_version_ = GetUpdaterVersion(is_machine_);
   last_autoupdate_started_ = GetUpdaterLastStartedAU(is_machine_);
   last_checked_ = GetUpdaterLastChecked(is_machine_);
   is_autoupdate_check_enabled_ = IsAutoupdateCheckEnabled();
   update_policy_ = GetUpdatePolicy();
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 #endif  // OS_WIN or Mac
 
@@ -75,7 +77,7 @@ UpdaterState::Attributes UpdaterState::BuildAttributes() const {
       is_autoupdate_check_enabled_ ? "1" : "0";
 
   DCHECK((update_policy_ >= 0 && update_policy_ <= 3) || update_policy_ == -1);
-  attributes["updatepolicy"] = base::IntToString(update_policy_);
+  attributes["updatepolicy"] = base::NumberToString(update_policy_);
 
   return attributes;
 }

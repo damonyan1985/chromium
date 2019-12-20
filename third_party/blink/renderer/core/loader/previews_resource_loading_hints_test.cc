@@ -5,18 +5,20 @@
 #include "third_party/blink/renderer/core/loader/previews_resource_loading_hints.h"
 
 #include <memory>
-#include <vector>
 
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_load_priority.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -29,7 +31,7 @@ namespace {
 class PreviewsResourceLoadingHintsTest : public PageTestBase {
  public:
   PreviewsResourceLoadingHintsTest() {
-    dummy_page_holder_ = DummyPageHolder::Create(IntSize(1, 1));
+    dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(1, 1));
   }
 
  protected:
@@ -37,17 +39,18 @@ class PreviewsResourceLoadingHintsTest : public PageTestBase {
 };
 
 TEST_F(PreviewsResourceLoadingHintsTest, NoPatterns) {
-  std::vector<WTF::String> subresources_to_block;
+  Vector<WTF::String> subresources_to_block;
 
   PreviewsResourceLoadingHints* hints = PreviewsResourceLoadingHints::Create(
       dummy_page_holder_->GetDocument(), ukm::UkmRecorder::GetNewSourceID(),
       subresources_to_block);
-  EXPECT_TRUE(hints->AllowLoad(KURL("https://www.example.com/"),
+  EXPECT_TRUE(hints->AllowLoad(ResourceType::kScript,
+                               KURL("https://www.example.com/"),
                                ResourceLoadPriority::kHighest));
 }
 
 TEST_F(PreviewsResourceLoadingHintsTest, OnePattern) {
-  std::vector<WTF::String> subresources_to_block;
+  Vector<WTF::String> subresources_to_block;
   subresources_to_block.push_back("foo.jpg");
 
   PreviewsResourceLoadingHints* hints = PreviewsResourceLoadingHints::Create(
@@ -72,16 +75,24 @@ TEST_F(PreviewsResourceLoadingHintsTest, OnePattern) {
 
   for (const auto& test : tests) {
     base::HistogramTester histogram_tester;
+    // By default, resource blocking hints do not apply to images.
+    EXPECT_TRUE(hints->AllowLoad(ResourceType::kImage, test.url,
+                                 ResourceLoadPriority::kHighest));
+    // By default, resource blocking hints apply to CSS and Scripts.
     EXPECT_EQ(test.allow_load_expected,
-              hints->AllowLoad(test.url, ResourceLoadPriority::kHighest));
+              hints->AllowLoad(ResourceType::kCSSStyleSheet, test.url,
+                               ResourceLoadPriority::kHighest));
+    EXPECT_EQ(test.allow_load_expected,
+              hints->AllowLoad(ResourceType::kScript, test.url,
+                               ResourceLoadPriority::kHighest));
     histogram_tester.ExpectUniqueSample(
         "ResourceLoadingHints.ResourceLoadingBlocked",
-        !test.allow_load_expected, 1);
+        !test.allow_load_expected, 2);
     if (!test.allow_load_expected) {
       histogram_tester.ExpectUniqueSample(
           "ResourceLoadingHints.ResourceLoadingBlocked.ResourceLoadPriority."
           "Blocked",
-          ResourceLoadPriority::kHighest, 1);
+          ResourceLoadPriority::kHighest, 2);
       histogram_tester.ExpectTotalCount(
           "ResourceLoadingHints.ResourceLoadingBlocked.ResourceLoadPriority."
           "Allowed",
@@ -94,13 +105,13 @@ TEST_F(PreviewsResourceLoadingHintsTest, OnePattern) {
       histogram_tester.ExpectUniqueSample(
           "ResourceLoadingHints.ResourceLoadingBlocked.ResourceLoadPriority."
           "Allowed",
-          ResourceLoadPriority::kHighest, 1);
+          ResourceLoadPriority::kHighest, 2);
     }
   }
 }
 
 TEST_F(PreviewsResourceLoadingHintsTest, MultiplePatterns) {
-  std::vector<WTF::String> subresources_to_block;
+  Vector<WTF::String> subresources_to_block;
   subresources_to_block.push_back(".example1.com/foo.jpg");
   subresources_to_block.push_back(".example1.com/bar.jpg");
   subresources_to_block.push_back(".example2.com/baz.jpg");
@@ -128,12 +139,13 @@ TEST_F(PreviewsResourceLoadingHintsTest, MultiplePatterns) {
 
   for (const auto& test : tests) {
     EXPECT_EQ(test.allow_load_expected,
-              hints->AllowLoad(test.url, ResourceLoadPriority::kHighest));
+              hints->AllowLoad(ResourceType::kScript, test.url,
+                               ResourceLoadPriority::kHighest));
   }
 }
 
 TEST_F(PreviewsResourceLoadingHintsTest, OnePatternHistogramChecker) {
-  std::vector<WTF::String> subresources_to_block;
+  Vector<WTF::String> subresources_to_block;
   subresources_to_block.push_back("foo.jpg");
 
   PreviewsResourceLoadingHints* hints = PreviewsResourceLoadingHints::Create(
@@ -158,7 +170,8 @@ TEST_F(PreviewsResourceLoadingHintsTest, OnePatternHistogramChecker) {
   for (const auto& test : tests) {
     base::HistogramTester histogram_tester;
     EXPECT_EQ(test.allow_load_expected,
-              hints->AllowLoad(test.url, test.resource_load_priority));
+              hints->AllowLoad(ResourceType::kScript, test.url,
+                               test.resource_load_priority));
     histogram_tester.ExpectUniqueSample(
         "ResourceLoadingHints.ResourceLoadingBlocked",
         !test.allow_load_expected, 1);
@@ -185,7 +198,7 @@ TEST_F(PreviewsResourceLoadingHintsTest, OnePatternHistogramChecker) {
 }
 
 TEST_F(PreviewsResourceLoadingHintsTest, MultiplePatternUKMChecker) {
-  std::vector<WTF::String> subresources_to_block;
+  Vector<WTF::String> subresources_to_block;
   subresources_to_block.push_back(".example1.com/low_1.jpg");
   subresources_to_block.push_back(".example1.com/very_low_1.jpg");
   subresources_to_block.push_back(".example1.com/very_high_1.jpg");
@@ -235,7 +248,7 @@ TEST_F(PreviewsResourceLoadingHintsTest, MultiplePatternUKMChecker) {
   };
 
   for (const auto& resource_to_load : resources_to_load) {
-    hints->AllowLoad(resource_to_load.url,
+    hints->AllowLoad(ResourceType::kScript, resource_to_load.url,
                      resource_to_load.resource_load_priority);
   }
 
@@ -260,6 +273,123 @@ TEST_F(PreviewsResourceLoadingHintsTest, MultiplePatternUKMChecker) {
                                       UkmEntry::kblocked_high_priorityName, 0);
   test_ukm_recorder.ExpectEntryMetric(
       entry, UkmEntry::kblocked_very_high_priorityName, 1);
+}
+
+// Test class that overrides field trial so that resource blocking hints apply
+// to images as well.
+class PreviewsResourceLoadingHintsTestBlockImages
+    : public PreviewsResourceLoadingHintsTest {
+ public:
+  PreviewsResourceLoadingHintsTestBlockImages() = default;
+
+  void SetUp() override {
+    std::map<std::string, std::string> feature_parameters;
+    feature_parameters["block_resource_type_1"] = "true";
+
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        blink::features::kPreviewsResourceLoadingHintsSpecificResourceTypes,
+        feature_parameters);
+  }
+
+ protected:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(PreviewsResourceLoadingHintsTestBlockImages,
+       OnePatternWithResourceSubtype) {
+  Vector<WTF::String> subresources_to_block;
+  subresources_to_block.push_back("foo.jpg");
+
+  PreviewsResourceLoadingHints* hints = PreviewsResourceLoadingHints::Create(
+      dummy_page_holder_->GetDocument(), ukm::UkmRecorder::GetNewSourceID(),
+      subresources_to_block);
+
+  const struct {
+    KURL url;
+    bool allow_load_expected;
+  } tests[] = {
+      {KURL("https://www.example.com/"), true},
+      {KURL("https://www.example.com/foo.js"), true},
+      {KURL("https://www.example.com/foo.jpg"), false},
+      {KURL("https://www.example.com/pages/foo.jpg"), false},
+      {KURL("https://www.example.com/foobar.jpg"), true},
+      {KURL("https://www.example.com/barfoo.jpg"), false},
+      {KURL("http://www.example.com/foo.jpg"), false},
+      {KURL("http://www.example.com/foo.jpg?q=alpha"), false},
+      {KURL("http://www.example.com/bar.jpg?q=foo.jpg"), true},
+      {KURL("http://www.example.com/bar.jpg?q=foo.jpg#foo.jpg"), true},
+  };
+
+  for (const auto& test : tests) {
+    // By default, resource blocking hints do not apply to SVG documents.
+    EXPECT_TRUE(hints->AllowLoad(ResourceType::kSVGDocument, test.url,
+                                 ResourceLoadPriority::kHighest));
+    // Feature override should cause resource blocking hints to apply to images.
+    EXPECT_EQ(test.allow_load_expected,
+              hints->AllowLoad(ResourceType::kImage, test.url,
+                               ResourceLoadPriority::kHighest));
+    EXPECT_EQ(test.allow_load_expected,
+              hints->AllowLoad(ResourceType::kScript, test.url,
+                               ResourceLoadPriority::kHighest));
+  }
+}
+
+// Test class that overrides field trial so that resource blocking hints do not
+// apply to CSS.
+class PreviewsResourceLoadingHintsTestAllowCSS
+    : public PreviewsResourceLoadingHintsTestBlockImages {
+ public:
+  PreviewsResourceLoadingHintsTestAllowCSS() = default;
+
+  void SetUp() override {
+    std::map<std::string, std::string> feature_parameters;
+    feature_parameters["block_resource_type_2"] = "false";
+
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        blink::features::kPreviewsResourceLoadingHintsSpecificResourceTypes,
+        feature_parameters);
+  }
+};
+
+TEST_F(PreviewsResourceLoadingHintsTestAllowCSS,
+       OnePatternWithResourceSubtype) {
+  Vector<WTF::String> subresources_to_block;
+  subresources_to_block.push_back("foo.jpg");
+
+  PreviewsResourceLoadingHints* hints = PreviewsResourceLoadingHints::Create(
+      dummy_page_holder_->GetDocument(), ukm::UkmRecorder::GetNewSourceID(),
+      subresources_to_block);
+
+  const struct {
+    KURL url;
+    bool allow_load_expected;
+  } tests[] = {
+      {KURL("https://www.example.com/"), true},
+      {KURL("https://www.example.com/foo.js"), true},
+      {KURL("https://www.example.com/foo.jpg"), false},
+      {KURL("https://www.example.com/pages/foo.jpg"), false},
+      {KURL("https://www.example.com/foobar.jpg"), true},
+      {KURL("https://www.example.com/barfoo.jpg"), false},
+      {KURL("http://www.example.com/foo.jpg"), false},
+      {KURL("http://www.example.com/foo.jpg?q=alpha"), false},
+      {KURL("http://www.example.com/bar.jpg?q=foo.jpg"), true},
+      {KURL("http://www.example.com/bar.jpg?q=foo.jpg#foo.jpg"), true},
+  };
+
+  for (const auto& test : tests) {
+    // Feature override should cause resource blocking hints to apply to only
+    // scripts and fonts.
+    EXPECT_TRUE(hints->AllowLoad(ResourceType::kImage, test.url,
+                                 ResourceLoadPriority::kHighest));
+    EXPECT_TRUE(hints->AllowLoad(ResourceType::kCSSStyleSheet, test.url,
+                                 ResourceLoadPriority::kHighest));
+    EXPECT_EQ(test.allow_load_expected,
+              hints->AllowLoad(ResourceType::kScript, test.url,
+                               ResourceLoadPriority::kHighest));
+    EXPECT_EQ(test.allow_load_expected,
+              hints->AllowLoad(ResourceType::kFont, test.url,
+                               ResourceLoadPriority::kHighest));
+  }
 }
 
 }  // namespace

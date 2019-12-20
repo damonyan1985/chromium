@@ -12,10 +12,12 @@
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/public/cpp/stylus_utils.h"
 #include "base/memory/ptr_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
@@ -24,7 +26,7 @@
 #include "chrome/browser/chromeos/system/timezone_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
-#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/constants/devicetype.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_handler.h"
@@ -50,6 +52,9 @@ const char kPropertyHWID[] = "hwid";
 
 // Key which corresponds to the customization ID setting.
 const char kPropertyCustomizationID[] = "customizationId";
+
+// Key which corresponds to the oem_device_requisition setting.
+const char kPropertyDeviceRequisition[] = "deviceRequisition";
 
 // Key which corresponds to the home provider property.
 const char kPropertyHomeProvider[] = "homeProvider";
@@ -105,7 +110,7 @@ const char kPropertyFocusHighlightEnabled[] = "a11yFocusHighlightEnabled";
 // Key which corresponds to the select-to-speak A11Y property in JS.
 const char kPropertySelectToSpeakEnabled[] = "a11ySelectToSpeakEnabled";
 
-// Key which corresponds to the switch access A11Y property in JS.
+// Key which corresponds to the Switch Access A11Y property in JS.
 const char kPropertySwitchAccessEnabled[] = "a11ySwitchAccessEnabled";
 
 // Key which corresponds to the send-function-keys property in JS.
@@ -189,10 +194,6 @@ const char kStylusStatusSeen[] = "seen";
 
 // Key which corresponds to the assistantStatus property in JS.
 const char kPropertyAssistantStatus[] = "assistantStatus";
-
-// Value to which assistantStatus property is set when the device does not
-// support Assistant.
-const char kAssistantStatusUnsupported[] = "unsupported";
 
 // Value to which assistantStatus property is set when the device supports
 // Assistant.
@@ -293,6 +294,15 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
     return std::make_unique<base::Value>(customization_id);
   }
 
+  if (property_name == kPropertyDeviceRequisition) {
+    std::string device_requisition;
+    chromeos::system::StatisticsProvider* provider =
+        chromeos::system::StatisticsProvider::GetInstance();
+    provider->GetMachineStatistic(chromeos::system::kOemDeviceRequisitionKey,
+                                  &device_requisition);
+    return std::make_unique<base::Value>(device_requisition);
+  }
+
   if (property_name == kPropertyHomeProvider) {
     const chromeos::DeviceState* cellular_device =
         NetworkHandler::Get()->network_state_handler()->GetDeviceStateByType(
@@ -376,9 +386,7 @@ std::unique_ptr<base::Value> ChromeosInfoPrivateGetFunction::GetValue(
   }
 
   if (property_name == kPropertyAssistantStatus) {
-    return std::make_unique<base::Value>(
-        chromeos::switches::IsAssistantEnabled() ? kAssistantStatusSupported
-                                                 : kAssistantStatusUnsupported);
+    return std::make_unique<base::Value>(kAssistantStatusSupported);
   }
 
   if (property_name == kPropertyClientId) {

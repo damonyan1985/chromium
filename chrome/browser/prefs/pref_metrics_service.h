@@ -12,6 +12,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "url/gurl.h"
 
+class PrefService;
 class Profile;
 
 // PrefMetricsService is responsible for recording prefs-related UMA stats.
@@ -51,7 +52,7 @@ class PrefMetricsService : public KeyedService {
   Profile* profile_;
   PrefService* prefs_;
 
-  base::WeakPtrFactory<PrefMetricsService> weak_factory_;
+  base::WeakPtrFactory<PrefMetricsService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrefMetricsService);
 };

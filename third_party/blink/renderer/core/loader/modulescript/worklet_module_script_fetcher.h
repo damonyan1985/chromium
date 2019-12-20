@@ -16,14 +16,14 @@ class ResourceFetcher;
 // WorkletModuleScriptFetcher is an implementation of ModuleScriptFetcher
 // interface for Worklets. This implements the custom "perform the fetch" hook
 // defined in the Worklets spec:
-// https://html.spec.whatwg.org/multipage/webappapis.html#fetching-scripts-perform-fetch
+// https://html.spec.whatwg.org/C/#fetching-scripts-perform-fetch
 // https://drafts.css-houdini.org/worklets/#fetch-a-worklet-script
 //
 // WorkletModuleScriptFetcher either fetchs a cached result from
 // WorkletModuleResponsesMap, or defers to ModuleScriptFetcher and
 // stores the result in WorkletModuleResponsesMap on fetch completion.
 class CORE_EXPORT WorkletModuleScriptFetcher final
-    : public GarbageCollectedFinalized<WorkletModuleScriptFetcher>,
+    : public GarbageCollected<WorkletModuleScriptFetcher>,
       public ModuleScriptFetcher {
   USING_GARBAGE_COLLECTED_MIXIN(WorkletModuleScriptFetcher);
 
@@ -33,6 +33,7 @@ class CORE_EXPORT WorkletModuleScriptFetcher final
   // Implements ModuleScriptFetcher.
   void Fetch(FetchParameters&,
              ResourceFetcher*,
+             const Modulator* modulator_for_built_in_modules,
              ModuleGraphLevel,
              ModuleScriptFetcher::Client*) override;
 

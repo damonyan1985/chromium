@@ -10,18 +10,14 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/extensions/browser_action_test_util.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "extensions/common/extension_builder.h"
 
-class ExtensionAction;
 class ScopedTestingLocalState;
 class ToolbarActionsBar;
 class ToolbarActionsModel;
-
-namespace content {
-class WebContents;
-}
 
 namespace extensions {
 class Extension;
@@ -50,11 +46,6 @@ class ToolbarActionsBarUnitTest : public BrowserWithTestWindowTest,
 
   // Activates the tab at the given |index| in the tab strip model.
   void ActivateTab(int index);
-
-  // Set whether or not the given |action| wants to run on the |web_contents|.
-  void SetActionWantsToRunOnTab(ExtensionAction* action,
-                                content::WebContents* web_contents,
-                                bool wants_to_run);
 
   // Creates an extension with the given |name| and |action_type|, adds it to
   // the associated extension service, and returns the created extension. (It's
@@ -92,6 +83,8 @@ class ToolbarActionsBarUnitTest : public BrowserWithTestWindowTest,
   }
 
  private:
+  base::test::ScopedFeatureList feature_list_;
+
   // The associated ToolbarActionsModel (owned by the keyed service setup).
   ToolbarActionsModel* toolbar_model_;
 

@@ -48,12 +48,50 @@ class SupportLibWebSettingsAdapter implements WebSettingsBoundaryInterface {
     }
 
     @Override
-    public boolean getShouldSuppressErrorPage() {
-        return mAwSettings.getShouldSuppressErrorPage();
+    public boolean getWillSuppressErrorPage() {
+        return mAwSettings.getWillSuppressErrorPage();
     }
 
     @Override
-    public void setShouldSuppressErrorPage(boolean suppressed) {
-        mAwSettings.setShouldSuppressErrorPage(suppressed);
+    public void setWillSuppressErrorPage(boolean suppressed) {
+        mAwSettings.setWillSuppressErrorPage(suppressed);
+    }
+
+    @Override
+    public void setForceDark(int forceDarkMode) {
+        mAwSettings.setForceDarkMode(forceDarkMode);
+    }
+
+    @Override
+    public int getForceDark() {
+        return mAwSettings.getForceDarkMode();
+    }
+
+    @Override
+    public void setForceDarkBehavior(int forceDarkBehavior) {
+        switch (forceDarkBehavior) {
+            case ForceDarkBehavior.FORCE_DARK_ONLY:
+                mAwSettings.setForceDarkBehavior(AwSettings.FORCE_DARK_ONLY);
+                break;
+            case ForceDarkBehavior.MEDIA_QUERY_ONLY:
+                mAwSettings.setForceDarkBehavior(AwSettings.MEDIA_QUERY_ONLY);
+                break;
+            case ForceDarkBehavior.PREFER_MEDIA_QUERY_OVER_FORCE_DARK:
+                mAwSettings.setForceDarkBehavior(AwSettings.PREFER_MEDIA_QUERY_OVER_FORCE_DARK);
+                break;
+        }
+    }
+
+    @Override
+    public int getForceDarkBehavior() {
+        switch (mAwSettings.getForceDarkBehavior()) {
+            case AwSettings.FORCE_DARK_ONLY:
+                return ForceDarkBehavior.FORCE_DARK_ONLY;
+            case AwSettings.MEDIA_QUERY_ONLY:
+                return ForceDarkBehavior.MEDIA_QUERY_ONLY;
+            case AwSettings.PREFER_MEDIA_QUERY_OVER_FORCE_DARK:
+                return ForceDarkBehavior.PREFER_MEDIA_QUERY_OVER_FORCE_DARK;
+        }
+        return ForceDarkBehavior.PREFER_MEDIA_QUERY_OVER_FORCE_DARK;
     }
 }

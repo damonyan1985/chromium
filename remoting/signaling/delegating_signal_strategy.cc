@@ -21,8 +21,7 @@ DelegatingSignalStrategy::DelegatingSignalStrategy(
     : local_address_(local_address),
       delegate_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       client_task_runner_(client_task_runner),
-      send_iq_callback_(send_iq_callback),
-      weak_factory_(this) {
+      send_iq_callback_(send_iq_callback) {
   incoming_iq_callback_ =
       base::BindRepeating(&OnIncomingMessageFromDelegate,
                           weak_factory_.GetWeakPtr(), client_task_runner_);
@@ -46,8 +45,8 @@ void DelegatingSignalStrategy::OnIncomingMessageFromDelegate(
   }
 
   client_task_runner->PostTask(
-      FROM_HERE, base::Bind(&DelegatingSignalStrategy::OnIncomingMessage,
-                            weak_ptr, message));
+      FROM_HERE, base::BindOnce(&DelegatingSignalStrategy::OnIncomingMessage,
+                                weak_ptr, message));
 }
 
 void DelegatingSignalStrategy::OnIncomingMessage(const std::string& message) {
@@ -103,8 +102,8 @@ bool DelegatingSignalStrategy::SendStanza(
     std::unique_ptr<jingle_xmpp::XmlElement> stanza) {
   DCHECK(client_task_runner_->BelongsToCurrentThread());
   GetLocalAddress().SetInMessage(stanza.get(), SignalingAddress::FROM);
-  delegate_task_runner_->PostTask(FROM_HERE,
-                                  base::Bind(send_iq_callback_, stanza->Str()));
+  delegate_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(send_iq_callback_, stanza->Str()));
   return true;
 }
 

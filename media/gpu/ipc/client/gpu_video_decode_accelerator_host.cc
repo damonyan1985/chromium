@@ -21,8 +21,7 @@ GpuVideoDecodeAcceleratorHost::GpuVideoDecodeAcceleratorHost(
       decoder_route_id_(MSG_ROUTING_NONE),
       client_(nullptr),
       impl_(impl),
-      media_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_this_factory_(this) {
+      media_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   DCHECK(channel_);
   DCHECK(impl_);
 
@@ -104,21 +103,23 @@ bool GpuVideoDecodeAcceleratorHost::Initialize(const Config& config,
   return true;
 }
 
-void GpuVideoDecodeAcceleratorHost::Decode(
-    const BitstreamBuffer& bitstream_buffer) {
+void GpuVideoDecodeAcceleratorHost::Decode(BitstreamBuffer bitstream_buffer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!channel_)
     return;
-  BitstreamBuffer buffer_to_send = bitstream_buffer;
-  base::SharedMemoryHandle handle =
-      channel_->ShareToGpuProcess(bitstream_buffer.handle());
-  if (!base::SharedMemory::IsHandleValid(handle)) {
-    NOTREACHED() << "Failed to duplicate buffer handler";
-    return;
+  if (channel_->IsLost()) {
+    Send(new AcceleratedVideoDecoderMsg_Decode(
+        decoder_route_id_,
+        BitstreamBuffer(bitstream_buffer.id(),
+                        base::subtle::PlatformSharedMemoryRegion(),
+                        bitstream_buffer.size(), bitstream_buffer.offset(),
+                        bitstream_buffer.presentation_timestamp())));
+  } else {
+    // The legacy IPC call will duplicate the shared memory region in
+    // bitstream_buffer.
+    Send(new AcceleratedVideoDecoderMsg_Decode(decoder_route_id_,
+                                               bitstream_buffer));
   }
-  buffer_to_send.set_handle(handle);
-  Send(
-      new AcceleratedVideoDecoderMsg_Decode(decoder_route_id_, buffer_to_send));
 }
 
 void GpuVideoDecodeAcceleratorHost::AssignPictureBuffers(
@@ -191,8 +192,8 @@ void GpuVideoDecodeAcceleratorHost::OnWillDeleteImpl() {
 
   // The gpu::CommandBufferProxyImpl is going away; error out this VDA.
   media_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&GpuVideoDecodeAcceleratorHost::OnChannelError, weak_this_));
+      FROM_HERE, base::BindOnce(&GpuVideoDecodeAcceleratorHost::OnChannelError,
+                                weak_this_));
 }
 
 void GpuVideoDecodeAcceleratorHost::PostNotifyError(Error error) {
@@ -262,6 +263,7 @@ void GpuVideoDecodeAcceleratorHost::OnPictureReady(
   Picture picture(params.picture_buffer_id, params.bitstream_buffer_id,
                   params.visible_rect, params.color_space,
                   params.allow_overlay);
+  picture.set_read_lock_fences_enabled(params.read_lock_fences_enabled);
   picture.set_size_changed(params.size_changed);
   picture.set_texture_owner(params.surface_texture);
   picture.set_wants_promotion_hint(params.wants_promotion_hint);

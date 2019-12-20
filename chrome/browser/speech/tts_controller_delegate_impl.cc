@@ -20,7 +20,7 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/tts_controller.h"
-#include "third_party/blink/public/platform/web_speech_synthesis_constants.h"
+#include "third_party/blink/public/mojom/speech/speech_synthesis.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -32,7 +32,7 @@ bool VoiceIdMatches(const std::string& voice_id,
       (voice.engine_id.empty() && !voice.native))
     return false;
   std::unique_ptr<base::DictionaryValue> json =
-      base::DictionaryValue::From(base::JSONReader::Read(voice_id));
+      base::DictionaryValue::From(base::JSONReader::ReadDeprecated(voice_id));
   std::string default_name;
   std::string default_extension_id;
   json->GetString("name", &default_name);
@@ -61,7 +61,7 @@ TtsControllerDelegateImpl::~TtsControllerDelegateImpl() {
 }
 
 int TtsControllerDelegateImpl::GetMatchingVoice(
-    const content::TtsUtterance* utterance,
+    content::TtsUtterance* utterance,
     std::vector<content::VoiceData>& voices) {
   // Return the index of the voice that best match the utterance parameters.
   //
@@ -123,7 +123,7 @@ int TtsControllerDelegateImpl::GetMatchingVoice(
     }
 
     // Next, prefer required event types.
-    if (utterance->GetRequiredEventTypes().size() > 0) {
+    if (!utterance->GetRequiredEventTypes().empty()) {
       bool has_all_required_event_types = true;
       for (auto iter = utterance->GetRequiredEventTypes().begin();
            iter != utterance->GetRequiredEventTypes().end(); ++iter) {
@@ -195,23 +195,23 @@ void TtsControllerDelegateImpl::UpdateUtteranceDefaultsFromPrefs(
   // Update pitch, rate and volume from user prefs if not set explicitly
   // on this utterance.
   const PrefService* prefs = GetPrefService(utterance);
-  if (*rate == blink::kWebSpeechSynthesisDoublePrefNotSet) {
+  if (*rate == blink::mojom::kSpeechSynthesisDoublePrefNotSet) {
     *rate = prefs ? prefs->GetDouble(prefs::kTextToSpeechRate)
-                  : blink::kWebSpeechSynthesisDefaultTextToSpeechRate;
+                  : blink::mojom::kSpeechSynthesisDefaultRate;
   }
-  if (*pitch == blink::kWebSpeechSynthesisDoublePrefNotSet) {
+  if (*pitch == blink::mojom::kSpeechSynthesisDoublePrefNotSet) {
     *pitch = prefs ? prefs->GetDouble(prefs::kTextToSpeechPitch)
-                   : blink::kWebSpeechSynthesisDefaultTextToSpeechPitch;
+                   : blink::mojom::kSpeechSynthesisDefaultPitch;
   }
-  if (*volume == blink::kWebSpeechSynthesisDoublePrefNotSet) {
+  if (*volume == blink::mojom::kSpeechSynthesisDoublePrefNotSet) {
     *volume = prefs ? prefs->GetDouble(prefs::kTextToSpeechVolume)
-                    : blink::kWebSpeechSynthesisDefaultTextToSpeechVolume;
+                    : blink::mojom::kSpeechSynthesisDefaultVolume;
   }
 #endif  // defined(OS_CHROMEOS)
 }
 
 const PrefService* TtsControllerDelegateImpl::GetPrefService(
-    const content::TtsUtterance* utterance) {
+    content::TtsUtterance* utterance) {
   const PrefService* prefs = nullptr;
   // The utterance->GetBrowserContext() is null in tests.
   if (utterance->GetBrowserContext()) {

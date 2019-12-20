@@ -33,6 +33,21 @@
 #include "base/mac/mac_util.h"
 #endif
 
+// TODO(crbug.com/969798): Fix memory leaks in tests and re-enable on LSAN.
+#ifdef LEAK_SANITIZER
+#define MAYBE_Create DISABLED_Create
+#else
+#define MAYBE_Create Create
+#endif
+
+// TYPED_TEST_P() and REGISTER_TYPED_TEST_SUITE_P() don't do macro expansion on
+// their parameters, making the MAYBE_ technique above not work -- these macros
+// are a workaround.
+#define TYPED_TEST_P_WITH_EXPANSION(SuiteName, TestName) \
+  TYPED_TEST_P(SuiteName, TestName)
+#define REGISTER_TYPED_TEST_SUITE_P_WITH_EXPANSION(SuiteName, ...) \
+  REGISTER_TYPED_TEST_SUITE_P(SuiteName, __VA_ARGS__)
+
 namespace gl {
 
 namespace internal {
@@ -43,6 +58,9 @@ void DrawTextureQuad(GLenum target, const gfx::Size& size);
 class GLImageTestDelegateBase {
  public:
   virtual ~GLImageTestDelegateBase() {}
+
+  virtual void DidSetUp() {}
+  virtual void WillTearDown() {}
 
   virtual base::Optional<GLImplementation> GetPreferedGLImplementation() const;
   virtual bool SkipTest() const;
@@ -59,8 +77,10 @@ class GLImageTest : public testing::Test {
     context_ =
         gl::init::CreateGLContext(nullptr, surface_.get(), GLContextAttribs());
     context_->MakeCurrent(surface_.get());
+    delegate_.DidSetUp();
   }
   void TearDown() override {
+    delegate_.WillTearDown();
     context_->ReleaseCurrent(surface_.get());
     context_ = nullptr;
     surface_ = nullptr;
@@ -73,9 +93,9 @@ class GLImageTest : public testing::Test {
   GLImageTestDelegate delegate_;
 };
 
-TYPED_TEST_CASE_P(GLImageTest);
+TYPED_TEST_SUITE_P(GLImageTest);
 
-TYPED_TEST_P(GLImageTest, Create) {
+TYPED_TEST_P_WITH_EXPANSION(GLImageTest, MAYBE_Create) {
   if (this->delegate_.SkipTest())
     return;
 
@@ -104,15 +124,15 @@ TYPED_TEST_P(GLImageTest, Create) {
 
 // The GLImageTest test case verifies the behaviour that is expected from a
 // GLImage in order to be conformant.
-REGISTER_TYPED_TEST_CASE_P(GLImageTest, Create);
+REGISTER_TYPED_TEST_SUITE_P_WITH_EXPANSION(GLImageTest, MAYBE_Create);
 
 template <typename GLImageTestDelegate>
 class GLImageOddSizeTest : public GLImageTest<GLImageTestDelegate> {};
 
 // This test verifies that odd-sized GLImages can be created and destroyed.
-TYPED_TEST_CASE_P(GLImageOddSizeTest);
+TYPED_TEST_SUITE_P(GLImageOddSizeTest);
 
-TYPED_TEST_P(GLImageOddSizeTest, Create) {
+TYPED_TEST_P_WITH_EXPANSION(GLImageOddSizeTest, MAYBE_Create) {
   if (this->delegate_.SkipTest())
     return;
 
@@ -131,14 +151,14 @@ TYPED_TEST_P(GLImageOddSizeTest, Create) {
 
 // The GLImageTest test case verifies the behaviour that is expected from a
 // GLImage in order to be conformant.
-REGISTER_TYPED_TEST_CASE_P(GLImageOddSizeTest, Create);
+REGISTER_TYPED_TEST_SUITE_P_WITH_EXPANSION(GLImageOddSizeTest, MAYBE_Create);
 
 template <typename GLImageTestDelegate>
 class GLImageZeroInitializeTest : public GLImageTest<GLImageTestDelegate> {};
 
 // This test verifies that if an uninitialized image is bound to a texture, the
 // result is zero-initialized.
-TYPED_TEST_CASE_P(GLImageZeroInitializeTest);
+TYPED_TEST_SUITE_P(GLImageZeroInitializeTest);
 
 TYPED_TEST_P(GLImageZeroInitializeTest, ZeroInitialize) {
   if (this->delegate_.SkipTest())
@@ -187,12 +207,12 @@ TYPED_TEST_P(GLImageZeroInitializeTest, ZeroInitialize) {
   glDeleteFramebuffersEXT(1, &framebuffer);
 }
 
-REGISTER_TYPED_TEST_CASE_P(GLImageZeroInitializeTest, ZeroInitialize);
+REGISTER_TYPED_TEST_SUITE_P(GLImageZeroInitializeTest, ZeroInitialize);
 
 template <typename GLImageTestDelegate>
 class GLImageBindTest : public GLImageTest<GLImageTestDelegate> {};
 
-TYPED_TEST_CASE_P(GLImageBindTest);
+TYPED_TEST_SUITE_P(GLImageBindTest);
 
 TYPED_TEST_P(GLImageBindTest, BindTexImage) {
   if (this->delegate_.SkipTest())
@@ -237,18 +257,25 @@ TYPED_TEST_P(GLImageBindTest, BindTexImage) {
   glDeleteFramebuffersEXT(1, &framebuffer);
 }
 
-REGISTER_TYPED_TEST_CASE_P(GLImageBindTest, BindTexImage);
+REGISTER_TYPED_TEST_SUITE_P(GLImageBindTest, BindTexImage);
 
 template <typename GLImageTestDelegate>
 class GLImageCopyTest : public GLImageTest<GLImageTestDelegate> {};
 
-TYPED_TEST_CASE_P(GLImageCopyTest);
+TYPED_TEST_SUITE_P(GLImageCopyTest);
 
 TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
   if (this->delegate_.SkipTest())
     return;
 
-  const gfx::Size image_size(256, 256);
+  // CopyTexImage follows different code paths depending whether the image is
+  // > 1 MiB or not. This range of sizes should cover both possibilities
+  // regardless of format.
+  const std::vector<gfx::Size> image_size_list{
+      {256, 256},
+      {512, 512},
+      {1024, 1024},
+  };
   const uint8_t* image_color = this->delegate_.GetImageColor();
   const uint8_t texture_color[] = {0, 0, 0xff, 0xff};
 
@@ -259,47 +286,51 @@ TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
     glBindVertexArrayOES(vao);
   }
 
-  GLuint framebuffer =
-      GLTestHelper::SetupFramebuffer(image_size.width(), image_size.height());
-  ASSERT_TRUE(framebuffer);
-  glBindFramebufferEXT(GL_FRAMEBUFFER, framebuffer);
-  glViewport(0, 0, image_size.width(), image_size.height());
+  for (auto image_size : image_size_list) {
+    LOG(INFO) << "Testing with size " << image_size.ToString();
+    GLuint framebuffer =
+        GLTestHelper::SetupFramebuffer(image_size.width(), image_size.height());
+    ASSERT_TRUE(framebuffer);
+    glBindFramebufferEXT(GL_FRAMEBUFFER, framebuffer);
+    glViewport(0, 0, image_size.width(), image_size.height());
 
-  // Create a solid color green image of preferred format. This must succeed
-  // in order for a GLImage to be conformant.
-  scoped_refptr<GLImage> image =
-      this->delegate_.CreateSolidColorImage(image_size, image_color);
-  ASSERT_TRUE(image);
+    // Create a solid color green image of preferred format. This must succeed
+    // in order for a GLImage to be conformant.
+    scoped_refptr<GLImage> image =
+        this->delegate_.CreateSolidColorImage(image_size, image_color);
+    ASSERT_TRUE(image);
 
-  // Create a solid color blue texture of the same size as |image|.
-  unsigned target = this->delegate_.GetTextureTarget();
-  GLuint texture = GLTestHelper::CreateTexture(target);
-  std::unique_ptr<uint8_t[]> pixels(new uint8_t[BufferSizeForBufferFormat(
-      image_size, gfx::BufferFormat::RGBA_8888)]);
-  GLImageTestSupport::SetBufferDataToColor(
-      image_size.width(), image_size.height(),
-      static_cast<int>(RowSizeForBufferFormat(image_size.width(),
-                                              gfx::BufferFormat::RGBA_8888, 0)),
-      0, gfx::BufferFormat::RGBA_8888, texture_color, pixels.get());
-  glBindTexture(target, texture);
-  glTexImage2D(target, 0, GL_RGBA, image_size.width(), image_size.height(), 0,
-               GL_RGBA, GL_UNSIGNED_BYTE, pixels.get());
+    // Create a solid color blue texture of the same size as |image|.
+    unsigned target = this->delegate_.GetTextureTarget();
+    GLuint texture = GLTestHelper::CreateTexture(target);
+    std::unique_ptr<uint8_t[]> pixels(new uint8_t[BufferSizeForBufferFormat(
+        image_size, gfx::BufferFormat::RGBA_8888)]);
+    GLImageTestSupport::SetBufferDataToColor(
+        image_size.width(), image_size.height(),
+        static_cast<int>(RowSizeForBufferFormat(
+            image_size.width(), gfx::BufferFormat::RGBA_8888, 0)),
+        0, gfx::BufferFormat::RGBA_8888, texture_color, pixels.get());
+    glBindTexture(target, texture);
+    glTexImage2D(target, 0, GL_RGBA, image_size.width(), image_size.height(), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, pixels.get());
 
-  // Copy |image| to |texture|.
-  bool rv = image->CopyTexImage(target);
-  EXPECT_TRUE(rv);
+    // Copy |image| to |texture|.
+    bool rv = image->CopyTexImage(target);
+    EXPECT_TRUE(rv);
 
-  // Draw |texture| to viewport.
-  internal::DrawTextureQuad(target, image_size);
+    // Draw |texture| to viewport.
+    internal::DrawTextureQuad(target, image_size);
 
-  // Read back pixels to check expectations.
-  GLTestHelper::CheckPixelsWithError(
-      0, 0, image_size.width(), image_size.height(),
-      this->delegate_.GetAdmissibleError(), image_color);
+    // Read back pixels to check expectations.
+    GLTestHelper::CheckPixelsWithError(
+        0, 0, image_size.width(), image_size.height(),
+        this->delegate_.GetAdmissibleError(), image_color);
 
-  // Clean up.
-  glDeleteTextures(1, &texture);
-  glDeleteFramebuffersEXT(1, &framebuffer);
+    // Clean up.
+    glDeleteTextures(1, &texture);
+    glDeleteFramebuffersEXT(1, &framebuffer);
+  }
+
   if (vao) {
     glDeleteVertexArraysOES(1, &vao);
   }
@@ -307,8 +338,13 @@ TYPED_TEST_P(GLImageCopyTest, CopyTexImage) {
 
 // The GLImageCopyTest test case verifies that the GLImage implementation
 // handles CopyTexImage correctly.
-REGISTER_TYPED_TEST_CASE_P(GLImageCopyTest, CopyTexImage);
+REGISTER_TYPED_TEST_SUITE_P(GLImageCopyTest, CopyTexImage);
 
 }  // namespace gl
+
+// Avoid polluting source files that include this header.
+#undef MAYBE_Create
+#undef TYPED_TEST_P_WITH_EXPANSION
+#undef REGISTER_TYPED_TEST_SUITE_P_WITH_EXPANSION
 
 #endif  // UI_GL_TEST_GL_IMAGE_TEST_TEMPLATE_H_

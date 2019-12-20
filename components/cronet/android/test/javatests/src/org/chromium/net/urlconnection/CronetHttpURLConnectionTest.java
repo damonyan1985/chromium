@@ -15,6 +15,7 @@ import static org.chromium.net.CronetTestRule.getContext;
 import android.os.Build;
 import android.os.Process;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
@@ -22,7 +23,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.Log;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetEngine;
 import org.chromium.net.CronetException;
@@ -65,8 +66,10 @@ import java.util.regex.Pattern;
  * {@code OnlyRunCronetHttpURLConnection} only run Cronet's implementation.
  * See {@link CronetTestBase#runTest()} for details.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class CronetHttpURLConnectionTest {
+    private static final String TAG = CronetHttpURLConnectionTest.class.getSimpleName();
+
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
 
@@ -305,9 +308,10 @@ public class CronetHttpURLConnectionTest {
             fail();
         } catch (IOException e) {
             assertTrue(e instanceof java.net.ConnectException || e instanceof CronetException);
-            assertTrue((e.getMessage().contains("ECONNREFUSED")
-                    || (e.getMessage().contains("Connection refused"))
-                    || e.getMessage().contains("net::ERR_CONNECTION_REFUSED")));
+            assertTrue(e.getMessage().contains("ECONNREFUSED")
+                    || e.getMessage().contains("Connection refused")
+                    || e.getMessage().contains("net::ERR_CONNECTION_REFUSED")
+                    || e.getMessage().contains("Failed to connect"));
         }
         checkExceptionsAreThrown(secondConnection);
         urlConnection.disconnect();
@@ -332,9 +336,10 @@ public class CronetHttpURLConnectionTest {
             fail();
         } catch (IOException e) {
             assertTrue(e instanceof java.net.ConnectException || e instanceof CronetException);
-            assertTrue((e.getMessage().contains("ECONNREFUSED")
-                    || (e.getMessage().contains("Connection refused"))
-                    || e.getMessage().contains("net::ERR_CONNECTION_REFUSED")));
+            assertTrue(e.getMessage().contains("ECONNREFUSED")
+                    || e.getMessage().contains("Connection refused")
+                    || e.getMessage().contains("net::ERR_CONNECTION_REFUSED")
+                    || e.getMessage().contains("Failed to connect"));
         }
         checkExceptionsAreThrown(urlConnection);
     }
@@ -1359,6 +1364,10 @@ public class CronetHttpURLConnectionTest {
     @Feature({"Cronet"})
     @RequiresMinApi(9) // Tagging support added in API level 9: crrev.com/c/chromium/src/+/930086
     public void testTagging() throws Exception {
+        if (!CronetTestUtil.nativeCanGetTaggedBytes()) {
+            Log.i(TAG, "Skipping test - GetTaggedBytes unsupported.");
+            return;
+        }
         URL url = new URL(NativeTestServer.getEchoMethodURL());
 
         // Test untagged requests are given tag 0.

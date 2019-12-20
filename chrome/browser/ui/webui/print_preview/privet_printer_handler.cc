@@ -20,7 +20,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_utils.h"
-#include "services/identity/public/cpp/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -42,7 +42,7 @@ void FillPrinterDescription(const std::string& name,
 }  //  namespace
 
 PrivetPrinterHandler::PrivetPrinterHandler(Profile* profile)
-    : profile_(profile), weak_ptr_factory_(this) {}
+    : profile_(profile) {}
 
 PrivetPrinterHandler::~PrivetPrinterHandler() {}
 
@@ -54,7 +54,7 @@ void PrivetPrinterHandler::Reset() {
 }
 
 void PrivetPrinterHandler::StartGetPrinters(
-    const AddedPrintersCallback& added_printers_callback,
+    AddedPrintersCallback added_printers_callback,
     GetPrintersDoneCallback done_callback) {
   using local_discovery::ServiceDiscoverySharedClient;
   scoped_refptr<ServiceDiscoverySharedClient> service_discovery =
@@ -71,25 +71,32 @@ void PrivetPrinterHandler::StartGetCapability(const std::string& destination_id,
   DCHECK(!capabilities_callback_);
   capabilities_callback_ = std::move(callback);
   CreateHTTP(destination_id,
-             base::Bind(&PrivetPrinterHandler::CapabilitiesUpdateClient,
-                        weak_ptr_factory_.GetWeakPtr()));
+             base::BindOnce(&PrivetPrinterHandler::CapabilitiesUpdateClient,
+                            weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PrivetPrinterHandler::StartPrint(
-    const std::string& destination_id,
-    const std::string& capability,
     const base::string16& job_title,
-    base::Value ticket,
-    const gfx::Size& page_size,
+    base::Value settings,
     scoped_refptr<base::RefCountedMemory> print_data,
     PrintCallback callback) {
+  std::string destination_id;
+  std::string capabilities;
+  gfx::Size page_size;
+  base::Value ticket;
+  if (!ParseSettings(settings, &destination_id, &capabilities, &page_size,
+                     &ticket)) {
+    std::move(callback).Run(base::Value(-1));
+    return;
+  }
+
   DCHECK(!print_callback_);
   print_callback_ = std::move(callback);
   CreateHTTP(
       destination_id,
       base::BindOnce(&PrivetPrinterHandler::PrintUpdateClient,
                      weak_ptr_factory_.GetWeakPtr(), job_title, print_data,
-                     std::move(ticket), capability, page_size));
+                     std::move(ticket), capabilities, page_size));
 }
 
 void PrivetPrinterHandler::LocalPrinterChanged(
@@ -125,8 +132,7 @@ void PrivetPrinterHandler::OnPrivetPrintingError(
 }
 
 void PrivetPrinterHandler::StartLister(
-    const scoped_refptr<local_discovery::ServiceDiscoverySharedClient>&
-        client) {
+    scoped_refptr<local_discovery::ServiceDiscoverySharedClient> client) {
   DCHECK(!service_discovery_client_.get() ||
          service_discovery_client_.get() == client.get());
   service_discovery_client_ = client;
@@ -157,8 +163,8 @@ void PrivetPrinterHandler::CapabilitiesUpdateClient(
 
   privet_capabilities_operation_ =
       privet_http_client_->CreateCapabilitiesOperation(
-          base::Bind(&PrivetPrinterHandler::OnGotCapabilities,
-                     weak_ptr_factory_.GetWeakPtr()));
+          base::BindOnce(&PrivetPrinterHandler::OnGotCapabilities,
+                         weak_ptr_factory_.GetWeakPtr()));
   privet_capabilities_operation_->Start();
 }
 
@@ -191,7 +197,7 @@ void PrivetPrinterHandler::OnGotCapabilities(
   printer_info_and_caps.SetDictionary(kSettingCapabilities,
                                       std::move(capabilities_copy));
   std::move(capabilities_callback_)
-      .Run(std::move(*ValidateCddForPrintPreview(printer_info_and_caps)));
+      .Run(ValidateCddForPrintPreview(std::move(printer_info_and_caps)));
   privet_capabilities_operation_.reset();
 }
 
@@ -243,7 +249,7 @@ void PrivetPrinterHandler::StartPrint(
   privet_local_print_operation_->SetPageSize(page_size);
   privet_local_print_operation_->SetData(print_data);
 
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfileIfExists(profile_);
   if (identity_manager) {
     privet_local_print_operation_->SetUsername(

@@ -33,26 +33,37 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantCardElementView
   void AboutToRequestFocusFromTabTraversal(bool reverse) override;
   void OnFocus() override;
   void OnGestureEvent(ui::GestureEvent* event) override;
+  void ScrollRectToVisible(const gfx::Rect& rect) override;
 
   // content::NavigableContentsObserver:
   void DidAutoResizeView(const gfx::Size& new_size) override;
   void DidSuppressNavigation(const GURL& url,
                              WindowOpenDisposition disposition,
                              bool from_user_gesture) override;
+  void FocusedNodeChanged(bool is_editable_node,
+                          const gfx::Rect& node_bounds_in_screen) override;
 
   // Returns a reference to the native view associated with the underlying web
   // contents. When animating AssistantCardElementView, we should animate the
   // layer for the native view as opposed to painting to and animating a layer
   // belonging to AssistantCardElementView.
-  gfx::NativeView native_view() { return contents_->GetView()->native_view(); }
+  gfx::NativeView native_view() { return contents()->GetView()->native_view(); }
+
+  const AssistantCardElement* GetCardElementForTesting() const {
+    return card_element_;
+  }
 
  private:
   void InitLayout(const AssistantCardElement* card_element);
 
+  content::NavigableContents* contents();
+
   AssistantViewDelegate* const delegate_;
 
-  // Owned by AssistantCardElement.
-  content::NavigableContents* const contents_;
+  const AssistantCardElement* const card_element_;
+
+  // Rect of the focused node in the |contents_|.
+  gfx::Rect focused_node_rect_;
 
   DISALLOW_COPY_AND_ASSIGN(AssistantCardElementView);
 };

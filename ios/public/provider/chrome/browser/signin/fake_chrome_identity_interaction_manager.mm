@@ -6,6 +6,7 @@
 
 #include "base/mac/scoped_block.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
+#import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_interaction_manager_constants.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #include "ios/public/provider/chrome/browser/signin/signin_error_provider.h"
 
@@ -57,6 +58,7 @@
 
   // Obnoxious color, this is a test screen.
   self.view.backgroundColor = [UIColor magentaColor];
+  self.view.accessibilityIdentifier = kFakeAddAccountViewIdentifier;
 
   _signInButton = [UIButton buttonWithType:UIButtonTypeCustom];
   [_signInButton setTitle:@"Sign in" forState:UIControlStateNormal];

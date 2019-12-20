@@ -28,7 +28,7 @@ class DevToolsProtocolTestBindings : public WebContentsObserver,
   // content::DevToolsAgentHostClient implementation.
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) override;
+                               base::span<const uint8_t> message) override;
 
   // WebContentsObserver overrides
   void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
@@ -38,6 +38,8 @@ class DevToolsProtocolTestBindings : public WebContentsObserver,
 
   scoped_refptr<DevToolsAgentHost> agent_host_;
 #if !defined(OS_ANDROID)
+  // DevToolsFrontendHost does not exist on Android, but we also don't run web
+  // tests natively on Android.
   std::unique_ptr<DevToolsFrontendHost> frontend_host_;
 #endif
 

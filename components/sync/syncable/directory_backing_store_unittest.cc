@@ -15,7 +15,7 @@
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "components/sync/base/node_ordinal.h"
 #include "components/sync/base/time.h"
@@ -31,6 +31,12 @@ namespace syncer {
 namespace syncable {
 namespace {
 
+const char kTestCacheGuid[] = "test_cache_guid";
+
+base::RepeatingCallback<std::string()> TestCacheGuidGenerator() {
+  return base::BindRepeating([]() -> std::string { return kTestCacheGuid; });
+}
+
 // A handler that simply sets |catastrophic_error_handler_was_called| to true.
 void CatastrophicErrorHandler(bool* catastrophic_error_handler_was_called) {
   *catastrophic_error_handler_was_called = true;
@@ -39,7 +45,7 @@ void CatastrophicErrorHandler(bool* catastrophic_error_handler_was_called) {
 // Create a dirty EntryKernel with an ID derived from |id| + |id_suffix|.
 std::unique_ptr<EntryKernel> CreateEntry(int id, const std::string& id_suffix) {
   std::unique_ptr<EntryKernel> entry(new EntryKernel());
-  std::string id_string = base::Int64ToString(id) + id_suffix;
+  std::string id_string = base::NumberToString(id) + id_suffix;
   entry->put(ID, Id::CreateFromClientString(id_string));
   entry->put(META_HANDLE, id);
   entry->mark_dirty(nullptr);
@@ -63,11 +69,11 @@ class MigrationTest : public testing::TestWithParam<int> {
 
   static bool LoadAndIgnoreReturnedData(DirectoryBackingStore *dbs) {
     Directory::MetahandlesMap tmp_handles_map;
-    JournalIndex delete_journals;
     MetahandleSet metahandles_to_purge;
     Directory::KernelLoadInfo kernel_load_info;
-    return dbs->Load(&tmp_handles_map, &delete_journals, &metahandles_to_purge,
-                     &kernel_load_info) == OPENED;
+    DirOpenResult result =
+        dbs->Load(&tmp_handles_map, &metahandles_to_purge, &kernel_load_info);
+    return result == OPENED_NEW || result == OPENED_EXISTING;
   }
 
   void SetUpCorruptedRootDatabase(sql::Database* connection);
@@ -108,7 +114,7 @@ class MigrationTest : public testing::TestWithParam<int> {
   }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::ScopedTempDir temp_dir_;
 };
 
@@ -2634,8 +2640,8 @@ void MigrationTest::SetUpVersion87Database(sql::Database* connection) {
          "0',X'C2881000',NULL,X'2200',X'2200',NULL);"
       "INSERT INTO 'metas' VALUES(11,683,683,8,0,"
          META_PROTO_TIMES_VALS(11)
-         ",'s_ID_11','s_ID_6','s_ID_6',0,0,0,0,0,0,'Ho"
-         "me (The Chromium Projects)','Home (The Chromium Projects)',NULL,NULL,"
+         ",'s_ID_11','s_ID_6','s_ID_6',0,0,0,0,0,0,'Home"
+         " (The Chromium Projects)','Home (The Chromium Projects)',NULL,NULL,"
          "X'50514C784A456D623579366267644237646A7A2B62314130346E493D',X'C288102"
          "20A18687474703A2F2F6465762E6368726F6D69756D2E6F72672F1206414741545741"
          "',X'C28810290A1D687474703A2F2F6465762E6368726F6D69756D2E6F72672F6F746"
@@ -2749,8 +2755,8 @@ void MigrationTest::SetUpVersion88Database(sql::Database* connection) {
          "0',X'C2881000',NULL,X'2200',X'2200',NULL);"
       "INSERT INTO 'metas' VALUES(11,683,683,8,0,"
          META_PROTO_TIMES_VALS(11)
-         ",'s_ID_11','s_ID_6','s_ID_6',0,0,0,0,0,0,'Ho"
-         "me (The Chromium Projects)','Home (The Chromium Projects)',NULL,NULL,"
+         ",'s_ID_11','s_ID_6','s_ID_6',0,0,0,0,0,0,'Home"
+         " (The Chromium Projects)','Home (The Chromium Projects)',NULL,NULL,"
          "X'50514C784A456D623579366267644237646A7A2B62314130346E493D',X'C288102"
          "20A18687474703A2F2F6465762E6368726F6D69756D2E6F72672F1206414741545741"
          "',X'C28810290A1D687474703A2F2F6465762E6368726F6D69756D2E6F72672F6F746"
@@ -3573,17 +3579,15 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion79To80) {
 
   // Ensure the bag_of_chips has been set.
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
   Directory::KernelLoadInfo load_info;
 
-  ASSERT_TRUE(dbs.Load(&handles_map, &delete_journals, &metahandles_to_purge,
-                       &load_info));
+  ASSERT_TRUE(dbs.Load(&handles_map, &metahandles_to_purge, &load_info));
   // Check that the initial value is the serialization of an empty ChipBag.
   sync_pb::ChipBag chip_bag;
   std::string serialized_chip_bag;
   ASSERT_TRUE(chip_bag.SerializeToString(&serialized_chip_bag));
-  EXPECT_EQ(serialized_chip_bag, load_info.kernel_info.bag_of_chips);
+  EXPECT_EQ(serialized_chip_bag, load_info.kernel_info.legacy_bag_of_chips);
 }
 
 TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
@@ -3595,7 +3599,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
       "SELECT metahandle, server_position_in_parent "
       "FROM metas WHERE unique_server_tag = 'google_chrome'"));
   ASSERT_TRUE(s.Step());
-  ASSERT_EQ(sql::COLUMN_TYPE_INTEGER, s.ColumnType(1));
+  ASSERT_EQ(sql::ColumnType::kInteger, s.GetColumnType(1));
 
   TestDirectoryBackingStore dbs(GetUsername(), &connection);
   EXPECT_TRUE(dbs.MigrateVersion80To81());
@@ -3606,7 +3610,7 @@ TEST_F(DirectoryBackingStoreTest, MigrateVersion80To81) {
       "SELECT metahandle, server_ordinal_in_parent "
       "FROM metas WHERE unique_server_tag = 'google_chrome'"));
   ASSERT_TRUE(new_s.Step());
-  EXPECT_EQ(sql::COLUMN_TYPE_BLOB, new_s.ColumnType(1));
+  EXPECT_EQ(sql::ColumnType::kBlob, new_s.GetColumnType(1));
 
   std::string expected_ordinal = Int64ToNodeOrdinal(1048576).ToInternalValue();
   std::string actual_ordinal;
@@ -3834,12 +3838,10 @@ TEST_F(DirectoryBackingStoreTest, DetectInvalidPosition) {
 
   // Trying to unpack this entry should signal that the DB is corrupted.
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
   Directory::KernelLoadInfo kernel_load_info;
   EXPECT_EQ(FAILED_DATABASE_CORRUPT,
-            dbs.Load(&handles_map, &delete_journals, &metahandles_to_purge,
-                     &kernel_load_info));
+            dbs.Load(&handles_map, &metahandles_to_purge, &kernel_load_info));
 }
 
 TEST_F(DirectoryBackingStoreTest, DetectCorruptedRoot) {
@@ -3850,12 +3852,10 @@ TEST_F(DirectoryBackingStoreTest, DetectCorruptedRoot) {
   TestDirectoryBackingStore dbs(GetUsername(), &connection);
 
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
   Directory::KernelLoadInfo kernel_load_info;
   EXPECT_EQ(FAILED_DATABASE_CORRUPT,
-            dbs.Load(&handles_map, &delete_journals, &metahandles_to_purge,
-                     &kernel_load_info));
+            dbs.Load(&handles_map, &metahandles_to_purge, &kernel_load_info));
 }
 
 TEST_P(MigrationTest, ToCurrentVersion) {
@@ -3954,13 +3954,13 @@ TEST_P(MigrationTest, ToCurrentVersion) {
 
   syncable::Directory::KernelLoadInfo dir_info;
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
 
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
-    ASSERT_EQ(OPENED, dbs.Load(&handles_map, &delete_journals,
-                               &metahandles_to_purge, &dir_info));
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
+    ASSERT_EQ(OPENED_EXISTING,
+              dbs.Load(&handles_map, &metahandles_to_purge, &dir_info));
     if (!metahandles_to_purge.empty())
       dbs.DeleteEntries(DirectoryBackingStore::METAS_TABLE,
                         metahandles_to_purge);
@@ -4225,8 +4225,9 @@ TEST_P(MigrationTest, ToCurrentVersion) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(DirectoryBackingStore, MigrationTest,
-                        testing::Range(67, kCurrentDBVersion + 1));
+INSTANTIATE_TEST_SUITE_P(DirectoryBackingStore,
+                         MigrationTest,
+                         testing::Range(67, kCurrentDBVersion + 1));
 
 TEST_F(DirectoryBackingStoreTest, ModelTypeIds) {
   ModelTypeSet protocol_types = ProtocolTypes();
@@ -4256,9 +4257,11 @@ class OnDiskDirectoryBackingStoreForTest : public OnDiskDirectoryBackingStore {
 
 OnDiskDirectoryBackingStoreForTest::OnDiskDirectoryBackingStoreForTest(
     const std::string& dir_name,
-    const base::FilePath& backing_filepath) :
-  OnDiskDirectoryBackingStore(dir_name, backing_filepath),
-  first_open_failed_(false) { }
+    const base::FilePath& backing_filepath)
+    : OnDiskDirectoryBackingStore(dir_name,
+                                  TestCacheGuidGenerator(),
+                                  backing_filepath),
+      first_open_failed_(false) {}
 
 OnDiskDirectoryBackingStoreForTest::~OnDiskDirectoryBackingStoreForTest() { }
 
@@ -4281,7 +4284,8 @@ bool OnDiskDirectoryBackingStoreForTest::DidFailFirstOpenAttempt() {
 // due to read-only file system), is not tested here.
 TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
     EXPECT_TRUE(LoadAndIgnoreReturnedData(&dbs));
   }
 
@@ -4303,7 +4307,8 @@ TEST_F(DirectoryBackingStoreTest, MinorCorruption) {
 
 TEST_F(DirectoryBackingStoreTest, MinorCorruptionAndUpgrade) {
   {
-    OnDiskDirectoryBackingStore dbs(GetUsername(), GetDatabasePath());
+    OnDiskDirectoryBackingStore dbs(GetUsername(), TestCacheGuidGenerator(),
+                                    GetDatabasePath());
     EXPECT_TRUE(LoadAndIgnoreReturnedData(&dbs));
   }
 
@@ -4336,12 +4341,10 @@ TEST_F(DirectoryBackingStoreTest, DeleteEntries) {
   SetUpCurrentDatabaseAndCheckVersion(&connection);
   TestDirectoryBackingStore dbs(GetUsername(), &connection);
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
   Directory::KernelLoadInfo kernel_load_info;
 
-  dbs.Load(&handles_map, &delete_journals, &metahandles_to_purge,
-           &kernel_load_info);
+  dbs.Load(&handles_map, &metahandles_to_purge, &kernel_load_info);
   size_t initial_size = handles_map.size();
   ASSERT_LT(0U, initial_size) << "Test requires handles_map to delete.";
   int64_t first_to_die = handles_map.begin()->second->ref(META_HANDLE);
@@ -4376,16 +4379,6 @@ TEST_F(DirectoryBackingStoreTest, DeleteEntries) {
   EXPECT_EQ(0U, handles_map.size());
 }
 
-TEST_F(DirectoryBackingStoreTest, GenerateCacheGUID) {
-  const std::string& guid1 = TestDirectoryBackingStore::GenerateCacheGUID();
-  const std::string& guid2 = TestDirectoryBackingStore::GenerateCacheGUID();
-  EXPECT_EQ(24U, guid1.size());
-  EXPECT_EQ(24U, guid2.size());
-  // In theory this test can fail, but it won't before the universe
-  // dies of heat death.
-  EXPECT_NE(guid1, guid2);
-}
-
 TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
   sql::Database connection;
   ASSERT_TRUE(connection.Open(GetDatabasePath()));
@@ -4393,13 +4386,12 @@ TEST_F(DirectoryBackingStoreTest, IncreaseDatabasePageSizeFrom4KTo32K) {
   SetUpCurrentDatabaseAndCheckVersion(&connection);
   TestDirectoryBackingStore dbs(GetUsername(), &connection);
   Directory::MetahandlesMap handles_map;
-  JournalIndex delete_journals;
   MetahandleSet metahandles_to_purge;
   Directory::KernelLoadInfo kernel_load_info;
 
-  DirOpenResult open_result = dbs.Load(
-      &handles_map, &delete_journals, &metahandles_to_purge, &kernel_load_info);
-  EXPECT_EQ(open_result, OPENED);
+  DirOpenResult open_result =
+      dbs.Load(&handles_map, &metahandles_to_purge, &kernel_load_info);
+  EXPECT_EQ(open_result, OPENED_EXISTING);
 
   // Set up database's page size to 4096
   EXPECT_TRUE(dbs.db_->Execute("PRAGMA page_size=4096;"));
@@ -4423,7 +4415,7 @@ TEST_F(DirectoryBackingStoreTest, CatastrophicErrorHandler_KeptAcrossReset) {
   ASSERT_FALSE(dbs.db_->has_error_callback());
   // Set one and see that it was set.
   dbs.SetCatastrophicErrorHandler(
-      base::Bind(&CatastrophicErrorHandler, nullptr));
+      base::BindRepeating(&CatastrophicErrorHandler, nullptr));
   EXPECT_TRUE(dbs.db_->has_error_callback());
   // Recreate the Connection and see that the handler remains set.
   dbs.ResetAndCreateConnection();
@@ -4435,8 +4427,8 @@ TEST_F(DirectoryBackingStoreTest, CatastrophicErrorHandler_KeptAcrossReset) {
 TEST_F(DirectoryBackingStoreTest,
        CatastrophicErrorHandler_InvocationDuringLoad) {
   bool was_called = false;
-  const base::Closure handler =
-      base::Bind(&CatastrophicErrorHandler, &was_called);
+  const base::RepeatingClosure handler =
+      base::BindRepeating(&CatastrophicErrorHandler, &was_called);
   {
     OnDiskDirectoryBackingStoreForTest dbs(GetUsername(), GetDatabasePath());
     dbs.SetCatastrophicErrorHandler(handler);
@@ -4479,8 +4471,8 @@ TEST_F(DirectoryBackingStoreTest,
 TEST_F(DirectoryBackingStoreTest,
        CatastrophicErrorHandler_InvocationDuringSaveChanges) {
   bool was_called = false;
-  const base::Closure handler =
-      base::Bind(&CatastrophicErrorHandler, &was_called);
+  const base::RepeatingClosure handler =
+      base::BindRepeating(&CatastrophicErrorHandler, &was_called);
   // Create a DB with many entries.
   OnDiskDirectoryBackingStoreForTest dbs(GetUsername(), GetDatabasePath());
   dbs.SetCatastrophicErrorHandler(handler);

@@ -25,12 +25,12 @@ source_set("cells") {
 
   deps = [
     "//ios/chrome/app/theme",
-    "//ios/chrome/browser/ui",
     "//ios/chrome/browser/ui/autofill:autofill_ui",
     "//ios/chrome/browser/ui/collection_view/cells",
     "//ios/chrome/browser/ui/colors",
-    "//ios/third_party/material_components_ios",
-    "//ios/third_party/material_roboto_font_loader_ios",
+    "//ios/chrome/browser/ui/util",
+    "//ios/chrome/common/colors",
+    "//ios/chrome/common/ui_util",
     "//url/",
   ]
 
@@ -54,7 +54,6 @@ source_set("unit_tests") {
     ":cells",
     "//ios/chrome/browser/ui/collection_view/cells",
     "//ios/chrome/browser/ui/collection_view/cells:test_support",
-    "//ios/third_party/material_components_ios",
     "//testing/gtest",
   ]
 

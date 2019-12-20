@@ -18,39 +18,33 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/task/post_task.h"
-#include "components/favicon/ios/web_favicon_driver.h"
 #include "components/navigation_metrics/navigation_metrics.h"
+#include "components/profile_metrics/browser_profile_type.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/sessions/ios/ios_live_tab.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/browser_state_metrics/browser_state_metrics.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/chrome_url_util.h"
-#include "ios/chrome/browser/crash_loop_detection_util.h"
+#include "ios/chrome/browser/crash_report/crash_loop_detection_util.h"
 #import "ios/chrome/browser/geolocation/omnibox_geolocation_controller.h"
+#import "ios/chrome/browser/main/browser_web_state_list_delegate.h"
 #import "ios/chrome/browser/metrics/tab_usage_recorder.h"
 #import "ios/chrome/browser/prerender/prerender_service_factory.h"
 #include "ios/chrome/browser/sessions/ios_chrome_tab_restore_service_factory.h"
-#import "ios/chrome/browser/sessions/session_ios.h"
+#import "ios/chrome/browser/sessions/session_restoration_agent.h"
 #import "ios/chrome/browser/sessions/session_service_ios.h"
 #import "ios/chrome/browser/sessions/session_window_ios.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
-#include "ios/chrome/browser/tab_parenting_global_observer.h"
-#import "ios/chrome/browser/tabs/legacy_tab_helper.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model_closing_web_state_observer.h"
-#import "ios/chrome/browser/tabs/tab_model_favicon_driver_observer.h"
 #import "ios/chrome/browser/tabs/tab_model_list.h"
-#import "ios/chrome/browser/tabs/tab_model_notification_observer.h"
-#import "ios/chrome/browser/tabs/tab_model_observers.h"
-#import "ios/chrome/browser/tabs/tab_model_observers_bridge.h"
 #import "ios/chrome/browser/tabs/tab_model_selected_tab_observer.h"
 #import "ios/chrome/browser/tabs/tab_model_synced_window_delegate.h"
-#import "ios/chrome/browser/tabs/tab_model_web_state_list_delegate.h"
 #import "ios/chrome/browser/tabs/tab_parenting_observer.h"
-#import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_metrics_observer.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer.h"
@@ -59,15 +53,14 @@
 #import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler.h"
 #import "ios/chrome/browser/web_state_list/web_usage_enabler/web_state_list_web_usage_enabler_factory.h"
 #include "ios/web/public/browser_state.h"
-#include "ios/web/public/certificate_policy_cache.h"
-#include "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/serializable_user_data_manager.h"
-#import "ios/web/public/web_state/navigation_context.h"
-#include "ios/web/public/web_state/session_certificate_policy_cache.h"
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
-#include "ios/web/public/web_task_traits.h"
-#include "ios/web/public/web_thread.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#include "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/security/certificate_policy_cache.h"
+#include "ios/web/public/session/session_certificate_policy_cache.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
+#import "ios/web/public/web_state_observer_bridge.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -212,17 +205,15 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
       web_state->GetNavigationManager()->GetLastCommittedItem();
   navigation_metrics::RecordMainFrameNavigation(
       item ? item->GetVirtualURL() : GURL::EmptyGURL(), true,
-      web_state->GetBrowserState()->IsOffTheRecord());
+      web_state->GetBrowserState()->IsOffTheRecord(),
+      GetBrowserStateType(web_state->GetBrowserState()));
 }
 
 }  // anonymous namespace
 
 @interface TabModel ()<CRWWebStateObserver, WebStateListObserving> {
-  // Delegate for the WebStateList.
-  std::unique_ptr<WebStateListDelegate> _webStateListDelegate;
-
-  // Underlying shared model implementation.
-  std::unique_ptr<WebStateList> _webStateList;
+  // Weak reference to the underlying shared model implementation.
+  WebStateList* _webStateList;
 
   // WebStateListObservers reacting to modifications of the model (may send
   // notification, translate and forward events, update metrics, ...).
@@ -232,21 +223,18 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   // WebStateListObserverBridges.
   NSArray<id<WebStateListObserving>>* _retainedWebStateListObservers;
 
-  // The delegate for sync.
-  std::unique_ptr<TabModelSyncedWindowDelegate> _syncedWindowDelegate;
-
-  // The observer that calls -notifyNewTabWillOpen on this object.
-  TabModelNotificationObserver* _tabModelNotificationObserver;
+  // The delegate for sync (the actual object will be owned by the observers
+  // vector, above).
+  TabModelSyncedWindowDelegate* _syncedWindowDelegate;
 
   // Counters for metrics.
   WebStateListMetricsObserver* _webStateListMetricsObserver;
 
   // Backs up property with the same name.
   std::unique_ptr<TabUsageRecorder> _tabUsageRecorder;
-  // Saves session's state.
-  SessionServiceIOS* _sessionService;
-  // List of TabModelObservers.
-  TabModelObservers* _observers;
+
+  // Used to handle session restoration.
+  std::unique_ptr<SessionRestorationAgent> _sessionRestorationAgent;
 
   // Used to ensure thread-safety of the certificate policy management code.
   base::CancelableTaskTracker _clearPoliciesTaskTracker;
@@ -255,8 +243,6 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   std::unique_ptr<web::WebStateObserver> _webStateObserver;
 }
 
-// Session window for the contents of the tab model.
-@property(nonatomic, readonly) SessionIOS* sessionForSaving;
 // Whether the underlying WebStateList's web usage is enabled.
 @property(nonatomic, readonly, getter=isWebUsageEnabled) BOOL webUsageEnabled;
 
@@ -269,30 +255,11 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 #pragma mark - Overriden
 
 - (void)dealloc {
-  // browserStateDestroyed should always have been called before destruction.
+  // -disconnect should always have been called before destruction.
   DCHECK(!_browserState);
-
-  // Make sure the observers do clean after themselves.
-  DCHECK([_observers empty]);
 }
 
 #pragma mark - Public methods
-
-- (Tab*)currentTab {
-  web::WebState* webState = _webStateList->GetActiveWebState();
-  return webState ? LegacyTabHelper::GetTabForWebState(webState) : nil;
-}
-
-- (void)setCurrentTab:(Tab*)newTab {
-  int indexOfTab = _webStateList->GetIndexOfWebState(newTab.webState);
-  DCHECK_NE(indexOfTab, WebStateList::kInvalidIndex);
-  _webStateList->ActivateWebStateAt(indexOfTab);
-}
-
-- (TabModelSyncedWindowDelegate*)syncedWindowDelegate {
-  return _syncedWindowDelegate.get();
-}
-
 - (TabUsageRecorder*)tabUsageRecorder {
   return _tabUsageRecorder.get();
 }
@@ -311,21 +278,24 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 }
 
 - (WebStateList*)webStateList {
-  return _webStateList.get();
+  DCHECK(_webStateList);
+  return _webStateList;
 }
 
 - (instancetype)initWithSessionService:(SessionServiceIOS*)service
-                          browserState:(ios::ChromeBrowserState*)browserState {
+                          browserState:(ios::ChromeBrowserState*)browserState
+                          webStateList:(WebStateList*)webStateList {
   if ((self = [super init])) {
-    _observers = [TabModelObservers observers];
-
-    _webStateListDelegate = std::make_unique<TabModelWebStateListDelegate>();
-    _webStateList = std::make_unique<WebStateList>(_webStateListDelegate.get());
-
+    _webStateList = webStateList;
     _browserState = browserState;
     DCHECK(_browserState);
 
     _webStateObserver = std::make_unique<web::WebStateObserverBridge>(self);
+
+    // There must be a valid session service defined to consume session windows.
+    DCHECK(service);
+    _sessionRestorationAgent = std::make_unique<SessionRestorationAgent>(
+        service, _webStateList, _browserState);
 
     // Normal browser states are the only ones to get tab restore. Tab sync
     // handles incognito browser states by filtering on profile, so it's
@@ -333,15 +303,18 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
     if (!_browserState->IsOffTheRecord()) {
       // Set up the usage recorder before tabs are created.
       _tabUsageRecorder = std::make_unique<TabUsageRecorder>(
-          _webStateList.get(),
+          _webStateList,
           PrerenderServiceFactory::GetForBrowserState(browserState));
+      _sessionRestorationAgent->AddObserver(_tabUsageRecorder.get());
     }
-    _syncedWindowDelegate =
-        std::make_unique<TabModelSyncedWindowDelegate>(_webStateList.get());
 
-    // There must be a valid session service defined to consume session windows.
-    DCHECK(service);
-    _sessionService = service;
+    std::unique_ptr<TabModelSyncedWindowDelegate> syncedWindowDelegate =
+        std::make_unique<TabModelSyncedWindowDelegate>(_webStateList);
+
+    // Keep a weak ref to the the window delegate, which is then moved into
+    // the web state list observers list.
+    _syncedWindowDelegate = syncedWindowDelegate.get();
+    _webStateListObservers.push_back(std::move(syncedWindowDelegate));
 
     NSMutableArray<id<WebStateListObserving>>* retainedWebStateListObservers =
         [[NSMutableArray alloc] init];
@@ -369,25 +342,11 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
         std::make_unique<WebStateListObserverBridge>(
             tabModelSelectedTabObserver));
 
-    TabModelObserversBridge* tabModelObserversBridge =
-        [[TabModelObserversBridge alloc] initWithTabModel:self
-                                        tabModelObservers:_observers];
-    [retainedWebStateListObservers addObject:tabModelObserversBridge];
-    _webStateListObservers.push_back(
-        std::make_unique<WebStateListObserverBridge>(tabModelObserversBridge));
-
-    _webStateListObservers.push_back(
-        std::make_unique<TabModelFaviconDriverObserver>(self, _observers));
-
     auto webStateListMetricsObserver =
         std::make_unique<WebStateListMetricsObserver>();
     _webStateListMetricsObserver = webStateListMetricsObserver.get();
+    _sessionRestorationAgent->AddObserver(_webStateListMetricsObserver);
     _webStateListObservers.push_back(std::move(webStateListMetricsObserver));
-
-    auto tabModelNotificationObserver =
-        std::make_unique<TabModelNotificationObserver>(self);
-    _tabModelNotificationObserver = tabModelNotificationObserver.get();
-    _webStateListObservers.push_back(std::move(tabModelNotificationObserver));
 
     for (const auto& webStateListObserver : _webStateListObservers)
       _webStateList->AddObserver(webStateListObserver.get());
@@ -412,141 +371,14 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   return self;
 }
 
-- (Tab*)tabAtIndex:(NSUInteger)index {
-  DCHECK_LE(index, static_cast<NSUInteger>(INT_MAX));
-  return LegacyTabHelper::GetTabForWebState(
-      _webStateList->GetWebStateAt(static_cast<int>(index)));
-}
-
-- (NSUInteger)indexOfTab:(Tab*)tab {
-  int index = _webStateList->GetIndexOfWebState(tab.webState);
-  if (index == WebStateList::kInvalidIndex)
-    return NSNotFound;
-
-  DCHECK_GE(index, 0);
-  return static_cast<NSUInteger>(index);
-}
-
-- (Tab*)insertTabWithURL:(const GURL&)URL
-                referrer:(const web::Referrer&)referrer
-              transition:(ui::PageTransition)transition
-                  opener:(Tab*)parentTab
-             openedByDOM:(BOOL)openedByDOM
-                 atIndex:(NSUInteger)index
-            inBackground:(BOOL)inBackground {
-  web::NavigationManager::WebLoadParams params(URL);
-  params.referrer = referrer;
-  params.transition_type = transition;
-  return [self insertTabWithLoadParams:params
-                                opener:parentTab
-                           openedByDOM:openedByDOM
-                               atIndex:index
-                          inBackground:inBackground];
-}
-
-- (Tab*)insertOpenByDOMTabWithOpener:(Tab*)opener {
-  DCHECK(_browserState);
-  web::WebState::CreateParams createParams(_browserState);
-  createParams.created_with_opener = YES;
-  std::unique_ptr<web::WebState> webState = web::WebState::Create(createParams);
-
-  int insertionFlags =
-      WebStateList::INSERT_FORCE_INDEX | WebStateList::INSERT_ACTIVATE;
-  int insertedIndex = _webStateList->InsertWebState(
-      _webStateList->count(), std::move(webState), insertionFlags,
-      WebStateOpener(opener.webState));
-
-  return LegacyTabHelper::GetTabForWebState(
-      _webStateList->GetWebStateAt(insertedIndex));
-}
-
-- (Tab*)insertTabWithLoadParams:
-            (const web::NavigationManager::WebLoadParams&)loadParams
-                         opener:(Tab*)parentTab
-                    openedByDOM:(BOOL)openedByDOM
-                        atIndex:(NSUInteger)index
-                   inBackground:(BOOL)inBackground {
-  DCHECK(_browserState);
-  DCHECK(index == TabModelConstants::kTabPositionAutomatically ||
-         index <= self.count);
-
-  int insertionIndex = WebStateList::kInvalidIndex;
-  int insertionFlags = WebStateList::INSERT_NO_FLAGS;
-  if (index != TabModelConstants::kTabPositionAutomatically) {
-    DCHECK_LE(index, static_cast<NSUInteger>(INT_MAX));
-    insertionIndex = static_cast<int>(index);
-    insertionFlags |= WebStateList::INSERT_FORCE_INDEX;
-  } else if (!ui::PageTransitionCoreTypeIs(loadParams.transition_type,
-                                           ui::PAGE_TRANSITION_LINK)) {
-    insertionIndex = _webStateList->count();
-    insertionFlags |= WebStateList::INSERT_FORCE_INDEX;
-  }
-
-  if (!inBackground) {
-    insertionFlags |= WebStateList::INSERT_ACTIVATE;
-  }
-
-  web::WebState::CreateParams createParams(self.browserState);
-  createParams.created_with_opener = openedByDOM;
-
-  std::unique_ptr<web::WebState> webState = web::WebState::Create(createParams);
-  webState->GetNavigationManager()->LoadURLWithParams(loadParams);
-
-  insertionIndex = _webStateList->InsertWebState(
-      insertionIndex, std::move(webState), insertionFlags,
-      WebStateOpener(parentTab.webState));
-
-  return LegacyTabHelper::GetTabForWebState(
-      _webStateList->GetWebStateAt(insertionIndex));
-}
-
-- (void)moveTab:(Tab*)tab toIndex:(NSUInteger)toIndex {
-  DCHECK_LE(toIndex, static_cast<NSUInteger>(INT_MAX));
-  int fromIndex = _webStateList->GetIndexOfWebState(tab.webState);
-  _webStateList->MoveWebStateAt(fromIndex, static_cast<int>(toIndex));
-}
-
 - (void)closeTabAtIndex:(NSUInteger)index {
   DCHECK_LE(index, static_cast<NSUInteger>(INT_MAX));
   _webStateList->CloseWebStateAt(static_cast<int>(index),
                                  WebStateList::CLOSE_USER_ACTION);
 }
 
-- (void)closeTab:(Tab*)tab {
-  [self closeTabAtIndex:[self indexOfTab:tab]];
-}
-
 - (void)closeAllTabs {
   _webStateList->CloseAllWebStates(WebStateList::CLOSE_USER_ACTION);
-}
-
-- (void)haltAllTabs {
-  for (int index = 0; index < _webStateList->count(); ++index) {
-    web::WebState* webState = _webStateList->GetWebStateAt(index);
-    Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-    [tab terminateNetworkActivity];
-  }
-}
-
-- (void)notifyTabChanged:(Tab*)tab {
-  [_observers tabModel:self didChangeTab:tab];
-}
-
-- (void)notifyNewTabWillOpen:(Tab*)tab inBackground:(BOOL)background {
-  [_observers tabModel:self newTabWillOpen:tab inBackground:background];
-}
-
-- (void)addObserver:(id<TabModelObserver>)observer {
-  [_observers addObserver:observer];
-}
-
-- (void)removeObserver:(id<TabModelObserver>)observer {
-  [_observers removeObserver:observer];
-}
-
-- (void)resetSessionMetrics {
-  if (_webStateListMetricsObserver)
-    _webStateListMetricsObserver->ResetSessionMetrics();
 }
 
 - (void)recordSessionMetrics {
@@ -556,22 +388,27 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 
 - (void)setPrimary:(BOOL)primary {
   if (_tabUsageRecorder) {
-    _tabUsageRecorder->RecordPrimaryTabModelChange(primary,
-                                                   self.currentTab.webState);
+    _tabUsageRecorder->RecordPrimaryTabModelChange(
+        primary, self.webStateList->GetActiveWebState());
   }
 }
 
 // NOTE: This can be called multiple times, so must be robust against that.
-- (void)browserStateDestroyed {
+- (void)disconnect {
   if (!_browserState)
     return;
 
   [[NSNotificationCenter defaultCenter] removeObserver:self];
   TabModelList::UnregisterTabModelFromChromeBrowserState(_browserState, self);
+
+  _sessionRestorationAgent->RemoveObserver(_webStateListMetricsObserver);
+  if (_tabUsageRecorder)
+    _sessionRestorationAgent->RemoveObserver(_tabUsageRecorder.get());
+
+  _sessionRestorationAgent.reset();
   _browserState = nullptr;
 
   // Clear weak pointer to observers before destroying them.
-  _tabModelNotificationObserver = nullptr;
   _webStateListMetricsObserver = nullptr;
 
   // Close all tabs. Do this in an @autoreleasepool as WebStateList observers
@@ -589,6 +426,7 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
     _webStateList->RemoveObserver(webStateListObserver.get());
   _webStateListObservers.clear();
   _retainedWebStateListObservers = nil;
+  _webStateList = nullptr;
 
   _clearPoliciesTaskTracker.TryCancelAll();
   _tabUsageRecorder.reset();
@@ -598,30 +436,9 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 #pragma mark - SessionWindowRestoring(public)
 
 - (void)saveSessionImmediately:(BOOL)immediately {
-  // Do nothing if there are tabs in the model but no selected tab. This is
-  // a transitional state.
-  if ((!self.currentTab && _webStateList->count()) || !_browserState)
+  if (!_sessionRestorationAgent)
     return;
-  NSString* statePath =
-      base::SysUTF8ToNSString(_browserState->GetStatePath().AsUTF8Unsafe());
-  __weak TabModel* weakSelf = self;
-  SessionIOSFactory sessionFactory = ^{
-    return weakSelf.sessionForSaving;
-  };
-  [_sessionService saveSession:sessionFactory
-                     directory:statePath
-                   immediately:immediately];
-}
-
-#pragma mark - Private methods
-
-- (SessionIOS*)sessionForSaving {
-  // Build the array of sessions. Copy the session objects as the saving will
-  // be done on a separate thread.
-  // TODO(crbug.com/661986): This could get expensive especially since this
-  // window may never be saved (if another call comes in before the delay).
-  return [[SessionIOS alloc]
-      initWithWindows:@[ SerializeWebStateList(_webStateList.get()) ]];
+  _sessionRestorationAgent->SaveSession(immediately);
 }
 
 - (BOOL)isWebUsageEnabled {
@@ -638,100 +455,26 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   // It is only ok to pass a nil |window| during the initial restore.
   DCHECK(window || initialRestore);
 
-  // The initial restore can only happen before observers are registered.
-  DCHECK(!initialRestore || [_observers empty]);
+  // Setting the sesion progress to |YES|, so BVC can check it to work around
+  // crbug.com/763964.
+  _restoringSession = YES;
+  base::ScopedClosureRunner updateSessionRestorationProgress(base::BindOnce(^{
+    _restoringSession = NO;
+  }));
 
-  // Disable calling -notifyNewTabWillOpen: while restoring a session as it
-  // breaks the BVC (see crbug.com/763964).
-  base::ScopedClosureRunner enableTabModelNotificationObserver;
-  if (_tabModelNotificationObserver) {
-    _tabModelNotificationObserver->SetDisabled(true);
-    enableTabModelNotificationObserver.ReplaceClosure(
-        base::BindOnce(&TabModelNotificationObserver::SetDisabled,
-                       base::Unretained(_tabModelNotificationObserver), false));
-  }
-
-  if (!window.sessions.count)
-    return NO;
-
-  int oldCount = _webStateList->count();
-  DCHECK_GE(oldCount, 0);
-
-  web::WebState::CreateParams createParams(_browserState);
-  DeserializeWebStateList(
-      _webStateList.get(), window,
-      base::BindRepeating(&web::WebState::CreateWithStorageSession,
-                          createParams));
-
-  DCHECK_GT(_webStateList->count(), oldCount);
-  int restoredCount = _webStateList->count() - oldCount;
-  DCHECK_EQ(window.sessions.count, static_cast<NSUInteger>(restoredCount));
-
-  scoped_refptr<web::CertificatePolicyCache> policyCache =
-      web::BrowserState::GetCertificatePolicyCache(_browserState);
-
-  std::vector<web::WebState*> restoredWebStates;
-  if (_tabUsageRecorder)
-    restoredWebStates.reserve(window.sessions.count);
-
-  for (int index = oldCount; index < _webStateList->count(); ++index) {
-    web::WebState* webState = _webStateList->GetWebStateAt(index);
-    web::NavigationItem* visible_item =
-        webState->GetNavigationManager()->GetVisibleItem();
-
-    if (!(visible_item &&
-          visible_item->GetVirtualURL() == kChromeUINewTabURL)) {
-      PagePlaceholderTabHelper::FromWebState(webState)
-          ->AddPlaceholderForNextNavigation();
-    }
-
-    if (visible_item && visible_item->GetVirtualURL().is_valid()) {
-      favicon::WebFaviconDriver::FromWebState(webState)->FetchFavicon(
-          visible_item->GetVirtualURL(), /*is_same_document=*/false);
-    }
-
-    // Restore the CertificatePolicyCache (note that webState is invalid after
-    // passing it via move semantic to -initWithWebState:model:).
-    UpdateCertificatePolicyCacheFromWebState(policyCache, webState);
-
-    if (_tabUsageRecorder)
-      restoredWebStates.push_back(webState);
-  }
-
-  // If there was only one tab and it was the new tab page, clobber it.
-  BOOL closedNTPTab = NO;
-  if (oldCount == 1) {
-    Tab* tab = [self tabAtIndex:0];
-    BOOL hasPendingLoad =
-        tab.webState->GetNavigationManager()->GetPendingItem() != nullptr;
-    if (!hasPendingLoad &&
-        tab.webState->GetLastCommittedURL() == kChromeUINewTabURL) {
-      [self closeTab:tab];
-      closedNTPTab = YES;
-      oldCount = 0;
-    }
-  }
-  if (_tabUsageRecorder) {
-    _tabUsageRecorder->InitialRestoredTabs(self.currentTab.webState,
-                                           restoredWebStates);
-  }
-
-  if (initialRestore) {
-    // Restore the session and reset the session metrics (as the event have
-    // not been generated by the user but by a cold start cycle).
-    [self resetSessionMetrics];
-  }
-
-  return closedNTPTab;
+  return _sessionRestorationAgent->RestoreSessionWindow(window);
 }
 
 #pragma mark - Notification Handlers
 
 // Called when UIApplicationWillResignActiveNotification is received.
 - (void)willResignActive:(NSNotification*)notify {
-  if (self.webUsageEnabled && self.currentTab) {
+  if (self.webUsageEnabled && _webStateList->GetActiveWebState()) {
+    NSString* tabId =
+        TabIdTabHelper::FromWebState(_webStateList->GetActiveWebState())
+            ->tab_id();
     [SnapshotCacheFactory::GetForBrowserState(_browserState)
-        willBeSavedGreyWhenBackgrounding:self.currentTab.tabId];
+        willBeSavedGreyWhenBackgrounding:tabId];
   }
 }
 
@@ -744,18 +487,22 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   // active sessions.
   CleanCertificatePolicyCache(
       &_clearPoliciesTaskTracker,
-      base::CreateSingleThreadTaskRunnerWithTraits({web::WebThread::IO}),
+      base::CreateSingleThreadTaskRunner({web::WebThread::IO}),
       web::BrowserState::GetCertificatePolicyCache(_browserState),
-      _webStateList.get());
+      _webStateList);
 
   // Normally, the session is saved after some timer expires but since the app
   // is about to enter the background send YES to save the session immediately.
   [self saveSessionImmediately:YES];
 
   // Write out a grey version of the current website to disk.
-  if (self.webUsageEnabled && self.currentTab) {
+  if (self.webUsageEnabled && _webStateList->GetActiveWebState()) {
+    NSString* tabId =
+        TabIdTabHelper::FromWebState(_webStateList->GetActiveWebState())
+            ->tab_id();
+
     [SnapshotCacheFactory::GetForBrowserState(_browserState)
-        saveGreyInBackgroundForSessionID:self.currentTab.tabId];
+        saveGreyInBackgroundForSessionID:tabId];
   }
 }
 
@@ -763,32 +510,16 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 
 - (void)webState:(web::WebState*)webState
     didFinishNavigation:(web::NavigationContext*)navigation {
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
 
   if (!navigation->IsSameDocument() && navigation->HasCommitted() &&
       !self.offTheRecord) {
     int tabCount = static_cast<int>(self.count);
     UMA_HISTOGRAM_CUSTOM_COUNTS("Tabs.TabCountPerLoad", tabCount, 1, 200, 50);
   }
-
-  // Sending a notification about the url change for crash reporting.
-  // TODO(crbug.com/661675): Consider using the navigation entry committed
-  // notification now that it's in the right place.
-  const std::string& lastCommittedURL = webState->GetLastCommittedURL().spec();
-  if (!lastCommittedURL.empty()) {
-    [[NSNotificationCenter defaultCenter]
-        postNotificationName:kTabUrlStartedLoadingNotificationForCrashReporting
-                      object:tab
-                    userInfo:@{
-                      kTabUrlKey : base::SysUTF8ToNSString(lastCommittedURL)
-                    }];
-  }
 }
 
 - (void)webState:(web::WebState*)webState
     didStartNavigation:(web::NavigationContext*)navigation {
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
 
   // In order to avoid false positive in the crash loop detection, disable the
   // counter as soon as an URL is loaded. This requires an user action and is a
@@ -804,12 +535,6 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   if (_tabUsageRecorder && ShouldRecordPageLoadStartForNavigation(navigation)) {
     _tabUsageRecorder->RecordPageLoadStart(webState);
   }
-
-  [self notifyTabChanged:tab];
-  [[NSNotificationCenter defaultCenter]
-      postNotificationName:
-          kTabClosingCurrentDocumentNotificationForCrashReporting
-                    object:tab];
 
   DCHECK(webState->GetNavigationManager());
   web::NavigationItem* navigationItem =
@@ -840,34 +565,12 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
 }
 
 - (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
-  DCHECK(!webState->IsLoading());
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
-
   RecordInterfaceOrientationMetric();
   RecordMainFrameNavigationMetric(webState);
 
-  [[OmniboxGeolocationController sharedInstance] finishPageLoadForTab:tab
-                                                          loadSuccess:success];
-}
-
-- (void)webState:(web::WebState*)webState
-    didChangeLoadingProgress:(double)progress {
-  // TODO(crbug.com/546406): It is probably possible to do something smarter,
-  // but the fact that this is not always sent will have to be taken into
-  // account.
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
-}
-
-- (void)webStateDidChangeTitle:(web::WebState*)webState {
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
-}
-
-- (void)webStateDidChangeVisibleSecurityState:(web::WebState*)webState {
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
+  [[OmniboxGeolocationController sharedInstance]
+      finishPageLoadForWebState:webState
+                    loadSuccess:success];
 }
 
 - (void)webStateDestroyed:(web::WebState*)webState {
@@ -875,11 +578,6 @@ void RecordMainFrameNavigationMetric(web::WebState* web_state) {
   // detached from WebStateList which happens before WebState destructor,
   // so this method should never be called.
   NOTREACHED();
-}
-
-- (void)webStateDidStopLoading:(web::WebState*)webState {
-  Tab* tab = LegacyTabHelper::GetTabForWebState(webState);
-  [self notifyTabChanged:tab];
 }
 
 #pragma mark - WebStateListObserving

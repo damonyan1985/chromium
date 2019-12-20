@@ -9,19 +9,18 @@
 
 #import "ios/chrome/browser/ui/coordinators/chrome_coordinator.h"
 
-@protocol ApplicationCommands;
-@protocol UrlLoader;
-
-class WebStateList;
+enum class UrlLoadStrategy;
 
 // Coordinator that presents Recent Tabs.
 @interface RecentTabsCoordinator : ChromeCoordinator
-// The dispatcher for this Coordinator.
-@property(nonatomic, weak) id<ApplicationCommands> dispatcher;
-// URL loader being managed by this Coordinator.
-@property(nonatomic, weak) id<UrlLoader> loader;
-// WebStateList managed by this Coordinator.
-@property(nonatomic, assign) WebStateList* webStateList;
+// Opaque instructions on how to open urls.
+@property(nonatomic) UrlLoadStrategy loadStrategy;
+
+// Use initWithBaseViewController:browser:
+- (instancetype)initWithBaseViewController:(UIViewController*)viewController
+                              browserState:
+                                  (ios::ChromeBrowserState*)browserState
+    NS_UNAVAILABLE;
 
 @end
 

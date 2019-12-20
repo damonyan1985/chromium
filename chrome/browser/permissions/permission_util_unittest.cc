@@ -4,30 +4,49 @@
 
 #include "chrome/browser/permissions/permission_util.h"
 
+#include "base/files/scoped_temp_dir.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class PermissionUtilTest : public testing::Test {
-  content::TestBrowserThreadBundle thread_bundle_;
+ public:
+  void SetUp() override { ASSERT_TRUE(profile_dir_.CreateUniqueTempDir()); }
+
+ protected:
+  // A profile directory that outlives |task_environment_| is needed because of
+  // the usage of TestingProfile::CreateHistoryService that uses it to host a
+  // database. See https://crbug.com/546640 for more details.
+  base::ScopedTempDir profile_dir_;
+
+ private:
+  content::BrowserTaskEnvironment task_environment_;
 };
 
-TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
-  TestingProfile profile;
+TEST_F(PermissionUtilTest, ScopedevocationReporter) {
+  TestingProfile::Builder profile_builder;
+  profile_builder.SetPath(profile_dir_.GetPath());
+
+  std::unique_ptr<TestingProfile> profile = profile_builder.Build();
+
+  ASSERT_TRUE(profile->CreateHistoryService(
+      /* delete_file= */ true,
+      /* no_db= */ false));
+
   // TODO(tsergeant): Add more comprehensive tests of PermissionUmaUtil.
   base::HistogramTester histograms;
   HostContentSettingsMap* map =
-      HostContentSettingsMapFactory::GetForProfile(&profile);
+      HostContentSettingsMapFactory::GetForProfile(profile.get());
   GURL host("https://example.com");
   ContentSettingsPattern host_pattern =
       ContentSettingsPattern::FromURLNoWildcard(host);
   ContentSettingsPattern host_containing_wildcards_pattern =
       ContentSettingsPattern::FromString("https://[*.]example.com/");
-  ContentSettingsType type = CONTENT_SETTINGS_TYPE_GEOLOCATION;
+  ContentSettingsType type = ContentSettingsType::GEOLOCATION;
   PermissionSourceUI source_ui = PermissionSourceUI::SITE_SETTINGS;
 
   // Allow->Block triggers a revocation.
@@ -35,7 +54,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
                                      CONTENT_SETTING_ALLOW);
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host, host, type, source_ui);
+        profile.get(), host, host, type, source_ui);
     map->SetContentSettingDefaultScope(host, host, type, std::string(),
                                        CONTENT_SETTING_BLOCK);
   }
@@ -45,7 +64,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
   // Block->Allow does not trigger a revocation.
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host, host, type, source_ui);
+        profile.get(), host, host, type, source_ui);
     map->SetContentSettingDefaultScope(host, host, type, std::string(),
                                        CONTENT_SETTING_ALLOW);
   }
@@ -56,7 +75,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
   map->SetDefaultContentSetting(type, CONTENT_SETTING_ASK);
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host, host, type, source_ui);
+        profile.get(), host, host, type, source_ui);
     map->SetContentSettingDefaultScope(host, host, type, std::string(),
                                        CONTENT_SETTING_DEFAULT);
   }
@@ -67,7 +86,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
   map->SetDefaultContentSetting(type, CONTENT_SETTING_ALLOW);
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host, host, type, source_ui);
+        profile.get(), host, host, type, source_ui);
     map->SetContentSettingDefaultScope(host, host, type, std::string(),
                                        CONTENT_SETTING_DEFAULT);
   }
@@ -79,7 +98,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
                                      CONTENT_SETTING_ALLOW);
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host_pattern, host_pattern, type, source_ui);
+        profile.get(), host_pattern, host_pattern, type, source_ui);
     map->SetContentSettingCustomScope(host_pattern, host_pattern, type,
                                       std::string(), CONTENT_SETTING_BLOCK);
   }
@@ -91,7 +110,7 @@ TEST_F(PermissionUtilTest, ScopedRevocationReporter) {
                                      CONTENT_SETTING_ALLOW);
   {
     PermissionUtil::ScopedRevocationReporter scoped_revocation_reporter(
-        &profile, host_containing_wildcards_pattern, host_pattern, type,
+        profile.get(), host_containing_wildcards_pattern, host_pattern, type,
         source_ui);
     map->SetContentSettingCustomScope(host_containing_wildcards_pattern,
                                       host_pattern, type, std::string(),

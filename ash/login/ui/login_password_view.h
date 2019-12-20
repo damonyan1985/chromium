@@ -6,10 +6,9 @@
 #define ASH_LOGIN_UI_LOGIN_PASSWORD_VIEW_H_
 
 #include "ash/ash_export.h"
-#include "ash/ime/ime_controller.h"
+#include "ash/ime/ime_controller_impl.h"
 #include "ash/login/ui/animated_rounded_image_view.h"
-#include "ash/public/interfaces/login_user_info.mojom.h"
-#include "ash/public/interfaces/user_info.mojom.h"
+#include "ash/public/cpp/session/user_info.h"
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
@@ -27,6 +26,7 @@ class Textfield;
 
 namespace ash {
 class LoginButton;
+enum class EasyUnlockIconId;
 
 // Contains a textfield instance with a submit button. The user can type a
 // password into the textfield and hit enter to submit.
@@ -40,7 +40,7 @@ class LoginButton;
 class ASH_EXPORT LoginPasswordView : public views::View,
                                      public views::ButtonListener,
                                      public views::TextfieldController,
-                                     public ImeController::Observer {
+                                     public ImeControllerImpl::Observer {
  public:
   // TestApi is used for tests to get internal implementation details.
   class ASH_EXPORT TestApi {
@@ -81,11 +81,11 @@ class ASH_EXPORT LoginPasswordView : public views::View,
   void SetEnabledOnEmptyPassword(bool enabled);
 
   // Change the active icon for easy unlock.
-  void SetEasyUnlockIcon(mojom::EasyUnlockIconId id,
+  void SetEasyUnlockIcon(EasyUnlockIconId id,
                          const base::string16& accessibility_label);
 
-  // Updates accessibility information for |user|.
-  void UpdateForUser(const mojom::LoginUserInfoPtr& user);
+  // Set the textfield name used for accessibility.
+  void SetAccessibleName(const base::string16& name);
 
   // Enable or disable focus on the child elements (ie, password field and
   // submit button).
@@ -123,7 +123,7 @@ class ASH_EXPORT LoginPasswordView : public views::View,
   bool HandleKeyEvent(views::Textfield* sender,
                       const ui::KeyEvent& key_event) override;
 
-  // ImeController::Observer:
+  // ImeControllerImpl::Observer:
   void OnCapsLockChanged(bool enabled) override;
   void OnKeyboardLayoutNameChanged(const std::string&) override {}
 

@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.browserservices;
 
-import android.net.Uri;
-import android.support.customtabs.CustomTabsService;
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -15,25 +13,28 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.browserservices.OriginVerifier.OriginVerificationListener;
 import org.chromium.chrome.browser.browsing_data.BrowsingDataType;
 import org.chromium.chrome.browser.browsing_data.TimePeriod;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
-import org.chromium.chrome.browser.preferences.privacy.BrowsingDataBridge;
+import org.chromium.chrome.browser.settings.privacy.BrowsingDataBridge;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.mock.MockWebContents;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
+import androidx.browser.customtabs.CustomTabsService;
 
 /** Tests for OriginVerifier. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -56,9 +57,6 @@ public class OriginVerifierTest {
     private static final String SHA_256_FINGERPRINT_OFFICIAL =
             "19:75:B2:F1:71:77:BC:89:A5:DF:F3:1F:9E:64:A6:CA:E2:81:A5"
             + ":3D:C1:D1:D5:9B:1D:14:7F:E1:C8:2A:FA:00";
-    private static final String SHA_256_FINGERPRINT = ChromeVersionInfo.isOfficialBuild()
-            ? SHA_256_FINGERPRINT_OFFICIAL
-            : SHA_256_FINGERPRINT_PUBLIC;
 
     private Origin mHttpsOrigin;
     private Origin mHttpOrigin;
@@ -85,13 +83,13 @@ public class OriginVerifierTest {
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityOnBlankPage();
 
-        mHttpsOrigin = new Origin("https://www.example.com");
-        mHttpOrigin = new Origin("http://www.android.com");
+        mHttpsOrigin = Origin.create("https://www.example.com");
+        mHttpOrigin = Origin.create("http://www.android.com");
 
-        mHandleAllUrlsVerifier =
-                new OriginVerifier(PACKAGE_NAME, CustomTabsService.RELATION_HANDLE_ALL_URLS);
-        mUseAsOriginVerifier =
-                new OriginVerifier(PACKAGE_NAME, CustomTabsService.RELATION_USE_AS_ORIGIN);
+        mHandleAllUrlsVerifier = new OriginVerifier(
+                PACKAGE_NAME, CustomTabsService.RELATION_HANDLE_ALL_URLS, new MockWebContents());
+        mUseAsOriginVerifier = new OriginVerifier(
+                PACKAGE_NAME, CustomTabsService.RELATION_USE_AS_ORIGIN, /* webContents= */ null);
         mVerificationResultSemaphore = new Semaphore(0);
     }
 
@@ -99,21 +97,24 @@ public class OriginVerifierTest {
     @SmallTest
     public void testSHA256CertificateChecks() {
         Assert.assertEquals(STRING_ARRAY, OriginVerifier.byteArrayToHexString(BYTE_ARRAY));
-        Assert.assertEquals(SHA_256_FINGERPRINT,
-                OriginVerifier.getCertificateSHA256FingerprintForPackage(PACKAGE_NAME));
+
+        String fingerprint = OriginVerifier.getCertificateSHA256FingerprintForPackage(PACKAGE_NAME);
+
+        // We could try to determine which fingerprint we should be signed with, but it's easier to
+        // just check that we match either of the fingerprints. The chances of our code returning
+        // an incorrect value that just happens to match the wrong fingerprint is incredibly small.
+        if (SHA_256_FINGERPRINT_OFFICIAL.equals(fingerprint)) return;
+        if (SHA_256_FINGERPRINT_PUBLIC.equals(fingerprint)) return;
+
+        Assert.fail("Generated fingerprint matches neither official nor public.");
     }
 
     @Test
     @SmallTest
     public void testOnlyHttpsAllowed() throws InterruptedException {
-        Origin origin = new Origin(Uri.parse("LOL"));
-        ThreadUtils.postOnUiThread(() ->
-                mHandleAllUrlsVerifier.start(new TestOriginVerificationListener(), origin));
-        Assert.assertTrue(
-                mVerificationResultSemaphore.tryAcquire(TIMEOUT_MS, TimeUnit.MILLISECONDS));
-        Assert.assertFalse(mLastVerified);
-        ThreadUtils.postOnUiThread(() ->
-                mHandleAllUrlsVerifier.start(new TestOriginVerificationListener(), mHttpOrigin));
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT,
+                () -> mHandleAllUrlsVerifier.start(
+                                new TestOriginVerificationListener(), mHttpOrigin));
         Assert.assertTrue(
                 mVerificationResultSemaphore.tryAcquire(TIMEOUT_MS, TimeUnit.MILLISECONDS));
         Assert.assertFalse(mLastVerified);
@@ -122,44 +123,44 @@ public class OriginVerifierTest {
     @Test
     @SmallTest
     public void testMultipleRelationships() throws Exception {
-        ThreadUtils.postOnUiThread(() ->
-                OriginVerifier.addVerificationOverride(
-                        PACKAGE_NAME, mHttpsOrigin, CustomTabsService.RELATION_USE_AS_ORIGIN));
-        ThreadUtils.postOnUiThread(() ->
-                mUseAsOriginVerifier.start(new TestOriginVerificationListener(), mHttpsOrigin));
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT,
+                () -> OriginVerifier.addVerificationOverride(PACKAGE_NAME, mHttpsOrigin,
+                                CustomTabsService.RELATION_USE_AS_ORIGIN));
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT,
+                () -> mUseAsOriginVerifier.start(
+                                new TestOriginVerificationListener(), mHttpsOrigin));
         Assert.assertTrue(
                 mVerificationResultSemaphore.tryAcquire(TIMEOUT_MS, TimeUnit.MILLISECONDS));
         Assert.assertTrue(mLastVerified);
-        Assert.assertTrue(ThreadUtils.runOnUiThreadBlocking(
+        Assert.assertTrue(TestThreadUtils.runOnUiThreadBlocking(
                 () -> OriginVerifier.wasPreviouslyVerified(PACKAGE_NAME, mHttpsOrigin,
-                        CustomTabsService.RELATION_USE_AS_ORIGIN)));
-        Assert.assertFalse(ThreadUtils.runOnUiThreadBlocking(
+                                CustomTabsService.RELATION_USE_AS_ORIGIN)));
+        Assert.assertFalse(TestThreadUtils.runOnUiThreadBlocking(
                 () -> OriginVerifier.wasPreviouslyVerified(PACKAGE_NAME, mHttpsOrigin,
-                        CustomTabsService.RELATION_HANDLE_ALL_URLS)));
+                                CustomTabsService.RELATION_HANDLE_ALL_URLS)));
         Assert.assertEquals(mLastPackageName, PACKAGE_NAME);
         Assert.assertEquals(mLastOrigin, mHttpsOrigin);
     }
 
     @Test
     @SmallTest
-    public void testWipedWithBrowsingData() throws InterruptedException, TimeoutException {
+    public void testWipedWithBrowsingData() throws TimeoutException {
         CallbackHelper callbackHelper = new CallbackHelper();
 
         String relationship = "relationship1";
         Set<String> savedLinks = new HashSet<>();
         savedLinks.add(relationship);
 
-        ChromePreferenceManager preferences = ChromePreferenceManager.getInstance();
+        VerificationResultStore.setRelationships(savedLinks);
 
-        preferences.setVerifiedDigitalAssetLinks(savedLinks);
-        Assert.assertTrue(preferences.getVerifiedDigitalAssetLinks().contains(relationship));
+        Assert.assertTrue(VerificationResultStore.getRelationships().contains(relationship));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             BrowsingDataBridge.getInstance().clearBrowsingData(callbackHelper::notifyCalled,
                     new int[] {BrowsingDataType.HISTORY}, TimePeriod.ALL_TIME);
         });
 
         callbackHelper.waitForCallback(0);
-        Assert.assertTrue(preferences.getVerifiedDigitalAssetLinks().isEmpty());
+        Assert.assertTrue(VerificationResultStore.getRelationships().isEmpty());
     }
 }

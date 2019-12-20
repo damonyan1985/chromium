@@ -59,7 +59,7 @@ class NotificationUIManagerBrowserTest : public InProcessBrowserTest {
                const base::Optional<base::string16>& reply) override {
       if (button_index) {
         log_ += "ButtonClick_";
-        log_ += base::IntToString(*button_index) + "_";
+        log_ += base::NumberToString(*button_index) + "_";
       } else {
         log_ += "Click_";
       }
@@ -120,6 +120,18 @@ class NotificationUIManagerBrowserTest : public InProcessBrowserTest {
 IN_PROC_BROWSER_TEST_F(NotificationUIManagerBrowserTest, RetrieveBaseParts) {
   EXPECT_TRUE(manager());
   EXPECT_TRUE(message_center());
+}
+
+IN_PROC_BROWSER_TEST_F(NotificationUIManagerBrowserTest, BasicNullProfile) {
+  TestMessageCenterObserver observer;
+  message_center()->AddObserver(&observer);
+  manager()->CancelAll();
+  manager()->Add(CreateTestNotification("hey"), nullptr);
+  EXPECT_EQ(1u, message_center()->NotificationCount());
+  EXPECT_NE("", observer.last_displayed_id());
+  manager()->CancelById("hey", NotificationUIManager::GetProfileID(nullptr));
+  EXPECT_EQ(0u, message_center()->NotificationCount());
+  message_center()->RemoveObserver(&observer);
 }
 
 IN_PROC_BROWSER_TEST_F(NotificationUIManagerBrowserTest, BasicAddCancel) {

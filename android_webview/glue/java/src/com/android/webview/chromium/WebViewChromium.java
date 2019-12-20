@@ -24,7 +24,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.print.PrintDocumentAdapter;
-import android.support.annotation.IntDef;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.DragEvent;
@@ -53,23 +52,31 @@ import android.webkit.WebView;
 import android.webkit.WebView.VisualStateCallback;
 import android.webkit.WebViewClient;
 import android.webkit.WebViewProvider;
+import android.webkit.WebViewRenderProcess;
+import android.webkit.WebViewRenderProcessClient;
 import android.widget.TextView;
+
+import androidx.annotation.IntDef;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsStatics;
-import org.chromium.android_webview.AwDrawFnImpl;
 import org.chromium.android_webview.AwPrintDocumentAdapter;
 import org.chromium.android_webview.AwSettings;
-import org.chromium.android_webview.ResourcesContextWrapperFactory;
-import org.chromium.android_webview.ScopedSysTraceEvent;
+import org.chromium.android_webview.gfx.AwDrawFnImpl;
 import org.chromium.android_webview.renderer_priority.RendererPriority;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.CachedMetrics.EnumeratedHistogramSample;
 import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
+import org.chromium.base.metrics.ScopedSysTraceEvent;
+import org.chromium.base.task.PostTask;
 import org.chromium.components.autofill.AutofillProvider;
+import org.chromium.components.content_capture.ContentCaptureConsumerImpl;
+import org.chromium.components.content_capture.ContentCaptureFeatures;
+import org.chromium.components.embedder_support.application.ClassLoaderContextWrapperFactory;
 import org.chromium.content_public.browser.NavigationHistory;
 import org.chromium.content_public.browser.SmartClipProvider;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -77,7 +84,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executor;
 
 /**
  * This class is the delegate to which WebViewProxy forwards all API calls.
@@ -247,7 +254,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             mWebView = webView;
             mWebViewPrivate = webViewPrivate;
             mHitTestResult = new WebView.HitTestResult();
-            mContext = ResourcesContextWrapperFactory.get(mWebView.getContext());
+            mContext = ClassLoaderContextWrapperFactory.get(mWebView.getContext());
             mAppTargetSdkVersion = mContext.getApplicationInfo().targetSdkVersion;
             mFactory = factory;
             mShouldDisableThreadChecking = shouldDisableThreadChecking;
@@ -359,8 +366,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         if (mFactory.hasStarted()) {
             TimesHistogramSample histogram = new TimesHistogramSample(
                     "Android.WebView.Startup.CreationTime.Stage2.ProviderInit."
-                            + (isFirstWebViewInit ? "Cold" : "Warm"),
-                    TimeUnit.MILLISECONDS);
+                    + (isFirstWebViewInit ? "Cold" : "Warm"));
             histogram.record(SystemClock.elapsedRealtime() - startTime);
         }
     }
@@ -428,7 +434,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     private void checkThread() {
         if (!ThreadUtils.runningOnUiThread()) {
             final RuntimeException threadViolation = createThreadException();
-            ThreadUtils.postOnUiThread(new Runnable() {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
                 @Override
                 public void run() {
                     throw threadViolation;
@@ -958,7 +964,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
             final long requestId, final VisualStateCallback callback) {
         sWebViewApiCallSample.record(ApiCall.INSERT_VISUAL_STATE_CALLBACK);
         mSharedWebViewChromium.insertVisualStateCallback(
-                requestId, new AwContents.VisualStateCallback() {
+                requestId, callback == null ? null : new AwContents.VisualStateCallback() {
                     @Override
                     public void onComplete(long requestId) {
                         callback.onComplete(requestId);
@@ -1466,6 +1472,35 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     }
 
     @Override
+    public WebViewRenderProcess getWebViewRenderProcess() {
+        return GlueApiHelperForQ.getWebViewRenderProcess(mSharedWebViewChromium.getRenderProcess());
+    }
+
+    @Override
+    public void setWebViewRenderProcessClient(
+            Executor executor, WebViewRenderProcessClient webViewRenderProcessClient) {
+        if (webViewRenderProcessClient == null) {
+            mSharedWebViewChromium.setWebViewRendererClientAdapter(null);
+        } else {
+            if (executor == null) {
+                executor = (Runnable r) -> r.run();
+            }
+            GlueApiHelperForQ.setWebViewRenderProcessClient(
+                    mSharedWebViewChromium, executor, webViewRenderProcessClient);
+        }
+    }
+
+    @Override
+    public WebViewRenderProcessClient getWebViewRenderProcessClient() {
+        SharedWebViewRendererClientAdapter adapter =
+                mSharedWebViewChromium.getWebViewRendererClientAdapter();
+        if (adapter == null || !(adapter instanceof WebViewRenderProcessClientAdapter)) {
+            return null;
+        }
+        return GlueApiHelperForQ.getWebViewRenderProcessClient(adapter);
+    }
+
+    @Override
     public void setDownloadListener(DownloadListener listener) {
         sWebViewApiCallSample.record(ApiCall.SET_DOWNLOAD_LISTENER);
         mContentsClientAdapter.setDownloadListener(listener);
@@ -1775,6 +1810,16 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         }
         sWebViewApiCallSample.record(ApiCall.ON_PROVIDE_AUTOFILL_VIRTUAL_STRUCTURE);
         mAwContents.onProvideAutoFillVirtualStructure(structure, flags);
+    }
+
+    @Override
+    public void onProvideContentCaptureStructure(ViewStructure structure, int flags) {
+        if (ContentCaptureFeatures.isDumpForTestingEnabled()) {
+            Log.i("ContentCapture", "onProvideContentCaptureStructure");
+        }
+        mAwContents.setContentCaptureConsumer(ContentCaptureConsumerImpl.create(
+                ClassLoaderContextWrapperFactory.get(mWebView.getContext()), mWebView, structure,
+                mAwContents.getWebContents()));
     }
 
     // WebViewProvider glue methods ---------------------------------------------------------------
@@ -2306,7 +2351,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
     public void setBackgroundColor(final int color) {
         mFactory.startYourEngines(false);
         if (checkNeedsPost()) {
-            ThreadUtils.postOnUiThread(new Runnable() {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
                 @Override
                 public void run() {
                     setBackgroundColor(color);
@@ -2323,7 +2368,7 @@ class WebViewChromium implements WebViewProvider, WebViewProvider.ScrollDelegate
         // is still null. We set the layer type in initForReal in that case.
         if (mAwContents == null) return;
         if (checkNeedsPost()) {
-            ThreadUtils.postOnUiThread(new Runnable() {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
                 @Override
                 public void run() {
                     setLayerType(layerType, paint);

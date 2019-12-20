@@ -13,6 +13,8 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
+#include "base/metrics/field_trial_param_associator.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/optional.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
@@ -40,14 +42,10 @@ TEST_F(DataReductionProxyParamsTest, EverythingDefined) {
   std::vector<DataReductionProxyServer> expected_proxies;
 
   // Both the origin and fallback proxy must have type CORE.
-  expected_proxies.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("https://proxy.googlezip.net:443",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::CORE));
-  expected_proxies.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("compress.googlezip.net:80",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::CORE));
+  expected_proxies.push_back(DataReductionProxyServer(net::ProxyServer::FromURI(
+      "https://proxy.googlezip.net:443", net::ProxyServer::SCHEME_HTTP)));
+  expected_proxies.push_back(DataReductionProxyServer(net::ProxyServer::FromURI(
+      "compress.googlezip.net:80", net::ProxyServer::SCHEME_HTTP)));
 
   EXPECT_EQ(expected_proxies, params.proxies_for_http());
 
@@ -78,14 +76,10 @@ TEST_F(DataReductionProxyParamsTest, Flags) {
   TestDataReductionProxyParams params;
 
   std::vector<DataReductionProxyServer> expected_proxies;
-  expected_proxies.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("http://ovveride-1.com/",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::UNSPECIFIED_TYPE));
-  expected_proxies.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("http://ovveride-2.com/",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::UNSPECIFIED_TYPE));
+  expected_proxies.push_back(DataReductionProxyServer(net::ProxyServer::FromURI(
+      "http://ovveride-1.com/", net::ProxyServer::SCHEME_HTTP)));
+  expected_proxies.push_back(DataReductionProxyServer(net::ProxyServer::FromURI(
+      "http://ovveride-2.com/", net::ProxyServer::SCHEME_HTTP)));
 
   EXPECT_EQ(expected_proxies, params.proxies_for_http());
 
@@ -120,36 +114,65 @@ TEST_F(DataReductionProxyParamsTest, AreServerExperimentsEnabled) {
     bool expected;
   } tests[] = {
       {
-          "Field trial not set", "", false, true,
+          "Field trial not set",
+          "Enabled_42",
+          false,
+          true,
       },
       {
-          "Field trial not set, flag set", "", true, false,
-      },
-      {
-          "Enabled", "Enabled", false, true,
-      },
-      {
-          "Enabled via field trial but disabled via flag", "Enabled", true,
+          "Field trial not set, flag set",
+          "",
+          true,
           false,
       },
       {
-          "Disabled via field trial", "Disabled", false, false,
+          "Enabled",
+          "Enabled",
+          false,
+          true,
+      },
+      {
+          "Enabled via field trial but disabled via flag",
+          "Enabled",
+          true,
+          false,
+      },
+      {
+          "Disabled via field trial",
+          "Disabled",
+          false,
+          false,
       },
   };
 
   for (const auto& test : tests) {
-    base::FieldTrialList field_trial_list(nullptr);
-    if (!test.trial_group_value.empty()) {
-      ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-          "DataReductionProxyServerExperiments", test.trial_group_value));
+    base::test::ScopedFeatureList scoped_feature_list;
+
+    std::map<std::string, std::string> variation_params;
+    std::string exp_name;
+
+    if (test.trial_group_value != "Disabled") {
+      exp_name = "foobar";
+      variation_params[params::GetDataSaverServerExperimentsOptionName()] =
+          exp_name;
+
+      scoped_feature_list.InitWithFeaturesAndParameters(
+          {{data_reduction_proxy::features::
+                kDataReductionProxyServerExperiments,
+            {variation_params}}},
+          {});
     }
 
     base::CommandLine::ForCurrentProcess()->InitFromArgv(0, nullptr);
     if (test.disable_flag_set) {
+      exp_name = "";
       base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
           switches::kDataReductionProxyServerExperimentsDisabled, "");
+    } else {
+      base::CommandLine::ForCurrentProcess()->RemoveSwitch(
+          switches::kDataReductionProxyServerExperimentsDisabled);
     }
-    EXPECT_EQ(test.expected, params::IsIncludedInServerExperimentsFieldTrial())
+    EXPECT_EQ(exp_name, params::GetDataSaverServerExperiments())
         << test.test_case;
   }
 }
@@ -178,6 +201,9 @@ TEST_F(DataReductionProxyParamsTest, QuicFieldTrial) {
     ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
         switches::kDisableDataReductionProxyWarmupURLFetch));
 
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
+
     variations::testing::ClearAllVariationParams();
     std::map<std::string, std::string> variation_params;
     if (!test.enable_warmup_url)
@@ -191,7 +217,6 @@ TEST_F(DataReductionProxyParamsTest, QuicFieldTrial) {
         params::GetQuicFieldTrialName(), test.trial_group_name,
         variation_params));
 
-    base::FieldTrialList field_trial_list(nullptr);
     base::FieldTrialList::CreateFieldTrial(params::GetQuicFieldTrialName(),
                                            test.trial_group_name);
 
@@ -246,33 +271,26 @@ TEST_F(DataReductionProxyParamsTest, QuicEnableNonCoreProxies) {
   const struct {
     std::string trial_group_name;
     bool expected_enabled;
-    std::string enable_non_core_proxies;
-    bool expected_enable_non_core_proxies;
   } tests[] = {
-      {"Enabled", true, "true", true},        {"Enabled", true, "false", false},
-      {"Enabled", true, std::string(), true}, {"Control", false, "true", false},
-      {"Disabled", false, "true", false},
+      {"Enabled", true},  {"Enabled", true},   {"Enabled", true},
+      {"Control", false}, {"Disabled", false},
   };
 
   for (const auto& test : tests) {
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
+
     variations::testing::ClearAllVariationParams();
     std::map<std::string, std::string> variation_params;
-    variation_params["enable_quic_non_core_proxies"] =
-        test.enable_non_core_proxies;
 
     ASSERT_TRUE(variations::AssociateVariationParams(
         params::GetQuicFieldTrialName(), test.trial_group_name,
         variation_params));
 
-    base::FieldTrialList field_trial_list(nullptr);
     base::FieldTrialList::CreateFieldTrial(params::GetQuicFieldTrialName(),
                                            test.trial_group_name);
 
     EXPECT_EQ(test.expected_enabled, params::IsIncludedInQuicFieldTrial());
-    if (params::IsIncludedInQuicFieldTrial()) {
-      EXPECT_EQ(test.expected_enable_non_core_proxies,
-                params::IsQuicEnabledForNonCoreProxies());
-    }
   }
 }
 
@@ -288,7 +306,8 @@ TEST_F(DataReductionProxyParamsTest, HoldbackEnabledFieldTrial) {
   };
 
   for (const auto& test : tests) {
-    base::FieldTrialList field_trial_list(nullptr);
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
 
     ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
         "DataCompressionProxyHoldback", test.trial_group_name));
@@ -310,7 +329,8 @@ TEST_F(DataReductionProxyParamsTest, PromoFieldTrial) {
   };
 
   for (const auto& test : tests) {
-    base::FieldTrialList field_trial_list(nullptr);
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
 
     ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
         "DataCompressionProxyPromoVisibility", test.trial_group_name));
@@ -331,7 +351,8 @@ TEST_F(DataReductionProxyParamsTest, FREPromoFieldTrial) {
   };
 
   for (const auto& test : tests) {
-    base::FieldTrialList field_trial_list(nullptr);
+    base::test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
 
     ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
         "DataReductionProxyFREPromo", test.trial_group_name));
@@ -431,14 +452,12 @@ TEST(DataReductionProxyParamsStandaloneTest, OverrideProxiesForHttp) {
 
   // Overriding proxies must have type UNSPECIFIED_TYPE.
   std::vector<DataReductionProxyServer> expected_override_proxies_for_http;
-  expected_override_proxies_for_http.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("http://override-first.net",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::UNSPECIFIED_TYPE));
-  expected_override_proxies_for_http.push_back(DataReductionProxyServer(
-      net::ProxyServer::FromURI("http://override-second.net",
-                                net::ProxyServer::SCHEME_HTTP),
-      ProxyServer::UNSPECIFIED_TYPE));
+  expected_override_proxies_for_http.push_back(
+      DataReductionProxyServer(net::ProxyServer::FromURI(
+          "http://override-first.net", net::ProxyServer::SCHEME_HTTP)));
+  expected_override_proxies_for_http.push_back(
+      DataReductionProxyServer(net::ProxyServer::FromURI(
+          "http://override-second.net", net::ProxyServer::SCHEME_HTTP)));
 
   EXPECT_EQ(expected_override_proxies_for_http, params.proxies_for_http());
 }

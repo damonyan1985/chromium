@@ -12,6 +12,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
+#include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/dip_px_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
@@ -23,26 +24,26 @@ namespace apps {
 
 namespace {
 
-void LoadDefaultImage(const content::URLDataSource::GotDataCallback& callback) {
+void LoadDefaultImage(content::URLDataSource::GotDataCallback callback) {
   base::StringPiece contents =
       ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
-          IDR_APP_DEFAULT_ICON, ui::SCALE_FACTOR_100P);
+          IDR_APP_DEFAULT_ICON, apps_util::GetPrimaryDisplayUIScaleFactor());
 
   base::RefCountedBytes* image_bytes = new base::RefCountedBytes();
   image_bytes->data().assign(contents.data(),
                              contents.data() + contents.size());
-  callback.Run(image_bytes);
+  std::move(callback).Run(image_bytes);
 }
 
-void RunCallback(const content::URLDataSource::GotDataCallback& callback,
+void RunCallback(content::URLDataSource::GotDataCallback callback,
                  apps::mojom::IconValuePtr iv) {
   if (!iv->compressed.has_value() || iv->compressed.value().empty()) {
-    LoadDefaultImage(callback);
+    LoadDefaultImage(std::move(callback));
     return;
   }
   base::RefCountedBytes* image_bytes =
       new base::RefCountedBytes(iv->compressed.value());
-  callback.Run(image_bytes);
+  std::move(callback).Run(image_bytes);
 }
 
 }  // namespace
@@ -51,32 +52,22 @@ AppIconSource::AppIconSource(Profile* profile) : profile_(profile) {}
 
 AppIconSource::~AppIconSource() = default;
 
-bool AppIconSource::AllowCaching() const {
-  // Should not be cached as caching is performed by proxy.
-  return false;
-}
-
-std::string AppIconSource::GetMimeType(const std::string&) const {
-  // We need to explicitly return a mime type, otherwise if the user tries to
-  // drag the image they get no extension.
-  return "image/png";
-}
-
-std::string AppIconSource::GetSource() const {
+std::string AppIconSource::GetSource() {
   return chrome::kChromeUIAppIconHost;
 }
 
 void AppIconSource::StartDataRequest(
-    const std::string& path,
-    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-    const content::URLDataSource::GotDataCallback& callback) {
-  std::string path_lower = base::ToLowerASCII(path);
+    const GURL& url,
+    const content::WebContents::Getter& wc_getter,
+    content::URLDataSource::GotDataCallback callback) {
+  const std::string path_lower =
+      base::ToLowerASCII(content::URLDataSource::URLToRequestPath(url));
   std::vector<std::string> path_parts = base::SplitString(
       path_lower, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   // Check data exists, load default image if it doesn't.
   if (path_lower.empty() || path_parts.size() < 2) {
-    LoadDefaultImage(callback);
+    LoadDefaultImage(std::move(callback));
     return;
   }
 
@@ -85,21 +76,43 @@ void AppIconSource::StartDataRequest(
   std::string size_param = path_parts[1];
   int size = 0;
   if (!base::StringToInt(size_param, &size)) {
-    LoadDefaultImage(callback);
+    LoadDefaultImage(std::move(callback));
     return;
   }
-  int size_in_dip = ConvertPxToDip(size);
+  constexpr bool quantize_to_supported_scale_factor = true;
+  int size_in_dip =
+      apps_util::ConvertPxToDip(size, quantize_to_supported_scale_factor);
 
   apps::AppServiceProxy* app_service_proxy =
-      apps::AppServiceProxy::Get(profile_);
+      apps::AppServiceProxyFactory::GetForProfile(profile_);
   if (!app_service_proxy) {
-    LoadDefaultImage(callback);
+    LoadDefaultImage(std::move(callback));
     return;
   }
 
-  app_service_proxy->LoadIcon(app_id, apps::mojom::IconCompression::kCompressed,
-                              size_in_dip,
-                              base::BindOnce(&RunCallback, callback));
+  const apps::mojom::AppType app_type =
+      app_service_proxy->AppRegistryCache().GetAppType(app_id);
+  constexpr bool allow_placeholder_icon = false;
+  app_service_proxy->LoadIcon(
+      app_type, app_id, apps::mojom::IconCompression::kCompressed, size_in_dip,
+      allow_placeholder_icon,
+      base::BindOnce(&RunCallback, std::move(callback)));
+}
+
+std::string AppIconSource::GetMimeType(const std::string&) {
+  // We need to explicitly return a mime type, otherwise if the user tries to
+  // drag the image they get no extension.
+  return "image/png";
+}
+
+bool AppIconSource::AllowCaching() {
+  // Should not be cached as caching is performed by proxy.
+  return false;
+}
+
+bool AppIconSource::ShouldReplaceExistingSource() {
+  // The source doesn't maintain its own state so there's no need to replace it.
+  return false;
 }
 
 }  // namespace apps

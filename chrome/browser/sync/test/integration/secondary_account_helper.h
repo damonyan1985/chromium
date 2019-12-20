@@ -10,6 +10,7 @@
 
 #include "base/callback_list.h"
 #include "build/build_config.h"
+#include "components/signin/public/identity_manager/account_info.h"
 
 class Profile;
 
@@ -23,14 +24,15 @@ class TestURLLoaderFactory;
 
 namespace secondary_account_helper {
 
-using ScopedFakeGaiaCookieManagerServiceFactory = std::unique_ptr<
+using ScopedSigninClientFactory = std::unique_ptr<
     base::CallbackList<void(content::BrowserContext*)>::Subscription>;
 
-// Sets up a factory to create a FakeGaiaCookieManagerService. Meant to be
+// Sets up a factory to create a SigninClient which uses the
+// provided |test_url_loader_factory| for cookie-related requests. Meant to be
 // called from SetUpInProcessBrowserTestFixture. The caller should hold on to
 // the returned object for the duration of the test, e.g. store it in a member
 // of the test fixture class.
-ScopedFakeGaiaCookieManagerServiceFactory SetUpFakeGaiaCookieManagerService(
+ScopedSigninClientFactory SetUpSigninClient(
     network::TestURLLoaderFactory* test_url_loader_factory);
 
 #if defined(OS_CHROMEOS)
@@ -45,7 +47,16 @@ void InitNetwork();
 #endif  // defined(OS_CHROMEOS)
 
 // Makes a non-primary account available with both a refresh token and cookie.
-void SignInSecondaryAccount(Profile* profile, const std::string& email);
+AccountInfo SignInSecondaryAccount(
+    Profile* profile,
+    network::TestURLLoaderFactory* test_url_loader_factory,
+    const std::string& email);
+
+// Clears signin cookies and removes the refresh token for the given account.
+void SignOutSecondaryAccount(
+    Profile* profile,
+    network::TestURLLoaderFactory* test_url_loader_factory,
+    const CoreAccountId& account_id);
 
 #if !defined(OS_CHROMEOS)
 // Makes the given account Chrome's primary one. The account must already be

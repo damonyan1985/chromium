@@ -10,10 +10,10 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/time/time.h"
 #include "net/socket/socket.h"
@@ -111,7 +111,7 @@ class FakePlugin : public SessionPlugin {
  public:
    std::unique_ptr<jingle_xmpp::XmlElement> GetNextMessage() override {
      std::string tag_name = "test-tag-";
-     tag_name += base::IntToString(outgoing_messages_.size());
+     tag_name += base::NumberToString(outgoing_messages_.size());
      std::unique_ptr<jingle_xmpp::XmlElement> new_message(new jingle_xmpp::XmlElement(
          jingle_xmpp::QName("test-namespace", tag_name)));
      outgoing_messages_.push_back(*new_message);
@@ -156,7 +156,6 @@ std::unique_ptr<jingle_xmpp::XmlElement> CreateTransportInfo(const std::string& 
 class JingleSessionTest : public testing::Test {
  public:
   JingleSessionTest() {
-    message_loop_.reset(new base::MessageLoopForIO());
     network_settings_ =
         NetworkSettings(NetworkSettings::NAT_TRAVERSAL_OUTGOING);
   }
@@ -322,7 +321,8 @@ class JingleSessionTest : public testing::Test {
     }
   }
 
-  std::unique_ptr<base::MessageLoopForIO> message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
 
   NetworkSettings network_settings_;
 

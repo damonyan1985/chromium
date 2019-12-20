@@ -33,8 +33,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_consistency_method.h"
-#include "components/signin/core/browser/signin_switches.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/zoom/page_zoom.h"
 #include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/host_zoom_map.h"
@@ -43,6 +42,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 #include "url/gurl.h"
 
 using content::HostZoomMap;
@@ -54,7 +54,7 @@ class ZoomLevelChangeObserver {
   explicit ZoomLevelChangeObserver(content::BrowserContext* context)
       : message_loop_runner_(new content::MessageLoopRunner) {
     subscription_ = zoom::ZoomEventManager::GetForBrowserContext(context)
-                        ->AddZoomLevelChangedCallback(base::Bind(
+                        ->AddZoomLevelChangedCallback(base::BindRepeating(
                             &ZoomLevelChangeObserver::OnZoomLevelChanged,
                             base::Unretained(this)));
   }
@@ -128,13 +128,6 @@ class HostZoomMapBrowserTest : public InProcessBrowserTest {
         results.push_back(it.key());
     }
     return results;
-  }
-
-  std::string GetSigninPromoURL() {
-    return signin::GetEmbeddedPromoURL(
-               signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
-               signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, false)
-        .spec();
   }
 
   GURL ConstructTestServerURL(const char* url_template) {
@@ -251,10 +244,14 @@ IN_PROC_BROWSER_TEST_F(HostZoomMapBrowserTest, ZoomEventsWorkForOffTheRecord) {
                                 test_scheme, test_host));
 }
 
+#if !defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(
     HostZoomMapBrowserTest,
     WebviewBasedSigninUsesDefaultStoragePartitionForEmbedder) {
-  GURL test_url = ConstructTestServerURL(GetSigninPromoURL().c_str());
+  GURL signin_url = signin::GetEmbeddedPromoURL(
+      signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+      signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT, false);
+  GURL test_url = ConstructTestServerURL(signin_url.spec().c_str());
   std::string test_host(test_url.host());
   std::string test_scheme(test_url.scheme());
   ui_test_utils::NavigateToURL(browser(), test_url);
@@ -270,10 +267,11 @@ IN_PROC_BROWSER_TEST_F(
       HostZoomMap::GetDefaultForBrowserContext(browser()->profile());
   EXPECT_EQ(host_zoom_map, default_profile_host_zoom_map);
 }
+#endif
 
 // Regression test for crbug.com/364399.
 IN_PROC_BROWSER_TEST_F(HostZoomMapBrowserTest, ToggleDefaultZoomLevel) {
-  const double default_zoom_level = content::ZoomFactorToZoomLevel(1.5);
+  const double default_zoom_level = blink::PageZoomFactorToZoomLevel(1.5);
 
   const char kTestURLTemplate1[] = "http://host1:%u/";
   const char kTestURLTemplate2[] = "http://host2:%u/";
@@ -286,26 +284,26 @@ IN_PROC_BROWSER_TEST_F(HostZoomMapBrowserTest, ToggleDefaultZoomLevel) {
   SetDefaultZoomLevel(default_zoom_level);
   observer.BlockUntilZoomLevelForHostHasChanged(test_url1.host());
   EXPECT_TRUE(
-      content::ZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url1)));
+      blink::PageZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url1)));
 
   GURL test_url2 = ConstructTestServerURL(kTestURLTemplate2);
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), test_url2, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   EXPECT_TRUE(
-      content::ZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
+      blink::PageZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   zoom::PageZoom::Zoom(web_contents, content::PAGE_ZOOM_OUT);
   observer.BlockUntilZoomLevelForHostHasChanged(test_url2.host());
   EXPECT_FALSE(
-      content::ZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
+      blink::PageZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
 
   zoom::PageZoom::Zoom(web_contents, content::PAGE_ZOOM_IN);
   observer.BlockUntilZoomLevelForHostHasChanged(test_url2.host());
   EXPECT_TRUE(
-      content::ZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
+      blink::PageZoomValuesEqual(default_zoom_level, GetZoomLevel(test_url2)));
 
   // Now both tabs should be at the default zoom level, so there should not be
   // any per-host values saved either to Pref, or internally in HostZoomMap.

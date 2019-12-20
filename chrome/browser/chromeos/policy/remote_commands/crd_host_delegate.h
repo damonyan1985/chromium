@@ -14,11 +14,7 @@
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/remote_commands/device_command_start_crd_session_job.h"
 #include "extensions/browser/api/messaging/native_message_host.h"
-#include "google_apis/gaia/oauth2_token_service.h"
-
-namespace network {
-class SimpleURLLoader;
-}
+#include "google_apis/gaia/oauth2_access_token_manager.h"
 
 class Profile;
 
@@ -26,7 +22,7 @@ namespace policy {
 
 // An implementation of the |DeviceCommandStartCRDSessionJob::Delegate|.
 class CRDHostDelegate : public DeviceCommandStartCRDSessionJob::Delegate,
-                        public OAuth2TokenService::Consumer,
+                        public OAuth2AccessTokenManager::Consumer,
                         public extensions::NativeMessageHost::Client {
  public:
   CRDHostDelegate();
@@ -42,21 +38,17 @@ class CRDHostDelegate : public DeviceCommandStartCRDSessionJob::Delegate,
   void FetchOAuthToken(
       DeviceCommandStartCRDSessionJob::OAuthTokenCallback success_callback,
       DeviceCommandStartCRDSessionJob::ErrorCallback error_callback) override;
-  void FetchICEConfig(
-      const std::string& oauth_token,
-      DeviceCommandStartCRDSessionJob::ICEConfigCallback success_callback,
-      DeviceCommandStartCRDSessionJob::ErrorCallback error_callback) override;
   void StartCRDHostAndGetCode(
       const std::string& oauth_token,
-      base::Value ice_config,
+      bool terminate_upon_input,
       DeviceCommandStartCRDSessionJob::AccessCodeCallback success_callback,
       DeviceCommandStartCRDSessionJob::ErrorCallback error_callback) override;
 
-  // OAuth2TokenService::Consumer:
+  // OAuth2AccessTokenManager::Consumer:
   void OnGetTokenSuccess(
-      const OAuth2TokenService::Request* request,
+      const OAuth2AccessTokenManager::Request* request,
       const OAuth2AccessTokenConsumer::TokenResponse& token_response) override;
-  void OnGetTokenFailure(const OAuth2TokenService::Request* request,
+  void OnGetTokenFailure(const OAuth2AccessTokenManager::Request* request,
                          const GoogleServiceAuthError& error) override;
 
   // extensions::NativeMessageHost::Client:
@@ -64,7 +56,6 @@ class CRDHostDelegate : public DeviceCommandStartCRDSessionJob::Delegate,
   void PostMessageFromNativeHost(const std::string& message) override;
   void CloseChannel(const std::string& error_message) override;
 
-  void OnICEConfigurationLoaded(std::unique_ptr<std::string> response_body);
   // Sends message to host in separate task.
   void SendMessageToHost(const std::string& type, base::Value& params);
   // Actually sends message to host.
@@ -87,12 +78,10 @@ class CRDHostDelegate : public DeviceCommandStartCRDSessionJob::Delegate,
   Profile* GetKioskProfile() const;
 
   DeviceCommandStartCRDSessionJob::OAuthTokenCallback oauth_success_callback_;
-  DeviceCommandStartCRDSessionJob::ICEConfigCallback ice_success_callback_;
   DeviceCommandStartCRDSessionJob::AccessCodeCallback code_success_callback_;
   DeviceCommandStartCRDSessionJob::ErrorCallback error_callback_;
 
-  std::unique_ptr<OAuth2TokenService::Request> oauth_request_;
-  std::unique_ptr<network::SimpleURLLoader> ice_config_loader_;
+  std::unique_ptr<OAuth2AccessTokenManager::Request> oauth_request_;
   std::unique_ptr<extensions::NativeMessageHost> host_;
 
   // Filled structure with parameters for "connect" message.
@@ -105,7 +94,7 @@ class CRDHostDelegate : public DeviceCommandStartCRDSessionJob::Delegate,
   // True if remote session was established.
   bool remote_connected_;
 
-  base::WeakPtrFactory<CRDHostDelegate> weak_factory_;
+  base::WeakPtrFactory<CRDHostDelegate> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CRDHostDelegate);
 };

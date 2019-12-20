@@ -14,6 +14,7 @@
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
@@ -186,15 +187,15 @@ std::unique_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
 
   // Execute the query and get results.
   while (query.is_valid() && query.Step()) {
-    scoped_refptr<Action> action =
-        new Action(query.ColumnString(0),
-                   base::Time::FromInternalValue(query.ColumnInt64(1)),
-                   static_cast<Action::ActionType>(query.ColumnInt(2)),
-                   query.ColumnString(3), query.ColumnInt64(9));
+    auto action = base::MakeRefCounted<Action>(
+        query.ColumnString(0),
+        base::Time::FromInternalValue(query.ColumnInt64(1)),
+        static_cast<Action::ActionType>(query.ColumnInt(2)),
+        query.ColumnString(3), query.ColumnInt64(9));
 
-    if (query.ColumnType(4) != sql::COLUMN_TYPE_NULL) {
+    if (query.GetColumnType(4) != sql::ColumnType::kNull) {
       std::unique_ptr<base::Value> parsed_value =
-          base::JSONReader::Read(query.ColumnString(4));
+          base::JSONReader::ReadDeprecated(query.ColumnString(4));
       if (parsed_value && parsed_value->is_list()) {
         action->set_args(base::WrapUnique(
             static_cast<base::ListValue*>(parsed_value.release())));
@@ -205,9 +206,9 @@ std::unique_ptr<Action::ActionVector> FullStreamUIPolicy::DoReadFilteredData(
     action->set_page_title(query.ColumnString(6));
     action->ParseArgUrl(query.ColumnString(7));
 
-    if (query.ColumnType(8) != sql::COLUMN_TYPE_NULL) {
+    if (query.GetColumnType(8) != sql::ColumnType::kNull) {
       std::unique_ptr<base::Value> parsed_value =
-          base::JSONReader::Read(query.ColumnString(8));
+          base::JSONReader::ReadDeprecated(query.ColumnString(8));
       if (parsed_value && parsed_value->is_dict()) {
         action->set_other(base::WrapUnique(
             static_cast<base::DictionaryValue*>(parsed_value.release())));

@@ -19,6 +19,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/branding_buildflags.h"
 #include "components/google/core/common/google_switches.h"
 #include "components/google/core/common/google_tld_list.h"
 #include "components/url_formatter/url_fixer.h"
@@ -29,7 +30,7 @@
 // Only use Link Doctor on official builds.  It uses an API key, too, but
 // seems best to just disable it, for more responsive error pages and to reduce
 // server load.
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #define LINKDOCTOR_SERVER_REQUEST_URL "https://www.googleapis.com/rpc"
 #else
 #define LINKDOCTOR_SERVER_REQUEST_URL ""
@@ -144,6 +145,8 @@ bool IsGoogleSearchSubdomainUrl(const GURL& url) {
 }  // namespace
 
 // Global functions -----------------------------------------------------------
+
+const char kGoogleHomepageURL[] = "https://www.google.com/";
 
 bool HasGoogleSearchQueryParam(base::StringPiece str) {
   url::Component query(0, static_cast<int>(str.length())), key, value;
@@ -286,6 +289,49 @@ bool IsYoutubeDomainUrl(const GURL& url,
   return IsValidURL(url, port_permission) &&
          IsValidHostName(url.host_piece(), "youtube", subdomain_permission,
                          nullptr);
+}
+
+bool IsGoogleAssociatedDomainUrl(const GURL& url) {
+  if (IsGoogleDomainUrl(url, ALLOW_SUBDOMAIN, ALLOW_NON_STANDARD_PORTS))
+    return true;
+
+  if (IsYoutubeDomainUrl(url, ALLOW_SUBDOMAIN, ALLOW_NON_STANDARD_PORTS))
+    return true;
+
+  // Some domains don't have international TLD extensions, so testing for them
+  // is very straightforward.
+  static const char* kSuffixesToSetHeadersFor[] = {
+      ".android.com",
+      ".doubleclick.com",
+      ".doubleclick.net",
+      ".ggpht.com",
+      ".googleadservices.com",
+      ".googleapis.com",
+      ".googlesyndication.com",
+      ".googleusercontent.com",
+      ".googlevideo.com",
+      ".gstatic.com",
+      ".litepages.googlezip.net",
+      ".ytimg.com",
+  };
+  const std::string host = url.host();
+  for (size_t i = 0; i < base::size(kSuffixesToSetHeadersFor); ++i) {
+    if (base::EndsWith(host, kSuffixesToSetHeadersFor[i],
+                       base::CompareCase::INSENSITIVE_ASCII)) {
+      return true;
+    }
+  }
+
+  // Exact hostnames in lowercase to set headers for.
+  static const char* kHostsToSetHeadersFor[] = {
+      "googleweblight.com",
+  };
+  for (size_t i = 0; i < base::size(kHostsToSetHeadersFor); ++i) {
+    if (base::LowerCaseEqualsASCII(host, kHostsToSetHeadersFor[i]))
+      return true;
+  }
+
+  return false;
 }
 
 const std::vector<std::string>& GetGoogleRegistrableDomains() {

@@ -7,12 +7,11 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/web/public/web_state/ui/crw_content_view.h"
+#import "ios/web/common/crw_content_view.h"
 
 @class CRWWebControllerContainerView;
 @class CRWWebViewContentView;
 @class CRWWebViewProxyImpl;
-@protocol CRWNativeContent;
 
 @protocol CRWWebControllerContainerViewDelegate<NSObject>
 
@@ -21,10 +20,14 @@
 - (CRWWebViewProxyImpl*)contentViewProxyForContainerView:
         (CRWWebControllerContainerView*)containerView;
 
-// Returns the insets from |containerView|'s bounds in which to lay out native
-// content.
-- (UIEdgeInsets)nativeContentInsetsForContainerView:
+// Returns |YES| if the delegate wants to keep the render process alive.
+- (BOOL)shouldKeepRenderProcessAliveForContainerView:
     (CRWWebControllerContainerView*)containerView;
+
+// Instructs the delegate to add the |viewToStash| to the view hierarchy to
+// keep the render process alive.
+- (void)containerView:(CRWWebControllerContainerView*)containerView
+    storeWebViewInWindow:(UIView*)viewToStash;
 
 @end
 
@@ -36,8 +39,6 @@
 // The web view content view being displayed.
 @property(nonatomic, strong, readonly)
     CRWWebViewContentView* webViewContentView;
-// The native controller whose content is being displayed.
-@property(nonatomic, strong, readonly) id<CRWNativeContent> nativeController;
 // The currently displayed transient content view.
 @property(nonatomic, strong, readonly) CRWContentView* transientContentView;
 @property(nonatomic, weak) id<CRWWebControllerContainerViewDelegate>
@@ -63,14 +64,17 @@
 // Replaces the currently displayed content with |webViewContentView|.
 - (void)displayWebViewContentView:(CRWWebViewContentView*)webViewContentView;
 
-// Replaces the currently displayed content with |nativeController|'s view.
-- (void)displayNativeContent:(id<CRWNativeContent>)nativeController;
-
 // Adds |transientContentView| as a subview above previously displayed content.
 - (void)displayTransientContent:(CRWContentView*)transientContentView;
 
 // Removes the transient content view, if one is displayed.
 - (void)clearTransientContentView;
+
+// Updates the |webViewContentView|'s view hierarchy status based on the the
+// container view window status. If the current webView is active but the window
+// is nil, store the webView in the view hierarchy keyWindow so WKWebView
+// doesn't suspend it's counterpart process.
+- (void)updateWebViewContentViewForContainerWindow:(UIWindow*)window;
 
 @end
 

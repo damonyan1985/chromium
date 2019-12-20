@@ -7,7 +7,6 @@
 """Adds the code parts to a resource APK."""
 
 import argparse
-import itertools
 import os
 import shutil
 import sys
@@ -17,6 +16,10 @@ import zipfile
 import finalize_apk
 
 from util import build_utils
+from util import zipalign
+
+# Input dex.jar files are zipaligned.
+zipalign.ApplyZipFileZipAlignFix()
 
 
 # Taken from aapt's Package.cpp:
@@ -30,19 +33,18 @@ _NO_COMPRESS_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.wav', '.mp2',
 def _ParseArgs(args):
   parser = argparse.ArgumentParser()
   build_utils.AddDepfileOption(parser)
-  parser.add_argument('--assets',
-                      help='GYP-list of files to add as assets in the form '
-                           '"srcPath:zipPath", where ":zipPath" is optional.',
-                      default='[]')
-  parser.add_argument('--java-resources',
-                      help='GYP-list of java_resources JARs to include.',
-                      default='[]')
+  parser.add_argument(
+      '--assets',
+      help='GYP-list of files to add as assets in the form '
+      '"srcPath:zipPath", where ":zipPath" is optional.')
+  parser.add_argument(
+      '--java-resources', help='GYP-list of java_resources JARs to include.')
   parser.add_argument('--write-asset-list',
                       action='store_true',
                       help='Whether to create an assets/assets_list file.')
-  parser.add_argument('--uncompressed-assets',
-                      help='Same as --assets, except disables compression.',
-                      default='[]')
+  parser.add_argument(
+      '--uncompressed-assets',
+      help='Same as --assets, except disables compression.')
   parser.add_argument('--resource-apk',
                       help='An .ap_ file built using aapt',
                       required=True)
@@ -51,10 +53,6 @@ def _ParseArgs(args):
                       required=True)
   parser.add_argument('--format', choices=['apk', 'bundle-module'],
                       default='apk', help='Specify output format.')
-  parser.add_argument('--apk-pak-info-path',
-                      help='Path to the *.apk.pak.info file')
-  parser.add_argument('--apk-res-info-path',
-                      help='Path to the *.apk.res.info file')
   parser.add_argument('--dex-file',
                       help='Path to the classes.dex to use')
   parser.add_argument('--uncompress-dex', action='store_true',
@@ -74,13 +72,19 @@ def _ParseArgs(args):
   parser.add_argument('--secondary-android-abi',
                       help='The secondary Android architecture to use for'
                            'secondary native libraries')
-  parser.add_argument('--native-lib-placeholders',
-                      help='GYP-list of native library placeholders to add.',
-                      default='[]')
-  parser.add_argument('--secondary-native-lib-placeholders',
-                      help='GYP-list of native library placeholders to add '
-                           'for the secondary ABI',
-                      default='[]')
+  parser.add_argument(
+      '--is-multi-abi',
+      action='store_true',
+      help='Will add a placeholder for the missing ABI if no native libs or '
+      'placeholders are set for either the primary or secondary ABI. Can only '
+      'be set if both --android-abi and --secondary-android-abi are set.')
+  parser.add_argument(
+      '--native-lib-placeholders',
+      help='GYP-list of native library placeholders to add.')
+  parser.add_argument(
+      '--secondary-native-lib-placeholders',
+      help='GYP-list of native library placeholders to add '
+      'for the secondary ABI')
   parser.add_argument('--uncompress-shared-libraries', default='False',
       choices=['true', 'True', 'false', 'False'],
       help='Whether to uncompress native shared libraries. Argument must be '
@@ -104,14 +108,9 @@ def _ParseArgs(args):
   options.secondary_native_lib_placeholders = build_utils.ParseGnList(
       options.secondary_native_lib_placeholders)
   options.java_resources = build_utils.ParseGnList(options.java_resources)
-  all_libs = []
-  for gyp_list in options.native_libs:
-    all_libs.extend(build_utils.ParseGnList(gyp_list))
-  options.native_libs = all_libs
-  secondary_libs = []
-  for gyp_list in options.secondary_native_libs:
-    secondary_libs.extend(build_utils.ParseGnList(gyp_list))
-  options.secondary_native_libs = secondary_libs
+  options.native_libs = build_utils.ParseGnList(options.native_libs)
+  options.secondary_native_libs = build_utils.ParseGnList(
+      options.secondary_native_libs)
 
   # --apksigner-path, --zipalign-path, --key-xxx arguments are
   # required when building an APK, but not a bundle module.
@@ -133,6 +132,10 @@ def _ParseArgs(args):
       options.secondary_native_lib_placeholders):
     raise Exception('Must specify --secondary-android-abi with'
                     ' --secondary-native-libs')
+  if options.is_multi_abi and not (options.android_abi
+                                   and options.secondary_android_abi):
+    raise Exception('Must specify --is-multi-abi with both --android-abi '
+                    'and --secondary-android-abi.')
   return options
 
 
@@ -196,52 +199,31 @@ def _AddAssets(apk, path_tuples, disable_compression=False):
                                        compress=compress)
 
 
-def _CreateAssetsList(path_tuples):
-  """Returns a newline-separated list of asset paths for the given paths."""
-  dests = sorted(t[1] for t in path_tuples)
-  return '\n'.join(dests) + '\n'
-
-
 def _AddNativeLibraries(out_apk, native_libs, android_abi, uncompress):
   """Add native libraries to APK."""
-  has_crazy_linker = any('android_linker' in os.path.basename(p)
-                         for p in native_libs)
+  has_crazy_linker = any(
+      'android_linker' in os.path.basename(p) for p in native_libs)
+  has_monochrome = any('monochrome' in os.path.basename(p) for p in native_libs)
+
   for path in native_libs:
     basename = os.path.basename(path)
-
     compress = None
-    if (uncompress and os.path.splitext(basename)[1] == '.so'
-        and 'android_linker' not in basename
-        and (not has_crazy_linker or 'clang_rt' not in basename)
-        and 'crashpad_handler' not in basename):
-      compress = False
-      # Add prefix to prevent android install from extracting upon install.
-      if has_crazy_linker:
-        basename = 'crazy.' + basename
+    if uncompress and os.path.splitext(basename)[1] == '.so':
+      # Trichrome
+      if has_crazy_linker and has_monochrome:
+        compress = False
+      elif ('android_linker' not in basename
+            and (not has_crazy_linker or 'clang_rt' not in basename)
+            and (not has_crazy_linker or 'crashpad_handler' not in basename)):
+        compress = False
+        if has_crazy_linker and not has_monochrome:
+          basename = 'crazy.' + basename
 
     apk_path = 'lib/%s/%s' % (android_abi, basename)
     build_utils.AddToZipHermetic(out_apk,
                                  apk_path,
                                  src_path=path,
                                  compress=compress)
-
-
-def _MergeResInfoFiles(res_info_path, resource_apk):
-  resource_apk_info_path = resource_apk + '.info'
-  shutil.copy(resource_apk_info_path, res_info_path)
-
-
-def _FilterPakInfoPaths(assets):
-  return [f.split(':')[0] + '.info' for f in assets if f.endswith('.pak')]
-
-
-def _MergePakInfoFiles(merged_path, pak_infos):
-  info_lines = set()
-  for pak_info_path in pak_infos:
-    with open(pak_info_path, 'r') as src_info_file:
-      info_lines.update(src_info_file.readlines())
-  with open(merged_path, 'w') as merged_info_file:
-    merged_info_file.writelines(sorted(info_lines))
 
 
 def main(args):
@@ -254,6 +236,12 @@ def main(args):
   # dependencies when is_component_build=true.
   depfile_deps = list(native_libs)
 
+  # For targets that depend on static library APKs, dex paths are created by
+  # the static library's dexsplitter target and GN doesn't know about these
+  # paths.
+  if options.dex_file:
+    depfile_deps.append(options.dex_file)
+
   secondary_native_libs = []
   if options.secondary_native_libs:
     secondary_native_libs = sorted(options.secondary_native_libs)
@@ -265,11 +253,6 @@ def main(args):
 
   assets = _ExpandPaths(options.assets)
   uncompressed_assets = _ExpandPaths(options.uncompressed_assets)
-
-  if options.apk_pak_info_path:
-    pak_infos = _FilterPakInfoPaths(
-        options.assets + options.uncompressed_assets)
-    depfile_deps.extend(pak_infos)
 
   # Included via .build_config, so need to write it to depfile.
   depfile_deps.extend(x[0] for x in assets)
@@ -317,10 +300,6 @@ def main(args):
           resource_apk.getinfo('AndroidManifest.xml'), out_dir=apk_manifest_dir)
 
       # 2. Assets
-      if options.write_asset_list:
-        data = _CreateAssetsList(itertools.chain(assets, uncompressed_assets))
-        build_utils.AddToZipHermetic(out_apk, 'assets/assets_list', data=data)
-
       _AddAssets(out_apk, assets, disable_compression=False)
       _AddAssets(out_apk, uncompressed_assets, disable_compression=True)
 
@@ -349,14 +328,29 @@ def main(args):
                             options.secondary_android_abi,
                             options.uncompress_shared_libraries)
 
-      for name in sorted(options.native_lib_placeholders):
+      # Add a placeholder lib if the APK should be multi ABI but is missing libs
+      # for one of the ABIs.
+      native_lib_placeholders = options.native_lib_placeholders
+      secondary_native_lib_placeholders = (
+          options.secondary_native_lib_placeholders)
+      if options.is_multi_abi:
+        if ((secondary_native_libs or secondary_native_lib_placeholders)
+            and not native_libs and not native_lib_placeholders):
+          native_lib_placeholders += ['libplaceholder.so']
+        if ((native_libs or native_lib_placeholders)
+            and not secondary_native_libs
+            and not secondary_native_lib_placeholders):
+          secondary_native_lib_placeholders += ['libplaceholder.so']
+
+      # Add placeholder libs.
+      for name in sorted(native_lib_placeholders):
         # Note: Empty libs files are ignored by md5check (can cause issues
         # with stale builds when the only change is adding/removing
         # placeholders).
         apk_path = 'lib/%s/%s' % (options.android_abi, name)
         build_utils.AddToZipHermetic(out_apk, apk_path, data='')
 
-      for name in sorted(options.secondary_native_lib_placeholders):
+      for name in sorted(secondary_native_lib_placeholders):
         # Note: Empty libs files are ignored by md5check (can cause issues
         # with stale builds when the only change is adding/removing
         # placeholders).
@@ -364,7 +358,7 @@ def main(args):
         build_utils.AddToZipHermetic(out_apk, apk_path, data='')
 
       # 5. Resources
-      for info in resource_infos:
+      for info in sorted(resource_infos, key=lambda i: i.filename):
         if info.filename != 'AndroidManifest.xml':
           copy_resource(info)
 
@@ -373,7 +367,7 @@ def main(args):
       # Prebuilt jars may contain class files which we shouldn't include.
       for java_resource in options.java_resources:
         with zipfile.ZipFile(java_resource, 'r') as java_resource_jar:
-          for apk_path in java_resource_jar.namelist():
+          for apk_path in sorted(java_resource_jar.namelist()):
             apk_path_lower = apk_path.lower()
 
             if apk_path_lower.startswith('meta-inf/'):
@@ -387,11 +381,6 @@ def main(args):
                 out_apk,
                 apk_root_dir + apk_path,
                 data=java_resource_jar.read(apk_path))
-
-      if options.apk_pak_info_path:
-        _MergePakInfoFiles(options.apk_pak_info_path, pak_infos)
-      if options.apk_res_info_path:
-        _MergeResInfoFiles(options.apk_res_info_path, options.resource_apk)
 
     if options.format == 'apk':
       finalize_apk.FinalizeApk(options.apksigner_path, options.zipalign_path,

@@ -7,23 +7,25 @@
 
 #include <map>
 #include <string>
-#include <vector>
 
-#include "ash/assistant/model/assistant_cache_model.h"
-#include "ash/assistant/model/assistant_cache_model_observer.h"
 #include "ash/assistant/model/assistant_interaction_model.h"
 #include "ash/assistant/model/assistant_interaction_model_observer.h"
+#include "ash/assistant/model/assistant_notification_model.h"
+#include "ash/assistant/model/assistant_notification_model_observer.h"
+#include "ash/assistant/model/assistant_suggestions_model.h"
+#include "ash/assistant/model/assistant_suggestions_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
 #include "ash/assistant/ui/assistant_mini_view.h"
 #include "ash/assistant/ui/caption_bar.h"
 #include "ash/assistant/ui/dialog_plate/dialog_plate.h"
 #include "ash/assistant/ui/main_stage/assistant_opt_in_view.h"
-#include "ash/public/cpp/assistant/default_voice_interaction_observer.h"
-#include "ash/public/interfaces/assistant_image_downloader.mojom.h"
+#include "ash/public/cpp/assistant/assistant_image_downloader.h"
+#include "ash/public/cpp/assistant/assistant_state.h"
 #include "base/component_export.h"
 #include "base/observer_list_types.h"
 #include "chromeos/services/assistant/public/mojom/assistant.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "services/content/public/mojom/navigable_contents_factory.mojom.h"
 #include "ui/wm/core/cursor_manager.h"
 
@@ -38,11 +40,31 @@ enum class DeepLinkType;
 class COMPONENT_EXPORT(ASSISTANT_UI) AssistantViewDelegateObserver
     : public base::CheckedObserver {
  public:
-  // Invoked when Assistant has received a deep link of the specified |type|
-  // with the given |params|.
-  virtual void OnDeepLinkReceived(
-      assistant::util::DeepLinkType type,
-      const std::map<std::string, std::string>& params) {}
+  using AssistantSuggestion = chromeos::assistant::mojom::AssistantSuggestion;
+
+  // Invoked when the dialog plate button identified by |id| is pressed.
+  virtual void OnDialogPlateButtonPressed(AssistantButtonId id) {}
+
+  // Invoked when the dialog plate contents have been committed.
+  virtual void OnDialogPlateContentsCommitted(const std::string& text) {}
+
+  // Invoked when the mini view is pressed.
+  virtual void OnMiniViewPressed() {}
+
+  // Invoked when the opt in button is pressed.
+  virtual void OnOptInButtonPressed() {}
+
+  // Invoked when the proactive suggestions close button is pressed.
+  virtual void OnProactiveSuggestionsCloseButtonPressed() {}
+
+  // Invoked when the hover state of the proactive suggestions view is changed.
+  virtual void OnProactiveSuggestionsViewHoverChanged(bool is_hovering) {}
+
+  // Invoked when the proactive suggestions view is pressed.
+  virtual void OnProactiveSuggestionsViewPressed() {}
+
+  // Invoked when a suggestion chip is pressed.
+  virtual void OnSuggestionChipPressed(const AssistantSuggestion* suggestion) {}
 };
 
 // A delegate of views in assistant/ui that handles views related actions e.g.
@@ -54,19 +76,21 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantViewDelegate {
 
   virtual ~AssistantViewDelegate() {}
 
-  // Gets the cache model associated with the view delegate.
-  virtual const AssistantCacheModel* GetCacheModel() const = 0;
-
   // Gets the interaction model associated with the view delegate.
   virtual const AssistantInteractionModel* GetInteractionModel() const = 0;
+
+  // Gets the notification model associated with the view delegate.
+  virtual const AssistantNotificationModel* GetNotificationModel() const = 0;
+
+  // Gets the suggestions model associated with the view delegate.
+  virtual const AssistantSuggestionsModel* GetSuggestionsModel() const = 0;
 
   // Gets the ui model associated with the view delegate.
   virtual const AssistantUiModel* GetUiModel() const = 0;
 
-  // Adds/removes the cache model observer associated with the view delegate.
-  virtual void AddCacheModelObserver(AssistantCacheModelObserver* observer) = 0;
-  virtual void RemoveCacheModelObserver(
-      AssistantCacheModelObserver* observer) = 0;
+  // Adds/removes the specified view delegate observer.
+  virtual void AddObserver(AssistantViewDelegateObserver* observer) = 0;
+  virtual void RemoveObserver(AssistantViewDelegateObserver* observer) = 0;
 
   // Adds/removes the interaction model observer associated with the view
   // delegate.
@@ -75,54 +99,76 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantViewDelegate {
   virtual void RemoveInteractionModelObserver(
       AssistantInteractionModelObserver* observer) = 0;
 
+  // Adds/removes the notification model observer associated with the view
+  // delegate.
+  virtual void AddNotificationModelObserver(
+      AssistantNotificationModelObserver* observer) = 0;
+  virtual void RemoveNotificationModelObserver(
+      AssistantNotificationModelObserver* observer) = 0;
+
+  // Adds/removes the suggestions model observer associated with the view
+  // delegate.
+  virtual void AddSuggestionsModelObserver(
+      AssistantSuggestionsModelObserver* observer) = 0;
+  virtual void RemoveSuggestionsModelObserver(
+      AssistantSuggestionsModelObserver* observer) = 0;
+
   // Adds/removes the ui model observer associated with the view delegate.
   virtual void AddUiModelObserver(AssistantUiModelObserver* observer) = 0;
   virtual void RemoveUiModelObserver(AssistantUiModelObserver* observer) = 0;
 
-  // Adds/removes the view delegate observer.
-  virtual void AddViewDelegateObserver(
-      AssistantViewDelegateObserver* observer) = 0;
-  virtual void RemoveViewDelegateObserver(
-      AssistantViewDelegateObserver* observer) = 0;
-
-  // Adds/removes the voice interaction controller observer associated with the
-  // view delegate.
-  virtual void AddVoiceInteractionControllerObserver(
-      DefaultVoiceInteractionObserver* observer) = 0;
-  virtual void RemoveVoiceInteractionControllerObserver(
-      DefaultVoiceInteractionObserver* observer) = 0;
-
   // Gets the caption bar delegate associated with the view delegate.
   virtual CaptionBarDelegate* GetCaptionBarDelegate() = 0;
-
-  // Gets the dialog plate observers associated with the view delegate.
-  virtual std::vector<DialogPlateObserver*> GetDialogPlateObservers() = 0;
-
-  // Gets the mini view delegate associated with the view delegate.
-  virtual AssistantMiniViewDelegate* GetMiniViewDelegate() = 0;
-
-  // Gets the opt in delegate associated with the view delegate.
-  virtual AssistantOptInDelegate* GetOptInDelegate() = 0;
 
   // Downloads the image found at the specified |url|. On completion, the
   // supplied |callback| will be run with the downloaded image. If the download
   // attempt is unsuccessful, a NULL image is returned.
   virtual void DownloadImage(
       const GURL& url,
-      mojom::AssistantImageDownloader::DownloadCallback callback) = 0;
+      AssistantImageDownloader::DownloadCallback callback) = 0;
 
   // Returns the cursor_manager.
-  virtual wm::CursorManager* GetCursorManager() = 0;
+  virtual ::wm::CursorManager* GetCursorManager() = 0;
 
   // Acquires a NavigableContentsFactory from the Content Service to allow
   // Assistant to display embedded web contents.
   virtual void GetNavigableContentsFactoryForView(
-      content::mojom::NavigableContentsFactoryRequest request) = 0;
+      mojo::PendingReceiver<content::mojom::NavigableContentsFactory>
+          receiver) = 0;
 
+  // Returns the root window for the specified |display_id|.
+  virtual aura::Window* GetRootWindowForDisplayId(int64_t display_id) = 0;
+
+  // Returns the root window that newly created windows should be added to.
   virtual aura::Window* GetRootWindowForNewWindows() = 0;
 
   // Returns true if in tablet mode.
   virtual bool IsTabletMode() const = 0;
+
+  // Invoked when the dialog plate button identified by |id| is pressed.
+  virtual void OnDialogPlateButtonPressed(AssistantButtonId id) = 0;
+
+  // Invoked when the dialog plate contents have been committed.
+  virtual void OnDialogPlateContentsCommitted(const std::string& text) = 0;
+
+  // Invoked when the mini view is pressed.
+  virtual void OnMiniViewPressed() = 0;
+
+  // Invoked when an in-Assistant notification button is pressed.
+  virtual void OnNotificationButtonPressed(const std::string& notification_id,
+                                           int notification_button_index) = 0;
+
+  // Invoked when the opt in button is pressed.
+  virtual void OnOptInButtonPressed() {}
+
+  // Invoked when the proactive suggestions close button is pressed.
+  virtual void OnProactiveSuggestionsCloseButtonPressed() {}
+
+  // Invoked when the hover state of the proactive suggestions view is changed.
+  virtual void OnProactiveSuggestionsViewHoverChanged(bool is_hovering) {}
+
+  // Invoked when the proactive suggestions view is pressed.
+  virtual void OnProactiveSuggestionsViewPressed() {}
 
   // Invoked when suggestion chip is pressed.
   virtual void OnSuggestionChipPressed(
@@ -131,9 +177,6 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantViewDelegate {
   // Opens the specified |url| in a new browser tab. Special handling is applied
   // to deep links which may cause deviation from this behavior.
   virtual void OpenUrlFromView(const GURL& url) = 0;
-
-  // Returns true if voice interaction controller setup completed.
-  virtual bool VoiceInteractionControllerSetupCompleted() const = 0;
 };
 
 }  // namespace ash

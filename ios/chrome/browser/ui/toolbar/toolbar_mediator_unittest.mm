@@ -13,6 +13,7 @@
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
+#include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/ui/toolbar/test/toolbar_test_navigation_manager.h"
 #import "ios/chrome/browser/ui/toolbar/test/toolbar_test_web_state.h"
 #import "ios/chrome/browser/ui/toolbar/toolbar_consumer.h"
@@ -26,8 +27,8 @@
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
-#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#include "ios/web/public/test/web_task_environment.h"
+#import "ios/web/public/web_state_observer_bridge.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #include "third_party/ocmock/gtest_support.h"
@@ -127,7 +128,7 @@ class ToolbarMediatorTest : public PlatformTest {
   ~ToolbarMediatorTest() override { [mediator_ disconnect]; }
 
  protected:
-  web::TestWebThreadBundle thread_bundle_;
+  web::WebTaskEnvironment task_environment_;
   void SetUpWebStateList() {
     web_state_list_ = std::make_unique<WebStateList>(&web_state_list_delegate_);
     web_state_list_->InsertWebState(0, std::move(test_web_state_),
@@ -143,7 +144,7 @@ class ToolbarMediatorTest : public PlatformTest {
         chrome_browser_state_.get());
     GURL URL = GURL(kTestUrl);
     const BookmarkNode* defaultFolder = bookmark_model_->mobile_node();
-    bookmark_model_->AddURL(defaultFolder, defaultFolder->child_count(),
+    bookmark_model_->AddURL(defaultFolder, defaultFolder->children().size(),
                             base::SysNSStringToUTF16(@"Test bookmark 1"), URL);
   }
 
@@ -197,7 +198,7 @@ TEST_F(ToolbarMediatorTest, TestToolbarAddedToBookmarks) {
       chrome_browser_state_.get());
   GURL URL = GURL(kTestUrl2);
   const BookmarkNode* defaultFolder = bookmark_model_->mobile_node();
-  bookmark_model_->AddURL(defaultFolder, defaultFolder->child_count(),
+  bookmark_model_->AddURL(defaultFolder, defaultFolder->children().size(),
                           base::SysNSStringToUTF16(@"Test bookmark 1"), URL);
   EXPECT_OCMOCK_VERIFY(consumer_);
 
@@ -206,7 +207,7 @@ TEST_F(ToolbarMediatorTest, TestToolbarAddedToBookmarks) {
   bookmark_model_ = ios::BookmarkModelFactory::GetForBrowserState(
       chrome_browser_state_.get());
   URL = GURL(kTestUrl);
-  bookmark_model_->AddURL(defaultFolder, defaultFolder->child_count(),
+  bookmark_model_->AddURL(defaultFolder, defaultFolder->children().size(),
                           base::SysNSStringToUTF16(@"Test bookmark 2"), URL);
 
   EXPECT_OCMOCK_VERIFY(consumer_);
@@ -221,7 +222,7 @@ TEST_F(ToolbarMediatorTest, TestToolbarRemovedFromBookmarks) {
       chrome_browser_state_.get());
   GURL URL = GURL(kTestUrl2);
   const BookmarkNode* defaultFolder = bookmark_model_->mobile_node();
-  bookmark_model_->AddURL(defaultFolder, defaultFolder->child_count(),
+  bookmark_model_->AddURL(defaultFolder, defaultFolder->children().size(),
                           base::SysNSStringToUTF16(@"Test bookmark 1"), URL);
   web_state_->SetCurrentURL(GURL(kTestUrl));
   mediator_.webStateList = web_state_list_.get();
@@ -391,6 +392,19 @@ TEST_F(ToolbarMediatorTest, TestDidStopLoading) {
   mediator_.consumer = consumer_;
 
   web_state_->SetLoading(false);
+  [[consumer_ verify] setLoadingState:NO];
+}
+
+// Tests the Toolbar is not updated when the Webstate observer method
+// DidStartLoading is triggered by SetLoading on the NTP.
+TEST_F(ToolbarMediatorTest, TestDidStartLoadingNTP) {
+  mediator_.webStateList = web_state_list_.get();
+  SetUpActiveWebState();
+  mediator_.consumer = consumer_;
+
+  web_state_->SetLoading(false);
+  web_state_->SetVisibleURL(GURL(kChromeUINewTabURL));
+  web_state_->SetLoading(true);
   [[consumer_ verify] setLoadingState:NO];
 }
 

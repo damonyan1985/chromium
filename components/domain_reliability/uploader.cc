@@ -120,8 +120,7 @@ class DomainReliabilityUploaderImpl
         0, upload_url, net::URLFetcher::POST, this, traffic_annotation);
     net::URLFetcher* fetcher = owned_fetcher.get();
     fetcher->SetRequestContext(url_request_context_getter_.get());
-    fetcher->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                          net::LOAD_DO_NOT_SAVE_COOKIES);
+    fetcher->SetAllowCredentials(false);
     fetcher->SetUploadData(kJsonMimeType, report_json);
     fetcher->SetAutomaticallyRetryOn5xx(false);
     fetcher->SetURLRequestUserData(
@@ -172,10 +171,6 @@ class DomainReliabilityUploaderImpl
     DVLOG(1) << "Upload finished with net error " << net_error
              << ", response code " << http_response_code << ", retry after "
              << retry_after;
-
-    base::UmaHistogramSparse("DomainReliability.UploadResponseCode",
-                             http_response_code);
-    base::UmaHistogramSparse("DomainReliability.UploadNetError", -net_error);
 
     UploadResult result;
     GetUploadResultFromResponseDetails(net_error,

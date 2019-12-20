@@ -5,20 +5,20 @@
 #include <drm_fourcc.h>
 #include <stdint.h>
 #include <unistd.h>
-
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/platform_file.h"
 #include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_fence_handle.h"
-#include "ui/ozone/common/linux/gbm_buffer.h"
+#include "ui/gfx/linux/gbm_buffer.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
 #include "ui/ozone/platform/drm/gpu/drm_framebuffer.h"
 #include "ui/ozone/platform/drm/gpu/drm_gpu_util.h"
@@ -303,7 +303,7 @@ TEST_P(HardwareDisplayPlaneManagerLegacyTest, MultiplePlanesAndCrtcs) {
 TEST_P(HardwareDisplayPlaneManagerLegacyTest, CheckFramebufferFormatMatch) {
   ui::DrmOverlayPlaneList assigns;
   scoped_refptr<ui::DrmFramebuffer> buffer =
-      CreateBufferWithFormat(kDefaultBufferSize, DRM_FORMAT_UYVY);
+      CreateBufferWithFormat(kDefaultBufferSize, DRM_FORMAT_NV12);
   assigns.push_back(ui::DrmOverlayPlane(buffer, nullptr));
 
   InitializeDrmState(/*crtc_count=*/2, /*planes_per_crtc=*/1);
@@ -780,16 +780,16 @@ TEST_P(HardwareDisplayPlaneManagerTest,
       crtc_properties_, plane_properties_, property_names_, use_atomic_));
 }
 
-INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+INSTANTIATE_TEST_SUITE_P(All,
                          HardwareDisplayPlaneManagerTest,
                          testing::Values(false, true));
 
 // TODO(dnicoara): Migrate as many tests as possible to the general list above.
-INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+INSTANTIATE_TEST_SUITE_P(All,
                          HardwareDisplayPlaneManagerLegacyTest,
                          testing::Values(false));
 
-INSTANTIATE_TEST_SUITE_P(/* no prefix */,
+INSTANTIATE_TEST_SUITE_P(All,
                          HardwareDisplayPlaneManagerAtomicTest,
                          testing::Values(true));
 
@@ -868,9 +868,9 @@ class HardwareDisplayPlaneManagerPlanesReadyTest : public testing::Test {
   scoped_refptr<ui::MockDrmDevice> fake_drm_;
   std::unique_ptr<ui::HardwareDisplayPlaneManager> plane_manager_;
   bool callback_called = false;
-  base::test::ScopedTaskEnvironment task_env_{
-      base::test::ScopedTaskEnvironment::MainThreadType::DEFAULT,
-      base::test::ScopedTaskEnvironment::ExecutionMode::QUEUED};
+  base::test::TaskEnvironment task_env_{
+      base::test::TaskEnvironment::MainThreadType::DEFAULT,
+      base::test::TaskEnvironment::ThreadPoolExecutionMode::QUEUED};
   scoped_refptr<ui::DrmFramebuffer> drm_framebuffer_;
   const FakeFenceFD fake_fence_fd1_;
   const FakeFenceFD fake_fence_fd2_;

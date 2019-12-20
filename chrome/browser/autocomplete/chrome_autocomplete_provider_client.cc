@@ -12,9 +12,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
-#include "chrome/browser/autocomplete/contextual_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/document_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
+#include "chrome/browser/autocomplete/remote_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service_factory.h"
@@ -27,34 +27,40 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_pedal_provider.h"
 #include "components/prefs/pref_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/sync/driver/sync_service.h"
 #include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_user_data.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/autocomplete/keyword_extensions_delegate_impl.h"
 #endif
 
 #if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/upgrade_detector/upgrade_detector.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "chromeos/constants/chromeos_features.h"
 #endif
 
 namespace {
@@ -68,17 +74,22 @@ const char* const kChromeSettingsSubPages[] = {
     chrome::kLanguageOptionsSubPage,  chrome::kPasswordManagerSubPage,
     chrome::kPaymentsSubPage,         chrome::kResetProfileSettingsSubPage,
     chrome::kSearchEnginesSubPage,    chrome::kSyncSetupSubPage,
-#if defined(OS_CHROMEOS)
-    chrome::kAccessibilitySubPage,    chrome::kBluetoothSubPage,
-    chrome::kDateTimeSubPage,         chrome::kDisplaySubPage,
-    chrome::kInternetSubPage,         chrome::kPowerSubPage,
-    chrome::kStylusSubPage,
-#else
+#if !defined(OS_CHROMEOS)
     chrome::kCreateProfileSubPage,    chrome::kImportDataSubPage,
     chrome::kManageProfileSubPage,    chrome::kPeopleSubPage,
 #endif
 };
 #endif  // !defined(OS_ANDROID)
+
+#if defined(OS_CHROMEOS)
+const char* const kChromeOSSettingsSubPages[] = {
+    chrome::kAccessibilitySubPage, chrome::kBluetoothSubPage,
+    chrome::kDateTimeSubPage,      chrome::kDisplaySubPage,
+    chrome::kInternetSubPage,      chrome::kNativePrintingSettingsSubPage,
+    chrome::kPowerSubPage,         chrome::kStylusSubPage,
+    chrome::kWiFiSettingsSubPage,
+};
+#endif  // defined(OS_CHROMEOS)
 
 }  // namespace
 
@@ -89,11 +100,9 @@ ChromeAutocompleteProviderClient::ChromeAutocompleteProviderClient(
       url_consent_helper_(
           unified_consent::UrlKeyedDataCollectionConsentHelper::
               NewPersonalizedDataCollectionConsentHelper(
-                  ProfileSyncServiceFactory::GetSyncServiceForProfile(
-                      profile_))),
+                  ProfileSyncServiceFactory::GetForProfile(profile_))),
       storage_partition_(nullptr) {
-  if (OmniboxFieldTrial::GetPedalSuggestionMode() !=
-      OmniboxFieldTrial::PedalSuggestionMode::NONE)
+  if (OmniboxFieldTrial::IsPedalSuggestionsEnabled())
     pedal_provider_ = std::make_unique<OmniboxPedalProvider>(*this);
 }
 
@@ -155,11 +164,11 @@ ChromeAutocompleteProviderClient::GetTemplateURLService() const {
   return TemplateURLServiceFactory::GetForProfile(profile_);
 }
 
-ContextualSuggestionsService*
-ChromeAutocompleteProviderClient::GetContextualSuggestionsService(
+RemoteSuggestionsService*
+ChromeAutocompleteProviderClient::GetRemoteSuggestionsService(
     bool create_if_necessary) const {
-  return ContextualSuggestionsServiceFactory::GetForProfile(
-      profile_, create_if_necessary);
+  return RemoteSuggestionsServiceFactory::GetForProfile(profile_,
+                                                        create_if_necessary);
 }
 
 DocumentSuggestionsService*
@@ -172,8 +181,7 @@ ChromeAutocompleteProviderClient::GetDocumentSuggestionsService(
 OmniboxPedalProvider* ChromeAutocompleteProviderClient::GetPedalProvider()
     const {
   // If Pedals are disabled, we should never get here to use the provider.
-  DCHECK_NE(OmniboxFieldTrial::GetPedalSuggestionMode(),
-            OmniboxFieldTrial::PedalSuggestionMode::NONE);
+  DCHECK(OmniboxFieldTrial::IsPedalSuggestionsEnabled());
   DCHECK(pedal_provider_);
   return pedal_provider_.get();
 }
@@ -200,7 +208,7 @@ ChromeAutocompleteProviderClient::GetKeywordExtensionsDelegate(
 }
 
 std::string ChromeAutocompleteProviderClient::GetAcceptLanguages() const {
-  return profile_->GetPrefs()->GetString(prefs::kAcceptLanguages);
+  return profile_->GetPrefs()->GetString(language::prefs::kAcceptLanguages);
 }
 
 std::string
@@ -229,6 +237,18 @@ std::vector<base::string16> ChromeAutocompleteProviderClient::GetBuiltinURLs() {
   }
 #endif
 
+#if defined(OS_CHROMEOS)
+  // TODO(crbug/950007): Delete this after the settings split is complete since
+  // the OS setting routes should not show up as an autocomplete suggestion in
+  // browser.
+  if (!base::FeatureList::IsEnabled(chromeos::features::kSplitSettings)) {
+    for (size_t i = 0; i < base::size(kChromeOSSettingsSubPages); i++) {
+      builtins.push_back(settings +
+                         base::ASCIIToUTF16(kChromeOSSettingsSubPages[i]));
+    }
+  }
+#endif
+
   return builtins;
 }
 
@@ -246,28 +266,9 @@ ChromeAutocompleteProviderClient::GetBuiltinsToProvideAsUserTypes() {
   return builtins_to_provide;
 }
 
-base::Time ChromeAutocompleteProviderClient::GetCurrentVisitTimestamp() const {
-// The timestamp is currenly used only for contextual zero suggest suggestions
-// on desktop. Consider updating this if this will be used for mobile services.
-#if !defined(OS_ANDROID)
-  const Browser* active_browser = BrowserList::GetInstance()->GetLastActive();
-  if (!active_browser)
-    return base::Time();
-
-  content::WebContents* active_tab =
-      active_browser->tab_strip_model()->GetActiveWebContents();
-  if (!active_tab)
-    return base::Time();
-
-  content::NavigationEntry* navigation =
-      active_tab->GetController().GetLastCommittedEntry();
-  if (!navigation)
-    return base::Time();
-
-  return navigation->GetTimestamp();
-#else
-  return base::Time();
-#endif  // !defined(OS_ANDROID)
+component_updater::ComponentUpdateService*
+ChromeAutocompleteProviderClient::GetComponentUpdateService() {
+  return g_browser_process->component_updater();
 }
 
 bool ChromeAutocompleteProviderClient::IsOffTheRecord() const {
@@ -291,8 +292,12 @@ bool ChromeAutocompleteProviderClient::IsAuthenticated() const {
 
 bool ChromeAutocompleteProviderClient::IsSyncActive() const {
   syncer::SyncService* sync =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   return sync && sync->IsSyncFeatureActive();
+}
+
+std::string ChromeAutocompleteProviderClient::ProfileUserName() const {
+  return profile_->GetProfileUserName();
 }
 
 void ChromeAutocompleteProviderClient::Classify(
@@ -315,6 +320,9 @@ void ChromeAutocompleteProviderClient::DeleteMatchingURLsForKeywordFromHistory(
 }
 
 void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
+  // Note: Android uses different image fetching mechanism to avoid
+  // penalty of copying byte buffers from C++ to Java.
+#if !defined(OS_ANDROID)
   BitmapFetcherService* image_service =
       BitmapFetcherServiceFactory::GetForBrowserContext(profile_);
   DCHECK(image_service);
@@ -360,6 +368,7 @@ void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
         })");
 
   image_service->Prefetch(url, traffic_annotation);
+#endif  // !defined(OS_ANDROID)
 }
 
 void ChromeAutocompleteProviderClient::StartServiceWorker(
@@ -384,15 +393,6 @@ void ChromeAutocompleteProviderClient::StartServiceWorker(
                                                base::DoNothing());
 }
 
-void ChromeAutocompleteProviderClient::OnAutocompleteControllerResultReady(
-    AutocompleteController* controller) {
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_AUTOCOMPLETE_CONTROLLER_RESULT_READY,
-      content::Source<AutocompleteController>(controller),
-      content::NotificationService::NoDetails());
-}
-
-// TODO(crbug.com/46623): Maintain a map of URL->WebContents for fast look-up.
 bool ChromeAutocompleteProviderClient::IsTabOpenWithURL(
     const GURL& url,
     const AutocompleteInput* input) {
@@ -401,16 +401,19 @@ bool ChromeAutocompleteProviderClient::IsTabOpenWithURL(
   content::WebContents* active_tab = nullptr;
   if (active_browser)
     active_tab = active_browser->tab_strip_model()->GetActiveWebContents();
+  const AutocompleteInput empty_input;
+  if (!input)
+    input = &empty_input;
+  const GURL stripped_url = AutocompleteMatch::GURLToStrippedGURL(
+      url, *input, GetTemplateURLService(), base::string16());
   for (auto* browser : *BrowserList::GetInstance()) {
     // Only look at same profile (and anonymity level).
-    if (browser->profile()->IsSameProfile(profile_) &&
-        browser->profile()->GetProfileType() == profile_->GetProfileType()) {
+    if (browser->profile()->IsSameProfileAndType(profile_)) {
       for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
         content::WebContents* web_contents =
             browser->tab_strip_model()->GetWebContentsAt(i);
         if (web_contents != active_tab &&
-            StrippedURLsAreEqual(web_contents->GetLastCommittedURL(), url,
-                                 input))
+            IsStrippedURLEqualToWebContentsURL(stripped_url, web_contents))
           return true;
       }
     }
@@ -439,4 +442,61 @@ bool ChromeAutocompleteProviderClient::StrippedURLsAreEqual(
              url1, *input, template_url_service, base::string16()) ==
          AutocompleteMatch::GURLToStrippedGURL(
              url2, *input, template_url_service, base::string16());
+}
+
+class AutocompleteClientWebContentsUserData
+    : public content::WebContentsUserData<
+          AutocompleteClientWebContentsUserData> {
+ public:
+  ~AutocompleteClientWebContentsUserData() override = default;
+
+  int GetLastCommittedEntryIndex() { return last_committed_entry_index_; }
+  const GURL& GetLastCommittedStrippedURL() {
+    return last_committed_stripped_url_;
+  }
+  void UpdateLastCommittedStrippedURL(
+      int last_committed_index,
+      const GURL& last_committed_url,
+      TemplateURLService* template_url_service) {
+    if (last_committed_url.is_valid()) {
+      last_committed_entry_index_ = last_committed_index;
+      // Use blank input since we will re-use this stripped URL with other
+      // inputs.
+      last_committed_stripped_url_ = AutocompleteMatch::GURLToStrippedGURL(
+          last_committed_url, AutocompleteInput(), template_url_service,
+          base::string16());
+    }
+  }
+
+ private:
+  explicit AutocompleteClientWebContentsUserData(
+      content::WebContents* contents);
+  friend class content::WebContentsUserData<
+      AutocompleteClientWebContentsUserData>;
+
+  int last_committed_entry_index_ = -1;
+  GURL last_committed_stripped_url_;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+};
+
+AutocompleteClientWebContentsUserData::AutocompleteClientWebContentsUserData(
+    content::WebContents*)
+    : content::WebContentsUserData<AutocompleteClientWebContentsUserData>() {}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(AutocompleteClientWebContentsUserData)
+
+bool ChromeAutocompleteProviderClient::IsStrippedURLEqualToWebContentsURL(
+    const GURL& stripped_url,
+    content::WebContents* web_contents) {
+  AutocompleteClientWebContentsUserData::CreateForWebContents(web_contents);
+  AutocompleteClientWebContentsUserData* user_data =
+      AutocompleteClientWebContentsUserData::FromWebContents(web_contents);
+  DCHECK(user_data);
+  if (user_data->GetLastCommittedEntryIndex() !=
+      web_contents->GetController().GetLastCommittedEntryIndex()) {
+    user_data->UpdateLastCommittedStrippedURL(
+        web_contents->GetController().GetLastCommittedEntryIndex(),
+        web_contents->GetLastCommittedURL(), GetTemplateURLService());
+  }
+  return stripped_url == user_data->GetLastCommittedStrippedURL();
 }

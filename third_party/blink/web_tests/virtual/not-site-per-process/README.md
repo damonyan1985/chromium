@@ -17,6 +17,13 @@ Tests under `virtual/not-site-per-process` are run with
 isolation.  This is needed to preserve test coverage provided by around
 60 tests that fail when run with site isolation.
 
+Instead of including `http/tests/devtools/isolated-code-cache` tests here, we
+split into two virtual test suites
+`virtual/not-split-http-cache-not-site-per-process` and
+`virtual/split-http-cache-not-site-per-process`, which disable and enable HTTP
+cache partitioning, respectively. This split is needed as a test checks whether
+cross-origin resources were cached.
+
 When modifying the list of files that behave differently with and without
 OOPIFs, please consider modifying all the locations below:
 - LayoutTests/VirtualTestSuites (virtual/not-site-per-process suite)
@@ -42,8 +49,8 @@ isolation of WPT origins.  The tests need to stay under
 - external/wpt/html/browsers/the-windowproxy-exotic-object/windowproxy-prototype-setting-same-origin-domain.sub.html
 - external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-domain-success.sub.html
 - external/wpt/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/window-similar-but-cross-origin-success.sub.html
-- external/wpt/wasm/serialization/window-domain-success.sub.html
-- external/wpt/wasm/serialization/window-similar-but-cross-origin-success.sub.html
+- external/wpt/wasm/serialization/module/window-domain-success.sub.html
+- external/wpt/wasm/serialization/module/window-similar-but-cross-origin-success.sub.html
 
 ## Tests that need further investigation and/or decisions
 

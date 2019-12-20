@@ -32,16 +32,15 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SERVICE_WORKER_SERVICE_WORKER_CONTAINER_H_
 
 #include <memory>
-#include <vector>
 
-#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom-blink.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_property.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/service_worker/message_from_service_worker.h"
 #include "third_party/blink/renderer/modules/service_worker/registration_options.h"
@@ -50,10 +49,12 @@
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
 class ExecutionContext;
+class ExceptionState;
 
 class MODULES_EXPORT ServiceWorkerContainer final
     : public EventTargetWithInlineData,
@@ -81,7 +82,7 @@ class MODULES_EXPORT ServiceWorkerContainer final
   void Trace(blink::Visitor*) override;
 
   ServiceWorker* controller() { return controller_; }
-  ScriptPromise ready(ScriptState*);
+  ScriptPromise ready(ScriptState*, ExceptionState&);
 
   ScriptPromise registerServiceWorker(ScriptState*,
                                       const String& pattern,
@@ -104,10 +105,12 @@ class MODULES_EXPORT ServiceWorkerContainer final
   ExecutionContext* GetExecutionContext() const override;
   const AtomicString& InterfaceName() const override;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(controllerchange, kControllerchange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(controllerchange, kControllerchange)
 
   void setOnmessage(EventListener* listener);
   EventListener* onmessage();
+
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(messageerror, kMessageerror)
 
   // Returns the ServiceWorkerRegistration object described by the given info.
   // Creates a new object if needed, or else returns the existing one.
@@ -120,7 +123,6 @@ class MODULES_EXPORT ServiceWorkerContainer final
 
  private:
   class DomContentLoadedListener;
-  class GetRegistrationForReadyCallback;
 
   using ReadyProperty =
       ScriptPromiseProperty<Member<ServiceWorkerContainer>,
@@ -131,6 +133,8 @@ class MODULES_EXPORT ServiceWorkerContainer final
   void EnableClientMessageQueue();
   void DispatchMessageEvent(WebServiceWorkerObjectInfo source,
                             TransferableMessage);
+
+  void OnGetRegistrationForReady(WebServiceWorkerRegistrationObjectInfo info);
 
   std::unique_ptr<WebServiceWorkerProvider> provider_;
   Member<ServiceWorker> controller_;
@@ -156,7 +160,7 @@ class MODULES_EXPORT ServiceWorkerContainer final
   // queue using this flag since the task runner is shared with other task
   // sources.
   bool is_client_message_queue_enabled_ = false;
-  std::vector<std::unique_ptr<MessageFromServiceWorker>> queued_messages_;
+  Vector<std::unique_ptr<MessageFromServiceWorker>> queued_messages_;
   Member<DomContentLoadedListener> dom_content_loaded_observer_;
 };
 

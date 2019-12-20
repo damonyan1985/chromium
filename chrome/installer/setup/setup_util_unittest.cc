@@ -4,9 +4,10 @@
 
 #include "chrome/installer/setup/setup_util_unittest.h"
 
-#include <windows.h>
 #include <shlobj.h>
+#include <windows.h>
 
+#include <ios>
 #include <memory>
 #include <string>
 
@@ -14,6 +15,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
@@ -27,6 +29,8 @@
 #include "base/version.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
+#include "build/branding_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_util.h"
 #include "chrome/install_static/test/scoped_install_details.h"
@@ -51,7 +55,7 @@ TEST(SetupUtilTest, GetMaxVersionFromArchiveDirTest) {
       installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()));
   ASSERT_EQ(version->GetString(), "1.0.0.0");
 
-  base::DeleteFile(chrome_dir, true);
+  base::DeleteFileRecursively(chrome_dir);
   ASSERT_FALSE(base::PathExists(chrome_dir)) << chrome_dir.value();
   ASSERT_TRUE(installer::GetMaxVersionFromArchiveDir(test_dir.GetPath()) ==
               NULL);
@@ -193,17 +197,25 @@ PriorityClassChangeResult RelaunchAndDoProcessPriorityAdjustment() {
 
 // Launching a subprocess at normal priority class is a noop.
 TEST(SetupUtilTest, AdjustFromNormalPriority) {
-  ASSERT_EQ(static_cast<DWORD>(NORMAL_PRIORITY_CLASS),
-            ::GetPriorityClass(::GetCurrentProcess()));
+  const DWORD priority_class = ::GetPriorityClass(::GetCurrentProcess());
+  if (priority_class != NORMAL_PRIORITY_CLASS) {
+    LOG(WARNING) << "Skipping SetupUtilTest.AdjustFromNormalPriority since "
+                    "the test harness is running at priority 0x"
+                 << std::hex << priority_class;
+    return;
+  }
   EXPECT_EQ(PCCR_UNCHANGED, RelaunchAndDoProcessPriorityAdjustment());
 }
 
 // Launching a subprocess below normal priority class drops it to bg mode for
 // sufficiently recent operating systems.
 TEST(SetupUtilTest, AdjustFromBelowNormalPriority) {
-  std::unique_ptr<ScopedPriorityClass> below_normal =
-      ScopedPriorityClass::Create(BELOW_NORMAL_PRIORITY_CLASS);
-  ASSERT_TRUE(below_normal);
+  std::unique_ptr<ScopedPriorityClass> below_normal;
+  if (::GetPriorityClass(::GetCurrentProcess()) !=
+      BELOW_NORMAL_PRIORITY_CLASS) {
+    below_normal = ScopedPriorityClass::Create(BELOW_NORMAL_PRIORITY_CLASS);
+    ASSERT_TRUE(below_normal);
+  }
   EXPECT_EQ(PCCR_CHANGED, RelaunchAndDoProcessPriorityAdjustment());
 }
 
@@ -245,22 +257,25 @@ TEST(SetupUtilTest, RecordUnPackMetricsTest) {
   base::HistogramTester histogram_tester;
   std::string unpack_status_metrics_name =
       std::string(installer::kUnPackStatusMetricsName) + "_SetupExePatch";
+  std::string unpack_result_metrics_name =
+      std::string(installer::kUnPackResultMetricsName) + "_SetupExePatch";
   std::string ntstatus_metrics_name =
       std::string(installer::kUnPackNTSTATUSMetricsName) + "_SetupExePatch";
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 0);
 
-  RecordUnPackMetrics(UnPackStatus::UNPACK_NO_ERROR, 0,
+  RecordUnPackMetrics(UnPackStatus::UNPACK_NO_ERROR, base::nullopt,
+                      base::nullopt,
                       installer::UnPackConsumer::SETUP_EXE_PATCH);
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 1);
   histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 0, 1);
-  histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 1);
-  histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 0, 1);
 
-  RecordUnPackMetrics(UnPackStatus::UNPACK_CLOSE_FILE_ERROR, 1,
+  RecordUnPackMetrics(UnPackStatus::UNPACK_EXTRACT_ERROR, 1, 2,
                       installer::UnPackConsumer::SETUP_EXE_PATCH);
   histogram_tester.ExpectTotalCount(unpack_status_metrics_name, 2);
-  histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 10, 1);
-  histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 2);
+  histogram_tester.ExpectBucketCount(unpack_status_metrics_name, 4, 1);
+  histogram_tester.ExpectTotalCount(unpack_result_metrics_name, 1);
+  histogram_tester.ExpectBucketCount(unpack_result_metrics_name, 2, 1);
+  histogram_tester.ExpectTotalCount(ntstatus_metrics_name, 1);
   histogram_tester.ExpectBucketCount(ntstatus_metrics_name, 1, 1);
 }
 
@@ -561,6 +576,25 @@ TEST_F(DeleteRegistryKeyPartialTest, EmptyKey) {
 
 TEST_F(DeleteRegistryKeyPartialTest, NonEmptyKey) {
   CreateSubKeys(false); /* !with_preserves */
+
+  // Put some values into the main key.
+  {
+    RegKey key(root_, path_.c_str(), KEY_SET_VALUE);
+    ASSERT_TRUE(key.Valid());
+    ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(nullptr, 5U));
+    ASSERT_EQ(
+        1u,
+        base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+    ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(L"foo", L"bar"));
+    ASSERT_EQ(
+        2u,
+        base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+    ASSERT_EQ(ERROR_SUCCESS, key.WriteValue(L"baz", L"huh"));
+    ASSERT_EQ(
+        3u,
+        base::win::RegistryValueIterator(root_, path_.c_str()).ValueCount());
+  }
+
   DeleteRegistryKeyPartial(root_, path_.c_str(), std::vector<base::string16>());
   ASSERT_FALSE(RegKey(root_, path_.c_str(), KEY_READ).Valid());
 
@@ -630,7 +664,7 @@ class LegacyCleanupsTest : public ::testing::Test {
     ASSERT_TRUE(base::win::RegKey(HKEY_CURRENT_USER, kCommandExecuteImplClsid,
                                   KEY_WRITE)
                     .Valid());
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     ASSERT_TRUE(base::win::RegKey(HKEY_CURRENT_USER, kGCFClientsKeyPath,
                                   KEY_WRITE | KEY_WOW64_32KEY)
                     .Valid());
@@ -643,7 +677,7 @@ class LegacyCleanupsTest : public ::testing::Test {
                           GetChromeAppCommandPath(L"install-extension").c_str(),
                           KEY_WRITE | KEY_WOW64_32KEY)
             .Valid());
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   }
 
   const InstallerState& installer_state() const { return *installer_state_; }
@@ -660,7 +694,7 @@ class LegacyCleanupsTest : public ::testing::Test {
         .Valid();
   }
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   bool HasMultiGCFVersionKey() const {
     return base::win::RegKey(HKEY_CURRENT_USER, kGCFClientsKeyPath,
                              KEY_QUERY_VALUE | KEY_WOW64_32KEY)
@@ -682,7 +716,7 @@ class LegacyCleanupsTest : public ::testing::Test {
                KEY_QUERY_VALUE | KEY_WOW64_32KEY)
         .Valid();
   }
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
  private:
   // An InstallerState for a per-user install of Chrome in a given directory.
@@ -697,7 +731,7 @@ class LegacyCleanupsTest : public ::testing::Test {
     }
   };
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   base::FilePath GetAppHostExePath() const {
     return installer_state_->target_path().AppendASCII("app_host.exe");
   }
@@ -708,11 +742,11 @@ class LegacyCleanupsTest : public ::testing::Test {
                L"{8A69D345-D564-463c-AFF1-A69D9E530F96}\\Commands\\") +
            command;
   }
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
   static const wchar_t kBinariesClientsKeyPath[];
   static const wchar_t kCommandExecuteImplClsid[];
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   static const wchar_t kGCFClientsKeyPath[];
   static const wchar_t kAppLauncherClientsKeyPath[];
 #endif
@@ -723,7 +757,7 @@ class LegacyCleanupsTest : public ::testing::Test {
   DISALLOW_COPY_AND_ASSIGN(LegacyCleanupsTest);
 };
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 const wchar_t LegacyCleanupsTest::kBinariesClientsKeyPath[] =
     L"SOFTWARE\\Google\\Update\\Clients\\"
     L"{4DC8B4CA-1BDA-483e-B5FA-D3C12E15B62D}";
@@ -735,35 +769,35 @@ const wchar_t LegacyCleanupsTest::kGCFClientsKeyPath[] =
 const wchar_t LegacyCleanupsTest::kAppLauncherClientsKeyPath[] =
     L"SOFTWARE\\Google\\Update\\Clients\\"
     L"{FDA71E6F-AC4C-4a00-8B70-9958A68906BF}";
-#else   // GOOGLE_CHROME_BUILD
+#else   // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 const wchar_t LegacyCleanupsTest::kBinariesClientsKeyPath[] =
     L"SOFTWARE\\Chromium Binaries";
 const wchar_t LegacyCleanupsTest::kCommandExecuteImplClsid[] =
     L"Software\\Classes\\CLSID\\{A2DF06F9-A21A-44A8-8A99-8B9C84F29160}";
-#endif  // !GOOGLE_CHROME_BUILD
+#endif  // !BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 TEST_F(LegacyCleanupsTest, NoOpOnFailedUpdate) {
   DoLegacyCleanups(installer_state(), INSTALL_FAILED);
   EXPECT_TRUE(HasBinariesVersionKey());
   EXPECT_TRUE(HasCommandExecuteImplClassKey());
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   EXPECT_TRUE(HasMultiGCFVersionKey());
   EXPECT_TRUE(HasAppLauncherVersionKey());
   EXPECT_TRUE(HasAppHostExe());
   EXPECT_TRUE(HasInstallExtensionCommand());
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 
 TEST_F(LegacyCleanupsTest, Do) {
   DoLegacyCleanups(installer_state(), NEW_VERSION_UPDATED);
   EXPECT_FALSE(HasBinariesVersionKey());
   EXPECT_FALSE(HasCommandExecuteImplClassKey());
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   EXPECT_FALSE(HasMultiGCFVersionKey());
   EXPECT_FALSE(HasAppLauncherVersionKey());
   EXPECT_FALSE(HasAppHostExe());
   EXPECT_FALSE(HasInstallExtensionCommand());
-#endif  // GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 
 }  // namespace installer

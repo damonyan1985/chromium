@@ -297,6 +297,9 @@ class Twitch2018Page(TopRealWorldDesktopPage):
   BASE_NAME = 'twitch'
   YEAR = '2018'
   URL = 'https://www.twitch.tv'
+  TAGS = TopRealWorldDesktopPage.TAGS + [
+    story_tags.REPRESENTATIVE_MAC_DESKTOP
+  ]
 
   def __init__(self,
                page_set,
@@ -331,7 +334,8 @@ class Gmail2018SmoothPage(TopRealWorldDesktopPage):
     super(Gmail2018SmoothPage, self).RunNavigateSteps(action_runner)
     action_runner.WaitForJavaScriptCondition(
         'window.gmonkey !== undefined &&'
-        'document.getElementById("gb") !== null')
+        'document.getElementById("gb") !== null &&'
+        'document.readyState == "complete"')
 
   def RunPageInteractions(self, action_runner):
     action_runner.WaitForElement(selector='.Tm.aeJ')

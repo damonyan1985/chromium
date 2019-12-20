@@ -33,7 +33,6 @@ class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   const std::string& GetApplicationLocale() const override;
   bool IsIncognito() const override;
-  bool IsSslCertificateValid() override;
   const GURL& GetLastCommittedURL() const override;
   void DoFullCardRequest(
       const autofill::CreditCard& credit_card,
@@ -45,12 +44,17 @@ class ChromePaymentRequestDelegate : public ContentPaymentRequestDelegate {
   std::string GetAuthenticatedEmail() const override;
   PrefService* GetPrefService() override;
   bool IsBrowserWindowActive() const override;
+
+  // ContentPaymentRequestDelegate:
   scoped_refptr<PaymentManifestWebDataService>
   GetPaymentManifestWebDataService() const override;
   PaymentRequestDisplayManager* GetDisplayManager() override;
   void EmbedPaymentHandlerWindow(
       const GURL& url,
       PaymentHandlerOpenWindowCallback callback) override;
+  bool IsInteractive() const override;
+  std::string GetInvalidSslCertificateErrorMessage() override;
+  bool SkipUiForBasicCard() const override;
 
  protected:
   // Reference to the dialog so that we can satisfy calls to CloseDialog(). This

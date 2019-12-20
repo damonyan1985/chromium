@@ -42,7 +42,7 @@ class PaintControllerTestBase : public testing::Test {
       : root_paint_property_client_("root"),
         root_paint_chunk_id_(root_paint_property_client_,
                              DisplayItem::kUninitializedType),
-        paint_controller_(PaintController::Create()) {}
+        paint_controller_(std::make_unique<PaintController>()) {}
 
   void InitRootChunk() { InitRootChunk(GetPaintController()); }
   void InitRootChunk(PaintController& paint_controller) {
@@ -55,18 +55,22 @@ class PaintControllerTestBase : public testing::Test {
 
   PaintController& GetPaintController() { return *paint_controller_; }
 
-  int NumCachedNewItems() const {
+  size_t NumCachedNewItems() const {
     return paint_controller_->num_cached_new_items_;
   }
-
+  size_t NumCachedNewSubsequences() const {
+    return paint_controller_->num_cached_new_subsequences_;
+  }
 #if DCHECK_IS_ON()
-  int NumSequentialMatches() const {
+  size_t NumIndexedItems() const {
+    return paint_controller_->num_indexed_items_;
+  }
+  size_t NumSequentialMatches() const {
     return paint_controller_->num_sequential_matches_;
   }
-  int NumOutOfOrderMatches() const {
+  size_t NumOutOfOrderMatches() const {
     return paint_controller_->num_out_of_order_matches_;
   }
-  int NumIndexedItems() const { return paint_controller_->num_indexed_items_; }
 #endif
 
   void InvalidateAll() { paint_controller_->InvalidateAllForTesting(); }
@@ -133,7 +137,7 @@ MATCHER_P5(IsPaintChunk, begin, end, id, properties, hit_test_data, "") {
 // Shorter names for frequently used display item types in tests.
 const DisplayItem::Type kBackgroundType = DisplayItem::kBoxDecorationBackground;
 const DisplayItem::Type kForegroundType =
-    static_cast<DisplayItem::Type>(DisplayItem::kDrawingPaintPhaseFirst + 4);
+    static_cast<DisplayItem::Type>(DisplayItem::kDrawingPaintPhaseFirst + 5);
 const DisplayItem::Type kDocumentBackgroundType =
     DisplayItem::kDocumentBackground;
 const DisplayItem::Type kScrollHitTestType = DisplayItem::kScrollHitTest;

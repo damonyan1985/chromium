@@ -9,15 +9,31 @@
 
 #include "base/containers/circular_deque.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/common/content_export.h"
 #include "content/public/common/input_event_ack_source.h"
 #include "content/public/common/input_event_ack_state.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 
 namespace content {
 
-class QueuedWebMouseWheelEvent;
+// This class represents a single queued mouse wheel event. Its main use
+// is that it is reported via trace events.
+class QueuedWebMouseWheelEvent : public MouseWheelEventWithLatencyInfo {
+ public:
+  QueuedWebMouseWheelEvent(const MouseWheelEventWithLatencyInfo& original_event)
+      : MouseWheelEventWithLatencyInfo(original_event) {
+    TRACE_EVENT_ASYNC_BEGIN0("input", "MouseWheelEventQueue::QueueEvent", this);
+  }
+
+  ~QueuedWebMouseWheelEvent() {
+    TRACE_EVENT_ASYNC_END0("input", "MouseWheelEventQueue::QueueEvent", this);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(QueuedWebMouseWheelEvent);
+};
 
 // Interface with which MouseWheelEventQueue can forward mouse wheel events,
 // and dispatch mouse wheel event responses.
@@ -34,6 +50,7 @@ class CONTENT_EXPORT MouseWheelEventQueueClient {
                                     InputEventAckSource ack_source,
                                     InputEventAckState ack_result) = 0;
   virtual bool IsWheelScrollInProgress() = 0;
+  virtual bool IsAutoscrollInProgress() = 0;
 };
 
 // A queue for throttling and coalescing mouse wheel events.
@@ -56,7 +73,7 @@ class CONTENT_EXPORT MouseWheelEventQueue {
   // renderer.
   void ProcessMouseWheelAck(InputEventAckSource ack_source,
                             InputEventAckState ack_result,
-                            const ui::LatencyInfo& latency_info);
+                            const MouseWheelEventWithLatencyInfo& ack_event);
 
   // When GestureScrollBegin is received, and it is a different source
   // than mouse wheels terminate the current GestureScroll if there is one.
@@ -71,6 +88,10 @@ class CONTENT_EXPORT MouseWheelEventQueue {
   size_t queued_size() const { return wheel_queue_.size(); }
   bool event_in_flight() const {
     return event_sent_for_gesture_ack_ != nullptr;
+  }
+
+  blink::WebMouseWheelEvent get_wheel_event_awaiting_ack_for_testing() {
+    return event_sent_for_gesture_ack_->event;
   }
 
  private:

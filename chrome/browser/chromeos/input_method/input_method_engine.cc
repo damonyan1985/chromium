@@ -40,20 +40,20 @@ namespace chromeos {
 
 namespace {
 
-const char kErrorNotActive[] = "IME is not active";
-const char kErrorWrongContext[] = "Context is not active";
-const char kCandidateNotFound[] = "Candidate not found";
+const char kErrorNotActive[] = "IME is not active.";
+const char kErrorWrongContext[] = "Context is not active.";
+const char kCandidateNotFound[] = "Candidate not found.";
 
 // The default entry number of a page in CandidateWindowProperty.
 const int kDefaultPageSize = 9;
 
 }  // namespace
 
-InputMethodEngine::Candidate::Candidate() {}
+InputMethodEngine::Candidate::Candidate() = default;
 
 InputMethodEngine::Candidate::Candidate(const Candidate& other) = default;
 
-InputMethodEngine::Candidate::~Candidate() {}
+InputMethodEngine::Candidate::~Candidate() = default;
 
 // When the default values are changed, please modify
 // CandidateWindow::CandidateWindowProperty defined in chromeos/ime/ too.
@@ -63,15 +63,49 @@ InputMethodEngine::CandidateWindowProperty::CandidateWindowProperty()
       is_vertical(false),
       show_window_at_composition(false) {}
 
-InputMethodEngine::CandidateWindowProperty::~CandidateWindowProperty() {}
+InputMethodEngine::CandidateWindowProperty::~CandidateWindowProperty() =
+    default;
 
-InputMethodEngine::InputMethodEngine()
-    : candidate_window_(new ui::CandidateWindow()),
-      window_visible_(false),
-      is_mirroring_(false),
-      is_casting_(false) {}
+InputMethodEngine::InputMethodEngine() = default;
 
-InputMethodEngine::~InputMethodEngine() {}
+InputMethodEngine::~InputMethodEngine() = default;
+
+void InputMethodEngine::Enable(const std::string& component_id) {
+  InputMethodEngineBase::Enable(component_id);
+  EnableInputView();
+}
+
+bool InputMethodEngine::IsActive() const {
+  return !active_component_id_.empty();
+}
+
+void InputMethodEngine::PropertyActivate(const std::string& property_name) {
+  observer_->OnMenuItemActivated(active_component_id_, property_name);
+}
+
+void InputMethodEngine::CandidateClicked(uint32_t index) {
+  if (index > candidate_ids_.size()) {
+    return;
+  }
+
+  // Only left button click is supported at this moment.
+  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
+                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
+}
+
+void InputMethodEngine::SetMirroringEnabled(bool mirroring_enabled) {
+  if (mirroring_enabled != is_mirroring_) {
+    is_mirroring_ = mirroring_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
+
+void InputMethodEngine::SetCastingEnabled(bool casting_enabled) {
+  if (casting_enabled != is_casting_) {
+    is_casting_ = casting_enabled;
+    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+  }
+}
 
 const InputMethodEngine::CandidateWindowProperty&
 InputMethodEngine::GetCandidateWindowProperty() const {
@@ -89,18 +123,18 @@ void InputMethodEngine::SetCandidateWindowProperty(
   dest_property.show_window_at_composition =
       property.show_window_at_composition;
   dest_property.cursor_position =
-      candidate_window_->GetProperty().cursor_position;
+      candidate_window_.GetProperty().cursor_position;
   dest_property.auxiliary_text = property.auxiliary_text;
   dest_property.is_auxiliary_text_visible = property.is_auxiliary_text_visible;
 
-  candidate_window_->SetProperty(dest_property);
+  candidate_window_.SetProperty(dest_property);
   candidate_window_property_ = property;
 
   if (IsActive()) {
     IMECandidateWindowHandlerInterface* cw_handler =
         ui::IMEBridge::Get()->GetCandidateWindowHandler();
     if (cw_handler)
-      cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+      cw_handler->UpdateLookupTable(candidate_window_, window_visible_);
   }
 }
 
@@ -115,7 +149,7 @@ bool InputMethodEngine::SetCandidateWindowVisible(bool visible,
   IMECandidateWindowHandlerInterface* cw_handler =
       ui::IMEBridge::Get()->GetCandidateWindowHandler();
   if (cw_handler)
-    cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+    cw_handler->UpdateLookupTable(candidate_window_, window_visible_);
   return true;
 }
 
@@ -135,27 +169,26 @@ bool InputMethodEngine::SetCandidates(
   // TODO: Nested candidates
   candidate_ids_.clear();
   candidate_indexes_.clear();
-  candidate_window_->mutable_candidates()->clear();
-  for (std::vector<Candidate>::const_iterator ix = candidates.begin();
-       ix != candidates.end(); ++ix) {
+  candidate_window_.mutable_candidates()->clear();
+  for (const auto& candidate : candidates) {
     ui::CandidateWindow::Entry entry;
-    entry.value = base::UTF8ToUTF16(ix->value);
-    entry.label = base::UTF8ToUTF16(ix->label);
-    entry.annotation = base::UTF8ToUTF16(ix->annotation);
-    entry.description_title = base::UTF8ToUTF16(ix->usage.title);
-    entry.description_body = base::UTF8ToUTF16(ix->usage.body);
+    entry.value = base::UTF8ToUTF16(candidate.value);
+    entry.label = base::UTF8ToUTF16(candidate.label);
+    entry.annotation = base::UTF8ToUTF16(candidate.annotation);
+    entry.description_title = base::UTF8ToUTF16(candidate.usage.title);
+    entry.description_body = base::UTF8ToUTF16(candidate.usage.body);
 
     // Store a mapping from the user defined ID to the candidate index.
-    candidate_indexes_[ix->id] = candidate_ids_.size();
-    candidate_ids_.push_back(ix->id);
+    candidate_indexes_[candidate.id] = candidate_ids_.size();
+    candidate_ids_.push_back(candidate.id);
 
-    candidate_window_->mutable_candidates()->push_back(entry);
+    candidate_window_.mutable_candidates()->push_back(entry);
   }
   if (IsActive()) {
     IMECandidateWindowHandlerInterface* cw_handler =
         ui::IMEBridge::Get()->GetCandidateWindowHandler();
     if (cw_handler)
-      cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+      cw_handler->UpdateLookupTable(candidate_window_, window_visible_);
   }
   return true;
 }
@@ -175,34 +208,37 @@ bool InputMethodEngine::SetCursorPosition(int context_id,
   std::map<int, int>::const_iterator position =
       candidate_indexes_.find(candidate_id);
   if (position == candidate_indexes_.end()) {
-    *error = kCandidateNotFound;
+    *error = base::StringPrintf("%s candidate id = %d", kCandidateNotFound,
+                                candidate_id);
     return false;
   }
 
-  candidate_window_->set_cursor_position(position->second);
+  candidate_window_.set_cursor_position(position->second);
   IMECandidateWindowHandlerInterface* cw_handler =
       ui::IMEBridge::Get()->GetCandidateWindowHandler();
   if (cw_handler)
-    cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+    cw_handler->UpdateLookupTable(candidate_window_, window_visible_);
   return true;
 }
 
 bool InputMethodEngine::SetMenuItems(
-    const std::vector<input_method::InputMethodManager::MenuItem>& items) {
-  return UpdateMenuItems(items);
+    const std::vector<input_method::InputMethodManager::MenuItem>& items,
+    std::string* error) {
+  return UpdateMenuItems(items, error);
 }
 
 bool InputMethodEngine::UpdateMenuItems(
-    const std::vector<input_method::InputMethodManager::MenuItem>& items) {
-  if (!IsActive())
+    const std::vector<input_method::InputMethodManager::MenuItem>& items,
+    std::string* error) {
+  if (!IsActive()) {
+    *error = kErrorNotActive;
     return false;
+  }
 
   ui::ime::InputMethodMenuItemList menu_item_list;
-  for (std::vector<input_method::InputMethodManager::MenuItem>::const_iterator
-           item = items.begin();
-       item != items.end(); ++item) {
+  for (const auto& item : items) {
     ui::ime::InputMethodMenuItem property;
-    MenuItemToProperty(*item, &property);
+    MenuItemToProperty(item, &property);
     menu_item_list.push_back(property);
   }
 
@@ -214,28 +250,84 @@ bool InputMethodEngine::UpdateMenuItems(
   return true;
 }
 
-bool InputMethodEngine::IsActive() const {
-  return !active_component_id_.empty();
-}
-
 void InputMethodEngine::HideInputView() {
   auto* keyboard_client = ChromeKeyboardControllerClient::Get();
   if (keyboard_client->is_keyboard_enabled())
-    keyboard_client->HideKeyboard(ash::mojom::HideReason::kUser);
+    keyboard_client->HideKeyboard(ash::HideReason::kUser);
 }
 
-void InputMethodEngine::SetMirroringEnabled(bool mirroring_enabled) {
-  if (mirroring_enabled != is_mirroring_) {
-    is_mirroring_ = mirroring_enabled;
-    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+void InputMethodEngine::UpdateComposition(
+    const ui::CompositionText& composition_text,
+    uint32_t cursor_pos,
+    bool is_visible) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context)
+    input_context->UpdateCompositionText(composition_text, cursor_pos,
+                                         is_visible);
+}
+
+bool InputMethodEngine::SetCompositionRange(
+    uint32_t before,
+    uint32_t after,
+    const std::vector<ui::ImeTextSpan>& text_spans) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+  return input_context->SetCompositionRange(before, after, text_spans);
+}
+
+bool InputMethodEngine::SetSelectionRange(uint32_t start, uint32_t end) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return false;
+  return input_context->SetSelectionRange(start, end);
+}
+
+void InputMethodEngine::CommitTextToInputContext(int context_id,
+                                                 const std::string& text) {
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (!input_context)
+    return;
+
+  const bool had_composition_text = input_context->HasCompositionText();
+  input_context->CommitText(text);
+
+  if (had_composition_text) {
+    // Records histograms for committed characters with composition text.
+    base::string16 wtext = base::UTF8ToUTF16(text);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
+                                25, 25);
   }
 }
 
-void InputMethodEngine::SetCastingEnabled(bool casting_enabled) {
-  if (casting_enabled != is_casting_) {
-    is_casting_ = casting_enabled;
-    observer_->OnScreenProjectionChanged(is_mirroring_ || is_casting_);
+bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
+                                     const std::string& code,
+                                     std::string* error) {
+  DCHECK(event);
+  if (event->key_code() == ui::VKEY_UNKNOWN)
+    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
+
+  // Marks the simulated key event is from the Virtual Keyboard.
+  ui::Event::Properties properties;
+  properties[ui::kPropertyFromVK] =
+      std::vector<uint8_t>(ui::kPropertyFromVKSize);
+  properties[ui::kPropertyFromVK][ui::kPropertyFromVKIsMirroringIndex] =
+      (uint8_t)is_mirroring_;
+  event->SetProperties(properties);
+
+  ui::IMEInputContextHandlerInterface* input_context =
+      ui::IMEBridge::Get()->GetInputContextHandler();
+  if (input_context) {
+    input_context->SendKeyEvent(event);
+    return true;
   }
+
+  *error = kErrorWrongContext;
+  return false;
 }
 
 void InputMethodEngine::EnableInputView() {
@@ -247,25 +339,6 @@ void InputMethodEngine::EnableInputView() {
     keyboard_client->ReloadKeyboardIfNeeded();
 }
 
-
-void InputMethodEngine::Enable(const std::string& component_id) {
-  InputMethodEngineBase::Enable(component_id);
-  EnableInputView();
-}
-
-void InputMethodEngine::PropertyActivate(const std::string& property_name) {
-  observer_->OnMenuItemActivated(active_component_id_, property_name);
-}
-
-void InputMethodEngine::CandidateClicked(uint32_t index) {
-  if (index > candidate_ids_.size()) {
-    return;
-  }
-
-  // Only left button click is supported at this moment.
-  observer_->OnCandidateClicked(active_component_id_, candidate_ids_.at(index),
-                                InputMethodEngineBase::MOUSE_BUTTON_LEFT);
-}
 
 // TODO(uekawa): rename this method to a more reasonable name.
 void InputMethodEngine::MenuItemToProperty(
@@ -307,50 +380,6 @@ void InputMethodEngine::MenuItemToProperty(
   }
 
   // TODO(nona): Support item.children.
-}
-
-void InputMethodEngine::UpdateComposition(
-    const ui::CompositionText& composition_text,
-    uint32_t cursor_pos,
-    bool is_visible) {
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (input_context)
-    input_context->UpdateCompositionText(composition_text, cursor_pos,
-                                         is_visible);
-}
-
-void InputMethodEngine::CommitTextToInputContext(int context_id,
-                                                 const std::string& text) {
-  ui::IMEBridge::Get()->GetInputContextHandler()->CommitText(text);
-
-  // Records histograms for committed characters.
-  if (!composition_text_->text.empty()) {
-    base::string16 wtext = base::UTF8ToUTF16(text);
-    UMA_HISTOGRAM_CUSTOM_COUNTS("InputMethod.CommitLength", wtext.length(), 1,
-                                25, 25);
-    composition_text_.reset(new ui::CompositionText());
-  }
-}
-
-bool InputMethodEngine::SendKeyEvent(ui::KeyEvent* event,
-                                     const std::string& code) {
-  DCHECK(event);
-  if (event->key_code() == ui::VKEY_UNKNOWN)
-    event->set_key_code(ui::DomKeycodeToKeyboardCode(code));
-
-  ui::IMEInputContextHandlerInterface* input_context =
-      ui::IMEBridge::Get()->GetInputContextHandler();
-  if (!input_context)
-    return false;
-
-  // Marks the simulated key event is from the Virtual Keyboard.
-  ui::Event::Properties properties;
-  properties[ui::kPropertyFromVK] = std::vector<uint8_t>();
-  event->SetProperties(properties);
-
-  input_context->SendKeyEvent(event);
-  return true;
 }
 
 }  // namespace chromeos

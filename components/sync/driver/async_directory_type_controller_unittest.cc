@@ -15,16 +15,16 @@
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/driver/async_directory_type_controller_mock.h"
 #include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/data_type_controller_mock.h"
-#include "components/sync/driver/fake_sync_client.h"
 #include "components/sync/driver/fake_sync_service.h"
 #include "components/sync/driver/generic_change_processor_factory.h"
+#include "components/sync/driver/sync_client_mock.h"
 #include "components/sync/engine/model_safe_worker.h"
 #include "components/sync/model/fake_syncable_service.h"
 #include "components/sync/model/sync_change.h"
@@ -32,9 +32,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace syncer {
-
-class SyncClient;
-
 namespace {
 
 using base::WaitableEvent;
@@ -79,7 +76,6 @@ class SharedChangeProcessorMock : public SharedChangeProcessor {
   MOCK_METHOD1(SyncModelHasUserCreatedNodes, bool(bool*));
   MOCK_METHOD0(CryptoReadyIfNecessary, bool());
   MOCK_CONST_METHOD1(GetDataTypeContext, bool(std::string*));
-  MOCK_METHOD1(RecordAssociationTime, void(base::TimeDelta time));
 
   void SetConnectReturn(base::WeakPtr<SyncableService> service) {
     connect_return_ = service;
@@ -104,10 +100,10 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
       SharedChangeProcessor* change_processor,
       scoped_refptr<base::SequencedTaskRunner> backend_task_runner)
       : AsyncDirectoryTypeController(kType,
-                                     base::Closure(),
+                                     base::NullCallback(),
                                      sync_service,
                                      sync_client,
-                                     GROUP_DB,
+                                     GROUP_PASSWORD,
                                      nullptr),
         blocked_(false),
         mock_(mock),
@@ -123,10 +119,8 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
   // to be posted on the backend thread again.
   void UnblockBackendTasks() {
     blocked_ = false;
-    for (std::vector<PendingTask>::const_iterator it = pending_tasks_.begin();
-         it != pending_tasks_.end(); ++it) {
-      PostTaskOnModelThread(it->from_here, it->task);
-    }
+    for (auto& entry : pending_tasks_)
+      PostTaskOnModelThread(entry.from_here, std::move(entry.task));
     pending_tasks_.clear();
   }
 
@@ -140,12 +134,12 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
 
  protected:
   bool PostTaskOnModelThread(const base::Location& from_here,
-                             const base::Closure& task) override {
+                             base::OnceClosure task) override {
     if (blocked_) {
-      pending_tasks_.push_back(PendingTask(from_here, task));
+      pending_tasks_.push_back(PendingTask(from_here, std::move(task)));
       return true;
     } else {
-      return backend_task_runner_->PostTask(from_here, task);
+      return backend_task_runner_->PostTask(from_here, std::move(task));
     }
   }
 
@@ -159,11 +153,11 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
 
  private:
   struct PendingTask {
-    PendingTask(const base::Location& from_here, const base::Closure& task)
-        : from_here(from_here), task(task) {}
+    PendingTask(const base::Location& from_here, base::OnceClosure task)
+        : from_here(from_here), task(std::move(task)) {}
 
     base::Location from_here;
-    base::Closure task;
+    base::OnceClosure task;
   };
 
   bool blocked_;
@@ -175,12 +169,11 @@ class AsyncDirectoryTypeControllerFake : public AsyncDirectoryTypeController {
   DISALLOW_COPY_AND_ASSIGN(AsyncDirectoryTypeControllerFake);
 };
 
-class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
-                                             public FakeSyncClient {
+class SyncAsyncDirectoryTypeControllerTest : public testing::Test {
  public:
   SyncAsyncDirectoryTypeControllerTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+      : task_environment_(
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
         backend_thread_("dbthread") {}
 
   void SetUp() override {
@@ -190,7 +183,7 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
     dtc_mock_ =
         std::make_unique<StrictMock<AsyncDirectoryTypeControllerMock>>();
     non_ui_dtc_ = std::make_unique<AsyncDirectoryTypeControllerFake>(
-        &sync_service_, this, dtc_mock_.get(), change_processor_.get(),
+        &sync_service_, &sync_client_, dtc_mock_.get(), change_processor_.get(),
         backend_thread_.task_runner());
   }
 
@@ -225,7 +218,6 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
     EXPECT_CALL(*change_processor_, GetAllSyncDataReturnError(_, _))
         .WillOnce(Return(SyncError()));
     EXPECT_CALL(*change_processor_, GetSyncCount()).WillOnce(Return(0));
-    EXPECT_CALL(*change_processor_, RecordAssociationTime(_));
   }
 
   void SetActivateExpectations(DataTypeController::ConfigureResult result) {
@@ -246,20 +238,21 @@ class SyncAsyncDirectoryTypeControllerTest : public testing::Test,
   void Start() {
     non_ui_dtc_->LoadModels(
         ConfigureContext(),
-        base::Bind(&ModelLoadCallbackMock::Run,
-                   base::Unretained(&model_load_callback_)));
-    non_ui_dtc_->StartAssociating(base::Bind(
+        base::BindRepeating(&ModelLoadCallbackMock::Run,
+                            base::Unretained(&model_load_callback_)));
+    non_ui_dtc_->StartAssociating(base::BindOnce(
         &StartCallbackMock::Run, base::Unretained(&start_callback_)));
   }
 
   static void SignalDone(WaitableEvent* done) { done->Signal(); }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::Thread backend_thread_;
 
   StartCallbackMock start_callback_;
   ModelLoadCallbackMock model_load_callback_;
   FakeSyncService sync_service_;
+  testing::NiceMock<SyncClientMock> sync_client_;
   // Must be destroyed after non_ui_dtc_.
   FakeSyncableService syncable_service_;
   std::unique_ptr<AsyncDirectoryTypeControllerFake> non_ui_dtc_;
@@ -287,7 +280,6 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, StartFirstRun) {
       .WillOnce(DoAll(SetArgPointee<0>(false), Return(true)));
   EXPECT_CALL(*change_processor_, GetAllSyncDataReturnError(_, _))
       .WillOnce(Return(SyncError()));
-  EXPECT_CALL(*change_processor_, RecordAssociationTime(_));
   SetActivateExpectations(DataTypeController::OK_FIRST_RUN);
   EXPECT_EQ(DataTypeController::NOT_RUNNING, non_ui_dtc_->state());
   Start();
@@ -301,9 +293,10 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, AbortDuringStartModels) {
   EXPECT_CALL(*dtc_mock_, StartModels()).WillOnce(Return(false));
   EXPECT_CALL(*dtc_mock_, StopModels());
   EXPECT_EQ(DataTypeController::NOT_RUNNING, non_ui_dtc_->state());
-  non_ui_dtc_->LoadModels(ConfigureContext(),
-                          base::Bind(&ModelLoadCallbackMock::Run,
-                                     base::Unretained(&model_load_callback_)));
+  non_ui_dtc_->LoadModels(
+      ConfigureContext(),
+      base::BindRepeating(&ModelLoadCallbackMock::Run,
+                          base::Unretained(&model_load_callback_)));
   WaitForDTC();
   EXPECT_EQ(DataTypeController::MODEL_STARTING, non_ui_dtc_->state());
   non_ui_dtc_->Stop(STOP_SYNC);
@@ -322,7 +315,6 @@ TEST_F(SyncAsyncDirectoryTypeControllerTest, StartAssociationFailed) {
       .WillOnce(DoAll(SetArgPointee<0>(true), Return(true)));
   EXPECT_CALL(*change_processor_, GetAllSyncDataReturnError(_, _))
       .WillOnce(Return(SyncError()));
-  EXPECT_CALL(*change_processor_, RecordAssociationTime(_));
   SetStartFailExpectations(DataTypeController::ASSOCIATION_FAILED);
   // Set up association to fail with an association failed error.
   EXPECT_EQ(DataTypeController::NOT_RUNNING, non_ui_dtc_->state());

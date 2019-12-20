@@ -16,12 +16,10 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/threading/scoped_blocking_call.h"
-#include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/account_fetcher_service.h"
-#include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/ios/browser/active_state_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/browser_state_info_cache.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_impl.h"
@@ -29,21 +27,18 @@
 #include "ios/chrome/browser/browser_state_metrics/browser_state_metrics.h"
 #include "ios/chrome/browser/chrome_constants.h"
 #include "ios/chrome/browser/chrome_paths.h"
-#include "ios/chrome/browser/invalidation/ios_chrome_deprecated_profile_invalidation_provider_factory.h"
 #include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/signin/account_consistency_service_factory.h"
-#include "ios/chrome/browser/signin/account_fetcher_service_factory.h"
 #include "ios/chrome/browser/signin/account_reconcilor_factory.h"
-#include "ios/chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/unified_consent/unified_consent_service_factory.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 namespace {
 
 int64_t ComputeFilesSize(const base::FilePath& directory,
                          const base::FilePath::StringType& pattern) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   int64_t running_size = 0;
   base::FileEnumerator iter(directory, false, base::FileEnumerator::FILES,
                             pattern);
@@ -142,8 +137,9 @@ ios::ChromeBrowserState* ChromeBrowserStateManagerImpl::GetBrowserState(
   // this profile are executed in expected order (what was previously assured by
   // the FILE thread).
   scoped_refptr<base::SequencedTaskRunner> io_task_runner =
-      base::CreateSequencedTaskRunnerWithTraits(
-          {base::TaskShutdownBehavior::BLOCK_SHUTDOWN, base::MayBlock()});
+      base::CreateSequencedTaskRunner(
+          {base::ThreadPool(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN,
+           base::MayBlock()});
 
   std::unique_ptr<ChromeBrowserStateImpl> browser_state_impl(
       new ChromeBrowserStateImpl(io_task_runner, path));
@@ -195,11 +191,11 @@ void ChromeBrowserStateManagerImpl::DoFinalInit(
   // Log the browser state size after a reasonable startup delay.
   base::FilePath path =
       browser_state->GetOriginalChromeBrowserState()->GetStatePath();
-  base::PostDelayedTaskWithTraits(
+  base::PostDelayedTask(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&BrowserStateSizeTask, path),
+      base::BindOnce(&BrowserStateSizeTask, path),
       base::TimeDelta::FromSeconds(112));
 
   LogNumberOfBrowserStates(
@@ -208,17 +204,9 @@ void ChromeBrowserStateManagerImpl::DoFinalInit(
 
 void ChromeBrowserStateManagerImpl::DoFinalInitForServices(
     ios::ChromeBrowserState* browser_state) {
-  ios::GaiaCookieManagerServiceFactory::GetForBrowserState(browser_state)
-      ->InitCookieListener();
   ios::AccountConsistencyServiceFactory::GetForBrowserState(browser_state);
-  invalidation::ProfileInvalidationProvider* invalidation_provider =
-      IOSChromeDeprecatedProfileInvalidationProviderFactory::GetForBrowserState(
-          browser_state);
-  invalidation::InvalidationService* invalidation_service =
-      invalidation_provider ? invalidation_provider->GetInvalidationService()
-                            : nullptr;
-  ios::AccountFetcherServiceFactory::GetForBrowserState(browser_state)
-      ->SetupInvalidationsOnProfileLoad(invalidation_service);
+  IdentityManagerFactory::GetForBrowserState(browser_state)
+      ->OnNetworkInitialized();
   ios::AccountReconcilorFactory::GetForBrowserState(browser_state);
   // Initialization needs to happen after the browser context is available
   // because UnifiedConsentService's dependencies needs the URL context getter.
@@ -232,15 +220,15 @@ void ChromeBrowserStateManagerImpl::AddBrowserStateToCache(
   if (browser_state->GetStatePath().DirName() != cache->GetUserDataDir())
     return;
 
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForBrowserState(browser_state);
-  AccountInfo account_info = identity_manager->GetPrimaryAccountInfo();
+  CoreAccountInfo account_info = identity_manager->GetPrimaryAccountInfo();
   base::string16 username = base::UTF8ToUTF16(account_info.email);
 
   size_t browser_state_index =
       cache->GetIndexOfBrowserStateWithPath(browser_state->GetStatePath());
   if (browser_state_index != std::string::npos) {
-    // The BrowserStateInfoCache's info must match the Signin Manager.
+    // The BrowserStateInfoCache's info must match the IdentityManager.
     cache->SetAuthInfoOfBrowserStateAtIndex(browser_state_index,
                                             account_info.gaia, username);
     return;

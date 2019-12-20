@@ -16,6 +16,7 @@
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
+#include "build/build_config.h"
 #include "components/viz/common/gpu/context_cache_controller.h"
 #include "components/viz/test/test_gles2_interface.h"
 #include "gpu/command_buffer/client/raster_implementation_gles.h"
@@ -23,6 +24,7 @@
 #include "gpu/skia_bindings/grcontext_for_gles2_interface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
+#include "ui/gfx/gpu_fence.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
 namespace viz {
@@ -36,7 +38,10 @@ const char* const kExtensions[] = {"GL_EXT_stencil_wrap",
                                    "GL_OES_rgb8_rgba8",
                                    "GL_EXT_texture_norm16",
                                    "GL_CHROMIUM_framebuffer_multisample",
-                                   "GL_CHROMIUM_renderbuffer_format_BGRA8888"};
+                                   "GL_CHROMIUM_renderbuffer_format_BGRA8888",
+                                   "GL_OES_texture_half_float",
+                                   "GL_OES_texture_half_float_linear",
+                                   "GL_EXT_color_buffer_half_float"};
 
 class TestGLES2InterfaceForContextProvider : public TestGLES2Interface {
  public:
@@ -122,6 +127,7 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
     const gfx::Size& size,
     const gfx::ColorSpace& color_space,
     uint32_t usage) {
+  base::AutoLock locked(lock_);
   auto mailbox = gpu::Mailbox::GenerateForSharedImage();
   shared_images_.insert(mailbox);
   most_recent_size_ = size;
@@ -134,6 +140,7 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
     const gfx::ColorSpace& color_space,
     uint32_t usage,
     base::span<const uint8_t> pixel_data) {
+  base::AutoLock locked(lock_);
   auto mailbox = gpu::Mailbox::GenerateForSharedImage();
   shared_images_.insert(mailbox);
   return mailbox;
@@ -144,6 +151,7 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     const gfx::ColorSpace& color_space,
     uint32_t usage) {
+  base::AutoLock locked(lock_);
   auto mailbox = gpu::Mailbox::GenerateForSharedImage();
   shared_images_.insert(mailbox);
   most_recent_size_ = gpu_memory_buffer->GetSize();
@@ -153,22 +161,79 @@ gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
 void TestSharedImageInterface::UpdateSharedImage(
     const gpu::SyncToken& sync_token,
     const gpu::Mailbox& mailbox) {
+  base::AutoLock locked(lock_);
+  DCHECK(shared_images_.find(mailbox) != shared_images_.end());
+}
+
+void TestSharedImageInterface::UpdateSharedImage(
+    const gpu::SyncToken& sync_token,
+    std::unique_ptr<gfx::GpuFence> acquire_fence,
+    const gpu::Mailbox& mailbox) {
+  base::AutoLock locked(lock_);
   DCHECK(shared_images_.find(mailbox) != shared_images_.end());
 }
 
 void TestSharedImageInterface::DestroySharedImage(
     const gpu::SyncToken& sync_token,
     const gpu::Mailbox& mailbox) {
+  base::AutoLock locked(lock_);
   shared_images_.erase(mailbox);
+  most_recent_destroy_token_ = sync_token;
+}
+
+gpu::SharedImageInterface::SwapChainMailboxes
+TestSharedImageInterface::CreateSwapChain(ResourceFormat format,
+                                          const gfx::Size& size,
+                                          const gfx::ColorSpace& color_space,
+                                          uint32_t usage) {
+  auto front_buffer = gpu::Mailbox::GenerateForSharedImage();
+  auto back_buffer = gpu::Mailbox::GenerateForSharedImage();
+  shared_images_.insert(front_buffer);
+  shared_images_.insert(back_buffer);
+  return {front_buffer, back_buffer};
+}
+
+void TestSharedImageInterface::PresentSwapChain(
+    const gpu::SyncToken& sync_token,
+    const gpu::Mailbox& mailbox) {}
+
+#if defined(OS_FUCHSIA)
+void TestSharedImageInterface::RegisterSysmemBufferCollection(
+    gfx::SysmemBufferCollectionId id,
+    zx::channel token) {
+  NOTREACHED();
+}
+
+void TestSharedImageInterface::ReleaseSysmemBufferCollection(
+    gfx::SysmemBufferCollectionId id) {
+  NOTREACHED();
+}
+#endif  // defined(OS_FUCHSIA)
+
+gpu::SyncToken TestSharedImageInterface::GenVerifiedSyncToken() {
+  base::AutoLock locked(lock_);
+  most_recent_generated_token_ =
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                     gpu::CommandBufferId(), ++release_id_);
+  most_recent_generated_token_.SetVerifyFlush();
+  return most_recent_generated_token_;
 }
 
 gpu::SyncToken TestSharedImageInterface::GenUnverifiedSyncToken() {
-  return gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
-                        gpu::CommandBufferId(), ++release_id_);
+  base::AutoLock locked(lock_);
+  most_recent_generated_token_ =
+      gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                     gpu::CommandBufferId(), ++release_id_);
+  return most_recent_generated_token_;
+}
+
+void TestSharedImageInterface::Flush() {
+  // No need to flush in this implementation.
 }
 
 bool TestSharedImageInterface::CheckSharedImageExists(
     const gpu::Mailbox& mailbox) const {
+  base::AutoLock locked(lock_);
   return shared_images_.contains(mailbox);
 }
 
@@ -237,17 +302,29 @@ TestContextProvider::TestContextProvider(
     std::unique_ptr<TestContextSupport> support,
     std::unique_ptr<TestGLES2Interface> gl,
     bool support_locking)
+    : TestContextProvider(std::move(support),
+                          std::move(gl),
+                          /*raster=*/nullptr,
+                          support_locking) {}
+
+TestContextProvider::TestContextProvider(
+    std::unique_ptr<TestContextSupport> support,
+    std::unique_ptr<TestGLES2Interface> gl,
+    std::unique_ptr<gpu::raster::RasterInterface> raster,
+    bool support_locking)
     : support_(std::move(support)),
       context_gl_(std::move(gl)),
+      raster_context_(std::move(raster)),
       shared_image_interface_(std::make_unique<TestSharedImageInterface>()),
-      support_locking_(support_locking),
-      weak_ptr_factory_(this) {
+      support_locking_(support_locking) {
   DCHECK(main_thread_checker_.CalledOnValidThread());
   DCHECK(context_gl_);
   context_thread_checker_.DetachFromThread();
   context_gl_->set_test_support(support_.get());
-  raster_context_ = std::make_unique<gpu::raster::RasterImplementationGLES>(
-      context_gl_.get());
+  if (!raster_context_) {
+    raster_context_ = std::make_unique<gpu::raster::RasterImplementationGLES>(
+        context_gl_.get());
+  }
   // Just pass nullptr to the ContextCacheController for its task runner.
   // Idle handling is tested directly in ContextCacheController's
   // unittests, and isn't needed here.

@@ -7,9 +7,9 @@
 namespace views {
 namespace test {
 
-TestLayoutManager::TestLayoutManager() {}
+TestLayoutManager::TestLayoutManager() = default;
 
-TestLayoutManager::~TestLayoutManager() {}
+TestLayoutManager::~TestLayoutManager() = default;
 
 void TestLayoutManager::Layout(View* host) {}
 
@@ -20,6 +20,10 @@ gfx::Size TestLayoutManager::GetPreferredSize(const View* host) const {
 int TestLayoutManager::GetPreferredHeightForWidth(const View* host,
                                                   int width) const {
   return preferred_height_for_width_;
+}
+
+void TestLayoutManager::InvalidateLayout() {
+  ++invalidate_count_;
 }
 
 }  // namespace test

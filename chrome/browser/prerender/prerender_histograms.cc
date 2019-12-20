@@ -52,6 +52,8 @@ std::string PrerenderHistograms::GetHistogramPrefix(Origin origin) {
       return "gws";
     case ORIGIN_EXTERNAL_REQUEST_FORCED_PRERENDER:
       return "externalrequestforced";
+    case ORIGIN_NAVIGATION_PREDICTOR:
+      return "navigationpredictor";
     default:
       NOTREACHED();
       break;
@@ -59,15 +61,6 @@ std::string PrerenderHistograms::GetHistogramPrefix(Origin origin) {
 
   // Dummy return value to make the compiler happy.
   return "none";
-}
-
-void PrerenderHistograms::RecordPerceivedFirstContentfulPaintStatus(
-    Origin origin,
-    bool successful,
-    bool was_hidden) const {
-  base::UmaHistogramBoolean(GetHistogramName(origin, "PerceivedTTFCPRecorded") +
-                                FirstContentfulPaintHiddenName(was_hidden),
-                            successful);
 }
 
 void PrerenderHistograms::RecordFinalStatus(

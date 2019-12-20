@@ -25,13 +25,14 @@ WebMediaPlayerParams::WebMediaPlayerParams(
     base::WeakPtr<MediaObserver> media_observer,
     bool enable_instant_source_buffer_gc,
     bool embedded_media_experience_enabled,
-    mojom::MediaMetricsProviderPtr metrics_provider,
+    mojo::PendingRemote<mojom::MediaMetricsProvider> metrics_provider,
     CreateSurfaceLayerBridgeCB create_bridge_callback,
     scoped_refptr<viz::ContextProvider> context_provider,
     blink::WebMediaPlayer::SurfaceLayerMode use_surface_layer_for_video,
     bool is_background_suspend_enabled,
     bool is_background_video_playback_enabled,
-    bool is_background_video_track_optimization_supported)
+    bool is_background_video_track_optimization_supported,
+    std::unique_ptr<PowerStatusHelper> power_status_helper)
     : defer_load_cb_(defer_load_cb),
       audio_renderer_sink_(audio_renderer_sink),
       media_log_(std::move(media_log)),
@@ -53,7 +54,8 @@ WebMediaPlayerParams::WebMediaPlayerParams(
       is_background_video_playback_enabled_(
           is_background_video_playback_enabled),
       is_background_video_track_optimization_supported_(
-          is_background_video_track_optimization_supported) {}
+          is_background_video_track_optimization_supported),
+      power_status_helper_(std::move(power_status_helper)) {}
 
 WebMediaPlayerParams::~WebMediaPlayerParams() = default;
 

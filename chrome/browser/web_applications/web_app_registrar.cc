@@ -4,71 +4,187 @@
 
 #include "chrome/browser/web_applications/web_app_registrar.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
-#include "base/callback.h"
 #include "base/logging.h"
-#include "chrome/browser/web_applications/abstract_web_app_database.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/web_applications/web_app.h"
 
 namespace web_app {
 
-WebAppRegistrar::WebAppRegistrar(AbstractWebAppDatabase* database)
-    : database_(database) {
-  DCHECK(database_);
-}
+WebAppRegistrar::WebAppRegistrar(Profile* profile) : AppRegistrar(profile) {}
 
 WebAppRegistrar::~WebAppRegistrar() = default;
 
-void WebAppRegistrar::RegisterApp(std::unique_ptr<WebApp> web_app) {
-  const auto app_id = web_app->app_id();
-  DCHECK(!app_id.empty());
-  DCHECK(!GetAppById(app_id));
-
-  database_->WriteWebApp(*web_app);
-
-  registry_.emplace(app_id, std::move(web_app));
+const WebApp* WebAppRegistrar::GetAppById(const AppId& app_id) const {
+  auto it = registry_.find(app_id);
+  return it == registry_.end() ? nullptr : it->second.get();
 }
 
-std::unique_ptr<WebApp> WebAppRegistrar::UnregisterApp(const AppId& app_id) {
-  DCHECK(!app_id.empty());
-
-  database_->DeleteWebApps({app_id});
-
-  auto kv = registry_.find(app_id);
-  DCHECK(kv != registry_.end());
-
-  auto web_app = std::move(kv->second);
-  registry_.erase(kv);
-  return web_app;
+bool WebAppRegistrar::IsInstalled(const AppId& app_id) const {
+  return GetAppById(app_id) != nullptr;
 }
 
-WebApp* WebAppRegistrar::GetAppById(const AppId& app_id) {
-  auto kv = registry_.find(app_id);
-  return kv == registry_.end() ? nullptr : kv->second.get();
+bool WebAppRegistrar::IsLocallyInstalled(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->is_locally_installed() : false;
 }
 
-void WebAppRegistrar::UnregisterAll() {
-  std::vector<AppId> app_ids;
-  for (auto& kv : registry()) {
-    const AppId& app_id = kv.first;
-    app_ids.push_back(app_id);
+bool WebAppRegistrar::WasInstalledByUser(const AppId& app_id) const {
+  const WebApp* web_app = GetAppById(app_id);
+  return web_app && web_app->WasInstalledByUser();
+}
+
+int WebAppRegistrar::CountUserInstalledApps() const {
+  int num_user_installed = 0;
+  for (const WebApp& app : AllApps()) {
+    if (app.is_locally_installed() && app.WasInstalledByUser())
+      ++num_user_installed;
   }
-  database_->DeleteWebApps(std::move(app_ids));
-
-  registry_.clear();
+  return num_user_installed;
 }
 
-void WebAppRegistrar::Init(base::OnceClosure closure) {
-  database_->OpenDatabase(base::BindOnce(&WebAppRegistrar::OnDatabaseOpened,
-                                         weak_ptr_factory_.GetWeakPtr(),
-                                         std::move(closure)));
+std::string WebAppRegistrar::GetAppShortName(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->name() : std::string();
 }
 
-void WebAppRegistrar::OnDatabaseOpened(base::OnceClosure closure,
-                                       Registry registry) {
-  DCHECK(is_empty());
+std::string WebAppRegistrar::GetAppDescription(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->description() : std::string();
+}
+
+base::Optional<SkColor> WebAppRegistrar::GetAppThemeColor(
+    const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->theme_color() : base::nullopt;
+}
+
+const GURL& WebAppRegistrar::GetAppLaunchURL(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->launch_url() : GURL::EmptyGURL();
+}
+
+base::Optional<GURL> WebAppRegistrar::GetAppScope(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  if (!web_app)
+    return base::nullopt;
+
+  // TODO(crbug.com/910016): Treat shortcuts as PWAs.
+  // Shortcuts on the WebApp system have empty scopes, while the implementation
+  // of IsShortcutApp just checks if the scope is |base::nullopt|, so make sure
+  // we return |base::nullopt| rather than an empty scope.
+  if (web_app->scope().is_empty())
+    return base::nullopt;
+
+  return web_app->scope();
+}
+
+DisplayMode WebAppRegistrar::GetAppDisplayMode(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->display_mode() : DisplayMode::kUndefined;
+}
+
+DisplayMode WebAppRegistrar::GetAppUserDisplayMode(const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->user_display_mode() : DisplayMode::kUndefined;
+}
+
+std::vector<WebApplicationIconInfo> WebAppRegistrar::GetAppIconInfos(
+    const AppId& app_id) const {
+  auto* web_app = GetAppById(app_id);
+  return web_app ? web_app->icon_infos()
+                 : std::vector<WebApplicationIconInfo>();
+}
+
+std::vector<AppId> WebAppRegistrar::GetAppIds() const {
+  std::vector<AppId> app_ids;
+  app_ids.reserve(registry_.size());
+
+  for (const WebApp& app : AllApps())
+    app_ids.push_back(app.app_id());
+
+  return app_ids;
+}
+
+WebAppRegistrar::AppSet::AppSet(const WebAppRegistrar* registrar)
+    : registrar_(registrar)
+#if DCHECK_IS_ON()
+      ,
+      mutations_count_(registrar->mutations_count_)
+#endif
+{
+}
+
+WebAppRegistrar::AppSet::~AppSet() {
+#if DCHECK_IS_ON()
+  DCHECK_EQ(mutations_count_, registrar_->mutations_count_);
+#endif
+}
+
+WebAppRegistrar::AppSet::iterator WebAppRegistrar::AppSet::begin() {
+  return iterator(registrar_->registry_.begin());
+}
+
+WebAppRegistrar::AppSet::iterator WebAppRegistrar::AppSet::end() {
+  return iterator(registrar_->registry_.end());
+}
+
+WebAppRegistrar::AppSet::const_iterator WebAppRegistrar::AppSet::begin() const {
+  return const_iterator(registrar_->registry_.begin());
+}
+
+WebAppRegistrar::AppSet::const_iterator WebAppRegistrar::AppSet::end() const {
+  return const_iterator(registrar_->registry_.end());
+}
+
+const WebAppRegistrar::AppSet WebAppRegistrar::AllApps() const {
+  return AppSet(this);
+}
+
+void WebAppRegistrar::SetRegistry(Registry&& registry) {
   registry_ = std::move(registry);
-  std::move(closure).Run();
+}
+
+void WebAppRegistrar::CountMutation() {
+#if DCHECK_IS_ON()
+  ++mutations_count_;
+#endif
+}
+
+WebAppRegistrarMutable::WebAppRegistrarMutable(Profile* profile)
+    : WebAppRegistrar(profile) {}
+
+WebAppRegistrarMutable::~WebAppRegistrarMutable() = default;
+
+void WebAppRegistrarMutable::InitRegistry(Registry&& registry) {
+  DCHECK(is_empty());
+  SetRegistry(std::move(registry));
+}
+
+WebApp* WebAppRegistrarMutable::GetAppByIdMutable(const AppId& app_id) {
+  return const_cast<WebApp*>(GetAppById(app_id));
+}
+
+WebAppRegistrar::AppSet WebAppRegistrarMutable::AllAppsMutable() {
+  return AppSet(this);
+}
+
+bool IsRegistryEqual(const Registry& registry, const Registry& registry2) {
+  if (registry.size() != registry2.size())
+    return false;
+
+  for (auto& kv : registry) {
+    const WebApp* web_app = kv.second.get();
+    const WebApp* web_app2 = registry2.at(web_app->app_id()).get();
+    if (*web_app != *web_app2)
+      return false;
+  }
+
+  return true;
 }
 
 }  // namespace web_app

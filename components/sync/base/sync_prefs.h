@@ -20,7 +20,10 @@
 #include "build/build_config.h"
 #include "components/prefs/pref_member.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/base/user_demographics.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/protocol/sync.pb.h"
+#include "third_party/metrics_proto/user_demographics.pb.h"
 
 class PrefService;
 
@@ -55,18 +58,6 @@ class CryptoSyncPrefs {
   virtual std::string GetKeystoreEncryptionBootstrapToken() const = 0;
   virtual void SetKeystoreEncryptionBootstrapToken(
       const std::string& token) = 0;
-
-  // Get/set for flag indicating that passphrase encryption transition is in
-  // progress.
-  virtual void SetPassphraseEncryptionTransitionInProgress(bool value) = 0;
-  virtual bool GetPassphraseEncryptionTransitionInProgress() const = 0;
-
-  // Get/set for saved Nigori specifics that must be passed to backend
-  // initialization after transition.
-  virtual void SetNigoriSpecificsForPassphraseTransition(
-      const sync_pb::NigoriSpecifics& nigori_specifics) = 0;
-  virtual void GetNigoriSpecificsForPassphraseTransition(
-      sync_pb::NigoriSpecifics* nigori_specifics) const = 0;
 };
 
 // SyncPrefs is a helper class that manages getting, setting, and persisting
@@ -85,20 +76,24 @@ class SyncPrefs : public CryptoSyncPrefs,
 
   // Clears "bookkeeping" sync preferences, such as the last synced time,
   // whether the last shutdown was clean, etc. Does *not* clear sync preferences
-  // which are directly user-controlled, such as the set of preferred data
-  // types.
+  // which are directly user-controlled, such as the set of selected types.
   void ClearPreferences();
+
+  // Clears only the subset of preferences that are redundant with the sync
+  // directory and used only for verifying consistency with prefs.
+  // TODO(crbug.com/923285): Remove this function and instead rely solely on
+  // ClearPreferences() once investigations are finalized are we understand the
+  // source of discrepancies for UMA Sync.DirectoryVsPrefsConsistency.
+  void ClearDirectoryConsistencyPreferences();
 
   // Getters and setters for global sync prefs.
 
   bool IsFirstSetupComplete() const;
   void SetFirstSetupComplete();
 
-  bool SyncHasAuthError() const;
-  void SetSyncAuthError(bool error);
-
   bool IsSyncRequested() const;
   void SetSyncRequested(bool is_requested);
+  void SetSyncRequestedIfNotSetExplicitly();
 
   base::Time GetLastSyncedTime() const;
   void SetLastSyncedTime(base::Time time);
@@ -106,34 +101,38 @@ class SyncPrefs : public CryptoSyncPrefs,
   base::Time GetLastPollTime() const;
   void SetLastPollTime(base::Time time);
 
-  base::TimeDelta GetShortPollInterval() const;
-  void SetShortPollInterval(base::TimeDelta interval);
-
-  base::TimeDelta GetLongPollInterval() const;
-  void SetLongPollInterval(base::TimeDelta interval);
+  base::TimeDelta GetPollInterval() const;
+  void SetPollInterval(base::TimeDelta interval);
 
   bool HasKeepEverythingSynced() const;
 
-  // The returned set is guaranteed to be a subset of |registered_types|.
-  // Returns |registered_types| directly if HasKeepEverythingSynced() is true.
-  // Preferred types are derived from chosen types by resolving pref groups.
-  ModelTypeSet GetPreferredDataTypes(ModelTypeSet registered_types) const;
+  // Returns UserSelectableTypeSet::All() if HasKeepEverythingSynced() is true.
+  UserSelectableTypeSet GetSelectedTypes() const;
 
-  // Sets the desired configuration for all data types, including the "keep
-  // everything synced" flag and the "preferred" state for each individual data
-  // type.
-  // |keep_everything_synced| indicates that all current and future data types
-  // should be synced. If this is set to true, then GetPreferredDataTypes() will
-  // always return all available data types, even if not all of them are
-  // individually marked as preferred.
-  // The |chosen_types| must be a subset of the |registered_types| and
-  // UserSelectableTypes().
-  // Changes are still made to the individual data type prefs even if
+  // Sets the selection state for all |registered_types| and "keep everything
+  // synced" flag.
+  // |keep_everything_synced| indicates that all current and future types
+  // should be synced. If this is set to true, then GetSelectedTypes() will
+  // always return UserSelectableTypeSet::All(), even if not all of them are
+  // registered or individually marked as selected.
+  // Changes are still made to the individual selectable type prefs even if
   // |keep_everything_synced| is true, but won't be visible until it's set to
   // false.
-  void SetDataTypesConfiguration(bool keep_everything_synced,
-                                 ModelTypeSet registered_types,
-                                 ModelTypeSet chosen_types);
+  void SetSelectedTypes(bool keep_everything_synced,
+                        UserSelectableTypeSet registered_types,
+                        UserSelectableTypeSet selected_types);
+
+#if defined(OS_CHROMEOS)
+  // Chrome OS provides a separate settings UI surface for sync of OS types,
+  // including a separate "Sync All" toggle for OS types.
+  bool IsSyncAllOsTypesEnabled() const;
+  UserSelectableOsTypeSet GetSelectedOsTypes() const;
+  void SetSelectedOsTypes(bool sync_all_os_types,
+                          UserSelectableOsTypeSet registered_types,
+                          UserSelectableOsTypeSet selected_types);
+  bool IsOsSyncFeatureEnabled() const;
+  void SetOsSyncFeatureEnabled(bool enabled);
+#endif
 
   // Whether Sync is forced off by enterprise policy. Note that this only covers
   // one out of two types of policy, "browser" policy. The second kind, "cloud"
@@ -150,14 +149,7 @@ class SyncPrefs : public CryptoSyncPrefs,
   void SetKeystoreEncryptionBootstrapToken(const std::string& token) override;
 
   // Maps |type| to its corresponding preference name.
-  static const char* GetPrefNameForDataType(ModelType type);
-
-#if defined(OS_CHROMEOS)
-  // Use this spare bootstrap token only when setting up sync for the first
-  // time.
-  std::string GetSpareBootstrapToken() const;
-  void SetSpareBootstrapToken(const std::string& token);
-#endif
+  static const char* GetPrefNameForType(UserSelectableType type);
 
   // Copy of various fields historically owned and persisted by the Directory.
   // This is a future-proof approach to ultimately replace the Directory once
@@ -170,28 +162,12 @@ class SyncPrefs : public CryptoSyncPrefs,
   void SetBagOfChips(const std::string& bag_of_chips);
   std::string GetBagOfChips() const;
 
-  // Get/set/clear first sync time of current user. Used to roll back browsing
-  // data later when user signs out.
-  base::Time GetFirstSyncTime() const;
-  void SetFirstSyncTime(base::Time time);
-  void ClearFirstSyncTime();
-
   // Out of band sync passphrase prompt getter/setter.
   bool IsPassphrasePrompted() const;
   void SetPassphrasePrompted(bool value);
 
   // For testing.
   void SetManagedForTest(bool is_managed);
-
-  // Get/Set number of memory warnings received.
-  int GetMemoryPressureWarningCount() const;
-  void SetMemoryPressureWarningCount(int value);
-
-  // Check if the previous shutdown was clean.
-  bool DidSyncShutdownCleanly() const;
-
-  // Set whether the last shutdown was clean.
-  void SetCleanShutdown(bool value);
 
   // Get/set for the last known sync invalidation versions.
   void GetInvalidationVersions(
@@ -206,39 +182,22 @@ class SyncPrefs : public CryptoSyncPrefs,
   std::string GetLastRunVersion() const;
   void SetLastRunVersion(const std::string& current_version);
 
-  // Get/set for flag indicating that passphrase encryption transition is in
-  // progress.
-  void SetPassphraseEncryptionTransitionInProgress(bool value) override;
-  bool GetPassphraseEncryptionTransitionInProgress() const override;
-
-  // Get/set for saved Nigori specifics that must be passed to backend
-  // initialization after transition.
-  void SetNigoriSpecificsForPassphraseTransition(
-      const sync_pb::NigoriSpecifics& nigori_specifics) override;
-  void GetNigoriSpecificsForPassphraseTransition(
-      sync_pb::NigoriSpecifics* nigori_specifics) const override;
-
   // Gets the local sync backend enabled state.
   bool IsLocalSyncEnabled() const;
 
-  // Returns a ModelTypeSet based on |types| expanded to include pref groups
-  // (see |pref_groups_|).
-  // Exposed for testing.
-  static ModelTypeSet ResolvePrefGroups(ModelTypeSet types);
+  // Gets the synced user’s birth year and gender from synced prefs and adds
+  // noise to the birth year, see doc of UserDemographicsStatus in
+  // components/sync/base/user_demographics.h for more details. You need to
+  // provide an accurate |now| time that represents the current time.
+  UserDemographicsResult GetUserNoisedBirthYearAndGender(base::Time now);
 
  private:
-  static void RegisterDataTypePreferredPref(
-      user_prefs::PrefRegistrySyncable* prefs,
-      ModelType type);
-
-  // Get/set the preference indicating that |type| was chosen. |type| must be
-  // on of UserSelectableTypes().
-  bool IsDataTypeChosen(ModelType type) const;
-  void SetDataTypeChosen(ModelType type, bool is_chosen);
+  static void RegisterTypeSelectedPref(user_prefs::PrefRegistrySyncable* prefs,
+                                       UserSelectableType type);
 
   void OnSyncManagedPrefChanged();
   void OnFirstSetupCompletePrefChange();
-  void OnSyncSuppressedPrefChange();
+  void OnSyncRequestedPrefChange();
 
   // Never null.
   PrefService* const pref_service_;
@@ -251,7 +210,7 @@ class SyncPrefs : public CryptoSyncPrefs,
 
   BooleanPrefMember pref_first_setup_complete_;
 
-  BooleanPrefMember pref_sync_suppressed_;
+  BooleanPrefMember pref_sync_requested_;
 
   bool local_sync_enabled_;
 
@@ -262,6 +221,15 @@ class SyncPrefs : public CryptoSyncPrefs,
 
 void MigrateSessionsToProxyTabsPrefs(PrefService* pref_service);
 void ClearObsoleteUserTypePrefs(PrefService* pref_service);
+void ClearObsoleteClearServerDataPrefs(PrefService* pref_service);
+void ClearObsoleteAuthErrorPrefs(PrefService* pref_service);
+void ClearObsoleteFirstSyncTime(PrefService* pref_service);
+void ClearObsoleteSyncLongPollIntervalSeconds(PrefService* pref_service);
+#if defined(OS_CHROMEOS)
+void ClearObsoleteSyncSpareBootstrapToken(PrefService* pref_service);
+#endif  // defined(OS_CHROMEOS)
+void MigrateSyncSuppressedPref(PrefService* pref_service);
+void ClearObsoleteMemoryPressurePrefs(PrefService* pref_service);
 
 }  // namespace syncer
 

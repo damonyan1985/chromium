@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_ASH_NETWORK_MOBILE_DATA_NOTIFICATIONS_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -38,7 +39,8 @@ class MobileDataNotifications
   ~MobileDataNotifications() override;
 
   // NetworkStateHandlerObserver:
-  void DefaultNetworkChanged(const chromeos::NetworkState* network) override;
+  void ActiveNetworksChanged(const std::vector<const chromeos::NetworkState*>&
+                                 active_networks) override;
 
   // NetworkConnectionObserver:
   void ConnectSucceeded(const std::string& service_path) override;
@@ -46,19 +48,24 @@ class MobileDataNotifications
                      const std::string& error_name) override;
 
   // UserSessionStateObserver:
-  void ActiveUserChanged(const user_manager::User* active_user) override;
+  void ActiveUserChanged(user_manager::User* active_user) override;
 
   // SessionManagerObserver:
   void OnSessionStateChanged() override;
 
  private:
+  // Requests the active networks and calls
+  // ShowOptionalMobileDataNotificationImpl.
+  void ShowOptionalMobileDataNotification();
+
   // Displays a mobile data warning notification if all conditions are met:
-  // * Celluar is the default network.
+  // * Cellular is the default network.
   // * User is authenticated with unlocked screen.
   // * There are no pending connection requests (Prevent flaky network switches
   //   from triggering the notification).
   // * First time notification is shown according to user prefs.
-  void ShowOptionalMobileDataNotification();
+  void ShowOptionalMobileDataNotificationImpl(
+      const std::vector<const chromeos::NetworkState*>& active_networks);
 
   // Adds a delay before calling |ShowOptionalMobileDataNotification|. Delay is
   // introduced because in some cases we might be notified through an observer
@@ -69,7 +76,7 @@ class MobileDataNotifications
 
   base::OneShotTimer one_shot_notification_check_delay_;
 
-  base::WeakPtrFactory<MobileDataNotifications> weak_factory_;
+  base::WeakPtrFactory<MobileDataNotifications> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MobileDataNotifications);
 };

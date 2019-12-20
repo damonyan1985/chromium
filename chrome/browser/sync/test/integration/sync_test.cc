@@ -4,38 +4,24 @@
 
 #include "chrome/browser/sync/test/integration/sync_test.h"
 
-#include <stddef.h>
-#include <stdint.h>
-
-#include <limits>
-
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/guid.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
-#include "base/process/launch.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/synchronization/waitable_event.h"
-#include "base/test/bind_test_util.h"
-#include "base/test/test_timeouts.h"
-#include "base/threading/platform_thread.h"
-#include "base/threading/thread_restrictions.h"
-#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/gcm/gcm_profile_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/invalidation/deprecated_profile_invalidation_provider_factory.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -43,13 +29,11 @@
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/test/integration/fake_server_invalidation_service.h"
-#include "chrome/browser/sync/test/integration/p2p_invalidation_forwarder.h"
-#include "chrome/browser/sync/test/integration/p2p_sync_refresher.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
+#include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -59,43 +43,41 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/search_test_utils.h"
-#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/google/core/browser/google_url_tracker.h"
+#include "components/gcm_driver/gcm_profile_service.h"
+#include "components/invalidation/impl/fake_invalidation_service.h"
+#include "components/invalidation/impl/fcm_invalidation_service.h"
+#include "components/invalidation/impl/fcm_network_handler.h"
+#include "components/invalidation/impl/invalidation_prefs.h"
 #include "components/invalidation/impl/invalidation_switches.h"
-#include "components/invalidation/impl/p2p_invalidation_service.h"
-#include "components/invalidation/impl/p2p_invalidator.h"
+#include "components/invalidation/impl/per_user_topic_subscription_manager.h"
 #include "components/invalidation/impl/profile_identity_provider.h"
 #include "components/invalidation/impl/profile_invalidation_provider.h"
 #include "components/invalidation/public/invalidation_service.h"
+#include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/os_crypt/os_crypt_mocker.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/sync/base/invalidation_helper.h"
+#include "components/sync/base/sync_base_switches.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "components/sync/driver/sync_driver_switches.h"
 #include "components/sync/driver/sync_user_settings.h"
+#include "components/sync/engine/sync_engine_switches.h"
 #include "components/sync/engine_impl/sync_scheduler_impl.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "components/sync/test/fake_server/fake_server_network_resources.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/network_service_instance.h"
-#include "content/public/browser/notification_service.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/test/test_browser_thread.h"
 #include "google_apis/gaia/gaia_urls.h"
-#include "jingle/glue/network_service_config_test_util.h"
-#include "net/base/escape.h"
-#include "net/base/load_flags.h"
-#include "net/base/network_change_notifier.h"
 #include "net/base/port_util.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_fetcher.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "url/gurl.h"
 
@@ -103,24 +85,91 @@
 #include "chrome/browser/sync/test/integration/printers_helper.h"
 #include "chrome/browser/sync/test/integration/sync_arc_package_helper.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs_factory.h"
+#include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
+#include "chromeos/components/account_manager/account_manager.h"
+#include "chromeos/components/account_manager/account_manager_factory.h"
 #include "chromeos/constants/chromeos_switches.h"
 #include "components/arc/arc_util.h"
 #endif  // defined(OS_CHROMEOS)
 
-#if BUILDFLAG(ENABLE_APP_LIST)
-#include "chrome/browser/ui/app_list/test/fake_app_list_model_updater.h"
-#endif  // BUILDFLAG(ENABLE_APP_LIST)
-
-using browser_sync::ProfileSyncService;
-using content::BrowserThread;
+using syncer::ProfileSyncService;
 
 namespace switches {
 const char kPasswordFileForTest[] = "password-file-for-test";
 const char kSyncUserForTest[] = "sync-user-for-test";
 const char kSyncPasswordForTest[] = "sync-password-for-test";
-}
+}  // namespace switches
 
 namespace {
+// Sender ID coming from the Firebase console.
+const char kInvalidationGCMSenderId[] = "8181035976";
+
+void SetURLLoaderFactoryForTest(
+    Profile* profile,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  ChromeSigninClient* signin_client = static_cast<ChromeSigninClient*>(
+      ChromeSigninClientFactory::GetForProfile(profile));
+  signin_client->SetURLLoaderFactoryForTest(url_loader_factory);
+
+#if defined(OS_CHROMEOS)
+  chromeos::AccountManagerFactory* factory =
+      g_browser_process->platform_part()->GetAccountManagerFactory();
+  chromeos::AccountManager* account_manager =
+      factory->GetAccountManager(profile->GetPath().value());
+  account_manager->SetUrlLoaderFactoryForTests(url_loader_factory);
+#endif  // defined(OS_CHROMEOS)
+}
+
+class FakePerUserTopicSubscriptionManager
+    : public syncer::PerUserTopicSubscriptionManager {
+ public:
+  explicit FakePerUserTopicSubscriptionManager(PrefService* local_state)
+      : syncer::PerUserTopicSubscriptionManager(
+            /*identity_provider=*/nullptr,
+            /*pref_service=*/local_state,
+            /*url_loader_factory=*/nullptr,
+            /*project_id*/ kInvalidationGCMSenderId,
+            /*migrate_prefs=*/false) {}
+  ~FakePerUserTopicSubscriptionManager() override = default;
+
+  void UpdateSubscribedTopics(const syncer::Topics& topics,
+                              const std::string& instance_id_token) override {}
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(FakePerUserTopicSubscriptionManager);
+};
+
+std::unique_ptr<syncer::FCMNetworkHandler> CreateFCMNetworkHandler(
+    Profile* profile,
+    std::map<const Profile*, syncer::FCMNetworkHandler*>*
+        profile_to_fcm_network_handler_map,
+    gcm::GCMDriver* gcm_driver,
+    instance_id::InstanceIDDriver* instance_id_driver,
+    const std::string& sender_id,
+    const std::string& app_id) {
+  auto handler = std::make_unique<syncer::FCMNetworkHandler>(
+      gcm_driver, instance_id_driver, sender_id, app_id);
+  (*profile_to_fcm_network_handler_map)[profile] = handler.get();
+  return handler;
+}
+
+std::unique_ptr<syncer::PerUserTopicSubscriptionManager>
+CreatePerUserTopicSubscriptionManager(
+    invalidation::IdentityProvider* identity_provider,
+    PrefService* local_state,
+    network::mojom::URLLoaderFactory* url_loader_factory,
+    const std::string& project_id,
+    bool migrate_prefs) {
+  return std::make_unique<FakePerUserTopicSubscriptionManager>(local_state);
+}
+
+syncer::FCMNetworkHandler* GetFCMNetworkHandler(
+    const Profile* profile,
+    std::map<const Profile*, syncer::FCMNetworkHandler*>*
+        profile_to_fcm_network_handler_map) {
+  auto it = profile_to_fcm_network_handler_map->find(profile);
+  return it != profile_to_fcm_network_handler_map->end() ? it->second : nullptr;
+}
 
 // Helper class to ensure a profile is registered before the manager is
 // notified of creation.
@@ -134,9 +183,8 @@ class SyncProfileDelegate : public Profile::Delegate {
   void OnProfileCreated(Profile* profile,
                         bool success,
                         bool is_new_profile) override {
-    g_browser_process->profile_manager()->RegisterTestingProfile(profile,
-                                                                 true,
-                                                                 false);
+    g_browser_process->profile_manager()->RegisterTestingProfile(
+        base::WrapUnique(profile), true, false);
 
     // Perform any custom work needed before the profile is initialized.
     if (!on_profile_created_callback_.is_null())
@@ -154,7 +202,7 @@ class SyncProfileDelegate : public Profile::Delegate {
 
 bool IsEncryptionComplete(const ProfileSyncService* service) {
   return service->GetUserSettings()->IsEncryptEverythingEnabled() &&
-         !service->encryption_pending();
+         !service->IsEncryptionPendingForTest();
 }
 
 // Helper class to wait for encryption to complete.
@@ -163,73 +211,39 @@ class EncryptionChecker : public SingleClientStatusChangeChecker {
   explicit EncryptionChecker(ProfileSyncService* service)
       : SingleClientStatusChangeChecker(service) {}
 
-  bool IsExitConditionSatisfied() override {
+  bool IsExitConditionSatisfied(std::ostream* os) override {
+    *os << "Waiting for encryption to complete";
     return IsEncryptionComplete(service());
   }
-
-  std::string GetDebugMessage() const override { return "Encryption"; }
 };
 
-std::unique_ptr<KeyedService> BuildFakeServerProfileInvalidationProvider(
-    content::BrowserContext* context) {
-  Profile* profile = static_cast<Profile*>(context);
-  return std::make_unique<invalidation::ProfileInvalidationProvider>(
-      std::make_unique<fake_server::FakeServerInvalidationService>(),
-      std::make_unique<invalidation::ProfileIdentityProvider>(
-          IdentityManagerFactory::GetForProfile(profile)));
-}
-
-std::unique_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
-    content::BrowserContext* context,
-    syncer::P2PNotificationTarget notification_target) {
-  Profile* profile = static_cast<Profile*>(context);
-  auto config_helper =
-      std::make_unique<jingle_glue::NetworkServiceConfigTestUtil>(
-          profile->GetRequestContext());
-  return std::make_unique<invalidation::ProfileInvalidationProvider>(
-      std::make_unique<invalidation::P2PInvalidationService>(
-          std::move(config_helper), content::GetNetworkConnectionTracker(),
-          notification_target),
-      std::make_unique<invalidation::ProfileIdentityProvider>(
-          IdentityManagerFactory::GetForProfile(profile)));
-}
-
-std::unique_ptr<KeyedService> BuildSelfNotifyingP2PProfileInvalidationProvider(
-    content::BrowserContext* context) {
-  return BuildP2PProfileInvalidationProvider(context, syncer::NOTIFY_ALL);
-}
-
-std::unique_ptr<KeyedService> BuildRealisticP2PProfileInvalidationProvider(
-    content::BrowserContext* context) {
-  return BuildP2PProfileInvalidationProvider(context, syncer::NOTIFY_OTHERS);
-}
-
 }  // namespace
+
+instance_id::InstanceID* SyncTest::FakeInstanceIDDriver::GetInstanceID(
+    const std::string& app_id) {
+  return &fake_instance_id_;
+}
+bool SyncTest::FakeInstanceIDDriver::ExistsInstanceID(
+    const std::string& app_id) const {
+  return true;
+}
 
 SyncTest::SyncTest(TestType test_type)
     : test_type_(test_type),
       server_type_(SERVER_TYPE_UNDECIDED),
       previous_profile_(nullptr),
       num_clients_(-1),
-      use_verifier_(true),
-      create_gaia_account_at_runtime_(false),
-      test_shared_url_loader_factory_(
-          base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-              &test_url_loader_factory_)) {
+      use_verifier_(true) {
   sync_datatype_helper::AssociateWithTest(this);
   switch (test_type_) {
-    case SINGLE_CLIENT:
-    case SINGLE_CLIENT_LEGACY: {
+    case SINGLE_CLIENT: {
       num_clients_ = 1;
       break;
     }
-    case TWO_CLIENT:
-    case TWO_CLIENT_LEGACY: {
+    case TWO_CLIENT: {
       num_clients_ = 2;
       break;
     }
-    default:
-      NOTREACHED() << "Invalid test type specified.";
   }
 }
 
@@ -246,12 +260,7 @@ void SyncTest::SetUp() {
     // Decide on username to use or create one.
     if (cl->HasSwitch(switches::kSyncUserForTest)) {
       username_ = cl->GetSwitchValueASCII(switches::kSyncUserForTest);
-    } else if (UsingExternalServers()) {
-      // We assume the need to automatically create a Gaia account which
-      // requires URL navigation and needs to be done outside SetUp() function.
-      create_gaia_account_at_runtime_ = true;
-      username_ = base::GenerateGUID();
-    } else {
+    } else if (!UsingExternalServers()) {
       username_ = "user@gmail.com";
     }
     // Decide on password to use.
@@ -277,25 +286,18 @@ void SyncTest::TearDown() {
   // Allow the InProcessBrowserTest framework to perform its tear down.
   InProcessBrowserTest::TearDown();
 
-  // Stop the local python test server. This is a no-op if one wasn't started.
-  TearDownLocalPythonTestServer();
-
-  // Stop the local sync test server. This is a no-op if one wasn't started.
-  TearDownLocalTestServer();
-
   // Return OSCrypt to its real behaviour
   OSCryptMocker::TearDown();
 
-  test_shared_url_loader_factory_->Detach();
   fake_server_.reset();
 }
 
 void SyncTest::SetUpCommandLine(base::CommandLine* cl) {
   AddTestSwitches(cl);
-  AddOptionalTypesToCommandLine(cl);
 
 #if defined(OS_CHROMEOS)
   cl->AppendSwitch(chromeos::switches::kIgnoreUserProfileMappingForTests);
+  cl->AppendSwitch(chromeos::switches::kDisableArcOptInVerification);
   arc::SetArcAvailableCommandLineForTesting(cl);
 #endif
 }
@@ -310,36 +312,23 @@ void SyncTest::AddTestSwitches(base::CommandLine* cl) {
 
   if (!cl->HasSwitch(switches::kSyncShortNudgeDelayForTest))
     cl->AppendSwitch(switches::kSyncShortNudgeDelayForTest);
+  // TODO(crbug.com/657130): This a temporary switch because sync integration
+  // tests depend on the precommit get updates because invalidations aren't
+  // working for them. Therefore, they pass the command line switch to enable
+  // this feature. Once sync integrations test support invalidation, this
+  // should be removed.
+  if (!cl->HasSwitch(switches::kSyncEnableGetUpdatesBeforeCommit))
+    cl->AppendSwitch(switches::kSyncEnableGetUpdatesBeforeCommit);
 }
 
-void SyncTest::AddOptionalTypesToCommandLine(base::CommandLine* cl) {}
-
-bool SyncTest::CreateGaiaAccount(const std::string& username,
-                                 const std::string& password) {
-  std::string relative_url = base::StringPrintf("/CreateUsers?%s=%s",
-                                                username.c_str(),
-                                                password.c_str());
-  GURL create_user_url =
-      GaiaUrls::GetInstance()->gaia_url().Resolve(relative_url);
-  // NavigateToURL blocks until the navigation finishes.
-  ui_test_utils::NavigateToURL(browser(), create_user_url);
-  content::WebContents* contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  content::NavigationEntry* entry = contents->GetController().GetVisibleEntry();
-  EXPECT_TRUE(entry)
-      << "Could not get a hold on NavigationEntry post URL navigate.";
-  DVLOG(1) << "Create Gaia account request return code = "
-      << entry->GetHttpStatusCode();
-  return entry->GetHttpStatusCode() == 200;
-}
-
-void SyncTest::BeforeSetupClient(int index) {}
+void SyncTest::BeforeSetupClient(int index,
+                                 const base::FilePath& profile_path) {}
 
 bool SyncTest::CreateProfile(int index) {
   base::FilePath profile_path;
 
   base::ScopedAllowBlockingForTesting allow_blocking;
-  if (UsingExternalServers() && num_clients_ > 1) {
+  if (UsingExternalServers() && (num_clients_ > 1 || use_new_user_data_dir_)) {
     scoped_temp_dirs_.push_back(std::make_unique<base::ScopedTempDir>());
     // For multi profile UI signin, profile paths should be outside user data
     // dir to allow signing-in multiple profiles to same account. Otherwise, we
@@ -368,6 +357,8 @@ bool SyncTest::CreateProfile(int index) {
         base::StringPrintf("SyncIntegrationTestClient%d", index));
   }
 
+  BeforeSetupClient(index, profile_path);
+
   if (UsingExternalServers()) {
     // If running against an EXTERNAL_LIVE_SERVER, we signin profiles using real
     // GAIA server. This requires creating profiles with no test hooks.
@@ -380,9 +371,7 @@ bool SyncTest::CreateProfile(int index) {
         std::make_unique<SyncProfileDelegate>(base::Bind(
             &SyncTest::InitializeProfile, base::Unretained(this), index));
     Profile* profile = MakeTestProfile(profile_path, index);
-    ChromeSigninClient* signin_client = static_cast<ChromeSigninClient*>(
-        ChromeSigninClientFactory::GetForProfile(profile));
-    signin_client->SetURLLoaderFactoryForTest(test_shared_url_loader_factory_);
+    SetupMockGaiaResponsesForProfile(profile);
   }
 
   // Once profile initialization has kicked off, wait for it to finish.
@@ -413,42 +402,19 @@ void SyncTest::CreateProfileCallback(const base::Closure& quit_closure,
 Profile* SyncTest::MakeProfileForUISignin(base::FilePath profile_path) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   base::RunLoop run_loop;
-  ProfileManager::CreateCallback create_callback = base::Bind(
-      &CreateProfileCallback, run_loop.QuitClosure());
-  profile_manager->CreateProfileAsync(profile_path,
-                                      create_callback,
-                                      base::string16(),
-                                      std::string());
+  ProfileManager::CreateCallback create_callback =
+      base::Bind(&CreateProfileCallback, run_loop.QuitClosure());
+  profile_manager->CreateProfileAsync(profile_path, create_callback,
+                                      base::string16(), std::string());
   run_loop.Run();
   return profile_manager->GetProfileByPath(profile_path);
 }
 
 Profile* SyncTest::MakeTestProfile(base::FilePath profile_path, int index) {
-  const auto& preference_contents_it =
-      preexisting_preferences_file_contents_.find(index);
-  if (preference_contents_it != preexisting_preferences_file_contents_.end() &&
-      !preference_contents_it->second.empty()) {
-    // The profile directory might not exist yet (e.g. for the verifier_
-    // profile).
-    if (!base::PathExists(profile_path) &&
-        !base::CreateDirectory(profile_path)) {
-      LOG(FATAL) << "Could not create profile directory: " << profile_path;
-    }
-    base::FilePath pref_path(profile_path.Append(chrome::kPreferencesFilename));
-    int write_result =
-        base::WriteFile(pref_path, preference_contents_it->second.c_str(),
-                        preference_contents_it->second.size());
-    if (write_result !=
-        static_cast<int>(preference_contents_it->second.size())) {
-      LOG(FATAL) << "Preexisting Preferences file could not be written to "
-                 << pref_path;
-    }
-  }
-
-  Profile* profile =
+  std::unique_ptr<Profile> profile =
       Profile::CreateProfile(profile_path, profile_delegates_[index].get(),
                              Profile::CREATE_MODE_SYNCHRONOUS);
-  return profile;
+  return profile.release();
 }
 
 Profile* SyncTest::GetProfile(int index) {
@@ -508,7 +474,15 @@ std::vector<ProfileSyncServiceHarness*> SyncTest::GetSyncClients() {
 }
 
 ProfileSyncService* SyncTest::GetSyncService(int index) {
-  return ProfileSyncServiceFactory::GetForProfile(GetProfile(index));
+  return ProfileSyncServiceFactory::GetAsProfileSyncServiceForProfile(
+      GetProfile(index));
+}
+
+syncer::UserSelectableTypeSet SyncTest::GetRegisteredSelectableTypes(
+    int index) {
+  return GetSyncService(index)
+      ->GetUserSettings()
+      ->GetRegisteredSelectableTypes();
 }
 
 std::vector<ProfileSyncService*> SyncTest::GetSyncServices() {
@@ -545,19 +519,7 @@ bool SyncTest::SetupClients() {
   profiles_.resize(num_clients_);
   profile_delegates_.resize(num_clients_ + 1);  // + 1 for the verifier.
   clients_.resize(num_clients_);
-  invalidation_forwarders_.resize(num_clients_);
-  sync_refreshers_.resize(num_clients_);
-  fake_server_invalidation_services_.resize(num_clients_);
-
-  if (create_gaia_account_at_runtime_) {
-    if (!UsingExternalServers()) {
-      ADD_FAILURE() << "Cannot create Gaia accounts without external "
-                       "authentication servers.";
-      return false;
-    }
-    if (!CreateGaiaAccount(username_, password_))
-      LOG(FATAL) << "Could not create Gaia account.";
-  }
+  fake_server_invalidation_observers_.resize(num_clients_);
 
   auto* cl = base::CommandLine::ForCurrentProcess();
   if (!cl->HasSwitch(switches::kSyncDeferredStartupTimeoutSeconds)) {
@@ -581,7 +543,6 @@ bool SyncTest::SetupClients() {
 #endif
 
   for (int i = 0; i < num_clients_; ++i) {
-    BeforeSetupClient(i);
     if (!CreateProfile(i)) {
       return false;
     }
@@ -625,17 +586,17 @@ void SyncTest::InitializeProfile(int index, Profile* profile) {
   // ProfileSyncServiceHarness - some tests expect the ProfileSyncService to
   // already exist.
   ProfileSyncService* profile_sync_service =
-      ProfileSyncServiceFactory::GetForProfile(GetProfile(index));
+      ProfileSyncServiceFactory::GetAsProfileSyncServiceForProfile(
+          GetProfile(index));
 
   if (server_type_ == IN_PROCESS_FAKE_SERVER) {
-    // TODO(pvalenzuela): Run the fake server via EmbeddedTestServer.
-    profile_sync_service->OverrideNetworkResourcesForTest(
-        base::WrapUnique<syncer::NetworkResources>(
-            new fake_server::FakeServerNetworkResources(
-                fake_server_->AsWeakPtr())));
+    profile_sync_service->OverrideNetworkForTest(
+        fake_server::CreateFakeServerHttpPostProviderFactory(
+            GetFakeServer()->AsWeakPtr()));
   }
 
-  ProfileSyncServiceHarness::SigninType singin_type = UsingExternalServers()
+  ProfileSyncServiceHarness::SigninType singin_type =
+      UsingExternalServers()
           ? ProfileSyncServiceHarness::SigninType::UI_SIGNIN
           : ProfileSyncServiceHarness::SigninType::FAKE_SIGNIN;
 
@@ -647,7 +608,8 @@ void SyncTest::InitializeProfile(int index, Profile* profile) {
 }
 
 void SyncTest::DisableNotificationsForClient(int index) {
-  fake_server_->RemoveObserver(fake_server_invalidation_services_[index]);
+  fake_server_->RemoveObserver(
+      fake_server_invalidation_observers_[index].get());
 }
 
 void SyncTest::SetEncryptionPassphraseForClient(int index,
@@ -665,14 +627,11 @@ void SyncTest::SetDecryptionPassphraseForClient(int index,
 }
 
 void SyncTest::SetupMockGaiaResponsesForProfile(Profile* profile) {
-  ChromeSigninClient* signin_client = static_cast<ChromeSigninClient*>(
-      ChromeSigninClientFactory::GetForProfile(profile));
-  signin_client->SetURLLoaderFactoryForTest(test_shared_url_loader_factory_);
+  SetURLLoaderFactoryForTest(profile,
+                             test_url_loader_factory_.GetSafeWeakWrapper());
 }
 
 void SyncTest::SetUpInvalidations(int index) {
-  bool fcm_invalidations_enabled =
-      base::FeatureList::IsEnabled(invalidation::switches::kFCMInvalidations);
   switch (server_type_) {
     case EXTERNAL_LIVE_SERVER:
       // DO NOTHING. External live sync servers use GCM to notify profiles of
@@ -681,56 +640,45 @@ void SyncTest::SetUpInvalidations(int index) {
       break;
 
     case IN_PROCESS_FAKE_SERVER: {
-      KeyedService* test_factory;
-      if (fcm_invalidations_enabled) {
-        test_factory =
-            invalidation::ProfileInvalidationProviderFactory::GetInstance()
-                ->SetTestingFactoryAndUse(
-                    GetProfile(index),
-                    base::BindRepeating(
-                        &BuildFakeServerProfileInvalidationProvider));
+      const std::string client_id = "Client " + base::NumberToString(index);
+      // Listen for fake server changes.
+      fake_server_invalidation_observers_[index] =
+          std::make_unique<fake_server::FakeServerInvalidationSender>(
+              client_id, TestUsesSelfNotifications(),
+              base::BindRepeating(&GetFCMNetworkHandler, GetProfile(index),
+                                  &profile_to_fcm_network_handler_map_));
+      fake_server_->AddObserver(
+          fake_server_invalidation_observers_[index].get());
 
-      } else {
-        test_factory =
-            invalidation::DeprecatedProfileInvalidationProviderFactory::
-                GetInstance()
-                    ->SetTestingFactoryAndUse(
-                        GetProfile(index),
-                        base::BindRepeating(
-                            &BuildFakeServerProfileInvalidationProvider));
+      // Store in prefs the mapping between public and private topics names. In
+      // real clients, those are stored upon subscription with the
+      // per-user-topic server. The pref name is defined in
+      // per_user_topic_subscription_manager.cc.
+      DictionaryPrefUpdate update(
+          GetProfile(index)->GetPrefs(),
+          "invalidation.per_sender_registered_for_invalidation");
+      update->SetDictionary(kInvalidationGCMSenderId,
+                            std::make_unique<base::DictionaryValue>());
+      for (syncer::ModelType model_type :
+           GetSyncService(index)->GetPreferredDataTypes()) {
+        std::string notification_type;
+        if (!RealModelTypeToNotificationType(model_type, &notification_type)) {
+          continue;
+        }
+        update->FindDictKey(kInvalidationGCMSenderId)
+            ->SetKey(notification_type,
+                     base::Value("/private/" + notification_type +
+                                 "-topic_server_user_id"));
       }
-      invalidation::InvalidationService* invalidation_service =
-          static_cast<invalidation::ProfileInvalidationProvider*>(test_factory)
-              ->GetInvalidationService();
-      auto* fake_invalidation_service =
-          static_cast<fake_server::FakeServerInvalidationService*>(
-              invalidation_service);
+      DictionaryPrefUpdate update_client_id(
+          GetProfile(index)->GetPrefs(),
+          invalidation::prefs::kInvalidationClientIDCache);
 
-      fake_server_->AddObserver(fake_invalidation_service);
-      if (TestUsesSelfNotifications())
-        fake_invalidation_service->EnableSelfNotifications();
-      else
-        fake_invalidation_service->DisableSelfNotifications();
-      fake_server_invalidation_services_[index] = fake_invalidation_service;
+      update_client_id->SetString(kInvalidationGCMSenderId, client_id);
       break;
     }
     case SERVER_TYPE_UNDECIDED:
-    case LOCAL_PYTHON_SERVER:
-      BrowserContextKeyedServiceFactory::TestingFactory invalidation_provider =
-          base::BindRepeating(
-              TestUsesSelfNotifications()
-                  ? &BuildSelfNotifyingP2PProfileInvalidationProvider
-                  : &BuildRealisticP2PProfileInvalidationProvider);
-      if (fcm_invalidations_enabled) {
-        invalidation::ProfileInvalidationProviderFactory::GetInstance()
-            ->SetTestingFactoryAndUse(GetProfile(index),
-                                      std::move(invalidation_provider));
-      } else {
-        invalidation::DeprecatedProfileInvalidationProviderFactory::
-            GetInstance()
-                ->SetTestingFactoryAndUse(GetProfile(index),
-                                          std::move(invalidation_provider));
-      }
+      NOTREACHED();
   }
 }
 
@@ -753,38 +701,19 @@ void SyncTest::InitializeInvalidations(int index) {
       break;
     }
     case SERVER_TYPE_UNDECIDED:
-    case LOCAL_PYTHON_SERVER:
-      bool fcm_invalidations_enabled = base::FeatureList::IsEnabled(
-          invalidation::switches::kFCMInvalidations);
-      invalidation::InvalidationService* invalidation_service;
-      if (fcm_invalidations_enabled) {
-        invalidation_service =
-            invalidation::ProfileInvalidationProviderFactory::GetForProfile(
-                GetProfile(index))
-                ->GetInvalidationService();
-      } else {
-        invalidation_service =
-            invalidation::DeprecatedProfileInvalidationProviderFactory::
-                GetForProfile(GetProfile(index))
-                    ->GetInvalidationService();
-      }
-      invalidation::P2PInvalidationService* p2p_invalidation_service =
-          static_cast<invalidation::P2PInvalidationService*>(
-              invalidation_service);
-      p2p_invalidation_service->UpdateCredentials(username_, password_);
-      // Start listening for and emitting notifications of commits.
-      DCHECK(!invalidation_forwarders_[index]);
-      invalidation_forwarders_[index] =
-          std::make_unique<P2PInvalidationForwarder>(clients_[index]->service(),
-                                                     p2p_invalidation_service);
+      NOTREACHED();
   }
 }
 
 void SyncTest::SetupSyncNoWaitingForCompletion() {
-  SetupSyncInternal(/*wait_for_completion=*/false);
+  SetupSyncInternal(/*setup_mode=*/NO_WAITING);
 }
 
-void SyncTest::SetupSyncInternal(bool wait_for_completion) {
+void SyncTest::SetupSyncOneClientAfterAnother() {
+  SetupSyncInternal(/*setup_mode=*/WAIT_FOR_COMMITS_TO_COMPLETE);
+}
+
+void SyncTest::SetupSyncInternal(SetupSyncMode setup_mode) {
   // Create sync profiles and clients if they haven't already been created.
   if (profiles_.empty()) {
     if (!SetupClients()) {
@@ -792,25 +721,24 @@ void SyncTest::SetupSyncInternal(bool wait_for_completion) {
     }
   }
 
-  int clientIndex = 0;
-  // If we're using external servers, clear server data so the account starts
-  // with a clean slate.
+  // TODO(crbug.com/801482): If we ever start running tests against external
+  // servers again, we might have to find a way to clear any pre-existing data
+  // from the test account.
   if (UsingExternalServers()) {
-    if (!SetupAndClearClient(clientIndex++)) {
-      LOG(FATAL) << "Setting up and clearing data for client "
-                 << clientIndex - 1 << " failed";
-    }
+    LOG(ERROR) << "WARNING: Running against external servers with an existing "
+                  "account. If there is any pre-existing data in the account, "
+                  "things will likely break.";
   }
 
   // Sync each of the profiles.
-  for (; clientIndex < num_clients_; clientIndex++) {
-    ProfileSyncServiceHarness* client = GetClient(clientIndex);
-    DVLOG(1) << "Setting up " << clientIndex << " client";
+  for (int client_index = 0; client_index < num_clients_; client_index++) {
+    ProfileSyncServiceHarness* client = GetClient(client_index);
+    DVLOG(1) << "Setting up " << client_index << " client";
 
     auto decryption_passphrase_it =
-        client_decryption_passphrases_.find(clientIndex);
+        client_decryption_passphrases_.find(client_index);
     auto encryption_passphrase_it =
-        client_encryption_passphrases_.find(clientIndex);
+        client_encryption_passphrases_.find(client_index);
     bool decryption_passphrase_provided =
         (decryption_passphrase_it != client_decryption_passphrases_.end());
     bool encryption_passphrase_provided =
@@ -822,28 +750,51 @@ void SyncTest::SetupSyncInternal(bool wait_for_completion) {
 
     if (encryption_passphrase_provided) {
       CHECK(client->SetupSyncWithEncryptionPassphraseNoWaitForCompletion(
-          syncer::UserSelectableTypes(), encryption_passphrase_it->second))
+          GetRegisteredSelectableTypes(client_index),
+          encryption_passphrase_it->second))
           << "SetupSync() failed.";
     } else if (decryption_passphrase_provided) {
       CHECK(client->SetupSyncWithDecryptionPassphraseNoWaitForCompletion(
-          syncer::UserSelectableTypes(), decryption_passphrase_it->second))
+          GetRegisteredSelectableTypes(client_index),
+          decryption_passphrase_it->second))
           << "SetupSync() failed.";
     } else {
-      CHECK(client->SetupSyncNoWaitForCompletion(syncer::UserSelectableTypes()))
+      CHECK(client->SetupSyncNoWaitForCompletion(
+          GetRegisteredSelectableTypes(client_index)))
           << "SetupSync() failed.";
     }
-    if (wait_for_completion) {
-      // It's important to wait for each client before setting up the next one,
-      // otherwise multi-client tests get flaky.
-      // TODO(tschumann): It would be nice to figure out why.
-      client->AwaitSyncSetupCompletion();
+
+    // It's important to wait for each client before setting up the next one,
+    // otherwise multi-client tests get flaky.
+    // TODO(crbug.com/956043): It would be nice to figure out why.
+    switch (setup_mode) {
+      case NO_WAITING:
+        break;
+      case WAIT_FOR_SYNC_SETUP_TO_COMPLETE:
+        client->AwaitSyncSetupCompletion();
+        break;
+      case WAIT_FOR_COMMITS_TO_COMPLETE:
+        DCHECK(TestUsesSelfNotifications())
+            << "We need that for the UpdatedProgressMarkerChecker";
+        UpdatedProgressMarkerChecker checker(GetSyncService(client_index));
+        checker.Wait();
+        break;
     }
   }
 }
 
+void SyncTest::ClearProfiles() {
+  profiles_.clear();
+  profile_delegates_.clear();
+  scoped_temp_dirs_.clear();
+  browsers_.clear();
+  clients_.clear();
+}
+
 bool SyncTest::SetupSync() {
   base::ScopedAllowBlockingForTesting allow_blocking;
-  SetupSyncInternal(/*wait_for_completion=*/true);
+
+  SetupSyncInternal(/*setup_mode=*/WAIT_FOR_SYNC_SETUP_TO_COMPLETE);
 
   // Because clients may modify sync data as part of startup (for example
   // local session-releated data is rewritten), we need to ensure all
@@ -859,20 +810,7 @@ bool SyncTest::SetupSync() {
     }
   }
 
-  // SyncRefresher is used instead of invalidations to notify other profiles to
-  // do a sync refresh on committed data sets. This is only needed when running
-  // tests against external live server, otherwise invalidation service is used.
-  // With external live servers, the profiles commit data on first sync cycle
-  // automatically after signing in. To avoid misleading sync commit
-  // notifications at start up, we start the SyncRefresher observers post
-  // client set up.
   if (UsingExternalServers()) {
-    for (int i = 0; i < num_clients_; ++i) {
-      DCHECK(!sync_refreshers_[i]);
-      sync_refreshers_[i] = std::make_unique<P2PSyncRefresher>(
-          GetProfile(i), clients_[i]->service());
-    }
-
     // OneClickSigninSyncStarter observer is created with a real user sign in.
     // It is deleted on certain conditions which are not satisfied by our tests,
     // and this causes the SigninTracker observer to stay hanging at shutdown.
@@ -885,23 +823,6 @@ bool SyncTest::SetupSync() {
     }
   }
 
-  return true;
-}
-
-bool SyncTest::SetupAndClearClient(size_t index) {
-  // Setup the first client so the sync engine is initialized, which is
-  // required to clear server data.
-  DVLOG(1) << "Setting up first client for clear.";
-  if (!GetClient(index)->SetupSyncForClearingServerData()) {
-    LOG(FATAL) << "SetupSync() failed.";
-    return false;
-  }
-
-  DVLOG(1) << "Done setting up first client for clear.";
-  if (!ClearServerData(GetClient(index++))) {
-    LOG(FATAL) << "ClearServerData failed.";
-    return false;
-  }
   return true;
 }
 
@@ -928,17 +849,103 @@ void SyncTest::TearDownOnMainThread() {
             init_browser_count - browsers_.size());
 
   if (fake_server_.get()) {
-    std::vector<fake_server::FakeServerInvalidationService*>::const_iterator it;
-    for (it = fake_server_invalidation_services_.begin();
-         it != fake_server_invalidation_services_.end(); ++it) {
-      fake_server_->RemoveObserver(*it);
+    for (const std::unique_ptr<fake_server::FakeServerInvalidationSender>&
+             observer : fake_server_invalidation_observers_) {
+      fake_server_->RemoveObserver(observer.get());
     }
   }
 
   // Delete things that unsubscribe in destructor before their targets are gone.
-  invalidation_forwarders_.clear();
-  sync_refreshers_.clear();
   configuration_refresher_.reset();
+}
+
+void SyncTest::SetUpInProcessBrowserTestFixture() {
+  will_create_browser_context_services_subscription_ =
+      BrowserContextDependencyManager::GetInstance()
+          ->RegisterWillCreateBrowserContextServicesCallbackForTesting(
+              base::BindRepeating(&SyncTest::OnWillCreateBrowserContextServices,
+                                  base::Unretained(this)));
+}
+
+void SyncTest::OnWillCreateBrowserContextServices(
+    content::BrowserContext* context) {
+  if (UsingExternalServers()) {
+    // DO NOTHING. External live sync servers use GCM to notify profiles of
+    // any invalidations in sync'ed data. No need to provide a testing
+    // factory the ProfileInvalidationProvider.
+    return;
+  }
+  invalidation::ProfileInvalidationProviderFactory::GetInstance()
+      ->SetTestingFactory(
+          context,
+          base::BindRepeating(&SyncTest::CreateProfileInvalidationProvider,
+                              &profile_to_fcm_network_handler_map_,
+                              &fake_instance_id_driver_));
+}
+
+// static
+std::unique_ptr<KeyedService> SyncTest::CreateProfileInvalidationProvider(
+    std::map<const Profile*, syncer::FCMNetworkHandler*>*
+        profile_to_fcm_network_handler_map,
+    instance_id::InstanceIDDriver* instance_id_driver,
+    content::BrowserContext* context) {
+  Profile* profile = Profile::FromBrowserContext(context);
+  gcm::GCMProfileService* gcm_profile_service =
+      gcm::GCMProfileServiceFactory::GetForProfile(profile);
+
+  auto profile_identity_provider =
+      std::make_unique<invalidation::ProfileIdentityProvider>(
+          IdentityManagerFactory::GetForProfile(profile));
+
+  auto fcm_invalidation_service =
+      std::make_unique<invalidation::FCMInvalidationService>(
+          profile_identity_provider.get(),
+          base::BindRepeating(&CreateFCMNetworkHandler, profile,
+                              profile_to_fcm_network_handler_map,
+                              gcm_profile_service->driver(),
+                              instance_id_driver),
+          base::BindRepeating(
+              &CreatePerUserTopicSubscriptionManager,
+              profile_identity_provider.get(), profile->GetPrefs(),
+              base::RetainedRef(
+                  content::BrowserContext::GetDefaultStoragePartition(profile)
+                      ->GetURLLoaderFactoryForBrowserProcess()
+                      .get())),
+          instance_id_driver, profile->GetPrefs(), kInvalidationGCMSenderId);
+  fcm_invalidation_service->Init();
+
+  return std::make_unique<invalidation::ProfileInvalidationProvider>(
+      std::move(fcm_invalidation_service), std::move(profile_identity_provider),
+      /*custom_sender_invalidation_service_factory=*/
+      base::BindRepeating(
+          [](const std::string&)
+              -> std::unique_ptr<invalidation::InvalidationService> {
+            return std::make_unique<invalidation::FakeInvalidationService>();
+          }));
+}
+
+void SyncTest::ResetSyncForPrimaryAccount() {
+  if (UsingExternalServers()) {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    // For external server testing, we need to have a clean account.
+    // The following code will sign in one chrome browser, get
+    // the client id and access token, then clean the server data.
+    int old_num_clients = num_clients_;
+    int old_use_new_user_data_dir = use_new_user_data_dir_;
+    use_new_user_data_dir_ = true;
+    num_clients_ = 1;
+    // Do not wait for sync complete. Some tests set passphrase and sync
+    // will fail. NO_WAITING mode gives access token and birthday so
+    // ProfileSyncServiceHarness::ResetSyncForPrimaryAccount() can succeed.
+    // The passphrase will be reset together with the rest of the sync data
+    // clearing.
+    SetupSyncNoWaitingForCompletion();
+    GetClient(0)->ResetSyncForPrimaryAccount();
+    GetClient(0)->StopSyncServiceAndClearData();
+    ClearProfiles();
+    use_new_user_data_dir_ = old_use_new_user_data_dir;
+    num_clients_ = old_num_clients;
+  }
 }
 
 void SyncTest::SetUpOnMainThread() {
@@ -953,7 +960,7 @@ void SyncTest::SetUpOnMainThread() {
   // Allows google.com as well as country-specific TLDs.
   host_resolver()->AllowDirectLookup("*.google.com");
   host_resolver()->AllowDirectLookup("accounts.google.*");
-
+  host_resolver()->AllowDirectLookup("*.googleusercontent.com");
   // Allow connection to googleapis.com for oauth token requests in E2E tests.
   host_resolver()->AllowDirectLookup("*.googleapis.com");
 
@@ -985,13 +992,12 @@ void SyncTest::ReadPasswordFile() {
                << switches::kPasswordFileForTest << "=<filename>";
   std::string file_contents;
   base::ReadFileToString(password_file_, &file_contents);
-  ASSERT_NE(file_contents, "") << "Password file \""
-      << password_file_.value() << "\" does not exist.";
+  ASSERT_NE(file_contents, "")
+      << "Password file \"" << password_file_.value() << "\" does not exist.";
   std::vector<std::string> tokens = base::SplitString(
       file_contents, "\r\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  ASSERT_EQ(2U, tokens.size()) << "Password file \""
-      << password_file_.value()
-      << "\" must contain exactly two lines of text.";
+  ASSERT_EQ(2U, tokens.size()) << "Password file \"" << password_file_.value()
+                               << "\" must contain exactly two lines of text.";
   username_ = tokens[0];
   password_ = tokens[1];
 }
@@ -1000,8 +1006,6 @@ void SyncTest::SetupMockGaiaResponses() {
   test_url_loader_factory_.AddResponse(
       GaiaUrls::GetInstance()->get_user_info_url().spec(),
       "email=user@gmail.com\ndisplayEmail=user@gmail.com");
-  test_url_loader_factory_.AddResponse(GoogleURLTracker::kSearchDomainCheckURL,
-                                       ".google.com");
   test_url_loader_factory_.AddResponse(
       GaiaUrls::GetInstance()->oauth2_token_url().spec(),
       R"({
@@ -1022,17 +1026,17 @@ void SyncTest::SetupMockGaiaResponses() {
 
 void SyncTest::SetOAuth2TokenResponse(const std::string& response_data,
                                       net::HttpStatusCode status_code,
-                                      net::URLRequestStatus::Status status) {
-  network::URLLoaderCompletionStatus completion_status(status);
+                                      net::Error net_error) {
+  network::URLLoaderCompletionStatus completion_status(net_error);
   completion_status.decoded_body_length = response_data.size();
 
   std::string response = base::StringPrintf("HTTP/1.1 %d %s\r\n", status_code,
                                             GetHttpReasonPhrase(status_code));
-  network::ResourceResponseHead resource_response;
-  resource_response.headers =
+  auto response_head = network::mojom::URLResponseHead::New();
+  response_head->headers =
       base::MakeRefCounted<net::HttpResponseHeaders>(response);
   test_url_loader_factory_.AddResponse(
-      GaiaUrls::GetInstance()->oauth2_token_url(), resource_response,
+      GaiaUrls::GetInstance()->oauth2_token_url(), std::move(response_head),
       response_data, completion_status);
   base::RunLoop().RunUntilIdle();
 }
@@ -1050,19 +1054,7 @@ void SyncTest::DecideServerType() {
     if (!cl->HasSwitch(switches::kSyncServiceURL)) {
       // If no sync server URL is provided, start up a local sync test server
       // and point Chrome to its URL. This is the most common configuration,
-      // and the only one that makes sense for most developers. FakeServer is
-      // the current solution but some scenarios are only supported by the
-      // legacy python server.
-      switch (test_type_) {
-        case SINGLE_CLIENT:
-        case TWO_CLIENT:
-          server_type_ = IN_PROCESS_FAKE_SERVER;
-          break;
-        case SINGLE_CLIENT_LEGACY:
-        case TWO_CLIENT_LEGACY:
-          server_type_ = LOCAL_PYTHON_SERVER;
-      }
-      DCHECK_NE(server_type_, SERVER_TYPE_UNDECIDED);
+      server_type_ = IN_PROCESS_FAKE_SERVER;
     } else {
       // If a sync server URL is provided, it is assumed that the server is
       // already running. Chrome will automatically connect to it at the URL
@@ -1077,10 +1069,6 @@ void SyncTest::DecideServerType() {
 void SyncTest::SetUpTestServerIfRequired() {
   if (UsingExternalServers()) {
     // Nothing to do; we'll just talk to the URL we were given.
-  } else if (server_type_ == LOCAL_PYTHON_SERVER) {
-    if (!SetUpLocalPythonTestServer())
-      LOG(FATAL) << "Failed to set up local python sync and XMPP servers";
-    SetupMockGaiaResponses();
   } else if (server_type_ == IN_PROCESS_FAKE_SERVER) {
     base::FilePath user_data_dir;
     base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
@@ -1089,98 +1077,6 @@ void SyncTest::SetUpTestServerIfRequired() {
   } else {
     LOG(FATAL) << "Don't know which server environment to run test in.";
   }
-}
-
-bool SyncTest::SetUpLocalPythonTestServer() {
-  EXPECT_TRUE(sync_server_.Start())
-      << "Could not launch local python test server.";
-
-  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  if (server_type_ == LOCAL_PYTHON_SERVER) {
-    std::string sync_service_url = sync_server_.GetURL("chromiumsync").spec();
-    cl->AppendSwitchASCII(switches::kSyncServiceURL, sync_service_url);
-    DVLOG(1) << "Started local python sync server at " << sync_service_url;
-  }
-
-  int xmpp_port = 0;
-  if (!sync_server_.server_data().GetInteger("xmpp_port", &xmpp_port)) {
-    LOG(ERROR) << "Could not find valid xmpp_port value";
-    return false;
-  }
-  if ((xmpp_port <= 0) || (xmpp_port > std::numeric_limits<uint16_t>::max())) {
-    LOG(ERROR) << "Invalid xmpp port: " << xmpp_port;
-    return false;
-  }
-
-  net::HostPortPair xmpp_host_port_pair(sync_server_.host_port_pair());
-  xmpp_host_port_pair.set_port(xmpp_port);
-  xmpp_port_ = std::make_unique<net::ScopedPortException>(xmpp_port);
-
-  if (!cl->HasSwitch(invalidation::switches::kSyncNotificationHostPort)) {
-    cl->AppendSwitchASCII(invalidation::switches::kSyncNotificationHostPort,
-                          xmpp_host_port_pair.ToString());
-    // The local XMPP server only supports insecure connections.
-    cl->AppendSwitch(invalidation::switches::kSyncAllowInsecureXmppConnection);
-  }
-  DVLOG(1) << "Started local python XMPP server at "
-           << xmpp_host_port_pair.ToString();
-
-  return true;
-}
-
-bool SyncTest::TearDownLocalPythonTestServer() {
-  if (!sync_server_.Stop()) {
-    LOG(ERROR) << "Could not stop local python test server.";
-    return false;
-  }
-  xmpp_port_.reset();
-  return true;
-}
-
-bool SyncTest::TearDownLocalTestServer() {
-  if (test_server_.IsValid()) {
-    EXPECT_TRUE(test_server_.Terminate(0, false))
-        << "Could not stop local test server.";
-    test_server_.Close();
-  }
-  return true;
-}
-
-bool SyncTest::WaitForTestServerToStart(base::TimeDelta wait, int intervals) {
-  for (int i = 0; i < intervals; ++i) {
-    if (IsTestServerRunning())
-      return true;
-    base::PlatformThread::Sleep(wait / intervals);
-  }
-  return false;
-}
-
-bool SyncTest::IsTestServerRunning() {
-  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
-  std::string sync_url = cl->GetSwitchValueASCII(switches::kSyncServiceURL);
-  GURL sync_url_status(sync_url.append("/healthz"));
-  auto resource_request = std::make_unique<network::ResourceRequest>();
-  resource_request->url = sync_url_status;
-  resource_request->load_flags = net::LOAD_DISABLE_CACHE |
-                                 net::LOAD_DO_NOT_SEND_COOKIES |
-                                 net::LOAD_DO_NOT_SAVE_COOKIES;
-  std::unique_ptr<network::SimpleURLLoader> simple_url_loader =
-      network::SimpleURLLoader::Create(std::move(resource_request),
-                                       TRAFFIC_ANNOTATION_FOR_TESTS);
-  bool server_running = false;
-  base::RunLoop run_loop;
-  simple_url_loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
-      g_browser_process->system_network_context_manager()
-          ->GetURLLoaderFactory(),
-      base::BindLambdaForTesting(
-          [&server_running,
-           &run_loop](std::unique_ptr<std::string> response_body) {
-            server_running =
-                response_body && base::StartsWith(*response_body, "ok",
-                                                  base::CompareCase::SENSITIVE);
-            run_loop.Quit();
-          }));
-  return server_running;
 }
 
 bool SyncTest::TestUsesSelfNotifications() {
@@ -1198,11 +1094,11 @@ bool SyncTest::EnableEncryption(int index) {
 
   // In order to kick off the encryption we have to reconfigure. Just grab the
   // currently synced types and use them.
-  syncer::ModelTypeSet synced_datatypes =
-      service->GetUserSettings()->GetChosenDataTypes();
-  bool sync_everything = (synced_datatypes == syncer::UserSelectableTypes());
-  service->GetUserSettings()->SetChosenDataTypes(sync_everything,
-                                                 synced_datatypes);
+  syncer::UserSelectableTypeSet selected_types =
+      service->GetUserSettings()->GetSelectedTypes();
+  bool sync_everything =
+      (selected_types == syncer::UserSelectableTypeSet::All());
+  service->GetUserSettings()->SetSelectedTypes(sync_everything, selected_types);
 
   return AwaitEncryptionComplete(index);
 }
@@ -1224,81 +1120,9 @@ bool SyncTest::UsingExternalServers() {
   return server_type_ == EXTERNAL_LIVE_SERVER;
 }
 
-bool SyncTest::ServerSupportsNotificationControl() const {
-  EXPECT_NE(SERVER_TYPE_UNDECIDED, server_type_);
-
-  // Supported only if we're using the python testserver.
-  return server_type_ == LOCAL_PYTHON_SERVER;
-}
-
-void SyncTest::DisableNotificationsImpl() {
-  ASSERT_TRUE(ServerSupportsNotificationControl());
-  std::string path = "chromiumsync/disablenotifications";
-  ui_test_utils::NavigateToURL(browser(), sync_server_.GetURL(path));
-  ASSERT_EQ("Notifications disabled",
-            base::UTF16ToASCII(
-                browser()->tab_strip_model()->GetActiveWebContents()->
-                    GetTitle()));
-}
-
-void SyncTest::DisableNotifications() {
-  DisableNotificationsImpl();
-}
-
-void SyncTest::EnableNotificationsImpl() {
-  ASSERT_TRUE(ServerSupportsNotificationControl());
-  std::string path = "chromiumsync/enablenotifications";
-  ui_test_utils::NavigateToURL(browser(), sync_server_.GetURL(path));
-  ASSERT_EQ("Notifications enabled",
-            base::UTF16ToASCII(
-                browser()->tab_strip_model()->GetActiveWebContents()->
-                    GetTitle()));
-}
-
-void SyncTest::EnableNotifications() {
-  EnableNotificationsImpl();
-}
-
-void SyncTest::TriggerNotification(syncer::ModelTypeSet changed_types) {
-  ASSERT_TRUE(ServerSupportsNotificationControl());
-  const std::string& data =
-      syncer::P2PNotificationData(
-          "from_server",
-          syncer::NOTIFY_ALL,
-          syncer::ObjectIdInvalidationMap::InvalidateAll(
-              syncer::ModelTypeSetToObjectIdSet(changed_types))).ToString();
-  const std::string& path =
-      std::string("chromiumsync/sendnotification?channel=") +
-      syncer::kSyncP2PNotificationChannel + "&data=" + data;
-  ui_test_utils::NavigateToURL(browser(), sync_server_.GetURL(path));
-  ASSERT_EQ("Notification sent",
-            base::UTF16ToASCII(
-                browser()->tab_strip_model()->GetActiveWebContents()->
-                    GetTitle()));
-}
-
-bool SyncTest::ServerSupportsErrorTriggering() const {
-  EXPECT_NE(SERVER_TYPE_UNDECIDED, server_type_);
-
-  // Supported only if we're using the python testserver.
-  return server_type_ == LOCAL_PYTHON_SERVER;
-}
-
 void SyncTest::TriggerMigrationDoneError(syncer::ModelTypeSet model_types) {
-  ASSERT_TRUE(ServerSupportsErrorTriggering());
-  std::string path = "chromiumsync/migrate";
-  char joiner = '?';
-  for (syncer::ModelType type : model_types) {
-    path.append(
-        base::StringPrintf("%ctype=%d", joiner,
-                           syncer::GetSpecificsFieldNumberFromModelType(type)));
-    joiner = '&';
-  }
-  ui_test_utils::NavigateToURL(browser(), sync_server_.GetURL(path));
-  ASSERT_EQ("Migration: 200",
-            base::UTF16ToASCII(
-                browser()->tab_strip_model()->GetActiveWebContents()->
-                    GetTitle()));
+  ASSERT_TRUE(server_type_ == IN_PROCESS_FAKE_SERVER);
+  fake_server_->TriggerMigrationDoneError(model_types);
 }
 
 fake_server::FakeServer* SyncTest::GetFakeServer() const {
@@ -1320,22 +1144,4 @@ arc::SyncArcPackageHelper* SyncTest::sync_arc_helper() {
 #else
   return nullptr;
 #endif
-}
-
-void SyncTest::SetPreexistingPreferencesFileContents(
-    int index,
-    const std::string& contents) {
-  preexisting_preferences_file_contents_[index] = contents;
-}
-
-bool SyncTest::ClearServerData(ProfileSyncServiceHarness* harness) {
-  // At this point our birthday is good.
-  base::RunLoop run_loop;
-  harness->service()->ClearServerDataForTest(run_loop.QuitClosure());
-  run_loop.Run();
-
-  // Our birthday is invalidated on the server here so restart sync to get
-  // the new birthday from the server.
-  harness->StopSyncServiceAndClearData();
-  return harness->StartSyncService();
 }

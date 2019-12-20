@@ -49,9 +49,9 @@ BrowserCloseManager::~BrowserCloseManager() {
 }
 
 void BrowserCloseManager::StartClosingBrowsers() {
-  // If the session is ending, skip straight to closing the browsers. There's no
-  // time to wait for beforeunload dialogs.
-  if (browser_shutdown::GetShutdownType() == browser_shutdown::END_SESSION) {
+  // If the session is ending or a silent exit was requested, skip straight to
+  // closing the browsers without waiting for beforeunload dialogs.
+  if (browser_shutdown::ShouldIgnoreUnloadHandlers()) {
     // Tell everyone that we are shutting down.
     browser_shutdown::SetTryingToQuit(true);
     CloseBrowsers();
@@ -120,9 +120,7 @@ void BrowserCloseManager::ConfirmCloseWithPendingDownloads(
   Browser* browser = BrowserList::GetInstance()->GetLastActive();
   DCHECK(browser);
   browser->window()->ConfirmBrowserCloseWithPendingDownloads(
-      download_count,
-      Browser::DOWNLOAD_CLOSE_BROWSER_SHUTDOWN,
-      true,
+      download_count, Browser::DownloadCloseType::kBrowserShutdown, true,
       callback);
 }
 
@@ -164,12 +162,11 @@ void BrowserCloseManager::CloseBrowsers() {
             BrowserList::GetInstance()->end(),
             std::back_inserter(browser_list_copy));
 
-  bool session_ending =
-      browser_shutdown::GetShutdownType() == browser_shutdown::END_SESSION;
+  bool ignore_unload_handlers = browser_shutdown::ShouldIgnoreUnloadHandlers();
 
   for (auto* browser : browser_list_copy) {
     browser->window()->Close();
-    if (session_ending) {
+    if (ignore_unload_handlers) {
       // This path is hit during logoff/power-down. In this case we won't get
       // a final message and so we force the browser to be deleted.
       // Close doesn't immediately destroy the browser
@@ -181,7 +178,7 @@ void BrowserCloseManager::CloseBrowsers() {
         browser->tab_strip_model()->DetachWebContentsAt(0);
       browser->window()->DestroyBrowser();
       // Destroying the browser should have removed it from the browser list.
-      DCHECK(!base::ContainsValue(*BrowserList::GetInstance(), browser));
+      DCHECK(!base::Contains(*BrowserList::GetInstance(), browser));
     }
   }
 

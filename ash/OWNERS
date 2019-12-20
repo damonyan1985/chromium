@@ -1,4 +1,4 @@
-derat@chromium.org
+afakhry@chromium.org
 jamescook@chromium.org
 oshima@chromium.org
 sky@chromium.org
@@ -12,8 +12,5 @@ per-file BUILD.gn=*
 
 # Translation artifacts:
 per-file *.xtb=file://tools/translation/TRANSLATION_OWNERS
-
-per-file manifest.json=set noparent
-per-file manifest.json=file://ipc/SECURITY_OWNERS
 
 # COMPONENT: UI>Shell

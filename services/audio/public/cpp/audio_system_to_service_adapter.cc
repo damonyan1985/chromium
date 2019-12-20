@@ -12,8 +12,6 @@
 #include "base/trace_event/trace_event.h"
 #include "media/audio/audio_device_description.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
-#include "services/audio/public/mojom/constants.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace audio {
 
@@ -225,25 +223,22 @@ OnInputDeviceInfoCallback WrapGetInputDeviceInfoReply(
 }  // namespace
 
 AudioSystemToServiceAdapter::AudioSystemToServiceAdapter(
-    std::unique_ptr<service_manager::Connector> connector,
+    SystemInfoBinder system_info_binder,
     base::TimeDelta disconnect_timeout)
-    : connector_(std::move(connector)) {
-  DCHECK(connector_);
+    : system_info_binder_(std::move(system_info_binder)),
+      disconnect_timeout_(disconnect_timeout) {
+  DCHECK(system_info_binder_);
   DETACH_FROM_THREAD(thread_checker_);
-  if (disconnect_timeout > base::TimeDelta()) {
-    disconnect_timer_.emplace(
-        FROM_HERE, disconnect_timeout, this,
-        &AudioSystemToServiceAdapter::DisconnectOnTimeout);
-  }
 }
 
 AudioSystemToServiceAdapter::AudioSystemToServiceAdapter(
-    std::unique_ptr<service_manager::Connector> connector)
-    : AudioSystemToServiceAdapter(std::move(connector), base::TimeDelta()) {}
+    SystemInfoBinder system_info_binder)
+    : AudioSystemToServiceAdapter(std::move(system_info_binder),
+                                  base::TimeDelta()) {}
 
 AudioSystemToServiceAdapter::~AudioSystemToServiceAdapter() {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (!!system_info_) {
+  if (system_info_.is_bound()) {
     TRACE_EVENT_NESTABLE_ASYNC_END1("audio",
                                     "AudioSystemToServiceAdapter bound", this,
                                     "disconnect reason", "destroyed");
@@ -324,30 +319,15 @@ mojom::SystemInfo* AudioSystemToServiceAdapter::GetSystemInfo() {
   if (!system_info_) {
     TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
         "audio", "AudioSystemToServiceAdapter bound", this);
-    connector_->BindInterface(mojom::kServiceName,
-                              mojo::MakeRequest(&system_info_));
-    system_info_.set_connection_error_handler(
+    system_info_binder_.Run(system_info_.BindNewPipeAndPassReceiver());
+    system_info_.set_disconnect_handler(
         base::BindOnce(&AudioSystemToServiceAdapter::OnConnectionError,
                        base::Unretained(this)));
-    DCHECK(system_info_);
+    if (!disconnect_timeout_.is_zero())
+      system_info_.reset_on_idle_timeout(disconnect_timeout_);
   }
-  if (disconnect_timer_)
-    disconnect_timer_->Reset();
-  return system_info_.get();
-}
 
-void AudioSystemToServiceAdapter::DisconnectOnTimeout() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (system_info_.IsExpectingResponse()) {
-    if (disconnect_timer_)
-      disconnect_timer_->Reset();
-    TRACE_EVENT_NESTABLE_ASYNC_INSTANT0("audio", "Timeout: expecting responce",
-                                        this);
-    return;
-  }
-  TRACE_EVENT_NESTABLE_ASYNC_END1("audio", "AudioSystemToServiceAdapter bound",
-                                  this, "disconnect reason", "timeout");
-  system_info_.reset();
+  return system_info_.get();
 }
 
 void AudioSystemToServiceAdapter::OnConnectionError() {

@@ -11,32 +11,33 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/test/bind_test_util.h"
-#include "components/browser_sync/profile_sync_service_mock.h"
-#include "components/signin/core/browser/account_tracker_service.h"
-#include "components/signin/core/browser/device_id_helper.h"
-#include "components/signin/core/browser/fake_profile_oauth2_token_service.h"
-#include "components/signin/core/browser/fake_signin_manager.h"
+#include "components/autofill/core/browser/test_personal_data_manager.h"
+#include "components/password_manager/core/browser/test_password_store.h"
 #include "components/signin/core/browser/signin_error_controller.h"
-#include "components/signin/core/browser/test_signin_client.h"
-#include "components/signin/ios/browser/fake_profile_oauth2_token_service_ios_provider.h"
-#include "components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h"
-#include "components/signin/ios/browser/profile_oauth2_token_service_ios_provider.h"
-#include "components/sync/device_info/device_info_sync_service_impl.h"
-#include "components/sync/device_info/local_device_info_provider_impl.h"
-#include "components/sync/driver/fake_sync_client.h"
+#include "components/signin/public/base/account_consistency_method.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/primary_account_mutator.h"
+#include "components/sync/driver/mock_sync_service.h"
 #include "components/sync/driver/sync_service_observer.h"
-#include "components/sync/model/test_model_type_store_service.h"
-#include "components/version_info/version_info.h"
-#include "components/version_info/version_string.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
+#include "ios/web/public/test/scoped_testing_web_client.h"
+#include "ios/web/public/test/web_task_environment.h"
+#include "ios/web/public/web_client.h"
 #include "ios/web_view/internal/app/application_context.h"
+#include "ios/web_view/internal/signin/ios_web_view_signin_client.h"
+#include "ios/web_view/internal/signin/web_view_device_accounts_provider_impl.h"
+#include "ios/web_view/internal/signin/web_view_identity_manager_factory.h"
+#include "ios/web_view/internal/signin/web_view_signin_client_factory.h"
+#include "ios/web_view/internal/signin/web_view_signin_error_controller_factory.h"
+#include "ios/web_view/internal/sync/web_view_profile_sync_service_factory.h"
 #include "ios/web_view/internal/web_view_browser_state.h"
 #import "ios/web_view/public/cwv_identity.h"
 #import "ios/web_view/public/cwv_sync_controller_data_source.h"
 #import "ios/web_view/public/cwv_sync_controller_delegate.h"
-#include "services/identity/public/cpp/identity_test_environment.h"
+#include "ios/web_view/test/test_with_locale_and_resources.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -54,114 +55,82 @@ using testing::_;
 using testing::Invoke;
 using testing::Return;
 
-// TODO(crbug.com/922971): Hopefully this class is not needed when
-// ProfileSyncService doesn't have a direct dependency to DeviceInfoSyncService.
-class TestSyncClient : public syncer::FakeSyncClient {
- public:
-  TestSyncClient()
-      : device_info_sync_service_(
-            model_type_store_service_.GetStoreFactory(),
-            std::make_unique<syncer::LocalDeviceInfoProviderImpl>(
-                version_info::Channel::UNKNOWN,
-                /*version=*/"",
-                /*is_tablet=*/false,
-                /*signin_scoped_device_id_callback=*/
-                base::BindLambdaForTesting([]() { return std::string(); }))) {}
+const char kTestGaiaId[] = "1337";
+const char kTestEmail[] = "johndoe@chromium.org";
+const char kTestFullName[] = "John Doe";
+const char kTestPassphrase[] = "dummy-passphrase";
+const char kTestScope1[] = "scope1.chromium.org";
+const char kTestScope2[] = "scope2.chromium.org";
 
-  ~TestSyncClient() override = default;
-
-  syncer::DeviceInfoSyncService* GetDeviceInfoSyncService() override {
-    return &device_info_sync_service_;
-  }
-
- private:
-  syncer::TestModelTypeStoreService model_type_store_service_;
-  syncer::DeviceInfoSyncServiceImpl device_info_sync_service_;
-};
+std::unique_ptr<KeyedService> BuildMockSyncService(web::BrowserState* context) {
+  return std::make_unique<syncer::MockSyncService>();
+}
 
 }  // namespace
 
-class CWVSyncControllerTest : public PlatformTest {
+class CWVSyncControllerTest : public TestWithLocaleAndResources {
  protected:
   CWVSyncControllerTest()
-      : browser_state_(/*off_the_record=*/false),
-        signin_client_(browser_state_.GetPrefs()),
-        token_service_delegate_(new ProfileOAuth2TokenServiceIOSDelegate(
-            &signin_client_,
-            std::make_unique<FakeProfileOAuth2TokenServiceIOSProvider>(),
-            &account_tracker_service_)),
-        token_service_(browser_state_.GetPrefs(),
-                       std::unique_ptr<ProfileOAuth2TokenServiceIOSDelegate>(
-                           token_service_delegate_)),
-        gaia_cookie_manager_service_(&token_service_, &signin_client_),
-        signin_manager_(&signin_client_,
-                        &token_service_,
-                        &account_tracker_service_,
-                        &gaia_cookie_manager_service_),
-        identity_test_env_(&account_tracker_service_,
-                           &token_service_,
-                           &signin_manager_,
-                           &gaia_cookie_manager_service_),
-        signin_error_controller_(
-            SigninErrorController::AccountMode::ANY_ACCOUNT,
-            identity_test_env_.identity_manager()) {
-    web_state_.SetBrowserState(&browser_state_);
+      : web_client_(std::make_unique<web::WebClient>()),
+        browser_state_(/*off_the_record=*/false) {
+    // Clear account info before each test.
+    PrefService* pref_service = browser_state_.GetPrefs();
+    pref_service->ClearPref(prefs::kGoogleServicesAccountId);
+    pref_service->ClearPref(prefs::kGoogleServicesConsentedToSync);
+    pref_service->ClearPref(prefs::kAccountInfo);
 
-    browser_sync::ProfileSyncService::InitParams init_params;
-    init_params.start_behavior = browser_sync::ProfileSyncService::MANUAL_START;
-    init_params.sync_client = std::make_unique<TestSyncClient>();
-    init_params.url_loader_factory = browser_state_.GetSharedURLLoaderFactory();
-    init_params.network_time_update_callback = base::DoNothing();
-    profile_sync_service_ =
-        std::make_unique<browser_sync::ProfileSyncServiceMock>(
-            std::move(init_params));
+    WebViewProfileSyncServiceFactory::GetInstance()->SetTestingFactory(
+        &browser_state_, base::BindRepeating(&BuildMockSyncService));
 
-    account_tracker_service_.Initialize(browser_state_.GetPrefs(),
-                                        base::FilePath());
-    signin_manager_.Initialize(
-        ApplicationContext::GetInstance()->GetLocalState());
-
-    EXPECT_CALL(*profile_sync_service_, AddObserver(_))
+    EXPECT_CALL(*mock_sync_service(), AddObserver(_))
         .WillOnce(Invoke(this, &CWVSyncControllerTest::AddObserver));
 
+    personal_data_manager_ =
+        std::make_unique<autofill::TestPersonalDataManager>();
+
+    password_store_ = new password_manager::TestPasswordStore();
+    password_store_->Init(base::RepeatingCallback<void(syncer::ModelType)>(),
+                          nullptr);
+
     sync_controller_ = [[CWVSyncController alloc]
-          initWithSyncService:profile_sync_service_.get()
-              identityManager:identity_test_env_.identity_manager()
-                 tokenService:&token_service_
-        signinErrorController:&signin_error_controller_];
-  };
+          initWithSyncService:mock_sync_service()
+              identityManager:identity_manager()
+        signinErrorController:signin_error_controller()
+          personalDataManager:personal_data_manager_.get()
+                passwordStore:password_store_.get()];
+  }
 
   ~CWVSyncControllerTest() override {
-    EXPECT_CALL(*profile_sync_service_, RemoveObserver(_));
+    password_store_->ShutdownOnUIThread();
+    EXPECT_CALL(*mock_sync_service(), RemoveObserver(_));
+    EXPECT_CALL(*mock_sync_service(), Shutdown());
   }
 
   void AddObserver(syncer::SyncServiceObserver* observer) {
     sync_service_observer_ = observer;
   }
 
-  void OnConfigureDone(const syncer::DataTypeManager::ConfigureResult& result) {
-    sync_service_observer_->OnSyncConfigurationCompleted(
-        profile_sync_service_.get());
+  signin::IdentityManager* identity_manager() {
+    return WebViewIdentityManagerFactory::GetForBrowserState(&browser_state_);
   }
 
-  web::TestWebThreadBundle web_thread_bundle_;
+  syncer::MockSyncService* mock_sync_service() {
+    return static_cast<syncer::MockSyncService*>(
+        WebViewProfileSyncServiceFactory::GetForBrowserState(&browser_state_));
+  }
+
+  SigninErrorController* signin_error_controller() {
+    return WebViewSigninErrorControllerFactory::GetForBrowserState(
+        &browser_state_);
+  }
+
+  web::WebTaskEnvironment task_environment_;
+  web::ScopedTestingWebClient web_client_;
   ios_web_view::WebViewBrowserState browser_state_;
-  web::TestWebState web_state_;
-  std::unique_ptr<browser_sync::ProfileSyncServiceMock> profile_sync_service_;
-  AccountTrackerService account_tracker_service_;
-  TestSigninClient signin_client_;
-
-  // Weak, owned by the token service.
-  ProfileOAuth2TokenServiceIOSDelegate* token_service_delegate_;
-
-  FakeProfileOAuth2TokenService token_service_;
-
-  GaiaCookieManagerService gaia_cookie_manager_service_;
-  FakeSigninManager signin_manager_;
-  identity::IdentityTestEnvironment identity_test_env_;
-  SigninErrorController signin_error_controller_;
-  CWVSyncController* sync_controller_;
-  syncer::SyncServiceObserver* sync_service_observer_;
+  scoped_refptr<password_manager::TestPasswordStore> password_store_;
+  std::unique_ptr<autofill::TestPersonalDataManager> personal_data_manager_;
+  CWVSyncController* sync_controller_ = nil;
+  syncer::SyncServiceObserver* sync_service_observer_ = nullptr;
 };
 
 // Verifies CWVSyncControllerDataSource methods are invoked with the correct
@@ -171,25 +140,23 @@ TEST_F(CWVSyncControllerTest, DataSourceCallbacks) {
   // destroyed before this test exits to avoid holding on to |sync_controller_|.
   @autoreleasepool {
     id data_source = OCMProtocolMock(@protocol(CWVSyncControllerDataSource));
-
+    CWVSyncController.dataSource = data_source;
     [[data_source expect]
-                 syncController:sync_controller_
-        getAccessTokenForScopes:[OCMArg checkWithBlock:^BOOL(NSArray* scopes) {
-          return [scopes containsObject:@"scope1.chromium.org"] &&
-                 [scopes containsObject:@"scope2.chromium.org"];
+        fetchAccessTokenForIdentity:[OCMArg checkWithBlock:^BOOL(
+                                                CWVIdentity* identity) {
+          return [identity.gaiaID isEqualToString:@(kTestGaiaId)];
         }]
-              completionHandler:[OCMArg any]];
+                             scopes:[OCMArg checkWithBlock:^BOOL(
+                                                NSArray* scopes) {
+                               return [scopes containsObject:@(kTestScope1)] &&
+                                      [scopes containsObject:@(kTestScope2)];
+                             }]
+                  completionHandler:[OCMArg any]];
 
-    CWVIdentity* identity =
-        [[CWVIdentity alloc] initWithEmail:@"johndoe@chromium.org"
-                                  fullName:@"John Doe"
-                                    gaiaID:@"1337"];
-    [sync_controller_ startSyncWithIdentity:identity dataSource:data_source];
-
-    std::set<std::string> scopes = {"scope1.chromium.org",
-                                    "scope2.chromium.org"};
-    ProfileOAuth2TokenServiceIOSProvider::AccessTokenCallback callback;
-    [sync_controller_ fetchAccessTokenForScopes:scopes callback:callback];
+    WebViewDeviceAccountsProviderImpl accounts_provider;
+    std::set<std::string> scopes = {kTestScope1, kTestScope2};
+    accounts_provider.GetAccessToken(kTestGaiaId, "dummy-client-id", scopes,
+                                     base::DoNothing());
 
     [data_source verify];
   }
@@ -201,16 +168,18 @@ TEST_F(CWVSyncControllerTest, DelegateCallbacks) {
   // [delegate expect] returns an autoreleased object, but it must be destroyed
   // before this test exits to avoid holding on to |sync_controller_|.
   @autoreleasepool {
+    CWVIdentity* identity = [[CWVIdentity alloc] initWithEmail:@(kTestEmail)
+                                                      fullName:@(kTestFullName)
+                                                        gaiaID:@(kTestGaiaId)];
+    id data_source = OCMProtocolMock(@protocol(CWVSyncControllerDataSource));
+    [[[data_source stub] andReturn:@[ identity ]] allKnownIdentities];
+    CWVSyncController.dataSource = data_source;
     id delegate = OCMProtocolMock(@protocol(CWVSyncControllerDelegate));
     sync_controller_.delegate = delegate;
+    [sync_controller_ startSyncWithIdentity:identity];
 
     [[delegate expect] syncControllerDidStartSync:sync_controller_];
-    EXPECT_CALL(*profile_sync_service_, OnConfigureDone(_))
-        .WillOnce(Invoke(
-            this,
-            &CWVSyncControllerTest_DelegateCallbacks_Test::OnConfigureDone));
-    syncer::DataTypeManager::ConfigureResult result;
-    profile_sync_service_->OnConfigureDone(result);
+    sync_service_observer_->OnSyncConfigurationCompleted(mock_sync_service());
     [[delegate expect]
           syncController:sync_controller_
         didFailWithError:[OCMArg checkWithBlock:^BOOL(NSError* error) {
@@ -220,48 +189,50 @@ TEST_F(CWVSyncControllerTest, DelegateCallbacks) {
     // Create authentication error.
     GoogleServiceAuthError auth_error(
         GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
-    std::string account_id = account_tracker_service_.SeedAccountInfo(
-        "gaia_id", "email@example.com");
-    token_service_delegate_->AddOrUpdateAccount(account_id);
-    token_service_delegate_->UpdateAuthError(account_id, auth_error);
+    signin::UpdatePersistentErrorOfRefreshTokenForAccount(
+        identity_manager(), identity_manager()->GetPrimaryAccountId(),
+        auth_error);
 
-    [[delegate expect] syncController:sync_controller_
-                didStopSyncWithReason:CWVStopSyncReasonServer];
-    [sync_controller_
-        didSignoutWithSourceMetric:signin_metrics::ProfileSignout::
-                                       SERVER_FORCED_DISABLE];
+    [[delegate expect] syncControllerDidStopSync:sync_controller_];
+    identity_manager()->GetPrimaryAccountMutator()->ClearPrimaryAccount(
+        signin::PrimaryAccountMutator::ClearAccountsAction::kDefault,
+        signin_metrics::ProfileSignout::USER_CLICKED_SIGNOUT_SETTINGS,
+        signin_metrics::SignoutDelete::IGNORE_METRIC);
+
     [delegate verify];
   }
 }
 
 // Verifies CWVSyncController properly maintains the current syncing user.
 TEST_F(CWVSyncControllerTest, CurrentIdentity) {
-  CWVIdentity* identity =
-      [[CWVIdentity alloc] initWithEmail:@"johndoe@chromium.org"
-                                fullName:@"John Doe"
-                                  gaiaID:@"1337"];
-  id unused_mock = OCMProtocolMock(@protocol(CWVSyncControllerDataSource));
-  [sync_controller_ startSyncWithIdentity:identity dataSource:unused_mock];
+  CWVIdentity* identity = [[CWVIdentity alloc] initWithEmail:@(kTestEmail)
+                                                    fullName:@(kTestFullName)
+                                                      gaiaID:@(kTestGaiaId)];
+  id data_source = OCMProtocolMock(@protocol(CWVSyncControllerDataSource));
+  [[[data_source stub] andReturn:@[ identity ]] allKnownIdentities];
+  CWVSyncController.dataSource = data_source;
+  [sync_controller_ startSyncWithIdentity:identity];
   CWVIdentity* currentIdentity = sync_controller_.currentIdentity;
   EXPECT_TRUE(currentIdentity);
   EXPECT_NSEQ(identity.email, currentIdentity.email);
   EXPECT_NSEQ(identity.fullName, currentIdentity.fullName);
   EXPECT_NSEQ(identity.gaiaID, currentIdentity.gaiaID);
 
+  EXPECT_CALL(*mock_sync_service(), StopAndClear());
   [sync_controller_ stopSyncAndClearIdentity];
   EXPECT_FALSE(sync_controller_.currentIdentity);
 }
 
 // Verifies CWVSyncController's passphrase API.
 TEST_F(CWVSyncControllerTest, Passphrase) {
-  EXPECT_CALL(*profile_sync_service_->GetUserSettingsMock(),
-              IsPassphraseRequiredForDecryption())
+  EXPECT_CALL(*mock_sync_service()->GetMockUserSettings(),
+              IsPassphraseRequiredForPreferredDataTypes())
       .WillOnce(Return(true));
   EXPECT_TRUE(sync_controller_.passphraseNeeded);
-  EXPECT_CALL(*profile_sync_service_->GetUserSettingsMock(),
-              SetDecryptionPassphrase("dummy-passphrase"))
+  EXPECT_CALL(*mock_sync_service()->GetMockUserSettings(),
+              SetDecryptionPassphrase(kTestPassphrase))
       .WillOnce(Return(true));
-  EXPECT_TRUE([sync_controller_ unlockWithPassphrase:@"dummy-passphrase"]);
+  EXPECT_TRUE([sync_controller_ unlockWithPassphrase:@(kTestPassphrase)]);
 }
 
 }  // namespace ios_web_view

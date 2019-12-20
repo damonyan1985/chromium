@@ -11,11 +11,8 @@
 #include "components/sync/base/model_type.h"
 #include "components/sync/driver/data_type_controller.h"
 #include "components/sync/driver/data_type_manager.h"
-#include "components/sync/driver/model_associator.h"
 #include "components/sync/driver/sync_api_component_factory.h"
 #include "components/sync/engine/sync_engine.h"
-#include "components/sync/model/change_processor.h"
-#include "components/sync/model/data_type_error_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace syncer {
@@ -27,9 +24,6 @@ class SyncApiComponentFactoryMock : public SyncApiComponentFactory {
   SyncApiComponentFactoryMock();
   ~SyncApiComponentFactoryMock() override;
 
-  MOCK_METHOD2(CreateCommonDataTypeControllers,
-               DataTypeController::TypeVector(ModelTypeSet disabled_types,
-                                              SyncService* sync_service));
   MOCK_METHOD6(CreateDataTypeManager,
                std::unique_ptr<DataTypeManager>(
                    ModelTypeSet,
@@ -38,16 +32,11 @@ class SyncApiComponentFactoryMock : public SyncApiComponentFactory {
                    const DataTypeEncryptionHandler*,
                    ModelTypeConfigurer*,
                    DataTypeManagerObserver*));
-  MOCK_METHOD4(CreateSyncEngine,
+  MOCK_METHOD3(CreateSyncEngine,
                std::unique_ptr<SyncEngine>(
                    const std::string& name,
                    invalidation::InvalidationService* invalidator,
-                   const base::WeakPtr<SyncPrefs>& sync_prefs,
-                   const base::FilePath& sync_folder));
-  MOCK_METHOD2(
-      CreateBookmarkSyncComponents,
-      SyncComponents(std::unique_ptr<DataTypeErrorHandler> error_handler,
-                     UserShare* user_share));
+                   const base::WeakPtr<SyncPrefs>& sync_prefs));
 };
 
 }  // namespace syncer

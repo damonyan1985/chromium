@@ -5,7 +5,6 @@
 #ifndef CC_TEST_TEST_HOOKS_H_
 #define CC_TEST_TEST_HOOKS_H_
 
-#include "base/macros.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/trees/layer_tree_host.h"
 #include "cc/trees/layer_tree_host_impl.h"
@@ -17,6 +16,7 @@ struct PresentationFeedback;
 namespace viz {
 class CompositorFrame;
 class OutputSurface;
+class SkiaOutputSurface;
 }
 
 namespace cc {
@@ -65,6 +65,8 @@ class TestHooks : public AnimationDelegate {
       LayerTreeHostImpl* host_impl) {}
   virtual void DidReceiveCompositorFrameAckOnThread(
       LayerTreeHostImpl* host_impl) {}
+  virtual void DidScheduleBeginMainFrame() {}
+  virtual void DidRunBeginMainFrame() {}
   virtual void DidReceivePresentationTimeOnThread(
       LayerTreeHostImpl* host_impl,
       uint32_t frame_token,
@@ -129,10 +131,14 @@ class TestHooks : public AnimationDelegate {
                                base::TimeTicks animation_start_time,
                                std::unique_ptr<AnimationCurve> curve) override {
   }
+  void NotifyLocalTimeUpdated(
+      base::Optional<base::TimeDelta> local_time) override {}
 
   // OutputSurface indirections to the LayerTreeTest, that can be further
   // overridden.
   virtual void RequestNewLayerTreeFrameSink() = 0;
+  virtual std::unique_ptr<viz::SkiaOutputSurface>
+  CreateDisplaySkiaOutputSurfaceOnThread() = 0;
   virtual std::unique_ptr<viz::OutputSurface>
   CreateDisplayOutputSurfaceOnThread(
       scoped_refptr<viz::ContextProvider> compositor_context_provider) = 0;

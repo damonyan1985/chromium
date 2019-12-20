@@ -7,8 +7,8 @@
 
 #include "base/macros.h"
 #include "base/time/time.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 namespace web {
 class WebState;
@@ -41,6 +41,8 @@ class LoadTimingTabHelper : public web::WebStateUserData<LoadTimingTabHelper>,
   static const char kOmnibarToPageLoadedMetric[];
 
  private:
+  friend class web::WebStateUserData<LoadTimingTabHelper>;
+
   void ReportLoadTime(const base::TimeDelta& elapsed);
   void ResetTimer();
 
@@ -49,6 +51,8 @@ class LoadTimingTabHelper : public web::WebStateUserData<LoadTimingTabHelper>,
   web::WebState* web_state_ = nullptr;
 
   base::TimeTicks load_start_time_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(LoadTimingTabHelper);
 };

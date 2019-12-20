@@ -7,13 +7,13 @@
 
 #include <iosfwd>
 #include <memory>
-#include "third_party/blink/renderer/platform/geometry/float_rect.h"
+#include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/hit_test_data.h"
 #include "third_party/blink/renderer/platform/graphics/paint/raster_invalidation_tracking.h"
 #include "third_party/blink/renderer/platform/graphics/paint/ref_counted_property_tree_state.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -38,16 +38,11 @@ struct PLATFORM_EXPORT PaintChunk {
         properties(props),
         is_cacheable(id.client.IsCacheable()),
         client_is_just_created(id.client.IsJustCreated()) {
-    // PaintChunk properties should not be null. If these checks are hit,
-    // we may be missing a call to ScopedPaintChunkProperties, see comment in
-    // PaintChunker::IncrementDisplayItemIndex for more information.
-    CHECK(props.Transform());
-    CHECK(props.Clip());
-    CHECK(props.Effect());
+    DCHECK_GT(end_index, begin_index);
   }
 
   size_t size() const {
-    DCHECK_GE(end_index, begin_index);
+    DCHECK_GT(end_index, begin_index);
     return end_index - begin_index;
   }
 
@@ -105,12 +100,14 @@ struct PLATFORM_EXPORT PaintChunk {
 
   // The total bounds of this paint chunk's contents, in the coordinate space of
   // the containing transform node.
-  FloatRect bounds;
+  IntRect bounds;
 
   // Some raster effects can exceed |bounds| in the rasterization space. This
   // is the maximum DisplayItemClient::VisualRectOutsetForRasterEffects() of
   // all clients of items in this chunk.
   float outset_for_raster_effects = 0;
+
+  SkColor safe_opaque_background_color = 0;
 
   // True if the bounds are filled entirely with opaque contents.
   bool known_to_be_opaque = false;

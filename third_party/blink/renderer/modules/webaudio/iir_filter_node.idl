@@ -4,11 +4,10 @@
 
 // See https://webaudio.github.io/web-audio-api/#iirfilternode
 [
-    Constructor(BaseAudioContext context, IIRFilterOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface IIRFilterNode : AudioNode {
+] interface IIRFilterNode : AudioNode {
+    [RaisesException] constructor(BaseAudioContext context, IIRFilterOptions options);
     [RaisesException] void getFrequencyResponse(Float32Array frequencyHz,
                                                 Float32Array magResponse,
                                                 Float32Array phaseResponse);

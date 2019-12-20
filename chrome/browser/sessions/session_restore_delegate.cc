@@ -13,6 +13,8 @@
 #include "chrome/browser/sessions/tab_loader.h"
 #include "chrome/common/url_constants.h"
 #include "components/favicon/content/content_favicon_driver.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "content/public/browser/web_contents.h"
 
 namespace {
@@ -38,16 +40,21 @@ bool IsInternalPage(const GURL& url) {
 
 }  // namespace
 
-SessionRestoreDelegate::RestoredTab::RestoredTab(content::WebContents* contents,
-                                                 bool is_active,
-                                                 bool is_app,
-                                                 bool is_pinned)
+SessionRestoreDelegate::RestoredTab::RestoredTab(
+    content::WebContents* contents,
+    bool is_active,
+    bool is_app,
+    bool is_pinned,
+    const base::Optional<tab_groups::TabGroupId>& group)
     : contents_(contents),
       is_active_(is_active),
       is_app_(is_app),
       is_internal_page_(IsInternalPage(contents->GetLastCommittedURL())),
-      is_pinned_(is_pinned) {
-}
+      is_pinned_(is_pinned),
+      group_(group) {}
+
+SessionRestoreDelegate::RestoredTab::RestoredTab(const RestoredTab& other) =
+    default;
 
 bool SessionRestoreDelegate::RestoredTab::operator<(
     const RestoredTab& right) const {

@@ -13,17 +13,12 @@
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/signin_error_controller_factory.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/browser_sync/profile_sync_service.h"
-#include "components/browser_sync/profile_sync_service_mock.h"
-#include "components/signin/core/browser/signin_error_controller.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/platform_test.h"
 
 class AppControllerTest : public PlatformTest {
@@ -44,7 +39,7 @@ class AppControllerTest : public PlatformTest {
     PlatformTest::TearDown();
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfileManager profile_manager_;
   TestingProfile* profile_;
 };

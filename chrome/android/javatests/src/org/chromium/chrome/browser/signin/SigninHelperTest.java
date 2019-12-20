@@ -10,40 +10,36 @@ import android.support.test.filters.SmallTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.signin.MockChangeEventChecker;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
+import org.chromium.components.signin.test.util.AccountManagerTestRule;
 
 /**
  * Instrumentation tests for {@link SigninHelper}.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class SigninHelperTest {
-    private FakeAccountManagerDelegate mAccountManager;
+    @Rule
+    public AccountManagerTestRule mAccountManagerTestRule = new AccountManagerTestRule();
+
     private MockChangeEventChecker mEventChecker;
 
     @Before
     public void setUp() {
-        SigninHelper.resetSharedPrefs();
         mEventChecker = new MockChangeEventChecker();
-
-        mAccountManager = new FakeAccountManagerDelegate(
-                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
-        AccountManagerFacade.overrideAccountManagerFacadeForTests(mAccountManager);
     }
 
     @After
     public void tearDown() {
         AccountManagerFacade.resetAccountManagerFacadeForTests();
-        SigninHelper.resetSharedPrefs();
     }
 
     @Test
@@ -87,13 +83,12 @@ public class SigninHelperTest {
     }
 
     @Test
-    @DisabledTest(message = "crbug.com/568623")
     @SmallTest
     public void testNotSignedInAccountRename() {
         setSignedInAccountName("A");
         mEventChecker.insertRenameEvent("B", "C");
         SigninHelper.updateAccountRenameData(mEventChecker);
-        Assert.assertEquals(null, getNewSignedInAccountName());
+        Assert.assertNull(getNewSignedInAccountName());
     }
 
     @Test
@@ -116,7 +111,7 @@ public class SigninHelperTest {
         mEventChecker.insertRenameEvent("B", "C");
         mEventChecker.insertRenameEvent("C", "D");
         SigninHelper.updateAccountRenameData(mEventChecker);
-        Assert.assertEquals(null, getNewSignedInAccountName());
+        Assert.assertNull(getNewSignedInAccountName());
     }
 
     @Test
@@ -146,17 +141,13 @@ public class SigninHelperTest {
         mEventChecker.insertRenameEvent("D", "A"); // Looped.
         Account account = AccountManagerFacade.createAccountFromName("D");
         AccountHolder accountHolder = AccountHolder.builder(account).build();
-        mAccountManager.addAccountHolderBlocking(accountHolder);
+        mAccountManagerTestRule.addAccount(accountHolder);
         SigninHelper.updateAccountRenameData(mEventChecker);
         Assert.assertEquals("D", getNewSignedInAccountName());
     }
 
     private void setSignedInAccountName(String account) {
         ChromeSigninController.get().setSignedInAccountName(account);
-    }
-
-    private String getSignedInAccountName() {
-        return ChromeSigninController.get().getSignedInAccountName();
     }
 
     private String getNewSignedInAccountName() {

@@ -4,6 +4,8 @@
 
 #import "ios/chrome/browser/ui/sad_tab/sad_tab_coordinator.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "components/ui_metrics/sadtab_metrics_types.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
@@ -14,7 +16,7 @@
 #import "ios/chrome/browser/ui/util/named_guide.h"
 #import "ios/chrome/browser/web/sad_tab_tab_helper.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -31,11 +33,21 @@
   if (_viewController)
     return;
 
+  if (self.repeatedFailure) {
+    UMA_HISTOGRAM_ENUMERATION(ui_metrics::kSadTabReloadHistogramKey,
+                              ui_metrics::SadTabEvent::DISPLAYED,
+                              ui_metrics::SadTabEvent::MAX_SAD_TAB_EVENT);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION(ui_metrics::kSadTabFeedbackHistogramKey,
+                              ui_metrics::SadTabEvent::DISPLAYED,
+                              ui_metrics::SadTabEvent::MAX_SAD_TAB_EVENT);
+  }
+
   _viewController = [[SadTabViewController alloc] init];
   _viewController.delegate = self;
   _viewController.overscrollDelegate = self.overscrollDelegate;
   _viewController.offTheRecord = self.browserState->IsOffTheRecord();
-  _viewController.repeatedFailure = _repeatedFailure;
+  _viewController.repeatedFailure = self.repeatedFailure;
 
   [self.baseViewController addChildViewController:_viewController];
   [self.baseViewController.view addSubview:_viewController.view];
@@ -88,7 +100,7 @@
   if (!webState->IsVisible())
     return;
 
-  _repeatedFailure = repeatedFailure;
+  self.repeatedFailure = repeatedFailure;
   [self start];
 }
 
@@ -98,7 +110,7 @@
 
 - (void)sadTabTabHelper:(SadTabTabHelper*)tabHelper
     didShowForRepeatedFailure:(BOOL)repeatedFailure {
-  _repeatedFailure = repeatedFailure;
+  self.repeatedFailure = repeatedFailure;
   [self start];
 }
 

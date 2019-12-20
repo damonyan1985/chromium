@@ -7,9 +7,8 @@
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "net/base/host_port_pair.h"
-#include "net/base/ip_address.h"
+#include "components/page_load_metrics/browser/page_load_metrics_util.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -105,7 +104,7 @@ bool IsLikelyRouterIP(net::IPAddress ip_address) {
 }
 
 // Attempts to get the IP address of a resource request from
-// |extra_request_info.host_port_pair|, trying to get it from the URL string in
+// |extra_request_info.remote_endpoint|, trying to get it from the URL string in
 // |extra_request_info.url| if that fails.
 // Sets the values of |resource_ip| and |port| with the extracted IP address and
 // port, respectively.
@@ -116,24 +115,28 @@ bool GetIPAndPort(
     int* resource_port) {
   // If the request was successful, then the IP address should be in
   // |extra_request_info|.
-  bool ip_exists = net::ParseURLHostnameToAddress(
-      extra_request_info.host_port_pair.host(), resource_ip);
-  *resource_port = extra_request_info.host_port_pair.port();
+  bool ip_exists = extra_request_info.remote_endpoint.address().IsValid();
+  *resource_ip = extra_request_info.remote_endpoint.address();
+  *resource_port = extra_request_info.remote_endpoint.port();
 
   // If the request failed, it's possible we didn't receive the IP address,
   // possibly because domain resolution failed. As a backup, try getting the IP
   // from the URL. If none was returned, try matching the hostname from the URL
   // itself as it might be an IP address if it is a local network request, which
   // is what we care about.
-  if (!ip_exists && extra_request_info.url.is_valid()) {
-    if (net::IsLocalhost(extra_request_info.url)) {
+  if (!ip_exists && !extra_request_info.origin_of_final_url.opaque()) {
+    // TODO(csharrison): https://crbug.com/1023042: Avoid the url::Origin->GURL
+    // conversion.  Today the conversion is necessary, because net::IsLocalhost
+    // and EffectiveIntPort are only available for GURL.
+    GURL origin_of_final_url = extra_request_info.origin_of_final_url.GetURL();
+    if (net::IsLocalhost(origin_of_final_url)) {
       *resource_ip = net::IPAddress::IPv4Localhost();
       ip_exists = true;
     } else {
-      ip_exists = net::ParseURLHostnameToAddress(extra_request_info.url.host(),
+      ip_exists = net::ParseURLHostnameToAddress(origin_of_final_url.host(),
                                                  resource_ip);
     }
-    *resource_port = extra_request_info.url.EffectiveIntPort();
+    *resource_port = origin_of_final_url.EffectiveIntPort();
   }
 
   if (net::HostStringIsLocalhost(resource_ip->ToString())) {
@@ -307,22 +310,17 @@ LocalNetworkRequestsPageLoadMetricsObserver::OnCommit(
     ukm::SourceId source_id) {
   // Upon page load, we want to determine whether the page loaded was a public
   // domain or private domain and generate an event describing the domain type.
-  net::HostPortPair address = navigation_handle->GetSocketAddress();
+  net::IPEndPoint remote_endpoint = navigation_handle->GetSocketAddress();
+  page_ip_address_ = remote_endpoint.address();
 
   // In cases where the page loaded does not have a socket address or was not a
   // network resource, we don't want to track the page load. Such resources will
   // fail to parse or return an empty IP address.
-  if (!net::ParseURLHostnameToAddress(address.host(), &page_ip_address_) ||
-      page_ip_address_.IsZero()) {
+  if (!page_ip_address_.IsValid()) {
     return STOP_OBSERVING;
   }
 
-  // |HostStringIsLocalhost| assumes (and doesn't verify) that any IPv6 host
-  // passed to it does not have square brackets around it, but
-  // |HostPortPair::host| retains the brackets, so we need to separately check
-  // for IPv6 localhost here.
-  if (net::HostStringIsLocalhost(address.host()) ||
-      page_ip_address_ == net::IPAddress::IPv6Localhost()) {
+  if (page_ip_address_.IsLoopback()) {
     page_domain_type_ = internal::DOMAIN_TYPE_LOCALHOST;
   } else if (!page_ip_address_.IsPubliclyRoutable()) {
     page_domain_type_ = internal::DOMAIN_TYPE_PRIVATE;
@@ -356,13 +354,12 @@ LocalNetworkRequestsPageLoadMetricsObserver::OnCommit(
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 LocalNetworkRequestsPageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& extra_info) {
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
   // The browser may come back, but there is no guarantee. To be safe, we record
   // what we have now and treat changes to this navigation as new page loads.
-  if (extra_info.did_commit) {
+  if (GetDelegate().DidCommit()) {
     RecordHistograms();
-    RecordUkmMetrics(extra_info.source_id);
+    RecordUkmMetrics(GetDelegate().GetSourceId());
     ClearLocalState();
   }
 
@@ -377,7 +374,7 @@ void LocalNetworkRequestsPageLoadMetricsObserver::OnLoadedResource(
   // We can't track anything if we don't have an IP address for the resource.
   // We also don't want to track any requests to the page's IP address itself.
   if (!GetIPAndPort(extra_request_info, &resource_ip, &resource_port) ||
-      resource_ip.IsZero() || resource_ip == page_ip_address_) {
+      !resource_ip.IsValid() || resource_ip == page_ip_address_) {
     return;
   }
 
@@ -401,11 +398,10 @@ void LocalNetworkRequestsPageLoadMetricsObserver::OnLoadedResource(
 }
 
 void LocalNetworkRequestsPageLoadMetricsObserver::OnComplete(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
-  if (info.did_commit) {
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  if (GetDelegate().DidCommit()) {
     RecordHistograms();
-    RecordUkmMetrics(info.source_id);
+    RecordUkmMetrics(GetDelegate().GetSourceId());
   }
 }
 

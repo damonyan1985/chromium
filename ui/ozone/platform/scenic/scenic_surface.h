@@ -36,13 +36,14 @@ class ScenicSurface : public ui::PlatformWindowSurface {
 
   // Sets the texture of the surface to a new image pipe.
   void SetTextureToNewImagePipe(
-      fidl::InterfaceRequest<fuchsia::images::ImagePipe> image_pipe_request);
+      fidl::InterfaceRequest<fuchsia::images::ImagePipe2> image_pipe_request);
 
   // Sets the texture of the surface to an image resource.
   void SetTextureToImage(const scenic::Image& image);
 
-  // Creates token to links the surface to the window in the browser process.
-  mojo::ScopedHandle CreateParentExportToken();
+  // Creates a View for this surface, and returns a ViewHolderToken handle
+  // that can be used to attach it into a scene graph.
+  mojo::ScopedHandle CreateView();
 
   void AssertBelongsToCurrentThread() {
     DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -55,7 +56,7 @@ class ScenicSurface : public ui::PlatformWindowSurface {
 
  private:
   scenic::Session scenic_session_;
-  scenic::ImportNode parent_;
+  std::unique_ptr<scenic::View> parent_;
   scenic::ShapeNode shape_;
   scenic::Material material_;
 

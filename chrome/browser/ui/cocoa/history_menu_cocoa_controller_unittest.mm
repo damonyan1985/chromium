@@ -17,7 +17,7 @@
 
 @interface FakeHistoryMenuController : HistoryMenuCocoaController {
  @public
-  BOOL opened_[3];
+  BOOL _opened[3];
 }
 @end
 
@@ -25,14 +25,14 @@
 
 - (id)initTest {
   if ((self = [super init])) {
-    opened_[1] = NO;
-    opened_[2] = NO;
+    _opened[1] = NO;
+    _opened[2] = NO;
   }
   return self;
 }
 
 - (void)openURLForItem:(const HistoryMenuBridge::HistoryItem*)item {
-  opened_[item->session_id.id()] = YES;
+  _opened[item->session_id.id()] = YES;
 }
 
 @end  // FakeHistoryMenuController
@@ -43,7 +43,7 @@ class HistoryMenuCocoaControllerTest : public CocoaProfileTest {
     CocoaProfileTest::SetUp();
     ASSERT_TRUE(profile());
 
-    bridge_.reset(new HistoryMenuBridge(profile()));
+    bridge_ = std::make_unique<HistoryMenuBridge>(profile());
     bridge_->controller_.reset(
         [[FakeHistoryMenuController alloc] initWithBridge:bridge_.get()]);
     [controller() initTest];
@@ -84,8 +84,8 @@ TEST_F(HistoryMenuCocoaControllerTest, OpenURLForItem) {
 
   for ( ; it != items.end(); ++it) {
     HistoryMenuBridge::HistoryItem* item = it->second;
-    EXPECT_FALSE(controller()->opened_[item->session_id.id()]);
+    EXPECT_FALSE(controller()->_opened[item->session_id.id()]);
     [controller() openHistoryMenuItem:it->first];
-    EXPECT_TRUE(controller()->opened_[item->session_id.id()]);
+    EXPECT_TRUE(controller()->_opened[item->session_id.id()]);
   }
 }

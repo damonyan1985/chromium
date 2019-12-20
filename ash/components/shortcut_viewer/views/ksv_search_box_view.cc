@@ -6,6 +6,7 @@
 
 #include "ash/components/shortcut_viewer/vector_icons/vector_icons.h"
 #include "ash/components/strings/grit/ash_components_strings.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/chromeos/search_box/search_box_view_delegate.h"
@@ -32,14 +33,14 @@ constexpr int kBorderCornerRadius = 32;
 KSVSearchBoxView::KSVSearchBoxView(search_box::SearchBoxViewDelegate* delegate)
     : search_box::SearchBoxViewBase(delegate) {
   SetSearchBoxBackgroundCornerRadius(kBorderCornerRadius);
-  SetSearchBoxBackgroundColor(kDefaultSearchBoxBackgroundColor);
+  UpdateBackgroundColor(kDefaultSearchBoxBackgroundColor);
   search_box()->SetBackgroundColor(SK_ColorTRANSPARENT);
   search_box()->SetColor(gfx::kGoogleGrey900);
   search_box()->set_placeholder_text_color(gfx::kGoogleGrey900);
   search_box()->set_placeholder_text_draw_flags(gfx::Canvas::TEXT_ALIGN_CENTER);
   const base::string16 search_box_name(
       l10n_util::GetStringUTF16(IDS_KSV_SEARCH_BOX_ACCESSIBILITY_NAME));
-  search_box()->set_placeholder_text(search_box_name);
+  search_box()->SetPlaceholderText(search_box_name);
   search_box()->SetAccessibleName(search_box_name);
   SetSearchIconImage(
       gfx::CreateVectorIcon(kKsvSearchBarIcon, gfx::kGoogleGrey900));
@@ -83,13 +84,13 @@ void KSVSearchBoxView::SetAccessibleValue(const base::string16& value) {
 }
 
 void KSVSearchBoxView::UpdateBackgroundColor(SkColor color) {
-  SetSearchBoxBackgroundColor(color);
+  GetSearchBoxBackground()->SetNativeControlColor(color);
 }
 
 void KSVSearchBoxView::UpdateSearchBoxBorder() {
   // TODO(wutao): Rename this function or create another function in base class.
   // It updates many things in addition to the border.
-  if (!search_box()->HasFocus() && search_box()->text().empty())
+  if (!search_box()->HasFocus() && search_box()->GetText().empty())
     SetSearchBoxActive(false, ui::ET_UNKNOWN);
 
   constexpr int kBorderThichness = 2;
@@ -98,22 +99,23 @@ void KSVSearchBoxView::UpdateSearchBoxBorder() {
   if (search_box()->HasFocus() || is_search_box_active()) {
     SetBorder(views::CreateRoundedRectBorder(
         kBorderThichness, kBorderCornerRadius, kActiveBorderColor));
-    SetSearchBoxBackgroundColor(gfx::kGoogleGrey100);
+    UpdateBackgroundColor(gfx::kGoogleGrey100);
     return;
   }
   SetBorder(views::CreateRoundedRectBorder(
       kBorderThichness, kBorderCornerRadius, SK_ColorTRANSPARENT));
-  SetSearchBoxBackgroundColor(kDefaultSearchBoxBackgroundColor);
+  UpdateBackgroundColor(kDefaultSearchBoxBackgroundColor);
 }
 
 void KSVSearchBoxView::SetupCloseButton() {
   views::ImageButton* close = close_button();
+  close->set_has_ink_drop_action_on_click(true);
   close->SetImage(
       views::ImageButton::STATE_NORMAL,
       gfx::CreateVectorIcon(kKsvSearchCloseIcon, gfx::kGoogleGrey700));
-  close->SetSize(gfx::Size(kIconSize, kIconSize));
-  close->SetImageAlignment(views::ImageButton::ALIGN_CENTER,
-                           views::ImageButton::ALIGN_MIDDLE);
+  close->SetPreferredSize(gfx::Size(kIconSize, kIconSize));
+  close->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+  close->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
   const base::string16 close_button_label(
       l10n_util::GetStringUTF16(IDS_KSV_CLEAR_SEARCHBOX_ACCESSIBILITY_NAME));
   close->SetAccessibleName(close_button_label);
@@ -123,12 +125,13 @@ void KSVSearchBoxView::SetupCloseButton() {
 
 void KSVSearchBoxView::SetupBackButton() {
   views::ImageButton* back = back_button();
+  back->set_has_ink_drop_action_on_click(true);
   back->SetImage(
       views::ImageButton::STATE_NORMAL,
       gfx::CreateVectorIcon(kKsvSearchBackIcon, gfx::kGoogleBlue500));
-  back->SetSize(gfx::Size(kIconSize, kIconSize));
-  back->SetImageAlignment(views::ImageButton::ALIGN_CENTER,
-                          views::ImageButton::ALIGN_MIDDLE);
+  back->SetPreferredSize(gfx::Size(kIconSize, kIconSize));
+  back->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+  back->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
   const base::string16 back_button_label(
       l10n_util::GetStringUTF16(IDS_KSV_BACK_ACCESSIBILITY_NAME));
   back->SetAccessibleName(back_button_label);

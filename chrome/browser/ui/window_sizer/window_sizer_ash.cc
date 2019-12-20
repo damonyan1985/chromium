@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/window_sizer/window_sizer.h"
 
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -46,7 +47,7 @@ bool WindowSizer::GetBrowserBoundsAsh(gfx::Rect* bounds,
 
   bool determined = false;
   if (bounds->IsEmpty()) {
-    if (browser_->is_type_tabbed()) {
+    if (browser_->is_type_normal()) {
       GetTabbedBrowserBoundsAsh(bounds, show_state);
       determined = true;
     } else if (browser_->is_trusted_source()) {
@@ -64,7 +65,7 @@ bool WindowSizer::GetBrowserBoundsAsh(gfx::Rect* bounds,
     }
   }
 
-  if (browser_->is_type_tabbed() && *show_state == ui::SHOW_STATE_DEFAULT) {
+  if (browser_->is_type_normal() && *show_state == ui::SHOW_STATE_DEFAULT) {
     display::Display display =
         display::Screen::GetScreen()->GetDisplayMatching(*bounds);
     gfx::Rect work_area = display.work_area();
@@ -87,7 +88,7 @@ void WindowSizer::GetTabbedBrowserBoundsAsh(
     ui::WindowShowState* show_state) const {
   DCHECK(show_state);
   DCHECK(bounds_in_screen);
-  DCHECK(browser_->is_type_tabbed());
+  DCHECK(browser_->is_type_normal());
   DCHECK(bounds_in_screen->IsEmpty());
 
   const ui::WindowShowState passed_show_state = *show_state;

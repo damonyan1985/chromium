@@ -133,8 +133,8 @@ WebMouseEvent WebMouseEventBuilder::Build(
   // set position fields:
   result.SetPositionInWidget(GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
 
-  POINT global_point = {result.PositionInWidget().x,
-                        result.PositionInWidget().y};
+  POINT global_point = {result.PositionInWidget().x(),
+                        result.PositionInWidget().y()};
   ClientToScreen(hwnd, &global_point);
 
   // We need to convert the global point back to DIP before using it.
@@ -153,9 +153,9 @@ WebMouseEvent WebMouseEventBuilder::Build(
 
   base::TimeTicks current_time = result.TimeStamp();
   bool cancel_previous_click =
-      (abs(last_click_position_x - result.PositionInWidget().x) >
+      (abs(last_click_position_x - result.PositionInWidget().x()) >
        (::GetSystemMetrics(SM_CXDOUBLECLK) / 2)) ||
-      (abs(last_click_position_y - result.PositionInWidget().y) >
+      (abs(last_click_position_y - result.PositionInWidget().y()) >
        (::GetSystemMetrics(SM_CYDOUBLECLK) / 2)) ||
       ((current_time - g_last_click_time).InMilliseconds() >
        ::GetDoubleClickTime());
@@ -165,8 +165,8 @@ WebMouseEvent WebMouseEventBuilder::Build(
       ++g_last_click_count;
     } else {
       g_last_click_count = 1;
-      last_click_position_x = result.PositionInWidget().x;
-      last_click_position_y = result.PositionInWidget().y;
+      last_click_position_x = result.PositionInWidget().x();
+      last_click_position_y = result.PositionInWidget().y();
     }
     g_last_click_time = current_time;
     last_click_button = result.button;
@@ -230,11 +230,11 @@ WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
         break;
       case SB_PAGEUP:
         wheel_delta = 1;
-        result.scroll_by_page = true;
+        result.delta_units = ui::input_types::ScrollGranularity::kScrollByPage;
         break;
       case SB_PAGEDOWN:
         wheel_delta = -1;
-        result.scroll_by_page = true;
+        result.delta_units = ui::input_types::ScrollGranularity::kScrollByPage;
         break;
       default:  // We don't supoprt SB_THUMBPOSITION or SB_THUMBTRACK here.
         wheel_delta = 0;
@@ -275,8 +275,8 @@ WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
   result.SetModifiers(modifiers);
 
   // Set coordinates by translating event coordinates from screen to client.
-  POINT client_point = {result.PositionInScreen().x,
-                        result.PositionInScreen().y};
+  POINT client_point = {result.PositionInScreen().x(),
+                        result.PositionInScreen().y()};
   MapWindowPoints(0, hwnd, &client_point, 1);
   result.SetPositionInWidget(client_point.x, client_point.y);
 
@@ -304,9 +304,12 @@ WebMouseWheelEvent WebMouseWheelEventBuilder::Build(
   } else {
     unsigned long scroll_lines = kDefaultScrollLinesPerWheelDelta;
     SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &scroll_lines, 0);
-    if (scroll_lines == WHEEL_PAGESCROLL)
-      result.scroll_by_page = true;
-    if (!result.scroll_by_page) {
+    if (scroll_lines == WHEEL_PAGESCROLL) {
+      result.delta_units = ui::input_types::ScrollGranularity::kScrollByPage;
+    }
+
+    if (result.delta_units !=
+        ui::input_types::ScrollGranularity::kScrollByPage) {
       scroll_delta *=
           static_cast<float>(scroll_lines) * kScrollbarPixelsPerLine;
     }

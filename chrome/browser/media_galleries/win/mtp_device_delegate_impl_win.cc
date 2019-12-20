@@ -30,11 +30,11 @@
 #include "chrome/browser/media_galleries/win/mtp_device_operations_util.h"
 #include "chrome/browser/media_galleries/win/portable_device_map_service.h"
 #include "chrome/browser/media_galleries/win/snapshot_file_details.h"
-#include "components/services/filesystem/public/interfaces/types.mojom.h"
+#include "components/services/filesystem/public/mojom/types.mojom.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/common/file_system/file_system_util.h"
 
 namespace {
 
@@ -182,7 +182,8 @@ base::File::Error ReadDirectoryOnBlockingPoolThread(
     const MTPDeviceDelegateImplWin::StorageDeviceInfo& device_info,
     const base::FilePath& root,
     storage::AsyncFileUtil::EntryList* entries) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(!root.empty());
   DCHECK(entries);
   base::File::Info file_info;
@@ -319,7 +320,7 @@ void CreateMTPDeviceAsyncDelegate(
   DCHECK(!device_location.empty());
   base::string16* pnp_device_id = new base::string16;
   base::string16* storage_object_id = new base::string16;
-  base::PostTaskWithTraitsAndReplyWithResult<bool>(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE, {content::BrowserThread::UI},
       base::Bind(&GetStorageInfoOnUIThread, device_location,
                  base::Unretained(pnp_device_id),
@@ -361,8 +362,7 @@ MTPDeviceDelegateImplWin::MTPDeviceDelegateImplWin(
       storage_device_info_(pnp_device_id,
                            registered_device_path,
                            storage_object_id),
-      task_in_progress_(false),
-      weak_ptr_factory_(this) {
+      task_in_progress_(false) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
   DCHECK(!registered_device_path.empty());
   DCHECK(!pnp_device_id.empty());
@@ -510,20 +510,19 @@ void MTPDeviceDelegateImplWin::AddWatcher(
     const GURL& origin,
     const base::FilePath& file_path,
     const bool recursive,
-    const storage::WatcherManager::StatusCallback& callback,
-    const storage::WatcherManager::NotificationCallback&
-        notification_callback) {
+    storage::WatcherManager::StatusCallback callback,
+    storage::WatcherManager::NotificationCallback notification_callback) {
   NOTIMPLEMENTED();
-  callback.Run(base::File::FILE_ERROR_INVALID_OPERATION);
+  std::move(callback).Run(base::File::FILE_ERROR_INVALID_OPERATION);
 }
 
 void MTPDeviceDelegateImplWin::RemoveWatcher(
     const GURL& origin,
     const base::FilePath& file_path,
     const bool recursive,
-    const storage::WatcherManager::StatusCallback& callback) {
+    storage::WatcherManager::StatusCallback callback) {
   NOTIMPLEMENTED();
-  callback.Run(base::File::FILE_ERROR_INVALID_OPERATION);
+  std::move(callback).Run(base::File::FILE_ERROR_INVALID_OPERATION);
 }
 
 void MTPDeviceDelegateImplWin::CancelPendingTasksAndDeleteDelegate() {
@@ -531,9 +530,8 @@ void MTPDeviceDelegateImplWin::CancelPendingTasksAndDeleteDelegate() {
   PortableDeviceMapService::GetInstance()->MarkPortableDeviceForDeletion(
       storage_device_info_.registered_device_path);
   media_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&DeletePortableDeviceOnBlockingPoolThread,
-                 storage_device_info_.registered_device_path));
+      FROM_HERE, base::BindOnce(&DeletePortableDeviceOnBlockingPoolThread,
+                                storage_device_info_.registered_device_path));
   while (!pending_tasks_.empty())
     pending_tasks_.pop();
   delete this;

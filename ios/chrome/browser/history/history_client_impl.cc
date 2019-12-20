@@ -8,6 +8,7 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/model_loader.h"
 #include "components/history/core/browser/history_service.h"
 #include "ios/chrome/browser/history/history_backend_client_impl.h"
 #include "ios/chrome/browser/history/history_utils.h"
@@ -73,7 +74,7 @@ void HistoryClientImpl::BookmarkModelBeingDeleted(
 void HistoryClientImpl::BookmarkNodeRemoved(
     bookmarks::BookmarkModel* model,
     const bookmarks::BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const bookmarks::BookmarkNode* node,
     const std::set<GURL>& no_longer_bookmarked) {
   if (on_bookmarks_removed_)

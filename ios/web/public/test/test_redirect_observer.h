@@ -9,8 +9,8 @@
 #include <set>
 
 #include "base/macros.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 #include "url/gurl.h"
 
 namespace web {
@@ -31,6 +31,8 @@ class TestRedirectObserver
   GURL GetFinalUrlForUrl(const GURL& url);
 
  private:
+  friend class web::WebStateUserData<TestRedirectObserver>;
+
   TestRedirectObserver(WebState* web_state);
   ~TestRedirectObserver() final;
 
@@ -53,6 +55,8 @@ class TestRedirectObserver
   // be removed and the redirect chain originating from that URL will be stored
   // in |redirect_chains_|.
   std::set<GURL> expected_urls_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(TestRedirectObserver);
 };

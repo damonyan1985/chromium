@@ -10,7 +10,6 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/time/time.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
 namespace app_modal {
@@ -27,9 +26,6 @@ class ChromeJavaScriptDialogExtraData {
 
   // True if the user has decided to block future JavaScript dialogs.
   bool suppress_javascript_messages_;
-
-  // Number of dialogs from the origin that were suppressed.
-  int suppressed_dialog_count_;
 };
 
 // A controller + model class for JavaScript alert, confirm, prompt, and
@@ -108,7 +104,7 @@ class JavaScriptAppModalDialog {
   void CompleteDialog();
 
   // The title of the dialog.
-  base::string16 title_;
+  const base::string16 title_;
 
   // // True if CompleteDialog was called.
   bool completed_;
@@ -129,11 +125,11 @@ class JavaScriptAppModalDialog {
 
   // Information about the message box is held in the following variables.
   const content::JavaScriptDialogType javascript_dialog_type_;
-  base::string16 message_text_;
-  base::string16 default_prompt_text_;
-  bool display_suppress_checkbox_;
-  bool is_before_unload_dialog_;
-  bool is_reload_;
+  const base::string16 message_text_;
+  const base::string16 default_prompt_text_;
+  const bool display_suppress_checkbox_;
+  const bool is_before_unload_dialog_;
+  const bool is_reload_;
 
   content::JavaScriptDialogManager::DialogClosedCallback callback_;
 
@@ -141,8 +137,6 @@ class JavaScriptAppModalDialog {
   // used when notifying the delegate, if |use_override_prompt_text_| is true.
   base::string16 override_prompt_text_;
   bool use_override_prompt_text_;
-
-  base::TimeTicks creation_time_;
 
   DISALLOW_COPY_AND_ASSIGN(JavaScriptAppModalDialog);
 };

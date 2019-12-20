@@ -11,7 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/app_list/search/search_provider.h"
-#include "components/arc/common/app.mojom.h"
+#include "components/arc/mojom/app.mojom.h"
 
 class AppListControllerDelegate;
 class Profile;
@@ -31,12 +31,14 @@ class ArcAppShortcutsSearchProvider : public SearchProvider {
  private:
   void OnGetAppShortcutGlobalQueryItems(
       std::vector<arc::mojom::AppShortcutItemPtr> shortcut_items);
+  void UpdateRecommendedResults(
+      std::vector<arc::mojom::AppShortcutItemPtr> shortcut_items);
 
   const int max_results_;
   Profile* const profile_;                            // Owned by ProfileInfo.
   AppListControllerDelegate* const list_controller_;  // Owned by AppListClient.
 
-  base::WeakPtrFactory<ArcAppShortcutsSearchProvider> weak_ptr_factory_;
+  base::WeakPtrFactory<ArcAppShortcutsSearchProvider> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ArcAppShortcutsSearchProvider);
 };

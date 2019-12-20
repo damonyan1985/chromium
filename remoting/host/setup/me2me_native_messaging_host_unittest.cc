@@ -16,10 +16,10 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringize_macros.h"
+#include "base/test/task_environment.h"
 #include "base/values.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
 #include "net/base/file_stream.h"
@@ -175,6 +175,8 @@ class MockDaemonControllerDelegate : public DaemonController::Delegate {
   // DaemonController::Delegate interface.
   DaemonController::State GetState() override;
   std::unique_ptr<base::DictionaryValue> GetConfig() override;
+  void CheckPermission(bool it2me,
+                       DaemonController::BoolCallback callback) override;
   void SetConfigAndStart(
       std::unique_ptr<base::DictionaryValue> config,
       bool consent,
@@ -199,6 +201,12 @@ DaemonController::State MockDaemonControllerDelegate::GetState() {
 std::unique_ptr<base::DictionaryValue>
 MockDaemonControllerDelegate::GetConfig() {
   return std::make_unique<base::DictionaryValue>();
+}
+
+void MockDaemonControllerDelegate::CheckPermission(
+    bool it2me,
+    DaemonController::BoolCallback callback) {
+  std::move(callback).Run(true);
 }
 
 void MockDaemonControllerDelegate::SetConfigAndStart(
@@ -274,8 +282,7 @@ class Me2MeNativeMessagingHostTest : public testing::Test {
   base::File input_write_file_;
   base::File output_read_file_;
 
-  // Message loop of the test thread.
-  std::unique_ptr<base::MessageLoop> test_message_loop_;
+  std::unique_ptr<base::test::SingleThreadTaskEnvironment> task_environment_;
   std::unique_ptr<base::RunLoop> test_run_loop_;
 
   std::unique_ptr<base::Thread> host_thread_;
@@ -299,23 +306,23 @@ void Me2MeNativeMessagingHostTest::SetUp() {
   ASSERT_TRUE(MakePipe(&input_read_file, &input_write_file_));
   ASSERT_TRUE(MakePipe(&output_read_file_, &output_write_file));
 
-  test_message_loop_.reset(new base::MessageLoop());
+  task_environment_ =
+      std::make_unique<base::test::SingleThreadTaskEnvironment>();
   test_run_loop_.reset(new base::RunLoop());
 
   // Run the host on a dedicated thread.
   host_thread_.reset(new base::Thread("host_thread"));
   host_thread_->Start();
 
-  // Arrange to run |test_message_loop_| until no components depend on it.
+  // Arrange to run |task_environment_| until no components depend on it.
   host_task_runner_ = new AutoThreadTaskRunner(
       host_thread_->task_runner(),
       base::Bind(&Me2MeNativeMessagingHostTest::ExitTest,
                  base::Unretained(this)));
 
   host_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&Me2MeNativeMessagingHostTest::StartHost,
-                 base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&Me2MeNativeMessagingHostTest::StartHost,
+                                base::Unretained(this)));
 
   // Wait until the host finishes starting.
   test_run_loop_->Run();
@@ -361,8 +368,7 @@ void Me2MeNativeMessagingHostTest::StartHost() {
   native_messaging_pipe_->Start(std::move(host), std::move(channel));
 
   // Notify the test that the host has finished starting up.
-  test_message_loop_->task_runner()->PostTask(
-      FROM_HERE, test_run_loop_->QuitClosure());
+  test_run_loop_->Quit();
 }
 
 void Me2MeNativeMessagingHostTest::StopHost() {
@@ -378,11 +384,11 @@ void Me2MeNativeMessagingHostTest::StopHost() {
 }
 
 void Me2MeNativeMessagingHostTest::ExitTest() {
-  if (!test_message_loop_->task_runner()->RunsTasksInCurrentSequence()) {
-    test_message_loop_->task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&Me2MeNativeMessagingHostTest::ExitTest,
-                   base::Unretained(this)));
+  if (!task_environment_->GetMainThreadTaskRunner()
+           ->RunsTasksInCurrentSequence()) {
+    task_environment_->GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&Me2MeNativeMessagingHostTest::ExitTest,
+                                  base::Unretained(this)));
     return;
   }
   test_run_loop_->Quit();
@@ -423,7 +429,8 @@ Me2MeNativeMessagingHostTest::ReadMessageFromOutputPipe() {
       return nullptr;
     }
 
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(message_json);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(message_json);
     if (!message || !message->is_dict()) {
       return nullptr;
     }

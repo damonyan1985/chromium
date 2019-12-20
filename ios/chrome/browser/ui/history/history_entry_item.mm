@@ -46,7 +46,7 @@
   return self;
 }
 
-- (void)configureCell:(UITableViewCell*)tableCell
+- (void)configureCell:(TableViewCell*)tableCell
            withStyler:(ChromeTableViewStyler*)styler {
   [super configureCell:tableCell withStyler:styler];
 
@@ -56,10 +56,6 @@
   cell.titleLabel.text = self.text;
   cell.URLLabel.text = self.detailText;
   cell.metadataLabel.text = self.timeText;
-  cell.faviconContainerView.backgroundColor = styler.tableViewBackgroundColor;
-  cell.titleLabel.backgroundColor = styler.tableViewBackgroundColor;
-  cell.URLLabel.backgroundColor = styler.tableViewBackgroundColor;
-  cell.metadataLabel.backgroundColor = styler.tableViewBackgroundColor;
   cell.isAccessibilityElement = YES;
   cell.accessibilityCustomActions = self.accessibilityActions;
   [cell configureUILayout];

@@ -21,7 +21,7 @@ cr.define('multidevice_setup', function() {
       // multidevice_setup.mojom).
       return /** @type {!Promise<{success: boolean}>} */ (
           multidevice_setup.MojoInterfaceProviderImpl.getInstance()
-              .getInterfacePtr()
+              .getMojoServiceRemote()
               .setHostDevice(hostDeviceId, opt_authToken));
     }
 

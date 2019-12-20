@@ -4,7 +4,7 @@
 
 #include "chrome/browser/page_load_metrics/observers/aborts_page_load_metrics_observer.h"
 
-#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
+#include "components/page_load_metrics/browser/page_load_metrics_util.h"
 
 using page_load_metrics::PageAbortReason;
 
@@ -68,12 +68,6 @@ void RecordAbortBeforeCommit(
             "UserGesture",
             abort_info.time_to_abort);
       }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.Reload.BeforeCommit."
-            "UserInputEvent",
-            abort_info.time_to_abort);
-      }
       if (abort_info.user_initiated_info.browser_initiated) {
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.Reload.BeforeCommit."
@@ -90,12 +84,6 @@ void RecordAbortBeforeCommit(
             "BeforeCommit.UserGesture",
             abort_info.time_to_abort);
       }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.ForwardBackNavigation."
-            "BeforeCommit.UserInputEvent",
-            abort_info.time_to_abort);
-      }
       if (abort_info.user_initiated_info.browser_initiated) {
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.ForwardBackNavigation."
@@ -110,12 +98,6 @@ void RecordAbortBeforeCommit(
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.NewNavigation.BeforeCommit."
             "UserGesture",
-            abort_info.time_to_abort);
-      }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.NewNavigation.BeforeCommit."
-            "UserInputEvent",
             abort_info.time_to_abort);
       }
       if (abort_info.user_initiated_info.browser_initiated) {
@@ -160,12 +142,6 @@ void RecordAbortAfterCommitBeforePaint(
             "UserGesture",
             abort_info.time_to_abort);
       }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.Reload.AfterCommit.BeforePaint."
-            "UserInputEvent",
-            abort_info.time_to_abort);
-      }
       if (abort_info.user_initiated_info.browser_initiated) {
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.Reload.AfterCommit.BeforePaint."
@@ -182,12 +158,6 @@ void RecordAbortAfterCommitBeforePaint(
             "AfterCommit.BeforePaint.UserGesture",
             abort_info.time_to_abort);
       }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.ForwardBackNavigation."
-            "AfterCommit.BeforePaint.UserInputEvent",
-            abort_info.time_to_abort);
-      }
       if (abort_info.user_initiated_info.browser_initiated) {
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.ForwardBackNavigation."
@@ -202,12 +172,6 @@ void RecordAbortAfterCommitBeforePaint(
         PAGE_LOAD_HISTOGRAM(
             "PageLoad.Experimental.AbortTiming.NewNavigation.AfterCommit."
             "BeforePaint.UserGesture",
-            abort_info.time_to_abort);
-      }
-      if (abort_info.user_initiated_info.user_input_event) {
-        PAGE_LOAD_HISTOGRAM(
-            "PageLoad.Experimental.AbortTiming.NewNavigation.AfterCommit."
-            "BeforePaint.UserInputEvent",
             abort_info.time_to_abort);
       }
       if (abort_info.user_initiated_info.browser_initiated) {
@@ -278,14 +242,15 @@ void RecordAbortDuringParse(
   NOTREACHED();
 }
 
-bool ShouldTrackMetrics(const page_load_metrics::PageLoadExtraInfo& extra_info,
-                        const page_load_metrics::PageAbortInfo& abort_info) {
+bool ShouldTrackMetrics(
+    const page_load_metrics::PageLoadMetricsObserverDelegate& delegate,
+    const page_load_metrics::PageAbortInfo& abort_info) {
   if (abort_info.reason == PageAbortReason::ABORT_NONE)
     return false;
 
   // Don't log abort times if the page was backgrounded before the abort event.
-  if (!WasStartedInForegroundOptionalEventInForeground(abort_info.time_to_abort,
-                                                       extra_info))
+  if (!page_load_metrics::WasStartedInForegroundOptionalEventInForeground(
+          abort_info.time_to_abort, delegate))
     return false;
 
   return true;
@@ -296,10 +261,9 @@ bool ShouldTrackMetrics(const page_load_metrics::PageLoadExtraInfo& extra_info,
 AbortsPageLoadMetricsObserver::AbortsPageLoadMetricsObserver() {}
 
 void AbortsPageLoadMetricsObserver::OnComplete(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  page_load_metrics::PageAbortInfo abort_info = GetPageAbortInfo(extra_info);
-  if (!ShouldTrackMetrics(extra_info, abort_info))
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  page_load_metrics::PageAbortInfo abort_info = GetPageAbortInfo(GetDelegate());
+  if (!ShouldTrackMetrics(GetDelegate(), abort_info))
     return;
 
   // If we did not receive any timing IPCs from the render process, we can't
@@ -325,10 +289,9 @@ void AbortsPageLoadMetricsObserver::OnComplete(
 }
 
 void AbortsPageLoadMetricsObserver::OnFailedProvisionalLoad(
-    const page_load_metrics::FailedProvisionalLoadInfo& failed_load_info,
-    const page_load_metrics::PageLoadExtraInfo& extra_info) {
-  page_load_metrics::PageAbortInfo abort_info = GetPageAbortInfo(extra_info);
-  if (!ShouldTrackMetrics(extra_info, abort_info))
+    const page_load_metrics::FailedProvisionalLoadInfo& failed_load_info) {
+  page_load_metrics::PageAbortInfo abort_info = GetPageAbortInfo(GetDelegate());
+  if (!ShouldTrackMetrics(GetDelegate(), abort_info))
     return;
 
   RecordAbortBeforeCommit(abort_info);

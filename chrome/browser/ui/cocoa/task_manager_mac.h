@@ -25,27 +25,28 @@ class TaskManagerMac;
 // This class is responsible for loading the task manager window and for
 // managing it.
 @interface TaskManagerWindowController
-    : NSWindowController<NSTableViewDataSource,
-                         NSTableViewDelegate,
-                         NSMenuDelegate> {
+    : NSWindowController <NSWindowDelegate,
+                          NSTableViewDataSource,
+                          NSTableViewDelegate,
+                          NSMenuDelegate> {
  @private
-  IBOutlet NSTableView* tableView_;
-  IBOutlet NSButton* endProcessButton_;
-  task_manager::TaskManagerMac* taskManagerMac_;     // weak
-  task_manager::TaskManagerTableModel* tableModel_;  // weak
+  NSTableView* _tableView;
+  NSButton* _endProcessButton;
+  task_manager::TaskManagerMac* _taskManagerMac;     // weak
+  task_manager::TaskManagerTableModel* _tableModel;  // weak
 
-  base::scoped_nsobject<WindowSizeAutosaver> size_saver_;
+  base::scoped_nsobject<WindowSizeAutosaver> _size_saver;
 
   // These contain a permutation of [0..|tableModel_->RowCount() - 1|]. Used to
   // implement sorting.
-  std::vector<int> viewToModelMap_;
-  std::vector<int> modelToViewMap_;
+  std::vector<int> _viewToModelMap;
+  std::vector<int> _modelToViewMap;
 
   // Descriptor of the current sort column.
-  task_manager::TableSortDescriptor currentSortDescriptor_;
+  task_manager::TableSortDescriptor _currentSortDescriptor;
 
   // Re-entrancy flag to allow meddling with the sort descriptor.
-  BOOL withinSortDescriptorsDidChange_;
+  BOOL _withinSortDescriptorsDidChange;
 }
 
 // Creates and shows the task manager's window.

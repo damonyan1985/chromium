@@ -8,7 +8,6 @@
 #include <limits>
 
 #include "base/cancelable_callback.h"
-#include "base/macros.h"
 #include "base/time/time.h"
 #include "cc/scheduler/scheduler.h"
 #include "cc/trees/layer_tree_host_impl.h"
@@ -18,6 +17,7 @@
 
 namespace viz {
 class BeginFrameSource;
+struct FrameTimingDetails;
 }
 
 namespace cc {
@@ -34,12 +34,14 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   static std::unique_ptr<Proxy> Create(
       LayerTreeHost* layer_tree_host,
       LayerTreeHostSingleThreadClient* client,
-      TaskRunnerProvider* task_runner_provider_);
+      TaskRunnerProvider* task_runner_provider);
+  SingleThreadProxy(const SingleThreadProxy&) = delete;
   ~SingleThreadProxy() override;
+
+  SingleThreadProxy& operator=(const SingleThreadProxy&) = delete;
 
   // Proxy implementation
   bool IsStarted() const override;
-  bool CommitToActiveTree() const override;
   void SetLayerTreeFrameSink(
       LayerTreeFrameSink* layer_tree_frame_sink) override;
   void ReleaseLayerTreeFrameSink() override;
@@ -50,9 +52,9 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void SetNeedsRedraw(const gfx::Rect& damage_rect) override;
   void SetNextCommitWaitsForActivation() override;
   bool RequestedAnimatePending() override;
-  void NotifyInputThrottledUntilCommit() override {}
   void SetDeferMainFrameUpdate(bool defer_main_frame_update) override;
-  void SetDeferCommits(bool defer_commits) override;
+  void StartDeferringCommits(base::TimeDelta timeout) override;
+  void StopDeferringCommits(PaintHoldingCommitTrigger) override;
   bool CommitRequested() const override;
   void Start() override;
   void Stop() override;
@@ -61,7 +63,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
       std::unique_ptr<PaintWorkletLayerPainter> painter) override;
   bool SupportsImplScrolling() const override;
   bool MainFrameWillHappenForTesting() override;
-  void SetURLForUkm(const GURL& url) override {
+  void SetSourceURL(ukm::SourceId source_id, const GURL& url) override {
     // Single-threaded mode is only for browser compositing and for renderers in
     // layout tests. This will still get called in the latter case, but we don't
     // need to record UKM in that case.
@@ -77,7 +79,8 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   // SchedulerClient implementation
   bool WillBeginImplFrame(const viz::BeginFrameArgs& args) override;
   void DidFinishImplFrame() override;
-  void DidNotProduceFrame(const viz::BeginFrameAck& ack) override;
+  void DidNotProduceFrame(const viz::BeginFrameAck& ack,
+                          FrameSkippedReason reason) override;
   void WillNotReceiveBeginFrame() override;
   void ScheduledActionSendBeginMainFrame(
       const viz::BeginFrameArgs& args) override;
@@ -95,6 +98,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void FrameIntervalUpdated(base::TimeDelta interval) override;
   size_t CompositedAnimationsCount() const override;
   size_t MainThreadAnimationsCount() const override;
+  bool HasCustomPropertyAnimations() const override;
   bool CurrentFrameHadRAF() const override;
   bool NextFrameHasPendingRAF() const override;
 
@@ -113,6 +117,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void PostAnimationEventsToMainThreadOnImplThread(
       std::unique_ptr<MutatorEvents> events) override;
   bool IsInsideDraw() override;
+  bool IsBeginMainFrameExpected() override;
   void RenewTreePriority() override {}
   void PostDelayedAnimationTaskOnImplThread(base::OnceClosure task,
                                             base::TimeDelta delay) override {}
@@ -128,9 +133,12 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void DidPresentCompositorFrameOnImplThread(
       uint32_t frame_token,
       std::vector<LayerTreeHost::PresentationTimeCallback> callbacks,
-      const gfx::PresentationFeedback& feedback) override;
-  void DidGenerateLocalSurfaceIdAllocationOnImplThread(
-      const viz::LocalSurfaceIdAllocation& allocation) override;
+      const viz::FrameTimingDetails& details) override;
+  void NotifyAnimationWorkletStateChange(
+      AnimationWorkletMutationState state,
+      ElementListType element_list_type) override;
+  void NotifyPaintWorkletStateChange(
+      Scheduler::PaintWorkletState state) override;
 
   void RequestNewLayerTreeFrameSink();
 
@@ -173,6 +181,9 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   // Accessed from both threads.
   std::unique_ptr<Scheduler> scheduler_on_impl_thread_;
 
+  // Only used when defer_commits_ is active and must be set in such cases.
+  base::TimeTicks commits_restart_time_;
+
   bool next_frame_is_newly_committed_frame_;
 
 #if DCHECK_IS_ON()
@@ -193,6 +204,10 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   // initialized.
   bool layer_tree_frame_sink_lost_;
 
+  // A number that kept incrementing in CompositeImmediately, which indicates a
+  // new impl frame.
+  uint64_t begin_frame_sequence_number_ = 1u;
+
   // This is the callback for the scheduled RequestNewLayerTreeFrameSink.
   base::CancelableOnceClosure layer_tree_frame_sink_creation_callback_;
 
@@ -200,11 +215,9 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
 
   // WeakPtrs generated by this factory will be invalidated when
   // LayerTreeFrameSink is released.
-  base::WeakPtrFactory<SingleThreadProxy> frame_sink_bound_weak_factory_;
+  base::WeakPtrFactory<SingleThreadProxy> frame_sink_bound_weak_factory_{this};
 
-  base::WeakPtrFactory<SingleThreadProxy> weak_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(SingleThreadProxy);
+  base::WeakPtrFactory<SingleThreadProxy> weak_factory_{this};
 };
 
 // For use in the single-threaded case. In debug builds, it pretends that the
@@ -221,19 +234,22 @@ class DebugScopedSetImplThread {
   explicit DebugScopedSetImplThread(TaskRunnerProvider* task_runner_provider) {}
 #endif
 
+  DebugScopedSetImplThread(const DebugScopedSetImplThread&) = delete;
+
   ~DebugScopedSetImplThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
 #endif
   }
 
- private:
+  DebugScopedSetImplThread& operator=(const DebugScopedSetImplThread&) = delete;
+
 #if DCHECK_IS_ON()
+
+ private:
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
 #endif
-
-  DISALLOW_COPY_AND_ASSIGN(DebugScopedSetImplThread);
 };
 
 // For use in the single-threaded case. In debug builds, it pretends that the
@@ -250,19 +266,22 @@ class DebugScopedSetMainThread {
   explicit DebugScopedSetMainThread(TaskRunnerProvider* task_runner_provider) {}
 #endif
 
+  DebugScopedSetMainThread(const DebugScopedSetMainThread&) = delete;
+
   ~DebugScopedSetMainThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
 #endif
   }
 
- private:
+  DebugScopedSetMainThread& operator=(const DebugScopedSetMainThread&) = delete;
+
 #if DCHECK_IS_ON()
+
+ private:
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
 #endif
-
-  DISALLOW_COPY_AND_ASSIGN(DebugScopedSetMainThread);
 };
 
 // For use in the single-threaded case. In debug builds, it pretends that the
@@ -274,12 +293,14 @@ class DebugScopedSetImplThreadAndMainThreadBlocked {
       TaskRunnerProvider* task_runner_provider)
       : impl_thread_(task_runner_provider),
         main_thread_blocked_(task_runner_provider) {}
+  DebugScopedSetImplThreadAndMainThreadBlocked(
+      const DebugScopedSetImplThreadAndMainThreadBlocked&) = delete;
+  DebugScopedSetImplThreadAndMainThreadBlocked& operator=(
+      const DebugScopedSetImplThreadAndMainThreadBlocked&) = delete;
 
  private:
   DebugScopedSetImplThread impl_thread_;
   DebugScopedSetMainThreadBlocked main_thread_blocked_;
-
-  DISALLOW_COPY_AND_ASSIGN(DebugScopedSetImplThreadAndMainThreadBlocked);
 };
 
 }  // namespace cc

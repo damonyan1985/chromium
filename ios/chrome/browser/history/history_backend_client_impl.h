@@ -19,14 +19,14 @@ class ModelLoader;
 
 class HistoryBackendClientImpl : public history::HistoryBackendClient {
  public:
-  explicit HistoryBackendClientImpl(bookmarks::ModelLoader* model_loader);
+  explicit HistoryBackendClientImpl(
+      scoped_refptr<bookmarks::ModelLoader> model_loader);
   ~HistoryBackendClientImpl() override;
 
  private:
   // history::HistoryBackendClient implementation.
   bool IsPinnedURL(const GURL& url) override;
   std::vector<history::URLAndTitle> GetPinnedURLs() override;
-  bool ShouldReportDatabaseError() override;
   bool IsWebSafe(const GURL& url) override;
 
   // ModelLoader is used to access bookmarks. May be null during testing.

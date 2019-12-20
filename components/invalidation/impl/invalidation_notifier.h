@@ -31,6 +31,8 @@
 namespace syncer {
 
 // This class must live on the IO thread.
+// TODO(crbug.com/1029481): Part of the legacy implementation of invalidations,
+// scheduled for deletion.
 class INVALIDATION_EXPORT InvalidationNotifier
     : public Invalidator,
       public SyncInvalidationListener::Delegate {
@@ -52,11 +54,9 @@ class INVALIDATION_EXPORT InvalidationNotifier
   void RegisterHandler(InvalidationHandler* handler) override;
   bool UpdateRegisteredIds(InvalidationHandler* handler,
                            const ObjectIdSet& ids) override;
-  bool UpdateRegisteredIds(InvalidationHandler* handler,
-                           const TopicSet& ids) override;
   void UnregisterHandler(InvalidationHandler* handler) override;
   InvalidatorState GetInvalidatorState() const override;
-  void UpdateCredentials(const std::string& email,
+  void UpdateCredentials(const CoreAccountId& account_id,
                          const std::string& token) override;
   void RequestDetailedStatus(base::Callback<void(const base::DictionaryValue&)>
                                  callback) const override;

@@ -42,7 +42,7 @@ class PerSiteDataUsage;
 //
 // A Java counterpart will be generated for this enum.
 // GENERATED_JAVA_ENUM_PACKAGE: (
-//     org.chromium.chrome.browser.preferences.datareduction)
+//     org.chromium.chrome.browser.settings.datareduction)
 enum class DataReductionProxySavingsClearedReason {
   SYSTEM_CLOCK_MOVED_BACK,
   PREFS_PARSE_ERROR,
@@ -295,7 +295,7 @@ class DataReductionProxyCompressionStats {
   base::OneShotTimer pref_writer_timer_;
   base::ThreadChecker thread_checker_;
 
-  base::WeakPtrFactory<DataReductionProxyCompressionStats> weak_factory_;
+  base::WeakPtrFactory<DataReductionProxyCompressionStats> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DataReductionProxyCompressionStats);
 };

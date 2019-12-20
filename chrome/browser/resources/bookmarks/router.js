@@ -2,6 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/polymer/v3_0/iron-location/iron-location.js';
+import 'chrome://resources/polymer/v3_0/iron-location/iron-query-params.js';
+
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
+import {selectFolder, setSearchTerm} from './actions.js';
+import {BOOKMARKS_BAR_ID} from './constants.js';
+import {StoreClient} from './store_client.js';
+
 Polymer({
   /**
    * This element is a one way bound interface that routes the page URL to
@@ -10,8 +19,10 @@ Polymer({
    */
   is: 'bookmarks-router',
 
+  _template: html`{__html_template__}`,
+
   behaviors: [
-    bookmarks.StoreClient,
+    StoreClient,
   ],
 
   properties: {
@@ -67,18 +78,17 @@ Polymer({
       selectedId = BOOKMARKS_BAR_ID;
     }
 
-    if (searchTerm != this.searchTerm_) {
+    if (searchTerm !== this.searchTerm_) {
       this.searchTerm_ = searchTerm;
-      this.dispatch(bookmarks.actions.setSearchTerm(searchTerm));
+      this.dispatch(setSearchTerm(searchTerm));
     }
 
-    if (selectedId && selectedId != this.selectedId_) {
+    if (selectedId && selectedId !== this.selectedId_) {
       this.selectedId_ = selectedId;
       // Need to dispatch a deferred action so that during page load
       // `this.getState()` will only evaluate after the Store is initialized.
       this.dispatchAsync((dispatch) => {
-        dispatch(
-            bookmarks.actions.selectFolder(selectedId, this.getState().nodes));
+        dispatch(selectFolder(selectedId, this.getState().nodes));
       });
     }
   },
@@ -108,7 +118,7 @@ Polymer({
   updateQueryParams_: function() {
     if (this.searchTerm_) {
       this.queryParams_ = {q: this.searchTerm_};
-    } else if (this.selectedId_ != BOOKMARKS_BAR_ID) {
+    } else if (this.selectedId_ !== BOOKMARKS_BAR_ID) {
       this.queryParams_ = {id: this.selectedId_};
     } else {
       this.queryParams_ = {};

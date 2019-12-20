@@ -15,7 +15,10 @@
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/files/file_path.h"
+#include "base/logging.h"
 #include "base/macros.h"
+#include "base/process/launch.h"
+#include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
@@ -29,6 +32,7 @@
 #include "chrome/browser/safe_browsing/chrome_cleaner/mock_chrome_cleaner_controller_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/srt_client_info_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/srt_field_trial_win.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/sw_reporter_invocation_win.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/common/chrome_switches.h"
@@ -41,7 +45,6 @@
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
-#include "components/variations/variations_params_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -88,21 +91,27 @@ class Waiter {
 //  - bool: if managed, whether the policy is forced on or not.
 using ReporterRunnerPolicyTestParams = std::tuple<bool, bool>;
 
+enum class ReporterRunnerPolicy {
+  kNoPolicy,
+  kEnabled,
+  kDisabled,
+};
+
 class ReporterRunnerPolicyTest
     : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<ReporterRunnerPolicyTestParams> {
+      public ::testing::WithParamInterface<ReporterRunnerPolicy> {
  public:
   ReporterRunnerPolicyTest() {
-    std::tie(is_managed_, is_enabled_) = GetParam();
+    policy_ = GetParam();
     component_updater::SetRegisterSwReporterComponentCallbackForTesting(
         base::BindOnce(&ReporterRunnerPolicyTest::ComponentRegistered,
                        base::Unretained(this)));
   }
 
-  bool is_managed() const { return is_managed_; }
-  bool is_enabled() const { return is_enabled_; }
-
   void WaitForComponentRegistration() { waiter_.Wait(); }
+
+ protected:
+  ReporterRunnerPolicy policy_;
 
  private:
   void SetUpCommandLine(base::CommandLine* command_line) override {}
@@ -122,12 +131,13 @@ class ReporterRunnerPolicyTest
         &policy_provider_);
 
     // Setup polices as needed.
-    if (is_managed_) {
+    if (policy_ != ReporterRunnerPolicy::kNoPolicy) {
+      bool is_enabled = policy_ == ReporterRunnerPolicy::kEnabled;
       policy::PolicyMap policies;
       policies.Set(policy::key::kChromeCleanupEnabled,
                    policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                    policy::POLICY_SOURCE_PLATFORM,
-                   std::make_unique<base::Value>(is_enabled_), nullptr);
+                   std::make_unique<base::Value>(is_enabled), nullptr);
       policy_provider_.UpdateChromePolicy(policies);
     }
   }
@@ -136,8 +146,6 @@ class ReporterRunnerPolicyTest
 
   policy::MockConfigurationPolicyProvider policy_provider_;
   Waiter waiter_;
-  bool is_managed_;
-  bool is_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(ReporterRunnerPolicyTest);
 };
@@ -149,19 +157,17 @@ IN_PROC_BROWSER_TEST_P(ReporterRunnerPolicyTest, CheckComponent) {
   // component installed.  Otherwise it should be installed.
   std::vector<std::string> component_ids =
       g_browser_process->component_updater()->GetComponentIDs();
-  bool sw_component_registered = base::ContainsValue(
-      component_ids, component_updater::kSwReporterComponentId);
-  ASSERT_EQ(!is_managed() || is_enabled(), sw_component_registered);
+  bool sw_component_registered =
+      base::Contains(component_ids, component_updater::kSwReporterComponentId);
+  ASSERT_EQ(policy_ != ReporterRunnerPolicy::kDisabled,
+            sw_component_registered);
 }
 
-// Tests for kUserInitiatedChromeCleanupsFeature enabled (all invocation types
-// are allowed).
-INSTANTIATE_TEST_SUITE_P(
-    PolicyControl,
-    ReporterRunnerPolicyTest,
-    ::testing::Values(ReporterRunnerPolicyTestParams(false, false),
-                      ReporterRunnerPolicyTestParams(true, false),
-                      ReporterRunnerPolicyTestParams(true, true)));
+INSTANTIATE_TEST_SUITE_P(PolicyControl,
+                         ReporterRunnerPolicyTest,
+                         ::testing::Values(ReporterRunnerPolicy::kNoPolicy,
+                                           ReporterRunnerPolicy::kEnabled,
+                                           ReporterRunnerPolicy::kDisabled));
 
 // The state of the the enterprise policy to use during tests.
 enum class PolicyState {
@@ -181,7 +187,7 @@ using ReporterRunnerTestParams =
 
 class ReporterRunnerTest
     : public InProcessBrowserTest,
-      public SwReporterTestingDelegate,
+      public internal::SwReporterTestingDelegate,
       public ::testing::WithParamInterface<ReporterRunnerTestParams> {
  public:
   ReporterRunnerTest() {
@@ -189,18 +195,16 @@ class ReporterRunnerTest
         GetParam();
   }
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    variations::testing::VariationParamsManager::AppendVariationParams(
-        kSRTPromptTrial, kSRTPromptGroup, {{"Seed", incoming_seed_}},
-        command_line);
-  }
-
   void SetUpInProcessBrowserTestFixture() override {
-    SetSwReporterTestingDelegate(this);
+    internal::SetSwReporterTestingDelegate(this);
     EXPECT_CALL(policy_provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(true));
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
         &policy_provider_);
+
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        kChromeCleanupInBrowserPromptFeature,
+        {{"Seed", incoming_seed_}, {"Group", kSRTPromptGroup}});
 
     switch (policy_state_) {
       case PolicyState::kNoLogs:
@@ -235,16 +239,25 @@ class ReporterRunnerTest
   }
 
   void TearDownInProcessBrowserTestFixture() override {
-    SetSwReporterTestingDelegate(nullptr);
+    internal::SetSwReporterTestingDelegate(nullptr);
   }
 
   // Records that the reporter was launched with the parameters given in
   // |invocation|.
-  int LaunchReporter(const SwReporterInvocation& invocation) override {
+  base::Process LaunchReporterProcess(
+      const SwReporterInvocation& invocation,
+      const base::LaunchOptions& options) override {
+    ANALYZER_ALLOW_UNUSED(options);
     ++reporter_launch_count_;
     reporter_launch_parameters_.push_back(invocation);
     if (first_launch_callback_)
       std::move(first_launch_callback_).Run();
+    // Need to return a valid process so the launch continues.
+    return base::Process::Current();
+  }
+
+  int WaitForReporterExit(const base::Process& reporter_process) const {
+    ANALYZER_ALLOW_UNUSED(reporter_process);
     return exit_code_to_report_;
   }
 
@@ -498,14 +511,6 @@ class ReporterRunnerTest
                                   SwReporterInvocationResult result) {
     EXPECT_EQ(expected_result, result);
     std::move(closure).Run();
-  }
-
-  OnReporterSequenceDone ExpectResultOnSequenceDoneCallback(
-      SwReporterInvocationResult expected_result,
-      base::OnceClosure closure) {
-    return base::BindOnce(&ReporterRunnerTest::ExpectResultOnSequenceDone,
-                          base::Unretained(this), expected_result,
-                          base::Passed(&closure));
   }
 
   bool PromptDialogShouldBeShown(SwReporterInvocationType invocation_type) {
@@ -923,10 +928,9 @@ struct ReporterRunTestParamsToString {
   }
 };
 
-// Tests for kUserInitiatedChromeCleanupsFeature enabled (all invocation types
-// are allowed) without an enterprise policy set.
+// Tests without an enterprise policy set.
 INSTANTIATE_TEST_SUITE_P(
-    UserInitiatedRunsEnabled,
+    NoEnterprisePolicy,
     ReporterRunnerTest,
     ::testing::Combine(
         ::testing::Values(
@@ -938,11 +942,10 @@ INSTANTIATE_TEST_SUITE_P(
         ::testing::Values(PolicyState::kNoLogs)),
     ReporterRunTestParamsToString());
 
-// Tests for kUserInitiatedChromeCleanupsFeature enabled (all invocation types
-// are allowed) with enterprise policies forcing reporting to be either enabled
+// Tests with enterprise policies forcing reporting to be either enabled
 // or disabled.
 INSTANTIATE_TEST_SUITE_P(
-    UserInitiatedRunsEnabledWithPolicy,
+    EnterprisePolicy,
     ReporterRunnerTest,
     ::testing::Combine(
         ::testing::Values(

@@ -19,17 +19,24 @@
 
 class Profile;
 
-namespace identity {
+namespace signin {
 class IdentityManager;
-}  // namespace identity
+}  // namespace signin
 
 // A service that downloads, caches, and hands out SearchSuggestData. It never
 // initiates a download automatically, only when Refresh is called. When the
 // user signs in or out, the cached value is cleared.
 class SearchSuggestService : public KeyedService {
  public:
+  // Search suggestions should be disabled when on-focus zero-prefix suggestions
+  // are displaying in the NTP. Returns false if omnibox::kZeroSuggestionsOnNTP
+  // or omnibox::kZeroSuggestionsOnNTPRealboxkNtpRealbox are enabled; or
+  // omnibox::kOnFocusSuggestions is enabled and configured to show suggestions
+  // of some type in the NTP Omnibox or Realbox.
+  static bool IsEnabled();
+
   SearchSuggestService(Profile* profile,
-                       identity::IdentityManager* identity_manager,
+                       signin::IdentityManager* identity_manager,
                        std::unique_ptr<SearchSuggestLoader> loader);
   ~SearchSuggestService() override;
 
@@ -37,20 +44,18 @@ class SearchSuggestService : public KeyedService {
   void Shutdown() override;
 
   // Returns the currently cached SearchSuggestData, if any.
-  const base::Optional<SearchSuggestData>& search_suggest_data() const {
-    return search_suggest_data_;
-  }
+  // Virtual for testing.
+  virtual const base::Optional<SearchSuggestData>& search_suggest_data() const;
 
-  const SearchSuggestLoader::Status& search_suggest_status() const {
-    return search_suggest_status_;
-  }
+  virtual const SearchSuggestLoader::Status& search_suggest_status() const;
 
   // Determines if a request for search suggestions should be made. If a request
   // should not be made immediately call SearchSuggestDataLoaded with the
   // reason. Otherwise requests an asynchronous refresh from the network. After
   // the update completes, regardless of success, OnSearchSuggestDataUpdated
   // will be called on the observers.
-  void Refresh();
+  // Virtual for testing.
+  virtual void Refresh();
 
   // Add/remove observers. All observers must unregister themselves before the
   // SearchSuggestService is destroyed.
@@ -99,7 +104,18 @@ class SearchSuggestService : public KeyedService {
 
   // Called when suggestions are displayed on the NTP, clears the cached data
   // and updates timestamps and impression counts.
-  void SuggestionsDisplayed();
+  // Virtual for testing.
+  virtual void SuggestionsDisplayed();
+
+ protected:
+  // Called when a Refresh() is requested. If |status|==OK, |data| will contain
+  // the fetched data. Otherwise |data| will be nullopt and |status| will
+  // indicate if the request failed or the reason it was not sent.
+  //
+  // If the |status|==FATAL_ERROR freeze future requests until the request
+  // freeze interval has elapsed.
+  void SearchSuggestDataLoaded(SearchSuggestLoader::Status status,
+                               const base::Optional<SearchSuggestData>& data);
 
  private:
   class SigninObserver;
@@ -109,15 +125,6 @@ class SearchSuggestService : public KeyedService {
   // Either calls SearchSuggestLoader::Load with |blocklist| or immediately
   // calls SearchSuggestDataLoaded with the reason a request was not made.
   void MaybeLoadWithBlocklist(const std::string& blocklist);
-
-  // Called when a Refresh() is requested. If |status|==OK, |data| will contain
-  // the fetched data. Otherwise |data| will be nullopt and |status| will
-  // indicate if the request failed or the reason it was not sent.
-  //
-  // If the |status|==FATAL_ERROR freeze future requests until the request
-  // freeze interval has elapsed.
-  void SearchSuggestDataLoaded(SearchSuggestLoader::Status status,
-                               const base::Optional<SearchSuggestData>& data);
 
   void NotifyObservers();
 

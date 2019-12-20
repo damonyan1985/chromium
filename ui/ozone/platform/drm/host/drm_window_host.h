@@ -16,6 +16,7 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/drm/host/gpu_thread_observer.h"
 #include "ui/platform_window/platform_window.h"
+#include "ui/platform_window/platform_window_delegate.h"
 
 namespace ui {
 
@@ -25,7 +26,6 @@ class DrmOverlayManager;
 class DrmWindowHostManager;
 class EventFactoryEvdev;
 class GpuThreadAdapter;
-class PlatformWindowDelegate;
 
 // Implementation of the platform window. This object and its handle |widget_|
 // uniquely identify a window. Since the DRI/GBM platform is split into 2
@@ -53,14 +53,15 @@ class DrmWindowHost : public PlatformWindow,
 
   void Initialize();
 
-  gfx::AcceleratedWidget GetAcceleratedWidget();
+  gfx::AcceleratedWidget GetAcceleratedWidget() const;
 
   gfx::Rect GetCursorConfinedBounds() const;
 
   // PlatformWindow:
-  void Show() override;
+  void Show(bool inactive) override;
   void Hide() override;
   void Close() override;
+  bool IsVisible() const override;
   void PrepareForShutdown() override;
   void SetBounds(const gfx::Rect& bounds) override;
   gfx::Rect GetBounds() override;
@@ -73,12 +74,20 @@ class DrmWindowHost : public PlatformWindow,
   void Minimize() override;
   void Restore() override;
   PlatformWindowState GetPlatformWindowState() const override;
+  void Activate() override;
+  void Deactivate() override;
+  void SetUseNativeFrame(bool use_native_frame) override;
+  bool ShouldUseNativeFrame() const override;
   void SetCursor(PlatformCursor cursor) override;
   void MoveCursorTo(const gfx::Point& location) override;
   void ConfineCursorToBounds(const gfx::Rect& bounds) override;
-  PlatformImeController* GetPlatformImeController() override;
   void SetRestoredBoundsInPixels(const gfx::Rect& bounds) override;
   gfx::Rect GetRestoredBoundsInPixels() const override;
+  void SetWindowIcons(const gfx::ImageSkia& window_icon,
+                      const gfx::ImageSkia& app_icon) override;
+  void SizeConstraintsChanged() override;
+
+  void OnMouseEnter();
 
   // PlatformEventDispatcher:
   bool CanDispatchEvent(const PlatformEvent& event) override;
@@ -98,7 +107,8 @@ class DrmWindowHost : public PlatformWindow,
   DrmCursor* const cursor_;                       // Not owned.
   DrmWindowHostManager* const window_manager_;    // Not owned.
   DrmDisplayHostManager* const display_manager_;  // Not owned.
-  DrmOverlayManager* const overlay_manager_;      // Not owned.
+  // TODO(crbug.com/936425): Remove after VizDisplayCompositor feature launches.
+  DrmOverlayManager* const overlay_manager_;  // Not owned.
 
   gfx::Rect bounds_;
   const gfx::AcceleratedWidget widget_;

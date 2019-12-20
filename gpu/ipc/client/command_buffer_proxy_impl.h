@@ -115,6 +115,7 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
   void GetGpuFence(uint32_t gpu_fence_id,
                    base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)>
                        callback) override;
+  void SetDisplayTransform(gfx::OverlayTransform transform) override;
 
   void SetLock(base::Lock* lock) override;
   void EnsureWorkVisible() override;
@@ -150,7 +151,6 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
   const base::UnsafeSharedMemoryRegion& GetSharedStateRegion() const {
     return shared_state_shm_;
   }
-  uint32_t CreateStreamTexture(uint32_t texture_id);
 
  private:
   typedef std::map<int32_t, scoped_refptr<gpu::Buffer>> TransferBufferMap;
@@ -178,12 +178,14 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
   void OnDestroyed(gpu::error::ContextLostReason reason,
                    gpu::error::Error error);
   void OnConsoleMessage(const GPUCommandBufferConsoleMessage& message);
+  void OnGpuSwitched(gl::GpuPreference active_gpu_heuristic);
   void OnSignalAck(uint32_t id, const CommandBuffer::State& state);
   void OnSwapBuffersCompleted(const SwapBuffersCompleteParams& params);
   void OnBufferPresented(uint64_t swap_id,
                          const gfx::PresentationFeedback& feedback);
   void OnGetGpuFenceHandleComplete(uint32_t gpu_fence_id,
                                    const gfx::GpuFenceHandle&);
+  void OnReturnData(const std::vector<uint8_t>& data);
 
   // Try to read an updated copy of the state from shared memory, and calls
   // OnGpuStateError() if the new state has an error.
@@ -274,7 +276,7 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
   GetGpuFenceTaskMap get_gpu_fence_tasks_;
 
   scoped_refptr<base::SingleThreadTaskRunner> callback_thread_;
-  base::WeakPtrFactory<CommandBufferProxyImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<CommandBufferProxyImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CommandBufferProxyImpl);
 };

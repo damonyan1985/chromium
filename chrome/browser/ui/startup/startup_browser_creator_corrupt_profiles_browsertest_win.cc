@@ -123,7 +123,7 @@ class StartupBrowserCreatorCorruptProfileTest : public InProcessBrowserTest {
 
     base::FilePath dir_to_delete = user_data_dir.AppendASCII(basepath);
     return base::DirectoryExists(dir_to_delete) &&
-           base::DeleteFile(dir_to_delete, true);
+           base::DeleteFileRecursively(dir_to_delete);
   }
 
   bool RemoveCreateDirectoryPermissionForUserDataDirectory() {
@@ -418,8 +418,9 @@ bool StartupBrowserCreatorCorruptProfileTest::
   return RemoveCreateDirectoryPermissionForUserDataDirectory();
 }
 
+// Flaky: https://crbug.com/951787
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorCorruptProfileTest,
-                       DeletedProfileFallbackToUserManager) {
+                       DISABLED_DeletedProfileFallbackToUserManager) {
   CheckBrowserWindows({});
   ExpectUserManagerToShow();
 }

@@ -31,7 +31,7 @@ class JniOAuthTokenGetter : public OAuthTokenGetter {
   ~JniOAuthTokenGetter() override;
 
   // OAuthTokenGetter overrides.
-  void CallWithToken(const TokenCallback& on_access_token) override;
+  void CallWithToken(TokenCallback on_access_token) override;
   void InvalidateCache() override;
 
   base::WeakPtr<JniOAuthTokenGetter> GetWeakPtr();
@@ -40,7 +40,7 @@ class JniOAuthTokenGetter : public OAuthTokenGetter {
   THREAD_CHECKER(thread_checker_);
 
   base::WeakPtr<JniOAuthTokenGetter> weak_ptr_;
-  base::WeakPtrFactory<JniOAuthTokenGetter> weak_factory_;
+  base::WeakPtrFactory<JniOAuthTokenGetter> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(JniOAuthTokenGetter);
 };
 

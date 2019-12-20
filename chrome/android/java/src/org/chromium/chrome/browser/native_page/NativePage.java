@@ -36,11 +36,6 @@ public interface NativePage {
     int getBackgroundColor();
 
     /**
-     * @return The theme color of the page.
-     */
-    int getThemeColor();
-
-    /**
      * @return True if the native page needs the toolbar shadow to be drawn.
      */
     boolean needsToolbarShadow();
@@ -49,6 +44,13 @@ public interface NativePage {
      * Updates the native page based on the given url.
      */
     void updateForUrl(String url);
+
+    /**
+     * @return {@code true} if the native page is in inactive/frozen state.
+     */
+    default boolean isFrozen() {
+        return false;
+    }
 
     /**
      * Called after a page has been removed from the view hierarchy and will no longer be used.

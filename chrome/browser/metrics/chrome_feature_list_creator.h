@@ -17,7 +17,6 @@
 #include "chrome/installer/util/master_preferences.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/prefs/pref_service.h"
-#include "services/preferences/public/cpp/in_process_service_factory.h"
 
 class ChromeMetricsServicesManagerClient;
 
@@ -25,7 +24,9 @@ class ChromeMetricsServicesManagerClient;
 // setting up field trials, e.g. VariationsService, MetricsServicesManager etc.
 // before the full browser loop starts. The |local_state| is instantiated, and
 // its ownership will be taken by BrowserProcessImpl when the full browser
-// starts.
+// starts. Note: On Chrome OS, this class depends on
+// BrowserPolicyConnectorChromeOS whose behavior depends on DBusThreadManager
+// being initialized.
 class ChromeFeatureListCreator {
  public:
   ChromeFeatureListCreator();
@@ -38,6 +39,9 @@ class ChromeFeatureListCreator {
   // Sets the application locale and verifies (via a CHECK) that it matches
   // what was used when creating field trials.
   void SetApplicationLocale(const std::string& locale);
+
+  // Overrides cached UI strings on the resource bundle once it is initialized.
+  void OverrideCachedUIStrings();
 
   // Gets the MetricsServicesManagerClient* used in this class.
   metrics_services_manager::MetricsServicesManagerClient*
@@ -58,14 +62,15 @@ class ChromeFeatureListCreator {
   std::unique_ptr<installer::MasterPreferences> TakeMasterPrefs();
 #endif
 
-  // Passes ownership of the |pref_service_factory_| to the caller.
-  std::unique_ptr<prefs::InProcessPrefServiceFactory> TakePrefServiceFactory();
-
   PrefService* local_state() { return local_state_.get(); }
   policy::ChromeBrowserPolicyConnector* browser_policy_connector() {
     return browser_policy_connector_.get();
   }
   const std::string& actual_locale() { return actual_locale_; }
+
+  ChromeBrowserFieldTrials* browser_field_trials() {
+    return browser_field_trials_.get();
+  }
 
  private:
   void CreatePrefService();
@@ -98,8 +103,6 @@ class ChromeFeatureListCreator {
 
   std::unique_ptr<policy::ChromeBrowserPolicyConnector>
       browser_policy_connector_;
-
-  std::unique_ptr<prefs::InProcessPrefServiceFactory> pref_service_factory_;
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   std::unique_ptr<installer::MasterPreferences> installer_master_prefs_;

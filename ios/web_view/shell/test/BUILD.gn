@@ -4,6 +4,7 @@
 
 import("//ios/build/config.gni")
 import("//ios/third_party/earl_grey/ios_eg_test.gni")
+import("//ios/third_party/features.gni")
 
 group("all_tests") {
   testonly = true
@@ -27,6 +28,13 @@ ios_eg_test("ios_web_view_shell_egtests") {
     "//net:test_support",
   ]
 
+  if (ios_third_party_material_components_built_as_framework) {
+    deps += [
+      "//ios/third_party/material_components_ios:material_components_ios+bundle",
+      "//ios/third_party/material_components_ios:material_components_ios+link",
+    ]
+  }
+
   configs += [ "//build/config/compiler:enable_arc" ]
 
   assert_no_deps = ios_assert_no_deps
@@ -38,6 +46,7 @@ source_set("earl_grey_test_support") {
   deps = [
     "//base",
     "//base/test:test_support",
+    "//ios/third_party/webkit",
     "//ios/web_view/shell",
   ]
 
@@ -46,10 +55,7 @@ source_set("earl_grey_test_support") {
     "//ios/third_party/earl_grey:earl_grey+link",
   ]
 
-  libs = [
-    "WebKit.framework",
-    "XCTest.framework",
-  ]
+  libs = [ "XCTest.framework" ]
 
   sources = [
     "earl_grey/web_view_shell_matchers.h",

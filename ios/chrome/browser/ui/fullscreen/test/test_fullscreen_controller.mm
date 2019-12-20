@@ -7,6 +7,7 @@
 #import "ios/chrome/browser/ui/broadcaster/chrome_broadcaster.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_controller_observer.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_model.h"
+#import "ios/chrome/browser/ui/fullscreen/fullscreen_model_observer.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -23,14 +24,16 @@ ChromeBroadcaster* TestFullscreenController::broadcaster() {
   return broadcaster_;
 }
 
-void TestFullscreenController::SetWebStateList(WebStateList* web_state_list) {}
+void TestFullscreenController::SetWebStateList(WebStateList* web_state_list) {
+  web_state_list_ = web_state_list;
+}
 
 const WebStateList* TestFullscreenController::GetWebStateList() const {
-  return nullptr;
+  return web_state_list_;
 }
 
 WebStateList* TestFullscreenController::GetWebStateList() {
-  return nullptr;
+  return web_state_list_;
 }
 
 void TestFullscreenController::AddObserver(
@@ -57,6 +60,10 @@ void TestFullscreenController::DecrementDisabledCounter() {
     model_->DecrementDisabledCounter();
 }
 
+bool TestFullscreenController::ResizesScrollView() const {
+  return model_->ResizesScrollView();
+}
+
 void TestFullscreenController::BrowserTraitCollectionChangedBegin() {}
 
 void TestFullscreenController::BrowserTraitCollectionChangedEnd() {}
@@ -77,15 +84,43 @@ UIEdgeInsets TestFullscreenController::GetCurrentViewportInsets() const {
   return model_ ? model_->current_toolbar_insets() : UIEdgeInsetsZero;
 }
 
+void TestFullscreenController::EnterFullscreen() {}
+
+void TestFullscreenController::ExitFullscreen() {
+  if (model_)
+    model_->ResetForNavigation();
+}
+
 void TestFullscreenController::Shutdown() {
   for (auto& observer : observers_) {
     observer.FullscreenControllerWillShutDown(this);
   }
 }
 
-void TestFullscreenController::EnterFullscreen() {}
+void TestFullscreenController::OnFullscreenViewportInsetRangeChanged(
+    UIEdgeInsets min_viewport_insets,
+    UIEdgeInsets max_viewport_insets) {
+  for (auto& observer : observers_) {
+    observer.FullscreenViewportInsetRangeChanged(this, min_viewport_insets,
+                                                 max_viewport_insets);
+  }
+}
 
-void TestFullscreenController::ExitFullscreen() {
-  if (model_)
-    model_->ResetForNavigation();
+void TestFullscreenController::OnFullscreenProgressUpdated(CGFloat progress) {
+  for (auto& observer : observers_) {
+    observer.FullscreenProgressUpdated(this, progress);
+  }
+}
+
+void TestFullscreenController::OnFullscreenEnabledStateChanged(bool enabled) {
+  for (auto& observer : observers_) {
+    observer.FullscreenEnabledStateChanged(this, enabled);
+  }
+}
+
+void TestFullscreenController::OnFullscreenWillAnimate(
+    FullscreenAnimator* animator) {
+  for (auto& observer : observers_) {
+    observer.FullscreenWillAnimate(this, animator);
+  }
 }

@@ -8,9 +8,6 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/sync_ui_util.h"
-#include "components/sync/driver/sync_service.h"
-#include "components/sync/engine/sync_status.h"
-#include "components/sync/protocol/sync_protocol_error.h"
 
 AvatarButtonErrorController::AvatarButtonErrorController(
     AvatarButtonErrorControllerDelegate* delegate,
@@ -68,10 +65,9 @@ AvatarButtonErrorController::SyncErrorObserver::SyncErrorObserver(
     Profile* profile,
     AvatarButtonErrorController* avatar_button_error_controller)
     : profile_(profile),
-      avatar_button_error_controller_(avatar_button_error_controller),
-      sync_observer_(this) {
+      avatar_button_error_controller_(avatar_button_error_controller) {
   syncer::SyncService* sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (sync_service)
     sync_observer_.Add(sync_service);
 }
@@ -85,13 +81,11 @@ void AvatarButtonErrorController::SyncErrorObserver::OnStateChanged(
 
 bool AvatarButtonErrorController::SyncErrorObserver::HasSyncError() {
   syncer::SyncService* sync_service =
-      ProfileSyncServiceFactory::GetSyncServiceForProfile(profile_);
+      ProfileSyncServiceFactory::GetForProfile(profile_);
   if (sync_service) {
-    syncer::SyncStatus status;
-    sync_service->QueryDetailedSyncStatus(&status);
     return sync_service->HasUnrecoverableError() ||
-           status.sync_protocol_error.action == syncer::UPGRADE_CLIENT ||
            sync_ui_util::ShouldShowPassphraseError(sync_service) ||
+           sync_ui_util::ShouldShowSyncKeysMissingError(sync_service) ||
            sync_ui_util::ShouldRequestSyncConfirmation(sync_service);
   }
   return false;

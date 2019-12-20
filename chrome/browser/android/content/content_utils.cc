@@ -2,14 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/android/scoped_java_ref.h"
+#include "chrome/android/chrome_jni_headers/ContentUtils_jni.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/user_agent.h"
-#include "jni/ContentUtils_jni.h"
 
 static base::android::ScopedJavaLocalRef<jstring>
 JNI_ContentUtils_GetBrowserUserAgent(JNIEnv* env) {

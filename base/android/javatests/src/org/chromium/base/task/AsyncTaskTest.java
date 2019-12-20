@@ -4,8 +4,9 @@
 
 package org.chromium.base.task;
 
-import android.support.annotation.NonNull;
 import android.support.test.filters.SmallTest;
+
+import androidx.annotation.NonNull;
 
 import org.hamcrest.CoreMatchers;
 import org.junit.Rule;
@@ -28,7 +29,7 @@ import java.util.concurrent.TimeUnit;
  */
 @RunWith(BaseJUnit4ClassRunner.class)
 public class AsyncTaskTest {
-    private static class SpecialChromeAsyncTask extends AsyncTask<Void> {
+    private static class SpecialChromeAsyncTask extends BackgroundOnlyAsyncTask<Void> {
         @Override
         protected Void doInBackground() {
             return null;
@@ -126,4 +127,22 @@ public class AsyncTaskTest {
                 CoreMatchers.not(CoreMatchers.containsString("SpecialChromeAsyncTask")));
         new SpecialChromeAsyncTask().executeOnExecutor(executor);
     }
+
+    /**
+     * Test verifying that tasks which specify that they are not using onPostExecute
+     * don't trigger it.
+     */
+    @Test
+    @SmallTest
+    public void testTaskNotNeedingPostExecutionDoesNotTriggerIt() {
+        new BackgroundOnlyAsyncTask<Void>() {
+            @Override
+            protected Void doInBackground() {
+                return null;
+            }
+            // Calling onPostExecute on this class causes failure.
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    // TODO(ksolt): do we need any post execution tests here?
 }

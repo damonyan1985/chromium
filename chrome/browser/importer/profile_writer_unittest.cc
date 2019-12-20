@@ -12,9 +12,11 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind_test_util.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/importer/importer_unittest_utils.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/importer/imported_bookmark_entry.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -24,12 +26,12 @@
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_types.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using bookmarks::BookmarkModel;
-using bookmarks::UrlAndTitle;
 using bookmarks::TitledUrlMatch;
+using bookmarks::UrlAndTitle;
 
 class TestProfileWriter : public ProfileWriter {
  public:
@@ -98,19 +100,21 @@ class ProfileWriterTest : public testing::Test {
             profile, ServiceAccessType::EXPLICIT_ACCESS);
     history::QueryOptions options;
     base::CancelableTaskTracker history_task_tracker;
+    base::RunLoop loop;
     history_service->QueryHistory(
-        base::string16(),
-        options,
-        base::Bind(&ProfileWriterTest::HistoryQueryComplete,
-                   base::Unretained(this)),
+        base::string16(), options,
+        base::BindLambdaForTesting([&](history::QueryResults results) {
+          history_count_ = results.size();
+          loop.Quit();
+        }),
         &history_task_tracker);
-    base::RunLoop().Run();
+    loop.Run();
   }
 
-  void HistoryQueryComplete(history::QueryResults* results) {
-    base::RunLoop::QuitCurrentWhenIdleDeprecated();
-    history_count_ = results->size();
-  }
+  // Creates a TemplateURL from the provided data.
+  std::unique_ptr<TemplateURL> CreateTemplateURL(const std::string& keyword,
+                                                 const std::string& url,
+                                                 const std::string& short_name);
 
  protected:
   std::vector<ImportedBookmarkEntry> bookmarks_;
@@ -129,7 +133,7 @@ class ProfileWriterTest : public testing::Test {
     bookmarks_.push_back(entry);
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(ProfileWriterTest);
 };
@@ -192,6 +196,17 @@ TEST_F(ProfileWriterTest, CheckBookmarksAfterWritingDataTwice) {
   VerifyBookmarksCount(bookmarks_record, bookmark_model, 2);
 }
 
+std::unique_ptr<TemplateURL> ProfileWriterTest::CreateTemplateURL(
+    const std::string& keyword,
+    const std::string& url,
+    const std::string& short_name) {
+  TemplateURLData data;
+  data.SetKeyword(base::ASCIIToUTF16(keyword));
+  data.SetShortName(base::ASCIIToUTF16(short_name));
+  data.SetURL(TemplateURLRef::DisplayURLToURLRef(base::ASCIIToUTF16(url)));
+  return std::make_unique<TemplateURL>(data);
+}
+
 // Verify that history entires are not duplicated when added twice.
 TEST_F(ProfileWriterTest, CheckHistoryAfterWritingDataTwice) {
   TestingProfile profile;
@@ -209,4 +224,37 @@ TEST_F(ProfileWriterTest, CheckHistoryAfterWritingDataTwice) {
   profile_writer->AddHistoryPage(pages_, history::SOURCE_FIREFOX_IMPORTED);
   VerifyHistoryCount(&profile);
   EXPECT_EQ(original_history_count, history_count_);
+}
+
+TEST_F(ProfileWriterTest, AddKeywords) {
+  TestingProfile profile;
+  ASSERT_TRUE(profile.CreateHistoryService(true, false));
+  TemplateURLServiceFactory::GetInstance()->SetTestingFactoryAndUse(
+      &profile,
+      base::BindRepeating(&TemplateURLServiceFactory::BuildInstanceFor));
+
+  TemplateURLService::OwnedTemplateURLVector keywords;
+  keywords.push_back(CreateTemplateURL("key1", "http://key1.com", "n1"));
+  // This entry will not be added since it has the same key as an existing
+  // keyword.
+  keywords.push_back(CreateTemplateURL("key1", "http://key1_1.com", "n1_1"));
+  keywords.push_back(CreateTemplateURL("key2", "http://key2.com", "n2"));
+  // This entry will not be added since the keyword contains spaces.
+  keywords.push_back(CreateTemplateURL("key 3", "http://key3.com", "n3"));
+
+  auto profile_writer = base::MakeRefCounted<TestProfileWriter>(&profile);
+  profile_writer->AddKeywords(std::move(keywords), false);
+
+  TemplateURLService* turl_model =
+      TemplateURLServiceFactory::GetForProfile(&profile);
+  auto turls = turl_model->GetTemplateURLs();
+  EXPECT_EQ(turls.size(), 2u);
+
+  EXPECT_EQ(turls[0]->keyword(), base::ASCIIToUTF16("key1"));
+  EXPECT_EQ(turls[0]->url(), "http://key1.com");
+  EXPECT_EQ(turls[0]->short_name(), base::ASCIIToUTF16("n1"));
+
+  EXPECT_EQ(turls[1]->keyword(), base::ASCIIToUTF16("key2"));
+  EXPECT_EQ(turls[1]->url(), "http://key2.com");
+  EXPECT_EQ(turls[1]->short_name(), base::ASCIIToUTF16("n2"));
 }

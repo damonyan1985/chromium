@@ -59,8 +59,9 @@ URLDownloader::URLDownloader(
       base_directory_(chrome_profile_path),
       mime_type_(),
       url_loader_factory_(std::move(url_loader_factory)),
-      task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      task_runner_(base::CreateSequencedTaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
+           base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       task_tracker_() {}
 
@@ -83,7 +84,7 @@ void URLDownloader::RemoveOfflineURL(const GURL& url) {
 }
 
 void URLDownloader::DownloadOfflineURL(const GURL& url) {
-  if (!base::ContainsValue(tasks_, std::make_pair(DOWNLOAD, url))) {
+  if (!base::Contains(tasks_, std::make_pair(DOWNLOAD, url))) {
     tasks_.push_back(std::make_pair(DOWNLOAD, url));
     HandleNextTask();
   }
@@ -122,7 +123,7 @@ void URLDownloader::DownloadCompletionHandler(
         task_runner_.get(), FROM_HERE,
         base::Bind(
             [](const base::FilePath& offline_directory_path) {
-              base::DeleteFile(offline_directory_path, true);
+              base::DeleteFileRecursively(offline_directory_path);
             },
             directory_path),
         post_delete);
@@ -153,7 +154,7 @@ void URLDownloader::HandleNextTask() {
   if (task.first == DELETE) {
     task_tracker_.PostTaskAndReplyWithResult(
         task_runner_.get(), FROM_HERE,
-        base::Bind(&base::DeleteFile, directory_path, true),
+        base::Bind(&base::DeleteFileRecursively, directory_path),
         base::Bind(&URLDownloader::DeleteCompletionHandler,
                    base::Unretained(this), url));
   } else if (task.first == DOWNLOAD) {

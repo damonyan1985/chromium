@@ -10,11 +10,12 @@
 #include "ash/assistant/model/assistant_query.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
 #include "ash/assistant/ui/assistant_view_delegate.h"
-#include "ash/assistant/ui/logo_view/base_logo_view.h"
+#include "ash/assistant/ui/logo_view/logo_view.h"
 #include "ash/assistant/util/assistant_util.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 
@@ -72,12 +73,12 @@ void AssistantMiniView::InitLayout() {
           2 * kSpacingDip));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
   // Molecule icon.
-  BaseLogoView* molecule_icon = BaseLogoView::Create();
+  LogoView* molecule_icon = LogoView::Create();
   molecule_icon->SetPreferredSize(gfx::Size(kIconSizeDip, kIconSizeDip));
-  molecule_icon->SetState(BaseLogoView::State::kMoleculeWavy,
+  molecule_icon->SetState(LogoView::State::kMoleculeWavy,
                           /*animate=*/false);
   AddChildView(molecule_icon);
 
@@ -89,6 +90,7 @@ void AssistantMiniView::InitLayout() {
                           .DeriveWithWeight(gfx::Font::Weight::MEDIUM));
   label_->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
   label_->SetLineHeight(kLineHeightDip);
+  label_->SetBackground(views::CreateSolidBackground(SK_ColorWHITE));
   AddChildView(label_);
 
   // Initialize the prompt.
@@ -97,8 +99,7 @@ void AssistantMiniView::InitLayout() {
 
 void AssistantMiniView::ButtonPressed(views::Button* sender,
                                       const ui::Event& event) {
-  if (mini_view_delegate_)
-    mini_view_delegate_->OnAssistantMiniViewPressed();
+  delegate_->OnMiniViewPressed();
 }
 
 void AssistantMiniView::OnInputModalityChanged(InputModality input_modality) {
@@ -106,7 +107,7 @@ void AssistantMiniView::OnInputModalityChanged(InputModality input_modality) {
 }
 
 void AssistantMiniView::OnResponseChanged(
-    const std::shared_ptr<AssistantResponse>& response) {
+    const scoped_refptr<AssistantResponse>& response) {
   // When a response changes, the committed query becomes active. We'll cache
   // the text for that query to use as our prompt when not using the stylus.
   const AssistantQuery& committed_query =

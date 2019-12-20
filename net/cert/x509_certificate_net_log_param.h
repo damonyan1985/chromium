@@ -15,13 +15,20 @@ class Value;
 
 namespace net {
 
-class NetLogCaptureMode;
 class X509Certificate;
 
 // Creates NetLog parameter to describe an X509Certificate.
-NET_EXPORT std::unique_ptr<base::Value> NetLogX509CertificateCallback(
+NET_EXPORT base::Value NetLogX509CertificateParams(
+    const X509Certificate* certificate);
+
+// Creates NetLog parameter to describe verification inputs: an X509Certificate,
+// hostname, VerifyFlags and optional OCSP response and SCT list.
+NET_EXPORT base::Value NetLogX509CertificateVerifyParams(
     const X509Certificate* certificate,
-    NetLogCaptureMode capture_mode);
+    const std::string& hostname,
+    int verify_flags,
+    const std::string& ocsp_response,
+    const std::string& sct_list);
 
 }  // namespace net
 

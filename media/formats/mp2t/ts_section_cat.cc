@@ -8,7 +8,6 @@
 
 #include "base/logging.h"
 #include "media/base/bit_reader.h"
-#include "media/base/encryption_scheme.h"
 #include "media/formats/mp2t/descriptors.h"
 #include "media/formats/mp2t/mp2t_common.h"
 

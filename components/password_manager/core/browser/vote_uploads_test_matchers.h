@@ -25,6 +25,17 @@ MATCHER_P(SignatureIsSameAs,
   return false;
 }
 
+MATCHER_P(SignatureIs,
+          signature,
+          std::string(negation ? "signature isn't " : "signature is ") +
+              base::NumberToString(signature)) {
+  if (signature == arg.form_signature())
+    return true;
+
+  *result_listener << "signature is " << arg.form_signature() << " instead";
+  return false;
+}
+
 MATCHER_P(SubmissionEventIsSameAs,
           expected_submission_event,
           std::string(negation ? "submission event isn't "
@@ -156,6 +167,10 @@ MATCHER_P2(UploadedGenerationTypesAre,
     }
   }
   return true;
+}
+
+MATCHER_P(PasswordsWereRevealed, passwords_were_revealed, "") {
+  return passwords_were_revealed == arg.passwords_were_revealed();
 }
 
 #endif  // COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_VOTE_UPLOADS_TEST_MATCHERS_H_

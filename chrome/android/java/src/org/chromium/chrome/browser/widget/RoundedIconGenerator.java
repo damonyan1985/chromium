@@ -11,13 +11,14 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Paint.FontMetrics;
 import android.graphics.RectF;
-import android.support.annotation.Nullable;
 import android.text.TextPaint;
 import android.text.TextUtils;
-import android.util.Log;
 
-import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.browser.UrlConstants;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+
+import org.chromium.base.Log;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.browser.util.UrlUtilities;
 
 import java.net.URI;
@@ -28,7 +29,7 @@ import java.util.Locale;
  * having a centered character drawn on top of it.
  */
 public class RoundedIconGenerator {
-    private static final String TAG = RoundedIconGenerator.class.getSimpleName();
+    private static final String TAG = "RoundedIconGenerator";
 
     private final int mIconWidthPx;
     private final int mIconHeightPx;
@@ -113,11 +114,9 @@ public class RoundedIconGenerator {
         String displayText = text.substring(0, length).toUpperCase(Locale.getDefault());
         float textWidth = mTextPaint.measureText(displayText);
 
-        canvas.drawText(
-                displayText,
-                (mIconWidthPx - textWidth) / 2f,
-                Math.round((Math.max(mIconHeightPx, mTextHeight) - mTextHeight)
-                        / 2.0f + mTextYOffset),
+        canvas.drawText(displayText, (mIconWidthPx - textWidth) / 2f,
+                Math.round(
+                        (Math.max(mIconHeightPx, mTextHeight) - mTextHeight) / 2.0f + mTextYOffset),
                 mTextPaint);
 
         return icon;

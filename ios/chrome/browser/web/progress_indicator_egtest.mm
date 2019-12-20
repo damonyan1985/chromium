@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <EarlGrey/EarlGrey.h>
-
 #include <memory>
 
 #include "base/mac/foundation_util.h"
@@ -14,13 +12,11 @@
 #import "base/test/ios/wait_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "ios/chrome/browser/ui/util/ui_util.h"
-#include "ios/chrome/test/app/navigation_test_util.h"
-#import "ios/chrome/test/app/web_view_interaction_test_util.h"
+#import "ios/chrome/browser/web/progress_indicator_app_interface.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/third_party/material_components_ios/src/components/ProgressView/src/MaterialProgressView.h"
+#import "ios/testing/earl_grey/earl_grey_test.h"
 #include "ios/web/public/test/http_server/html_response_provider.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #import "ios/web/public/test/http_server/http_server_util.h"
@@ -29,6 +25,16 @@
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+#if defined(CHROME_EARL_GREY_2)
+// TODO(crbug.com/1015113) The EG2 macro is breaking indexing for some reason
+// without the trailing semicolon.  For now, disable the extra semi warning
+// so Xcode indexing works for the egtest.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++98-compat-extra-semi"
+GREY_STUB_CLASS_IN_APP_MAIN_QUEUE(ProgressIndicatorAppInterface);
+#pragma clang diagnostic pop
+#endif  // defined(CHROME_EARL_GREY_2)
 
 namespace {
 
@@ -52,24 +58,7 @@ const char kSimplePageURL[] = "http://simplepage";
 
 // Matcher for progress view.
 id<GREYMatcher> ProgressView() {
-  return grey_kindOfClass([MDCProgressView class]);
-}
-
-// Matcher for the progress view with |progress|.
-id<GREYMatcher> ProgressViewWithProgress(CGFloat progress) {
-  MatchesBlock matches = ^BOOL(UIView* view) {
-    MDCProgressView* progressView = base::mac::ObjCCast<MDCProgressView>(view);
-    return progressView && progressView.progress == progress;
-  };
-
-  DescribeToBlock describe = ^(id<GREYDescription> description) {
-    [description
-        appendText:[NSString stringWithFormat:@"progress view with progress:%f",
-                                              progress]];
-  };
-
-  return [[GREYElementMatcherBlock alloc] initWithMatchesBlock:matches
-                                              descriptionBlock:describe];
+  return grey_kindOfClassName(@"MDCProgressView");
 }
 
 // Response provider that serves the page which never finishes loading.
@@ -173,7 +162,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // for a simple two item page, and the toolbar is visible.
 - (void)testProgressIndicatorShown {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -187,13 +176,14 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   web::test::SetUpHttpServer(std::move(uniqueInfinitePendingProvider));
   // The page being loaded never completes, so call the LoadUrl helper that
   // does not wait for the page to complete loading.
-  chrome_test_util::LoadUrl(infinitePendingURL);
+  [ChromeEarlGrey loadURL:infinitePendingURL waitForCompletion:NO];
 
   // Wait until the page is half loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
-  [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
+  [[EarlGrey selectElementWithMatcher:[ProgressIndicatorAppInterface
+                                          progressViewWithProgress:0.5]]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   [ChromeEarlGreyUI waitForToolbarVisible:YES];
@@ -203,7 +193,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // after a form is submitted, and the toolbar is visible.
 - (void)testProgressIndicatorShownOnFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -225,15 +215,16 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   // Load form first.
   [ChromeEarlGrey loadURL:formURL];
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Wait until the page is half loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
-  [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
+  [[EarlGrey selectElementWithMatcher:[ProgressIndicatorAppInterface
+                                          progressViewWithProgress:0.5]]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   [ChromeEarlGreyUI waitForToolbarVisible:YES];
@@ -242,7 +233,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
 // Tests that the progress indicator disappears after form has been submitted.
 - (void)testProgressIndicatorDisappearsAfterFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -257,12 +248,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   [ChromeEarlGrey loadURL:formURL];
 
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify the new page has been loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:ProgressView()]
@@ -272,7 +263,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator disappears after form post attempt with a
 // submit event that returns false.
 - (void)testProgressIndicatorDisappearsAfterSuppressedFormPost {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -285,12 +276,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   [ChromeEarlGrey loadURL:formURL];
 
   // Verify the form page has been loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify progress view is not visible.
-  [[EarlGrey selectElementWithMatcher:grey_kindOfClass([MDCProgressView class])]
+  [[EarlGrey selectElementWithMatcher:grey_kindOfClassName(@"MDCProgressView")]
       assertWithMatcher:grey_notVisible()];
 }
 

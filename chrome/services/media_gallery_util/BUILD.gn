@@ -3,14 +3,11 @@
 # found in the LICENSE file.
 
 import("//media/media_options.gni")
-import("//services/service_manager/public/service_manifest.gni")
 
 source_set("lib") {
   sources = [
     "ipc_data_source.cc",
     "ipc_data_source.h",
-    "media_gallery_util_service.cc",
-    "media_gallery_util_service.h",
     "media_metadata_parser.cc",
     "media_metadata_parser.h",
     "media_parser.cc",
@@ -29,12 +26,13 @@ source_set("lib") {
     sources += [
       "media_parser_android.cc",
       "media_parser_android.h",
+      "video_thumbnail_parser.cc",
+      "video_thumbnail_parser.h",
     ]
   }
 
   public_deps = [
     "//chrome/services/media_gallery_util/public/mojom",
-    "//services/service_manager/public/cpp",
   ]
 
   if (media_use_ffmpeg) {
@@ -64,9 +62,4 @@ if (is_android) {
       "//testing/gtest",
     ]
   }
-}
-
-service_manifest("manifest") {
-  name = "media_gallery_util"
-  source = "manifest.json"
 }

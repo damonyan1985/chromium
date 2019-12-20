@@ -5,10 +5,12 @@
 package org.chromium.chrome.browser.device;
 
 import org.chromium.base.CommandLine;
-import org.chromium.base.StrictModeContext;
 import org.chromium.base.SysUtils;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
-import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
+import org.chromium.chrome.browser.flags.FeatureUtilities;
+import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.chrome.browser.preferences.SharedPreferencesManager;
 import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -45,7 +47,9 @@ public class DeviceClassManager {
         if (SysUtils.isLowEndDevice()) {
             mEnableSnapshots = false;
             mEnableLayerDecorationCache = true;
-            mEnableAccessibilityLayout = true;
+            mEnableAccessibilityLayout =
+                    !FeatureUtilities.isTabGroupsAndroidContinuationChromeFlagEnabled()
+                    || !ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_GROUPS_ANDROID);
             mEnableAnimations = false;
             mEnablePrerendering = false;
             mEnableToolbarSwipe = false;
@@ -96,10 +100,8 @@ public class DeviceClassManager {
     public static boolean enableAccessibilityLayout() {
         if (getInstance().mEnableAccessibilityLayout) return true;
         if (!AccessibilityUtil.isAccessibilityEnabled()) return false;
-        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
-            return ChromePreferenceManager.getInstance().readBoolean(
-                    ChromePreferenceManager.ACCESSIBILITY_TAB_SWITCHER, true);
-        }
+        return SharedPreferencesManager.getInstance().readBoolean(
+                ChromePreferenceKeys.ACCESSIBILITY_TAB_SWITCHER, true);
     }
 
     /**
@@ -115,10 +117,8 @@ public class DeviceClassManager {
     public static boolean enableAnimations() {
         if (!getInstance().mEnableAnimations) return false;
         if (!AccessibilityUtil.isAccessibilityEnabled()) return true;
-        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
-            return !ChromePreferenceManager.getInstance().readBoolean(
-                    ChromePreferenceManager.ACCESSIBILITY_TAB_SWITCHER, true);
-        }
+        return !SharedPreferencesManager.getInstance().readBoolean(
+                ChromePreferenceKeys.ACCESSIBILITY_TAB_SWITCHER, true);
     }
 
     /**

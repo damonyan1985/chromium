@@ -5,7 +5,6 @@
 #import "ios/chrome/browser/ui/toolbar/primary_toolbar_view_controller.h"
 
 #include "base/logging.h"
-#import "ios/chrome/browser/ui/UIView+SizeClassSupport.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_animator.h"
 #import "ios/chrome/browser/ui/toolbar/adaptive_toolbar_view_controller+subclassing.h"
@@ -49,7 +48,7 @@
   __weak PrimaryToolbarViewController* weakSelf = self;
   [self.view.progressBar setProgress:0];
   [self.view.progressBar setHidden:NO
-                          animated:YES
+                          animated:[self areAnimationsEnabled]
                         completion:^(BOOL finished) {
                           [weakSelf stopProgressBar];
                         }];
@@ -69,7 +68,8 @@
 
 - (void)resetAfterSideSwipeSnapshot {
   [super resetAfterSideSwipeSnapshot];
-  self.view.backgroundColor = nil;
+  self.view.backgroundColor =
+      self.buttonFactory.toolbarConfiguration.backgroundColor;
   self.view.locationBarContainer.hidden = NO;
 }
 
@@ -77,6 +77,10 @@
 
 - (void)setScrollProgressForTabletOmnibox:(CGFloat)progress {
   [super setScrollProgressForTabletOmnibox:progress];
+
+  // Sometimes an NTP may make a delegate call when it's no longer visible.
+  if (!self.isNTP)
+    progress = 1;
 
   if (progress == 1) {
     self.view.locationBarContainer.transform = CGAffineTransformIdentity;
@@ -86,6 +90,7 @@
                (progress - 1));
   }
   self.view.locationBarContainer.alpha = progress;
+  self.view.separator.alpha = progress;
 
   // When the locationBarContainer is hidden, show the |fakeOmniboxTarget|.
   if (progress == 0 && !self.view.fakeOmniboxTarget) {
@@ -98,6 +103,7 @@
     [self.view removeFakeOmniboxTarget];
   }
 }
+
 #pragma mark - UIViewController
 
 - (void)loadView {
@@ -132,6 +138,13 @@
   }
 }
 
+- (void)viewDidLoad {
+  [super viewDidLoad];
+  if (@available(iOS 13, *)) {
+    [self updateLayoutForPreviousTraitCollection:nil];
+  }
+}
+
 - (void)didMoveToParentViewController:(UIViewController*)parent {
   [super didMoveToParentViewController:parent];
   UIView* omniboxView = self.view.locationBarContainer;
@@ -141,30 +154,16 @@
 
 - (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
   [super traitCollectionDidChange:previousTraitCollection];
-  [self.delegate
-      viewControllerTraitCollectionDidChange:previousTraitCollection];
-  if (IsCompactHeight(self)) {
-    self.view.locationBarExtraBottomPadding.constant =
-        kAdaptiveLocationBarExtraVerticalMargin;
-  } else {
-    self.view.locationBarExtraBottomPadding.constant = 0;
-  }
-  self.view.locationBarBottomConstraint.constant =
-      [self verticalMarginForLocationBarForFullscreenProgress:
-                self.previousFullscreenProgress];
-  if (previousTraitCollection.preferredContentSizeCategory !=
-      self.traitCollection.preferredContentSizeCategory) {
-    self.view.locationBarHeight.constant = [self
-        locationBarHeightForFullscreenProgress:self.previousFullscreenProgress];
-    self.view.locationBarContainer.layer.cornerRadius =
-        self.view.locationBarHeight.constant / 2;
-  }
+  [self updateLayoutForPreviousTraitCollection:previousTraitCollection];
 }
 
 #pragma mark - Property accessors
 
-- (void)setLocationBarView:(UIView*)locationBarView {
-  self.view.locationBarView = locationBarView;
+- (void)setLocationBarViewController:
+    (UIViewController*)locationBarViewController {
+  [self addChildViewController:locationBarViewController];
+  [locationBarViewController didMoveToParentViewController:self];
+  self.view.locationBarView = locationBarViewController.view;
 }
 
 - (void)setIsNTP:(BOOL)isNTP {
@@ -211,10 +210,13 @@
 
 - (void)animateFullscreenWithAnimator:(FullscreenAnimator*)animator {
   CGFloat finalProgress = animator.finalProgress;
-  [animator addAnimations:^{
-    [self updateForFullscreenProgress:finalProgress];
-    [self.view layoutIfNeeded];
-  }];
+  // Using the animator doesn't work as the animation doesn't trigger a relayout
+  // of the constraints (see crbug.com/978462, crbug.com/950994).
+  [UIView animateWithDuration:animator.duration
+                   animations:^{
+                     [self updateForFullscreenProgress:finalProgress];
+                     [self.view layoutIfNeeded];
+                   }];
 }
 
 #pragma mark - ToolbarAnimatee
@@ -257,6 +259,28 @@
 }
 
 #pragma mark - Private
+
+- (void)updateLayoutForPreviousTraitCollection:
+    (UITraitCollection*)previousTraitCollection {
+  [self.delegate
+      viewControllerTraitCollectionDidChange:previousTraitCollection];
+  if (IsCompactHeight(self)) {
+    self.view.locationBarExtraBottomPadding.constant =
+        kAdaptiveLocationBarExtraVerticalMargin;
+  } else {
+    self.view.locationBarExtraBottomPadding.constant = 0;
+  }
+  self.view.locationBarBottomConstraint.constant =
+      [self verticalMarginForLocationBarForFullscreenProgress:
+                self.previousFullscreenProgress];
+  if (previousTraitCollection.preferredContentSizeCategory !=
+      self.traitCollection.preferredContentSizeCategory) {
+    self.view.locationBarHeight.constant = [self
+        locationBarHeightForFullscreenProgress:self.previousFullscreenProgress];
+    self.view.locationBarContainer.layer.cornerRadius =
+        self.view.locationBarHeight.constant / 2;
+  }
+}
 
 - (CGFloat)clampedFontSizeMultiplier {
   return ToolbarClampedFontSizeMultiplier(

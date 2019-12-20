@@ -6,11 +6,11 @@
 #define CHROME_BROWSER_CHROMEOS_ARC_ARC_UTIL_H_
 
 #include <stdint.h>
+#include <memory>
 
-#include "ash/public/interfaces/voice_interaction_controller.mojom.h"
 #include "base/callback_forward.h"
 #include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
-#include "components/arc/arc_supervision_transition.h"
+#include "components/arc/session/arc_supervision_transition.h"
 
 // Most utility should be put in components/arc/arc_util.{h,cc}, rather than
 // here. However, some utility implementation requires other modules defined in
@@ -19,15 +19,24 @@
 // by DEPS.
 
 class AccountId;
+class GURL;
 class Profile;
+
+namespace aura {
+class Window;
+}  // namespace aura
 
 namespace base {
 class FilePath;
-}
+}  // namespace base
+
+namespace content {
+class WebContents;
+}  // namespace content
 
 namespace user_manager {
 class User;
-}
+}  // namespace user_manager
 
 namespace arc {
 
@@ -49,6 +58,11 @@ enum FileSystemCompatibilityState : int32_t {
   // "compatible" state. Be careful in the case adding a new enum value.
 };
 
+// Returns false if |profile| is not a real user profile but some internal
+// profile for service purposes, which should be ignored for ARC and metrics
+// recording. Also returns false if |profile| is null.
+bool IsRealUserProfile(const Profile* profile);
+
 // Returns true if ARC is allowed to run for the given profile.
 // Otherwise, returns false, e.g. if the Profile is not for the primary user,
 // ARC is not available on the device, it is in the flow to set up managed
@@ -62,8 +76,6 @@ bool IsArcProvisioned(const Profile* profile);
 
 // Returns true if the profile is unmanaged or if the policy
 // EcryptfsMigrationStrategy for the user doesn't disable the migration.
-// Specifically if the policy states to ask the user, it is also considered that
-// migration is allowed, so return true.
 bool IsArcMigrationAllowedByPolicyForProfile(const Profile* profile);
 
 // Returns true if the profile is temporarily blocked to run ARC in the current
@@ -160,10 +172,6 @@ void UpdateArcFileSystemCompatibilityPrefIfNeeded(
     const base::FilePath& profile_path,
     base::OnceClosure callback);
 
-// Returns whether Google Assistant feature is allowed for given |profile|.
-ash::mojom::AssistantAllowedState IsAssistantAllowedForProfile(
-    const Profile* profile);
-
 // Returns the supervision transition status as stored in profile prefs.
 ArcSupervisionTransition GetSupervisionTransition(const Profile* profile);
 
@@ -171,6 +179,30 @@ ArcSupervisionTransition GetSupervisionTransition(const Profile* profile);
 // session.
 bool IsPlayStoreAvailable();
 
+// Skip to show OOBE/in sesion UI asking users to set up ARC OptIn preferences,
+// iff all of them are managed by the admin policy.
+// Skips in session play terms of service for managed user and starts ARC
+// directly. Leaves B&R/GLS off if not set by admin since users don't see
+// the Tos page.
+bool ShouldStartArcSilentlyForManagedProfile(const Profile* profile);
+
+// Returns an ARC window with the given task ID.
+aura::Window* GetArcWindow(int32_t task_id);
+
+// Creates a web contents for an ARC Custom Tab using the given profile and url.
+std::unique_ptr<content::WebContents> CreateArcCustomTabWebContents(
+    Profile* profile,
+    const GURL& url);
+
+// Adds a suffix to the name based on the account type. If profile is not
+// provided, then defaults to the primary user profile.
+std::string GetHistogramNameByUserType(const std::string& base_name,
+                                       const Profile* profile = nullptr);
+
+// Adds a suffix to the name based on the account type of the primary user
+// profile.
+std::string GetHistogramNameByUserTypeForPrimaryProfile(
+    const std::string& base_name);
 }  // namespace arc
 
 #endif  // CHROME_BROWSER_CHROMEOS_ARC_ARC_UTIL_H_

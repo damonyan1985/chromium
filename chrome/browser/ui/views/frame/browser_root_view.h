@@ -5,9 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_ROOT_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_ROOT_VIEW_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "ui/views/widget/root_view.h"
+
+class ToolbarView;
 
 namespace ui {
 class OSExchangeData;
@@ -127,7 +131,7 @@ class BrowserRootView : public views::internal::RootView {
 
   std::unique_ptr<DropInfo> drop_info_;
 
-  base::WeakPtrFactory<BrowserRootView> weak_ptr_factory_;
+  base::WeakPtrFactory<BrowserRootView> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowserRootView);
 };

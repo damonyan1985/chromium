@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
+#include "components/policy/core/common/cloud/dm_token.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 
 namespace policy {
 namespace {
@@ -19,15 +21,19 @@ const base::FilePath::CharType kKeyCache[] =
 }  // namespace
 
 MachineLevelUserCloudPolicyStore::MachineLevelUserCloudPolicyStore(
-    const std::string& machine_dm_token,
+    const DMToken& machine_dm_token,
     const std::string& machine_client_id,
     const base::FilePath& policy_path,
     const base::FilePath& key_path,
+    bool cloud_policy_has_priority,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
     : DesktopCloudPolicyStore(policy_path,
                               key_path,
                               background_task_runner,
-                              PolicyScope::POLICY_SCOPE_MACHINE),
+                              PolicyScope::POLICY_SCOPE_MACHINE,
+                              cloud_policy_has_priority
+                                  ? PolicySource::POLICY_SOURCE_PRIORITY_CLOUD
+                                  : PolicySource::POLICY_SOURCE_CLOUD),
       machine_dm_token_(machine_dm_token),
       machine_client_id_(machine_client_id) {}
 
@@ -36,21 +42,22 @@ MachineLevelUserCloudPolicyStore::~MachineLevelUserCloudPolicyStore() {}
 // static
 std::unique_ptr<MachineLevelUserCloudPolicyStore>
 MachineLevelUserCloudPolicyStore::Create(
-    const std::string& machine_dm_token,
+    const DMToken& machine_dm_token,
     const std::string& machine_client_id,
     const base::FilePath& policy_dir,
+    bool cloud_policy_has_priority,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner) {
   base::FilePath policy_cache_file = policy_dir.Append(kPolicyCache);
   base::FilePath key_cache_file = policy_dir.Append(kKeyCache);
   return std::make_unique<MachineLevelUserCloudPolicyStore>(
       machine_dm_token, machine_client_id, policy_cache_file, key_cache_file,
-      background_task_runner);
+      cloud_policy_has_priority, background_task_runner);
 }
 
 void MachineLevelUserCloudPolicyStore::LoadImmediately() {
   // There is no global dm token, stop loading the policy cache. The policy will
   // be fetched in the end of enrollment process.
-  if (machine_dm_token_.empty()) {
+  if (!machine_dm_token_.is_valid()) {
     VLOG(1) << "LoadImmediately ignored, no DM token present.";
     return;
   }
@@ -61,7 +68,7 @@ void MachineLevelUserCloudPolicyStore::LoadImmediately() {
 void MachineLevelUserCloudPolicyStore::Load() {
   // There is no global dm token, stop loading the policy cache. The policy will
   // be fetched in the end of enrollment process.
-  if (machine_dm_token_.empty()) {
+  if (!machine_dm_token_.is_valid()) {
     VLOG(1) << "Load ignored, no DM token present.";
     return;
   }
@@ -77,7 +84,7 @@ MachineLevelUserCloudPolicyStore::CreateValidator(
       std::move(policy), background_task_runner());
   validator->ValidatePolicyType(
       dm_protocol::kChromeMachineLevelUserCloudPolicyType);
-  validator->ValidateDMToken(machine_dm_token_,
+  validator->ValidateDMToken(machine_dm_token_.value(),
                              CloudPolicyValidatorBase::DM_TOKEN_REQUIRED);
   validator->ValidateDeviceId(machine_client_id_,
                               CloudPolicyValidatorBase::DEVICE_ID_REQUIRED);
@@ -90,27 +97,32 @@ MachineLevelUserCloudPolicyStore::CreateValidator(
 }
 
 void MachineLevelUserCloudPolicyStore::SetupRegistration(
-    const std::string& machine_dm_token,
+    const DMToken& machine_dm_token,
     const std::string& machine_client_id) {
   machine_dm_token_ = machine_dm_token;
   machine_client_id_ = machine_client_id;
+}
+
+void MachineLevelUserCloudPolicyStore::InitWithoutToken() {
+  NotifyStoreError();
 }
 
 void MachineLevelUserCloudPolicyStore::Validate(
     std::unique_ptr<enterprise_management::PolicyFetchResponse> policy,
     std::unique_ptr<enterprise_management::PolicySigningKey> key,
     bool validate_in_background,
-    const UserCloudPolicyValidator::CompletionCallback& callback) {
+    UserCloudPolicyValidator::CompletionCallback callback) {
   std::unique_ptr<UserCloudPolicyValidator> validator = CreateValidator(
       std::move(policy), CloudPolicyValidatorBase::TIMESTAMP_VALIDATED);
 
   ValidateKeyAndSignature(validator.get(), key.get(), std::string());
 
   if (validate_in_background) {
-    UserCloudPolicyValidator::StartValidation(std::move(validator), callback);
+    UserCloudPolicyValidator::StartValidation(std::move(validator),
+                                              std::move(callback));
   } else {
     validator->RunValidation();
-    callback.Run(validator.get());
+    std::move(callback).Run(validator.get());
   }
 }
 

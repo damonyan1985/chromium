@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
@@ -15,9 +16,14 @@ namespace blink {
 
 // This class should only be used from inside the accessibility directory.
 class AXRelationCache {
+  USING_FAST_MALLOC(AXRelationCache);
+
  public:
   explicit AXRelationCache(AXObjectCacheImpl*);
   virtual ~AXRelationCache();
+
+  // Scan the initial document.
+  void Init();
 
   // Returns true if the given object's position in the tree was due to
   // aria-owns.
@@ -35,6 +41,19 @@ class AXRelationCache {
                       const Vector<String>& id_vector,
                       HeapVector<Member<AXObject>>& owned_children);
 
+  // Given an object that has explicitly set elements for aria-owns, update the
+  // internal state to reflect the new set of children owned by this object.
+  // Note that |owned_children| will be the AXObjects corresponding to the
+  // elements in |attr_associated_elements|. These elements are validated -
+  // exist in the DOM, and are a descendant of a shadow including ancestor.
+  void UpdateAriaOwnsFromAttrAssociatedElements(
+      const AXObject* owner,
+      const HeapVector<Member<Element>>& attr_associated_elements,
+      HeapVector<Member<AXObject>>& owned_children);
+
+  // Return true if any label ever pointed to the element via the for attribute.
+  bool MayHaveHTMLLabelViaForAttribute(const HTMLElement&);
+
   // Given an element in the DOM tree that was either just added or whose id
   // just changed, check to see if another object wants to be its parent due to
   // aria-owns. If so, update the tree by calling childrenChanged() on the
@@ -51,6 +70,8 @@ class AXRelationCache {
   void UpdateReverseRelations(const AXObject* relation_source,
                               const Vector<String>& target_ids);
 
+  void LabelChanged(Node*);
+
  private:
   // If any object is related to this object via <label for>, aria-owns,
   // aria-describedby or aria-labeledby, update the text for the related object.
@@ -60,6 +81,12 @@ class AXRelationCache {
   void UnmapOwnedChildren(const AXObject* owner, Vector<AXID>);
   void MapOwnedChildren(const AXObject* owner, Vector<AXID>);
   void GetReverseRelated(Node*, HeapVector<Member<AXObject>>& sources);
+
+  // Updates |aria_owner_to_children_mapping_| after calling UpdateAriaOwns for
+  // either the content attribute or the attr associated elements.
+  void UpdateAriaOwnerToChildrenMapping(
+      const AXObject* owner,
+      HeapVector<Member<AXObject>>& validated_owned_children_result);
 
   WeakPersistent<AXObjectCacheImpl> object_cache_;
 
@@ -87,13 +114,19 @@ class AXRelationCache {
   //   and fire the appropriate change events.
   HashMap<String, HashSet<AXID>> id_attr_to_related_mapping_;
 
+  // HTML id attributes that at one time havehad a <label for> pointing to it.
+  // IDs are not necessarily removed from this set. It is not necessary to
+  // remove IDs as false positives are ok. Being able to determine that a
+  // labelable element has never had an associated label allows the accessible
+  // name calculation to be optimized.
+  HashSet<AtomicString> all_previously_seen_label_target_ids_;
+
   // Helpers that call back into object cache
   AXObject* ObjectFromAXID(AXID) const;
   AXObject* GetOrCreate(Node*);
   AXObject* Get(Node*);
   void ChildrenChanged(AXObject*);
   void TextChanged(AXObject*);
-  void LabelChanged(Node*);
 
   DISALLOW_COPY_AND_ASSIGN(AXRelationCache);
 };

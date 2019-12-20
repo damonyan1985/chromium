@@ -7,74 +7,90 @@
 #include <string>
 #include <utility>
 
-#include "ash/accessibility/accessibility_controller.h"
+#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/public/cpp/spoken_feedback_event_rewriter_delegate.h"
 #include "ash/shell.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/chromeos/events/event_rewriter_chromeos.h"
 #include "ui/events/event.h"
 #include "ui/events/event_sink.h"
 
 namespace ash {
 
-SpokenFeedbackEventRewriter::SpokenFeedbackEventRewriter() = default;
+SpokenFeedbackEventRewriter::SpokenFeedbackEventRewriter(
+    ui::EventRewriterChromeOS* event_rewriter_chromeos)
+    : event_rewriter_chromeos_(event_rewriter_chromeos) {}
 
 SpokenFeedbackEventRewriter::~SpokenFeedbackEventRewriter() = default;
-
-void SpokenFeedbackEventRewriter::SetDelegate(
-    mojom::SpokenFeedbackEventRewriterDelegatePtr delegate) {
-  delegate_ = std::move(delegate);
-}
 
 void SpokenFeedbackEventRewriter::OnUnhandledSpokenFeedbackEvent(
     std::unique_ptr<ui::Event> event) const {
   DCHECK(event->IsKeyEvent()) << "Unexpected unhandled event type";
-  // For now, these events are sent directly to the primary display's EventSink.
-  // TODO: Pass the event to the original EventSource, not the primary one.
-  ui::EventSource* source =
-      Shell::GetPrimaryRootWindow()->GetHost()->GetEventSource();
-  if (SendEventToEventSource(source, event.get()).dispatcher_destroyed) {
+  // Send the event to the most recently rewritten event's continuation,
+  // (that is, through its EventSource). Under the assumption that a single
+  // SpokenFeedbackEventRewriter is not registered to multiple EventSources,
+  // this will be the same as this event's original source.
+  const char* failure_reason = nullptr;
+  if (continuation_) {
+    ui::EventDispatchDetails details = SendEvent(continuation_, event.get());
+    if (details.dispatcher_destroyed)
+      failure_reason = "destroyed dispatcher";
+    else if (details.target_destroyed)
+      failure_reason = "destroyed target";
+  } else if (continuation_.WasInvalidated()) {
+    failure_reason = "destroyed source";
+  } else {
+    failure_reason = "no prior rewrite";
+  }
+  if (failure_reason) {
     VLOG(0) << "Undispatched key " << event->AsKeyEvent()->key_code()
-            << " due to destroyed dispatcher.";
+            << " due to " << failure_reason << ".";
   }
 }
 
-ui::EventRewriteStatus SpokenFeedbackEventRewriter::RewriteEvent(
+ui::EventDispatchDetails SpokenFeedbackEventRewriter::RewriteEvent(
     const ui::Event& event,
-    std::unique_ptr<ui::Event>* new_event) {
-  if (!delegate_.is_bound() ||
+    const Continuation continuation) {
+  // Save continuation for |OnUnhandledSpokenFeedbackEvent()|.
+  continuation_ = continuation;
+
+  if (!delegate_ ||
       !Shell::Get()->accessibility_controller()->spoken_feedback_enabled())
-    return ui::EVENT_REWRITE_CONTINUE;
+    return SendEvent(continuation, &event);
 
   if (event.IsKeyEvent()) {
     const ui::KeyEvent* key_event = event.AsKeyEvent();
+    ui::EventRewriterChromeOS::MutableKeyState state(key_event);
+    event_rewriter_chromeos_->RewriteModifierKeys(*key_event, &state);
+    std::unique_ptr<ui::Event> rewritten_event;
+    ui::EventRewriterChromeOS::BuildRewrittenKeyEvent(*key_event, state,
+                                                      &rewritten_event);
+    const ui::KeyEvent* rewritten_key_event =
+        rewritten_event.get()->AsKeyEvent();
 
     bool capture = capture_all_keys_;
 
     // Always capture the Search key.
-    capture |= key_event->IsCommandDown();
+    capture |= rewritten_key_event->IsCommandDown() ||
+               rewritten_key_event->key_code() == ui::VKEY_LWIN;
 
     // Don't capture tab as it gets consumed by Blink so never comes back
     // unhandled. In third_party/WebKit/Source/core/input/EventHandler.cpp, a
     // default tab handler consumes tab even when no focusable nodes are found;
     // it sets focus to Chrome and eats the event.
-    if (key_event->GetDomKey() == ui::DomKey::TAB)
+    if (rewritten_key_event->GetDomKey() == ui::DomKey::TAB)
       capture = false;
 
-    delegate_->DispatchKeyEventToChromeVox(ui::Event::Clone(event), capture);
-    return capture ? ui::EVENT_REWRITE_DISCARD : ui::EVENT_REWRITE_CONTINUE;
+    delegate_->DispatchKeyEventToChromeVox(
+        ui::Event::Clone(*rewritten_key_event), capture);
+    return capture ? DiscardEvent(continuation)
+                   : SendEvent(continuation, &event);
   }
 
-  if (send_mouse_events_ && event.IsMouseEvent()) {
+  if (send_mouse_events_ && event.IsMouseEvent())
     delegate_->DispatchMouseEventToChromeVox(ui::Event::Clone(event));
-  }
 
-  return ui::EVENT_REWRITE_CONTINUE;
-}
-
-ui::EventRewriteStatus SpokenFeedbackEventRewriter::NextDispatchEvent(
-    const ui::Event& last_event,
-    std::unique_ptr<ui::Event>* new_event) {
-  NOTREACHED();
-  return ui::EVENT_REWRITE_CONTINUE;
+  return SendEvent(continuation, &event);
 }
 
 }  // namespace ash

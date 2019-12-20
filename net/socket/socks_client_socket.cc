@@ -12,6 +12,7 @@
 #include "base/stl_util.h"
 #include "base/sys_byteorder.h"
 #include "net/base/io_buffer.h"
+#include "net/dns/public/dns_query_type.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -60,9 +61,11 @@ static_assert(sizeof(SOCKS4ServerResponse) == kReadHeaderSize,
 
 SOCKSClientSocket::SOCKSClientSocket(
     std::unique_ptr<StreamSocket> transport_socket,
-    const HostResolver::RequestInfo& req_info,
+    const HostPortPair& destination,
+    const NetworkIsolationKey& network_isolation_key,
     RequestPriority priority,
     HostResolver* host_resolver,
+    bool disable_secure_dns,
     const NetworkTrafficAnnotationTag& traffic_annotation)
     : transport_socket_(std::move(transport_socket)),
       next_state_(STATE_NONE),
@@ -71,7 +74,9 @@ SOCKSClientSocket::SOCKSClientSocket(
       bytes_received_(0),
       was_ever_used_(false),
       host_resolver_(host_resolver),
-      host_request_info_(req_info),
+      disable_secure_dns_(disable_secure_dns),
+      destination_(destination),
+      network_isolation_key_(network_isolation_key),
       priority_(priority),
       net_log_(transport_socket_->NetLog()),
       traffic_annotation_(traffic_annotation) {}
@@ -104,7 +109,7 @@ int SOCKSClientSocket::Connect(CompletionOnceCallback callback) {
 
 void SOCKSClientSocket::Disconnect() {
   completed_handshake_ = false;
-  request_.reset();
+  resolve_host_request_.reset();
   transport_socket_->Disconnect();
 
   // Reset other states to make sure they aren't mistakenly used later.
@@ -301,14 +306,20 @@ int SOCKSClientSocket::DoResolveHost() {
   next_state_ = STATE_RESOLVE_HOST_COMPLETE;
   // SOCKS4 only supports IPv4 addresses, so only try getting the IPv4
   // addresses for the target host.
-  host_request_info_.set_address_family(ADDRESS_FAMILY_IPV4);
-  return host_resolver_->Resolve(
-      host_request_info_, priority_, &addresses_,
-      base::Bind(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)),
-      &request_, net_log_);
+  HostResolver::ResolveHostParameters parameters;
+  parameters.dns_query_type = DnsQueryType::A;
+  parameters.initial_priority = priority_;
+  if (disable_secure_dns_)
+    parameters.secure_dns_mode_override = DnsConfig::SecureDnsMode::OFF;
+  resolve_host_request_ = host_resolver_->CreateRequest(
+      destination_, network_isolation_key_, net_log_, parameters);
+
+  return resolve_host_request_->Start(
+      base::BindOnce(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)));
 }
 
 int SOCKSClientSocket::DoResolveHostComplete(int result) {
+  resolve_error_info_ = resolve_host_request_->GetResolveErrorInfo();
   if (result != OK) {
     // Resolving the hostname failed; fail the request rather than automatically
     // falling back to SOCKS4a (since it can be confusing to see invalid IP
@@ -325,10 +336,12 @@ const std::string SOCKSClientSocket::BuildHandshakeWriteBuffer() const {
   SOCKS4ServerRequest request;
   request.version = kSOCKSVersion4;
   request.command = kSOCKSStreamRequest;
-  request.nw_port = base::HostToNet16(host_request_info_.port());
+  request.nw_port = base::HostToNet16(destination_.port());
 
-  DCHECK(!addresses_.empty());
-  const IPEndPoint& endpoint = addresses_.front();
+  DCHECK(resolve_host_request_->GetAddressResults() &&
+         !resolve_host_request_->GetAddressResults().value().empty());
+  const IPEndPoint& endpoint =
+      resolve_host_request_->GetAddressResults().value().front();
 
   // We disabled IPv6 results when resolving the hostname, so none of the
   // results in the list will be IPv6.
@@ -365,7 +378,7 @@ int SOCKSClientSocket::DoHandshakeWrite() {
          handshake_buf_len);
   return transport_socket_->Write(
       handshake_buf_.get(), handshake_buf_len,
-      base::Bind(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)),
+      base::BindOnce(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)),
       traffic_annotation_);
 }
 
@@ -400,7 +413,7 @@ int SOCKSClientSocket::DoHandshakeRead() {
   handshake_buf_ = base::MakeRefCounted<IOBuffer>(handshake_buf_len);
   return transport_socket_->Read(
       handshake_buf_.get(), handshake_buf_len,
-      base::Bind(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)));
+      base::BindOnce(&SOCKSClientSocket::OnIOComplete, base::Unretained(this)));
 }
 
 int SOCKSClientSocket::DoHandshakeReadComplete(int result) {
@@ -460,6 +473,10 @@ int SOCKSClientSocket::GetPeerAddress(IPEndPoint* address) const {
 
 int SOCKSClientSocket::GetLocalAddress(IPEndPoint* address) const {
   return transport_socket_->GetLocalAddress(address);
+}
+
+ResolveErrorInfo SOCKSClientSocket::GetResolveErrorInfo() const {
+  return resolve_error_info_;
 }
 
 }  // namespace net

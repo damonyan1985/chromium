@@ -8,7 +8,7 @@ import json5_generator
 import template_expander
 import make_style_builder
 import keyword_utils
-from name_utilities import enum_for_css_keyword
+from name_utilities import enum_key_for_css_keyword
 
 
 def _find_continuous_segment(numbers):
@@ -93,8 +93,7 @@ def _find_enum_longest_continuous_segment(property_, name_to_position_dictionary
     enum_tuple_list = []
     for x in enum_pair_list:
         keyword = NameStyleConverter(property_['keywords'][x[1]])
-        enum_tuple_list.append((keyword.to_enum_value(), x[1],
-                                enum_for_css_keyword(keyword), x[0]))
+        enum_tuple_list.append((enum_key_for_css_keyword(keyword), x[1], x[0]))
     return enum_tuple_list, enum_segment, longest_segment
 
 
@@ -104,7 +103,7 @@ class CSSValueIDMappingsWriter(make_style_builder.StyleBuilderWriter):
         self._outputs = {
             'css_value_id_mappings_generated.h': self.generate_css_value_mappings,
         }
-        self.css_values_dictionary_file = json5_file_paths[2]
+        self.css_values_dictionary_file = json5_file_paths[3]
         css_properties = self.css_properties.longhands
         # We sort the enum values based on each value's position in
         # the keywords as listed in css_properties.json5. This will ensure that if there is a continuous
@@ -113,7 +112,7 @@ class CSSValueIDMappingsWriter(make_style_builder.StyleBuilderWriter):
         # css_properties.json5 and we can get the longest continuous segment.
         # Thereby reduce the switch case statement to the minimum.
         css_properties = keyword_utils.sort_keyword_properties_by_canonical_order(
-            css_properties, json5_file_paths[2], self.default_parameters)
+            css_properties, json5_file_paths[3], self.default_parameters)
 
     @template_expander.use_jinja('core/css/templates/css_value_id_mappings_generated.h.tmpl')
     def generate_css_value_mappings(self):
@@ -131,8 +130,8 @@ class CSSValueIDMappingsWriter(make_style_builder.StyleBuilderWriter):
             if property_['field_template'] == 'multi_keyword':
                 mappings[property_['type_name']] = {
                     'default_value': property_['default_value'],
-                    'mapping': [(k.to_enum_value(), enum_for_css_keyword(k))
-                                for k in map(NameStyleConverter, property_['keywords'])],
+                    'mapping': [enum_key_for_css_keyword(k)
+                                for k in property_['keywords']],
                 }
             elif property_['field_template'] == 'keyword':
                 enum_pair_list, enum_segment, p_segment = _find_enum_longest_continuous_segment(

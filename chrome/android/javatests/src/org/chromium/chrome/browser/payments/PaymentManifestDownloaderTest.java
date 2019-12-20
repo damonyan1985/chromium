@@ -43,6 +43,11 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
 
     private static final String EXPECTED_WEB_APP_MANIFEST = "{\n"
             + "  \"name\": \"BobPay\",\n"
+            + "  \"icons\": [{\n"
+            + "    \"src\": \"icon.png\",\n"
+            + "    \"sizes\": \"48x48\",\n"
+            + "    \"type\": \"image/png\"\n"
+            + "  }],\n"
             + "  \"related_applications\": [{\n"
             + "    \"platform\": \"play\",\n"
             + "    \"id\": \"com.bobpay\",\n"
@@ -62,6 +67,7 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
     private boolean mDownloadPaymentMethodManifestSuccess;
     private boolean mDownloadWebAppManifestSuccess;
     private boolean mDownloadFailure;
+    private String mErrorMessage;
     private String mPaymentMethodManifest;
     private String mWebAppManifest;
 
@@ -80,9 +86,10 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
     }
 
     @Override
-    public void onManifestDownloadFailure() {
+    public void onManifestDownloadFailure(String errorMessage) {
         mDownloadComplete = true;
         mDownloadFailure = true;
+        mErrorMessage = errorMessage;
     }
 
     @Before
@@ -96,6 +103,7 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
         mDownloadPaymentMethodManifestSuccess = false;
         mDownloadWebAppManifestSuccess = false;
         mDownloadFailure = false;
+        mErrorMessage = "";
         mPaymentMethodManifest = null;
         mWebAppManifest = null;
     }
@@ -139,6 +147,8 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
         });
 
         Assert.assertTrue("Web app manifest should not have been downloaded.", mDownloadFailure);
+        Assert.assertEquals(
+                "Unable to download payment manifest \"" + uri.toString() + "\".", mErrorMessage);
     }
 
     @Test
@@ -174,6 +184,9 @@ public class PaymentManifestDownloaderTest implements ManifestDownloadCallback {
 
         Assert.assertTrue(
                 "Payment method manifest should have not have been downloaded.", mDownloadFailure);
+        Assert.assertEquals("Unable to make a HEAD request to \"" + uri.toString()
+                        + "\" for payment method manifest.",
+                mErrorMessage);
     }
 
     @Test

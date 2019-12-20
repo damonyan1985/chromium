@@ -18,12 +18,12 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "base/enterprise_util.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
@@ -65,7 +65,7 @@ const char kBlockedExtensionPrefix[] = "[BLOCKED]";
 const char* kInsecurePolicies[] = {
     key::kChromeCleanupEnabled,
     key::kChromeCleanupReportingEnabled,
-    key::kCloudPolicyOverridesMachinePolicy,
+    key::kCommandLineFlagSecurityWarningsEnabled,
     key::kDefaultSearchProviderEnabled,
     key::kHomepageIsNewTabPage,
     key::kHomepageLocation,
@@ -147,8 +147,7 @@ void FilterUntrustedPolicy(PolicyMap* policy) {
 
   for (size_t i = 0; i < base::size(kInsecurePolicies); ++i) {
     if (policy->Get(kInsecurePolicies[i])) {
-      // TODO(pastarmovj): Surface this issue in the about:policy page.
-      policy->Erase(kInsecurePolicies[i]);
+      policy->GetMutable(kInsecurePolicies[i])->SetBlocked();
       invalid_policies++;
       const PolicyDetails* details =
           GetChromePolicyDetails(kInsecurePolicies[i]);
@@ -265,7 +264,7 @@ void CollectEnterpriseUMAs() {
   base::UmaHistogramBoolean("EnterpriseCheck.IsManaged",
                             base::win::IsDeviceRegisteredWithManagement());
   base::UmaHistogramBoolean("EnterpriseCheck.IsEnterpriseUser",
-                            base::win::IsEnterpriseManaged());
+                            base::IsMachineExternallyManaged());
 
   base::string16 machine_name;
   if (GetName(base::Bind(&::GetComputerNameEx, ::ComputerNameDnsHostname),
@@ -338,7 +337,7 @@ PolicyLoaderWin::~PolicyLoaderWin() {
 std::unique_ptr<PolicyLoaderWin> PolicyLoaderWin::Create(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
     const base::string16& chrome_policy_key) {
-  return base::WrapUnique(new PolicyLoaderWin(task_runner, chrome_policy_key));
+  return std::make_unique<PolicyLoaderWin>(task_runner, chrome_policy_key);
 }
 
 void PolicyLoaderWin::InitOnBackgroundThread() {

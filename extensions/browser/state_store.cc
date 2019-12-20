@@ -15,7 +15,6 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/value_store/value_store_factory.h"
 #include "extensions/common/extension.h"
 
@@ -76,8 +75,7 @@ StateStore::StateStore(content::BrowserContext* context,
                        ValueStoreFrontend::BackendType backend_type,
                        bool deferred_load)
     : store_(new ValueStoreFrontend(store_factory, backend_type)),
-      task_queue_(new DelayedTaskQueue()),
-      extension_registry_observer_(this) {
+      task_queue_(new DelayedTaskQueue()) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(context));
 
   if (deferred_load) {
@@ -181,7 +179,7 @@ void StateStore::InitAfterDelay() {
     return;
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&StateStore::Init, AsWeakPtr()),
+      FROM_HERE, base::BindOnce(&StateStore::Init, AsWeakPtr()),
       base::TimeDelta::FromSeconds(kInitDelaySeconds));
 }
 

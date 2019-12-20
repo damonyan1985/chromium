@@ -2,12 +2,16 @@
    Use of this source code is governed by a BSD-style license that can be
    found in the LICENSE file. */
 
-paper-button {
+cr-button {
   padding-inline-end: 16px;
   padding-inline-start: 8px;
 }
 
-hd-iron-icon {
+:host-context([dir=ltr]) hd-iron-icon {
   padding-inline-start: 4px; /* transform(180deg) will make it inline-end. */
   transform: rotate(180deg);
+}
+
+:host-context([dir=rtl]) hd-iron-icon {
+  padding-inline-end: 4px;
 }

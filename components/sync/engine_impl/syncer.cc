@@ -7,11 +7,12 @@
 #include <memory>
 
 #include "base/auto_reset.h"
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "components/sync/base/cancelation_signal.h"
+#include "components/sync/engine/sync_engine_switches.h"
 #include "components/sync/engine_impl/apply_control_data_updates.h"
-#include "components/sync/engine_impl/clear_server_data.h"
 #include "components/sync/engine_impl/commit.h"
 #include "components/sync/engine_impl/commit_processor.h"
 #include "components/sync/engine_impl/cycle/nudge_tracker.h"
@@ -46,8 +47,13 @@ bool Syncer::NormalSyncShare(ModelTypeSet request_types,
                              SyncCycle* cycle) {
   base::AutoReset<bool> is_syncing(&is_syncing_, true);
   HandleCycleBegin(cycle);
-  if (nudge_tracker->IsGetUpdatesRequired() ||
-      cycle->context()->ShouldFetchUpdatesBeforeCommit()) {
+  // TODO(crbug.com/657130): Sync integration tests depend on the precommit get
+  // updates because invalidations aren't working for them. Therefore, they pass
+  // the command line switch to enable this feature. Once sync integrations test
+  // support invalidation, this should be removed.
+  base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
+  if (nudge_tracker->IsGetUpdatesRequired(request_types) ||
+      cl->HasSwitch(switches::kSyncEnableGetUpdatesBeforeCommit)) {
     VLOG(1) << "Downloading types " << ModelTypeSetToString(request_types);
     if (!DownloadAndApplyUpdates(&request_types, cycle,
                                  NormalGetUpdatesDelegate(*nudge_tracker))) {
@@ -55,10 +61,8 @@ bool Syncer::NormalSyncShare(ModelTypeSet request_types,
     }
   }
 
-  CommitProcessor commit_processor(
-      cycle->context()->model_type_registry()->commit_contributor_map());
-  SyncerError commit_result = BuildAndPostCommits(request_types, nudge_tracker,
-                                                  cycle, &commit_processor);
+  SyncerError commit_result =
+      BuildAndPostCommits(request_types, nudge_tracker, cycle);
   cycle->mutable_status_controller()->set_commit_result(commit_result);
 
   return HandleCycleEnd(cycle, nudge_tracker->GetOrigin());
@@ -92,12 +96,6 @@ bool Syncer::PollSyncShare(ModelTypeSet request_types, SyncCycle* cycle) {
   return HandleCycleEnd(cycle, sync_pb::SyncEnums::PERIODIC);
 }
 
-bool Syncer::PostClearServerData(SyncCycle* cycle) {
-  DCHECK(cycle);
-  ClearServerData clear_server_data(cycle->context()->account_name());
-  return clear_server_data.SendRequest(cycle).value() == SyncerError::SYNCER_OK;
-}
-
 bool Syncer::DownloadAndApplyUpdates(ModelTypeSet* request_types,
                                      SyncCycle* cycle,
                                      const GetUpdatesDelegate& delegate) {
@@ -128,8 +126,8 @@ bool Syncer::DownloadAndApplyUpdates(ModelTypeSet* request_types,
   {
     TRACE_EVENT0("sync", "ApplyUpdates");
 
-    // Control type updates always get applied first.
-    ApplyControlDataUpdates(cycle->context()->directory());
+    // Nigori updates always get applied first.
+    ApplyNigoriUpdate(cycle->context()->directory());
 
     // Apply updates to the other types. May or may not involve cross-thread
     // traffic, depending on the underlying update handlers and the GU type's
@@ -147,21 +145,23 @@ bool Syncer::DownloadAndApplyUpdates(ModelTypeSet* request_types,
 
 SyncerError Syncer::BuildAndPostCommits(const ModelTypeSet& request_types,
                                         NudgeTracker* nudge_tracker,
-                                        SyncCycle* cycle,
-                                        CommitProcessor* commit_processor) {
+                                        SyncCycle* cycle) {
   VLOG(1) << "Committing from types " << ModelTypeSetToString(request_types);
 
+  CommitProcessor commit_processor(
+      request_types,
+      cycle->context()->model_type_registry()->commit_contributor_map());
   // The ExitRequested() check is unnecessary, since we should start getting
   // errors from the ServerConnectionManager if an exist has been requested.
   // However, it doesn't hurt to check it anyway.
   while (!ExitRequested()) {
     std::unique_ptr<Commit> commit(
-        Commit::Init(request_types, cycle->context()->GetEnabledTypes(),
+        Commit::Init(cycle->context()->GetEnabledTypes(),
                      cycle->context()->max_commit_batch_size(),
                      cycle->context()->account_name(),
                      cycle->context()->directory()->cache_guid(),
                      cycle->context()->cookie_jar_mismatch(),
-                     cycle->context()->cookie_jar_empty(), commit_processor,
+                     cycle->context()->cookie_jar_empty(), &commit_processor,
                      cycle->context()->extensions_activity()));
     if (!commit) {
       break;

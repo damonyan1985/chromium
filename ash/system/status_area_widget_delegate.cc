@@ -6,26 +6,32 @@
 
 #include "ash/focus_cycler.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
 #include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_constants.h"
+#include "ash/shelf/shelf_layout_manager.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/tray/tray_constants.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/tween.h"
+#include "ui/gfx/canvas.h"
+#include "ui/gfx/skia_paint_util.h"
 #include "ui/views/accessible_pane_view.h"
+#include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/layout/grid_layout.h"
 
-namespace {
+namespace ash {
 
-using session_manager::SessionState;
+namespace {
 
 constexpr int kAnimationDurationMs = 250;
 
 constexpr int kPaddingBetweenWidgetsNewUi = 8;
+
+constexpr int kPaddingBetweenWidgetAndRightScreenEdge = 6;
 
 class StatusAreaWidgetDelegateAnimationSettings
     : public ui::ScopedLayerAnimationSettings {
@@ -44,14 +50,43 @@ class StatusAreaWidgetDelegateAnimationSettings
   DISALLOW_COPY_AND_ASSIGN(StatusAreaWidgetDelegateAnimationSettings);
 };
 
-}  // namespace
+// Gradient background for the status area shown when it overflows into the
+// shelf.
+class OverflowGradientBackground : public views::Background {
+ public:
+  explicit OverflowGradientBackground(Shelf* shelf) : shelf_(shelf) {}
+  OverflowGradientBackground(const OverflowGradientBackground&) = delete;
+  ~OverflowGradientBackground() override = default;
+  OverflowGradientBackground& operator=(const OverflowGradientBackground&) =
+      delete;
 
-namespace ash {
+  // views::Background:
+  void Paint(gfx::Canvas* canvas, views::View* view) const override {
+    gfx::Rect bounds = view->GetContentsBounds();
+
+    SkColor shelf_background_color =
+        shelf_->shelf_widget()->GetShelfBackgroundColor();
+
+    cc::PaintFlags flags;
+    flags.setShader(gfx::CreateGradientShader(
+        gfx::Point(), gfx::Point(kStatusAreaOverflowGradientSize, 0),
+        SkColorSetA(shelf_background_color, 0), shelf_background_color));
+    canvas->DrawRect(bounds, flags);
+  }
+
+ private:
+  Shelf* shelf_;
+};
+
+}  // namespace
 
 StatusAreaWidgetDelegate::StatusAreaWidgetDelegate(Shelf* shelf)
     : shelf_(shelf), focus_cycler_for_testing_(nullptr) {
   DCHECK(shelf_);
   set_owned_by_client();  // Deleted by DeleteDelegate().
+
+  ShelfConfig::Get()->AddObserver(this);
+  shelf_->shelf_layout_manager()->AddObserver(this);
 
   // Allow the launcher to surrender the focus to another window upon
   // navigation completion by the user.
@@ -60,7 +95,10 @@ StatusAreaWidgetDelegate::StatusAreaWidgetDelegate(Shelf* shelf)
   layer()->SetFillsBoundsOpaquely(false);
 }
 
-StatusAreaWidgetDelegate::~StatusAreaWidgetDelegate() = default;
+StatusAreaWidgetDelegate::~StatusAreaWidgetDelegate() {
+  ShelfConfig::Get()->RemoveObserver(this);
+  shelf_->shelf_layout_manager()->RemoveObserver(this);
+}
 
 void StatusAreaWidgetDelegate::SetFocusCyclerForTesting(
     const FocusCycler* focus_cycler) {
@@ -68,19 +106,35 @@ void StatusAreaWidgetDelegate::SetFocusCyclerForTesting(
 }
 
 bool StatusAreaWidgetDelegate::ShouldFocusOut(bool reverse) {
-  if (Shell::Get()->session_controller()->GetSessionState() ==
-      SessionState::ACTIVE) {
+  // Never bring the focus out if it's not a views-based shelf as it is visually
+  // not on par with the status widget.
+  if (!ShelfWidget::IsUsingViewsShelf())
     return false;
-  }
-
   views::View* focused_view = GetFocusManager()->GetFocusedView();
   return (reverse && focused_view == GetFirstFocusableChild()) ||
          (!reverse && focused_view == GetLastFocusableChild());
 }
 
+void StatusAreaWidgetDelegate::OnStatusAreaCollapseStateChanged(
+    StatusAreaWidget::CollapseState new_collapse_state) {
+  switch (new_collapse_state) {
+    case StatusAreaWidget::CollapseState::EXPANDED:
+      SetBackground(std::make_unique<OverflowGradientBackground>(shelf_));
+      break;
+    case StatusAreaWidget::CollapseState::COLLAPSED:
+    case StatusAreaWidget::CollapseState::NOT_COLLAPSIBLE:
+      SetBackground(nullptr);
+      break;
+  }
+}
+
 views::View* StatusAreaWidgetDelegate::GetDefaultFocusableChild() {
   return default_last_focusable_child_ ? GetLastFocusableChild()
                                        : GetFirstFocusableChild();
+}
+
+const char* StatusAreaWidgetDelegate::GetClassName() const {
+  return "ash/StatusAreaWidgetDelegate";
 }
 
 views::Widget* StatusAreaWidgetDelegate::GetWidget() {
@@ -122,49 +176,66 @@ void StatusAreaWidgetDelegate::DeleteDelegate() {
   delete this;
 }
 
+void StatusAreaWidgetDelegate::OnShelfConfigUpdated() {
+  UpdateLayout();
+}
+
+void StatusAreaWidgetDelegate::OnHotseatStateChanged(HotseatState old_state,
+                                                     HotseatState new_state) {
+  // Update the border of the last visible child so it has the right
+  // padding depending of the state of the shelf (See
+  // https://crbug.com/1025270). Don't layout as it will cause the whole
+  // transition to snap instead of animate (See https://crbug.com/1032770).
+  auto it = std::find_if(children().crbegin(), children().crend(),
+                         [](const View* v) { return v->GetVisible(); });
+  if (it == children().crend())
+    return;
+
+  View* last_visible_child = *it;
+  SetBorderOnChild(last_visible_child, /*is_child_on_edge=*/true);
+}
+
 void StatusAreaWidgetDelegate::UpdateLayout() {
   // Use a grid layout so that the trays can be centered in each cell, and
   // so that the widget gets laid out correctly when tray sizes change.
   views::GridLayout* layout =
-      SetLayoutManager(std::make_unique<views::GridLayout>(this));
+      SetLayoutManager(std::make_unique<views::GridLayout>());
 
-  // Update tray border based on layout.
-  bool is_child_on_edge = true;
-  for (int c = 0; c < child_count(); ++c) {
-    views::View* child = child_at(c);
-    if (!child->visible())
+  const auto it = std::find_if(children().crbegin(), children().crend(),
+                               [](const View* v) { return v->GetVisible(); });
+  const View* last_visible_child = it == children().crend() ? nullptr : *it;
+
+  // Set the border for each child, with a different border for the edge child.
+  for (auto* child : children()) {
+    if (!child->GetVisible())
       continue;
-    SetBorderOnChild(child, is_child_on_edge);
-    is_child_on_edge = false;
+    SetBorderOnChild(child, last_visible_child == child);
   }
 
   views::ColumnSet* columns = layout->AddColumnSet(0);
 
   if (shelf_->IsHorizontalAlignment()) {
-    for (int c = child_count() - 1; c >= 0; --c) {
-      views::View* child = child_at(c);
-      if (!child->visible())
+    for (auto* child : children()) {
+      if (!child->GetVisible())
         continue;
       columns->AddColumn(views::GridLayout::CENTER, views::GridLayout::FILL,
                          0, /* resize percent */
                          views::GridLayout::USE_PREF, 0, 0);
     }
     layout->StartRow(0, 0);
-    for (int c = child_count() - 1; c >= 0; --c) {
-      views::View* child = child_at(c);
-      if (child->visible())
-        layout->AddView(child);
+    for (auto* child : children()) {
+      if (child->GetVisible())
+        layout->AddExistingView(child);
     }
   } else {
     columns->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER,
                        0, /* resize percent */
                        views::GridLayout::USE_PREF, 0, 0);
-    for (int c = child_count() - 1; c >= 0; --c) {
-      views::View* child = child_at(c);
-      if (!child->visible())
+    for (auto* child : children()) {
+      if (!child->GetVisible())
         continue;
       layout->StartRow(0, 0);
-      layout->AddView(child);
+      layout->AddExistingView(child);
     }
   }
 
@@ -191,9 +262,9 @@ void StatusAreaWidgetDelegate::UpdateWidgetSize() {
 }
 
 void StatusAreaWidgetDelegate::SetBorderOnChild(views::View* child,
-                                                bool extend_border_to_edge) {
+                                                bool is_child_on_edge) {
   const int vertical_padding =
-      (ShelfConstants::shelf_size() - kTrayItemSize) / 2;
+      (ShelfConfig::Get()->shelf_size() - kTrayItemSize) / 2;
 
   // Edges for horizontal alignment (right-to-left, default).
   int top_edge = vertical_padding;
@@ -202,6 +273,13 @@ void StatusAreaWidgetDelegate::SetBorderOnChild(views::View* child,
   // Add some extra space so that borders don't overlap. This padding between
   // items also takes care of padding at the edge of the shelf.
   int right_edge = kPaddingBetweenWidgetsNewUi;
+
+  if (is_child_on_edge && chromeos::switches::ShouldShowShelfHotseat()) {
+    right_edge =
+        shelf_->shelf_layout_manager()->hotseat_state() == HotseatState::kShown
+            ? kPaddingBetweenWidgetAndRightScreenEdge
+            : 0;
+  }
 
   // Swap edges if alignment is not horizontal (bottom-to-top).
   if (!shelf_->IsHorizontalAlignment()) {

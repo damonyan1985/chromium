@@ -10,15 +10,17 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/task_runner_util.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/thread_wrapper.h"
+#include "net/base/network_change_notifier.h"
 #include "net/test/test_data_directory.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/rsa_key_pair.h"
@@ -51,6 +53,7 @@
 
 namespace remoting {
 
+using base::test::TaskEnvironment;
 using protocol::ChannelConfig;
 
 namespace {
@@ -106,17 +109,18 @@ class ProtocolPerfTest
       public HostStatusObserver {
  public:
   ProtocolPerfTest()
-      : host_thread_("host"),
+      : task_environment_(TaskEnvironment::MainThreadType::IO),
+        host_thread_("host"),
         capture_thread_("capture"),
         encode_thread_("encode"),
         decode_thread_("decode") {
     host_thread_.StartWithOptions(
-        base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
+        base::Thread::Options(base::MessagePumpType::IO, 0));
     capture_thread_.Start();
     encode_thread_.Start();
     decode_thread_.Start();
 
-    base::TaskScheduler::CreateAndStartWithDefaultParams("ProtocolPerfTest");
+    network_change_notifier_ = net::NetworkChangeNotifier::CreateIfNeeded();
 
     desktop_environment_factory_.reset(
         new FakeDesktopEnvironmentFactory(capture_thread_.task_runner()));
@@ -150,6 +154,9 @@ class ProtocolPerfTest
   protocol::ClipboardStub* GetClipboardStub() override { return nullptr; }
   protocol::CursorShapeStub* GetCursorShapeStub() override {
     return &cursor_shape_stub_;
+  }
+  protocol::KeyboardLayoutStub* GetKeyboardLayoutStub() override {
+    return nullptr;
   }
 
   // protocol::FrameConsumer interface.
@@ -195,9 +202,9 @@ class ProtocolPerfTest
   }
 
   void OnClientConnected(const std::string& jid) override {
-    message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ProtocolPerfTest::OnHostConnectedMainThread,
-                              base::Unretained(this)));
+    task_environment_.GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&ProtocolPerfTest::OnHostConnectedMainThread,
+                                  base::Unretained(this)));
   }
 
  protected:
@@ -258,7 +265,7 @@ class ProtocolPerfTest
 
     host_thread_.task_runner()->PostTask(
         FROM_HERE,
-        base::Bind(&ProtocolPerfTest::StartHost, base::Unretained(this)));
+        base::BindOnce(&ProtocolPerfTest::StartHost, base::Unretained(this)));
   }
 
   void StartHost() {
@@ -282,9 +289,9 @@ class ProtocolPerfTest
     port_allocator_factory->socket_factory()->set_out_of_order_rate(
         GetParam().out_of_order_rate);
     scoped_refptr<protocol::TransportContext> transport_context(
-        new protocol::TransportContext(
-            host_signaling_.get(), std::move(port_allocator_factory), nullptr,
-            network_settings, protocol::TransportRole::SERVER));
+        new protocol::TransportContext(std::move(port_allocator_factory),
+                                       nullptr, network_settings,
+                                       protocol::TransportRole::SERVER));
     std::unique_ptr<protocol::SessionManager> session_manager(
         new protocol::JingleSessionManager(host_signaling_.get()));
     session_manager->set_protocol_config(protocol_config_->Clone());
@@ -315,16 +322,16 @@ class ProtocolPerfTest
         protocol::GetSharedSecretHash(kHostId, kHostPin);
     std::unique_ptr<protocol::AuthenticatorFactory> auth_factory =
         protocol::Me2MeHostAuthenticatorFactory::CreateWithPin(
-            true, kHostOwner, host_cert, key_pair, std::vector<std::string>(),
+            kHostOwner, host_cert, key_pair, std::vector<std::string>(),
             host_pin_hash, nullptr);
     host_->SetAuthenticatorFactory(std::move(auth_factory));
 
     host_->status_monitor()->AddStatusObserver(this);
     host_->Start(kHostOwner);
 
-    message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ProtocolPerfTest::StartClientAfterHost,
-                              base::Unretained(this)));
+    task_environment_.GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&ProtocolPerfTest::StartClientAfterHost,
+                                  base::Unretained(this)));
   }
 
   void StartClientAfterHost() {
@@ -349,9 +356,9 @@ class ProtocolPerfTest
     port_allocator_factory->socket_factory()->set_out_of_order_rate(
         GetParam().out_of_order_rate);
     scoped_refptr<protocol::TransportContext> transport_context(
-        new protocol::TransportContext(
-            host_signaling_.get(), std::move(port_allocator_factory), nullptr,
-            network_settings, protocol::TransportRole::CLIENT));
+        new protocol::TransportContext(std::move(port_allocator_factory),
+                                       nullptr, network_settings,
+                                       protocol::TransportRole::CLIENT));
 
     protocol::ClientAuthenticationConfig client_auth_config;
     client_auth_config.host_id = kHostId;
@@ -377,7 +384,7 @@ class ProtocolPerfTest
   void MeasureTotalLatency(bool use_webrtc);
   void MeasureScrollPerformance(bool use_webrtc);
 
-  base::MessageLoopForIO message_loop_;
+  TaskEnvironment task_environment_;
 
   scoped_refptr<FakeNetworkDispatcher> fake_network_dispatcher_;
 
@@ -418,22 +425,24 @@ class ProtocolPerfTest
   std::unique_ptr<webrtc::DesktopFrame> last_video_frame_;
   std::vector<protocol::FrameStats> frame_stats_;
 
+  std::unique_ptr<net::NetworkChangeNotifier> network_change_notifier_;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(ProtocolPerfTest);
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     NoDelay,
     ProtocolPerfTest,
     ::testing::Values(NetworkPerformanceParams(0, 0, 0, 0, 0.0, 0)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     HighLatency,
     ProtocolPerfTest,
     ::testing::Values(NetworkPerformanceParams(0, 0, 300, 30, 0.0, 0),
                       NetworkPerformanceParams(0, 0, 30, 10, 0.0, 0)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     OutOfOrder,
     ProtocolPerfTest,
     ::testing::Values(NetworkPerformanceParams(0, 0, 2, 0, 0.01, 0),
@@ -442,7 +451,7 @@ INSTANTIATE_TEST_CASE_P(
                       NetworkPerformanceParams(0, 0, 300, 20, 0.01, 0),
                       NetworkPerformanceParams(0, 0, 300, 20, 0.1, 0)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     LimitedBandwidth,
     ProtocolPerfTest,
     ::testing::Values(
@@ -459,7 +468,7 @@ INSTANTIATE_TEST_CASE_P(
         NetworkPerformanceParams(800, 0.25, 130, 5, 0.00, 0),
         NetworkPerformanceParams(800, 1.0, 130, 5, 0.00, 0)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     SlowSignaling,
     ProtocolPerfTest,
     ::testing::Values(NetworkPerformanceParams(8000, 0.25, 30, 0, 0.0, 50),

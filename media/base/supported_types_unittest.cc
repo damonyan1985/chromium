@@ -14,6 +14,12 @@ const bool kPropCodecsEnabled = true;
 const bool kPropCodecsEnabled = false;
 #endif
 
+#if defined(OS_CHROMEOS) && BUILDFLAG(USE_PROPRIETARY_CODECS)
+const bool kMpeg4Supported = true;
+#else
+const bool kMpeg4Supported = false;
+#endif
+
 TEST(SupportedTypesTest, IsSupportedVideoTypeBasics) {
   // Default to common 709.
   const media::VideoColorSpace kColorSpace = media::VideoColorSpace::REC709();
@@ -41,9 +47,6 @@ TEST(SupportedTypesTest, IsSupportedVideoTypeBasics) {
   EXPECT_FALSE(IsSupportedVideoType({media::kCodecMPEG2,
                                      media::VIDEO_CODEC_PROFILE_UNKNOWN,
                                      kUnspecifiedLevel, kColorSpace}));
-  EXPECT_FALSE(IsSupportedVideoType({media::kCodecMPEG4,
-                                     media::VIDEO_CODEC_PROFILE_UNKNOWN,
-                                     kUnspecifiedLevel, kColorSpace}));
   EXPECT_FALSE(IsSupportedVideoType({media::kCodecHEVC,
                                      media::VIDEO_CODEC_PROFILE_UNKNOWN,
                                      kUnspecifiedLevel, kColorSpace}));
@@ -53,6 +56,10 @@ TEST(SupportedTypesTest, IsSupportedVideoTypeBasics) {
       kPropCodecsEnabled,
       IsSupportedVideoType(
           {media::kCodecH264, media::H264PROFILE_BASELINE, 1, kColorSpace}));
+  EXPECT_EQ(kMpeg4Supported,
+            IsSupportedVideoType({media::kCodecMPEG4,
+                                  media::VIDEO_CODEC_PROFILE_UNKNOWN,
+                                  kUnspecifiedLevel, kColorSpace}));
 }
 
 TEST(SupportedTypesTest, IsSupportedVideoType_VP9TransferFunctions) {
@@ -155,6 +162,42 @@ TEST(SupportedTypesTest, IsSupportedVideoType_VP9Matrix) {
                                            color_space}));
   }
   EXPECT_EQ(kSupportedMatrix.size(), num_found);
+}
+
+TEST(SupportedTypesTest, IsSupportedAudioTypeWithSpatialRenderingBasics) {
+  const bool is_spatial_rendering = true;
+  // Dolby Atmos = E-AC3 (Dolby Digital Plus) + spatialRendering. Currently not
+  // supported.
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecEAC3, is_spatial_rendering}));
+
+  // Expect non-support for codecs with which there is no spatial audio format.
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecAAC, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecMP3, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecPCM, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecVorbis, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecFLAC, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecAMR_NB, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecAMR_WB, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecPCM_MULAW, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecGSM_MS, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecPCM_S16BE, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecPCM_S24BE, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecOpus, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecPCM_ALAW, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecALAC, is_spatial_rendering}));
+  EXPECT_FALSE(IsSupportedAudioType({media::kCodecAC3, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kCodecMpegHAudio, is_spatial_rendering}));
+  EXPECT_FALSE(
+      IsSupportedAudioType({media::kUnknownAudioCodec, is_spatial_rendering}));
 }
 
 }  // namespace media

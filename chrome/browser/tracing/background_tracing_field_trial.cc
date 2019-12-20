@@ -25,6 +25,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "net/base/network_change_notifier.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/tracing/public/cpp/perfetto/trace_event_data_source.h"
 #include "url/gurl.h"
 
 namespace tracing {
@@ -48,8 +49,7 @@ void OnBackgroundTracingUploadComplete(
 
 void BackgroundTracingUploadCallback(
     const std::string& upload_url,
-    const scoped_refptr<base::RefCountedString>& file_contents,
-    std::unique_ptr<const base::DictionaryValue> metadata,
+    std::unique_ptr<std::string> file_contents,
     content::BackgroundTracingManager::FinishedProcessingCallback callback) {
   TraceCrashServiceUploader* uploader = new TraceCrashServiceUploader(
       g_browser_process->shared_url_loader_factory());
@@ -66,9 +66,11 @@ void BackgroundTracingUploadCallback(
     uploader->SetMaxUploadBytes(100 * 1024);
   }
 #endif
+  std::unique_ptr<base::DictionaryValue> metadata =
+      TraceEventMetadataSource::GetInstance()->GenerateLegacyMetadataDict();
 
   uploader->DoUpload(
-      file_contents->data(), content::TraceUploader::UNCOMPRESSED_UPLOAD,
+      *file_contents, content::TraceUploader::UNCOMPRESSED_UPLOAD,
       std::move(metadata), content::TraceUploader::UploadProgressCallback(),
       base::BindOnce(&OnBackgroundTracingUploadComplete, base::Owned(uploader),
                      std::move(callback)));
@@ -84,7 +86,8 @@ std::unique_ptr<content::BackgroundTracingConfig> GetBackgroundTracingConfig() {
   if (g_config_text_filter_for_testing)
     (*g_config_text_filter_for_testing)(&config_text);
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(config_text);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(config_text);
   if (!value)
     return nullptr;
 
@@ -104,7 +107,8 @@ void SetupBackgroundTracingFromConfigFile(const base::FilePath& config_file,
     return;
   }
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(config_text);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(config_text);
   if (!value) {
     LOG(ERROR) << "Background tracing has incorrect config: " << config_text;
     return;

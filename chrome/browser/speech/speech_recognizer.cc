@@ -43,12 +43,14 @@ static const int kInvalidSessionId = -1;
 // SpeechRecognizerDelegate via a weak pointer that is only ever referenced from
 // the UI thread.
 class SpeechRecognizer::EventListener
-    : public base::RefCountedThreadSafe<SpeechRecognizer::EventListener>,
+    : public base::RefCountedThreadSafe<
+          SpeechRecognizer::EventListener,
+          content::BrowserThread::DeleteOnIOThread>,
       public content::SpeechRecognitionEventListener {
  public:
   EventListener(const base::WeakPtr<SpeechRecognizerDelegate>& delegate,
-                std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-                    shared_url_loader_factory_info,
+                std::unique_ptr<network::PendingSharedURLLoaderFactory>
+                    pending_shared_url_loader_factory,
                 const std::string& accept_language,
                 const std::string& locale);
 
@@ -59,7 +61,9 @@ class SpeechRecognizer::EventListener
   void StopOnIOThread();
 
  private:
-  friend class base::RefCountedThreadSafe<SpeechRecognizer::EventListener>;
+  friend struct content::BrowserThread::DeleteOnThread<
+      content::BrowserThread::IO>;
+  friend class base::DeleteHelper<SpeechRecognizer::EventListener>;
   ~EventListener() override;
 
   void NotifyRecognitionStateChanged(SpeechRecognizerStatus new_state);
@@ -94,9 +98,9 @@ class SpeechRecognizer::EventListener
   base::WeakPtr<SpeechRecognizerDelegate> delegate_;
 
   // All remaining members only accessed from the IO thread.
-  std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-      shared_url_loader_factory_info_;
-  // Initialized from |shared_url_loader_factory_info_| on first use.
+  std::unique_ptr<network::PendingSharedURLLoaderFactory>
+      pending_shared_url_loader_factory_;
+  // Initialized from |pending_shared_url_loader_factory_| on first use.
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
   const std::string accept_language_;
   std::string locale_;
@@ -104,24 +108,23 @@ class SpeechRecognizer::EventListener
   int session_;
   base::string16 last_result_str_;
 
-  base::WeakPtrFactory<EventListener> weak_factory_;
+  base::WeakPtrFactory<EventListener> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EventListener);
 };
 
 SpeechRecognizer::EventListener::EventListener(
     const base::WeakPtr<SpeechRecognizerDelegate>& delegate,
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        shared_url_loader_factory_info,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_shared_url_loader_factory,
     const std::string& accept_language,
     const std::string& locale)
     : delegate_(delegate),
-      shared_url_loader_factory_info_(
-          std::move(shared_url_loader_factory_info)),
+      pending_shared_url_loader_factory_(
+          std::move(pending_shared_url_loader_factory)),
       accept_language_(accept_language),
       locale_(locale),
-      session_(kInvalidSessionId),
-      weak_factory_(this) {
+      session_(kInvalidSessionId) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
@@ -145,9 +148,9 @@ void SpeechRecognizer::EventListener::StartOnIOThread(
   config.filter_profanities = true;
   config.accept_language = accept_language_;
   if (!shared_url_loader_factory_) {
-    DCHECK(shared_url_loader_factory_info_);
+    DCHECK(pending_shared_url_loader_factory_);
     shared_url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-        std::move(shared_url_loader_factory_info_));
+        std::move(pending_shared_url_loader_factory_));
   }
   config.shared_url_loader_factory = shared_url_loader_factory_;
   config.event_listener = weak_factory_.GetWeakPtr();
@@ -180,10 +183,10 @@ void SpeechRecognizer::EventListener::StopOnIOThread() {
 
 void SpeechRecognizer::EventListener::NotifyRecognitionStateChanged(
     SpeechRecognizerStatus new_state) {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&SpeechRecognizerDelegate::OnSpeechRecognitionStateChanged,
-                 delegate_, new_state));
+      base::BindOnce(&SpeechRecognizerDelegate::OnSpeechRecognitionStateChanged,
+                     delegate_, new_state));
 }
 
 void SpeechRecognizer::EventListener::StartSpeechTimeout(int timeout_seconds) {
@@ -225,10 +228,10 @@ void SpeechRecognizer::EventListener::OnRecognitionResults(
       final_count++;
     result_str += result->hypotheses[0]->utterance;
   }
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&SpeechRecognizerDelegate::OnSpeechResult, delegate_,
-                 result_str, final_count == results.size()));
+      base::BindOnce(&SpeechRecognizerDelegate::OnSpeechResult, delegate_,
+                     result_str, final_count == results.size()));
 
   // Stop the moment we have a final result. If we receive any new or changed
   // text, restart the timer to give the user more time to speak. (The timer is
@@ -272,10 +275,10 @@ void SpeechRecognizer::EventListener::OnAudioLevelsChange(int session_id,
   // Both |volume| and |noise_volume| are defined to be in the range [0.0, 1.0].
   // See: content/public/browser/speech_recognition_event_listener.h
   int16_t sound_level = static_cast<int16_t>(INT16_MAX * volume);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&SpeechRecognizerDelegate::OnSpeechSoundLevelChanged,
-                 delegate_, sound_level));
+      base::BindOnce(&SpeechRecognizerDelegate::OnSpeechSoundLevelChanged,
+                     delegate_, sound_level));
 }
 
 void SpeechRecognizer::EventListener::OnEnvironmentEstimationComplete(
@@ -287,14 +290,14 @@ void SpeechRecognizer::EventListener::OnAudioEnd(int session_id) {}
 
 SpeechRecognizer::SpeechRecognizer(
     const base::WeakPtr<SpeechRecognizerDelegate>& delegate,
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        shared_url_loader_factory_info,
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_shared_url_loader_factory,
     const std::string& accept_language,
     const std::string& locale)
     : delegate_(delegate),
       speech_event_listener_(
           new EventListener(delegate,
-                            std::move(shared_url_loader_factory_info),
+                            std::move(pending_shared_url_loader_factory),
                             accept_language,
                             locale)) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -312,16 +315,16 @@ void SpeechRecognizer::Start(
   std::string auth_token;
   delegate_->GetSpeechAuthParameters(&auth_scope, &auth_token);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::IO},
-      base::Bind(&SpeechRecognizer::EventListener::StartOnIOThread,
-                 speech_event_listener_, auth_scope, auth_token, preamble));
+      base::BindOnce(&SpeechRecognizer::EventListener::StartOnIOThread,
+                     speech_event_listener_, auth_scope, auth_token, preamble));
 }
 
 void SpeechRecognizer::Stop() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::IO},
-      base::Bind(&SpeechRecognizer::EventListener::StopOnIOThread,
-                 speech_event_listener_));
+      base::BindOnce(&SpeechRecognizer::EventListener::StopOnIOThread,
+                     speech_event_listener_));
 }

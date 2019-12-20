@@ -28,7 +28,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_DATABASE_CONTEXT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBDATABASE_DATABASE_CONTEXT_H_
 
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
@@ -38,7 +38,7 @@ class DatabaseThread;
 class ExecutionContext;
 class SecurityOrigin;
 
-class DatabaseContext final : public GarbageCollectedFinalized<DatabaseContext>,
+class DatabaseContext final : public GarbageCollected<DatabaseContext>,
                               public ContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(DatabaseContext);
 

@@ -7,9 +7,10 @@
 #include "ash/public/cpp/shelf_model.h"
 #include "ash/shelf/overflow_button.h"
 #include "ash/shelf/shelf_app_button.h"
-#include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_menu_model_adapter.h"
+#include "ash/shelf/shelf_navigation_widget.h"
 #include "ash/shelf/shelf_view.h"
+#include "ash/shelf/shelf_widget.h"
 #include "base/run_loop.h"
 #include "ui/views/animation/bounds_animator.h"
 #include "ui/views/controls/menu/menu_runner.h"
@@ -47,28 +48,19 @@ int ShelfViewTestAPI::GetButtonCount() {
 }
 
 ShelfAppButton* ShelfViewTestAPI::GetButton(int index) {
-  // App list and back button are not ShelfAppButtons.
-  if (shelf_view_->model_->items()[index].type == ash::TYPE_APP_LIST ||
-      shelf_view_->model_->items()[index].type == ash::TYPE_BACK_BUTTON)
-    return nullptr;
-
   return static_cast<ShelfAppButton*>(GetViewAt(index));
+}
+
+ShelfID ShelfViewTestAPI::AddItem(ShelfItemType type) {
+  ShelfItem item;
+  item.type = type;
+  item.id = ShelfID(base::NumberToString(id_++));
+  shelf_view_->model_->Add(item);
+  return item.id;
 }
 
 views::View* ShelfViewTestAPI::GetViewAt(int index) {
   return shelf_view_->view_model_->view_at(index);
-}
-
-int ShelfViewTestAPI::GetFirstVisibleIndex() {
-  return shelf_view_->first_visible_index_;
-}
-
-int ShelfViewTestAPI::GetLastVisibleIndex() {
-  return shelf_view_->last_visible_index_;
-}
-
-bool ShelfViewTestAPI::IsOverflowButtonVisible() {
-  return shelf_view_->overflow_button_->visible();
 }
 
 void ShelfViewTestAPI::ShowOverflowBubble() {
@@ -81,10 +73,6 @@ void ShelfViewTestAPI::HideOverflowBubble() {
   shelf_view_->ToggleOverflowBubble();
 }
 
-bool ShelfViewTestAPI::IsShowingOverflowBubble() const {
-  return shelf_view_->IsShowingOverflowBubble();
-}
-
 const gfx::Rect& ShelfViewTestAPI::GetBoundsByIndex(int index) {
   return shelf_view_->view_model_->view_at(index)->bounds();
 }
@@ -93,28 +81,34 @@ const gfx::Rect& ShelfViewTestAPI::GetIdealBoundsByIndex(int index) {
   return shelf_view_->view_model_->ideal_bounds(index);
 }
 
-int ShelfViewTestAPI::GetAnimationDuration() const {
+base::TimeDelta ShelfViewTestAPI::GetAnimationDuration() const {
   DCHECK(shelf_view_->bounds_animator_);
   return shelf_view_->bounds_animator_->GetAnimationDuration();
 }
 
-void ShelfViewTestAPI::SetAnimationDuration(int duration_ms) {
-  shelf_view_->bounds_animator_->SetAnimationDuration(duration_ms);
+void ShelfViewTestAPI::SetAnimationDuration(base::TimeDelta duration) {
+  shelf_view_->bounds_animator_->SetAnimationDuration(duration);
+}
+
+void ShelfViewTestAPI::RunMessageLoopUntilAnimationsDone(
+    views::BoundsAnimator* bounds_animator) {
+  std::unique_ptr<TestAPIAnimationObserver> observer(
+      new TestAPIAnimationObserver());
+
+  bounds_animator->AddObserver(observer.get());
+
+  // This nested loop will quit when TestAPIAnimationObserver's
+  // OnBoundsAnimatorDone is called.
+  base::RunLoop().Run();
+
+  bounds_animator->RemoveObserver(observer.get());
 }
 
 void ShelfViewTestAPI::RunMessageLoopUntilAnimationsDone() {
   if (!shelf_view_->bounds_animator_->IsAnimating())
     return;
 
-  std::unique_ptr<TestAPIAnimationObserver> observer(
-      new TestAPIAnimationObserver());
-  shelf_view_->bounds_animator_->AddObserver(observer.get());
-
-  // This nested loop will quit when TestAPIAnimationObserver's
-  // OnBoundsAnimatorDone is called.
-  base::RunLoop().Run();
-
-  shelf_view_->bounds_animator_->RemoveObserver(observer.get());
+  RunMessageLoopUntilAnimationsDone(shelf_view_->bounds_animator_.get());
 }
 
 gfx::Rect ShelfViewTestAPI::GetMenuAnchorRect(const views::View& source,
@@ -135,12 +129,8 @@ OverflowBubble* ShelfViewTestAPI::overflow_bubble() {
   return shelf_view_->overflow_bubble_.get();
 }
 
-OverflowButton* ShelfViewTestAPI::overflow_button() const {
-  return shelf_view_->overflow_button_;
-}
-
 ShelfTooltipManager* ShelfViewTestAPI::tooltip_manager() {
-  return &shelf_view_->tooltip_;
+  return shelf_view_->shelf()->tooltip();
 }
 
 int ShelfViewTestAPI::GetMinimumDragDistance() const {

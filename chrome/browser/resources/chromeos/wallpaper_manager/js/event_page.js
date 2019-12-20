@@ -271,8 +271,13 @@ chrome.storage.onChanged.addListener(function(changes, namespace) {
     var updateDailyRefreshStates = key => {
       if (!changes[key])
         return;
-      var oldDailyRefreshInfo = JSON.parse(changes[key].oldValue);
+
+      // If the user did not change Daily Refresh in this sync update,
+      // changes[key].oldValue will be empty
+      var oldDailyRefreshInfo =
+          changes[key].oldValue ? JSON.parse(changes[key].oldValue) : '';
       var newDailyRefreshInfo = JSON.parse(changes[key].newValue);
+
       // The resume token is expected to change after a new daily refresh
       // wallpaper is set. Ignore it if it's the only change.
       if (oldDailyRefreshInfo.enabled === newDailyRefreshInfo.enabled &&
@@ -303,45 +308,42 @@ chrome.storage.onChanged.addListener(function(changes, namespace) {
       }
 
       // If the built-in Wallpaper Picker App is open, update the check mark
-      // and the corresponding 'wallpaper-set-by-message' in time.
+      // and the corresponding message in time.
       var updateCheckMarkAndAppNameIfAppliable = function(appName) {
         if (!wallpaperPickerWindow)
           return;
         var wpDocument = wallpaperPickerWindow.contentWindow.document;
+        var messageContent = wpDocument.querySelector('#message-content');
 
-        if (!!appName) {
-          chrome.wallpaperPrivate.getStrings(function(strings) {
+        chrome.wallpaperPrivate.getStrings(strings => {
+          if (appName) {
+            wpDocument.querySelector('#message-container').display = 'block';
             var message =
                 strings.currentWallpaperSetByMessage.replace(/\$1/g, appName);
-            wpDocument.querySelector('#wallpaper-set-by-message').textContent =
-                message;
-            wpDocument.querySelector('#wallpaper-grid').classList.add('small');
+            messageContent.textContent = message;
             wpDocument.querySelector('#checkbox').classList.remove('checked');
             wpDocument.querySelector('#categories-list').disabled = false;
             wpDocument.querySelector('#wallpaper-grid').disabled = false;
-          });
-        } else {
-          wpDocument.querySelector('#wallpaper-set-by-message').textContent =
-              '';
-          wpDocument.querySelector('#wallpaper-grid').classList.remove('small');
-          Constants.WallpaperSyncStorage.get(
-              Constants.AccessSyncSurpriseMeEnabledKey, function(item) {
-                // TODO(crbug.com/810169): Try to combine this part with
-                // |WallpaperManager.onSurpriseMeStateChanged_|. The logic is
-                // duplicate.
-                var enable = item[Constants.AccessSyncSurpriseMeEnabledKey];
-                if (enable) {
-                  wpDocument.querySelector('#checkbox')
-                      .classList.add('checked');
-                } else {
-                  wpDocument.querySelector('#checkbox')
-                      .classList.remove('checked');
-                  if (wpDocument.querySelector('.check'))
-                    wpDocument.querySelector('.check').style.visibility =
-                        'visible';
-                }
-              });
-        }
+          } else {
+            Constants.WallpaperSyncStorage.get(
+                Constants.AccessSyncSurpriseMeEnabledKey, function(item) {
+                  // TODO(crbug.com/810169): Try to combine this part with
+                  // |WallpaperManager.onSurpriseMeStateChanged_|. The logic is
+                  // duplicate.
+                  var enable = item[Constants.AccessSyncSurpriseMeEnabledKey];
+                  if (enable) {
+                    wpDocument.querySelector('#checkbox')
+                        .classList.add('checked');
+                  } else {
+                    wpDocument.querySelector('#checkbox')
+                        .classList.remove('checked');
+                    if (wpDocument.querySelector('.check'))
+                      wpDocument.querySelector('.check').style.visibility =
+                          'visible';
+                  }
+                });
+          }
+        });
       };
 
       if (changes[Constants.AccessLocalWallpaperInfoKey]) {

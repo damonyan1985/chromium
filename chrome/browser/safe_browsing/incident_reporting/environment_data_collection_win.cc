@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 
+#include "base/enterprise_util.h"
 #include "base/i18n/case_conversion.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/histogram_macros.h"
@@ -18,14 +19,12 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
-#include "base/win/win_util.h"
 #include "chrome/browser/install_verification/win/module_info.h"
 #include "chrome/browser/install_verification/win/module_verification_common.h"
 #include "chrome/browser/net/service_providers_win.h"
 #include "chrome/browser/safe_browsing/download_protection/path_sanitizer.h"
 #include "chrome/browser/safe_browsing/incident_reporting/module_integrity_verifier_win.h"
 #include "chrome/common/safe_browsing/binary_feature_extractor.h"
-#include "chrome_elf/chrome_elf_constants.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "components/variations/variations_associated_data.h"
 
@@ -292,7 +291,7 @@ void CollectRegistryData(
 
 void CollectDomainEnrollmentData(
     ClientIncidentReport_EnvironmentData_OS* os_data) {
-  os_data->set_is_enrolled_to_domain(base::win::IsEnterpriseManaged());
+  os_data->set_is_enrolled_to_domain(base::IsMachineExternallyManaged());
 }
 
 void CollectPlatformProcessData(

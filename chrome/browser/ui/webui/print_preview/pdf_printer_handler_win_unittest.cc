@@ -43,7 +43,7 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
  public:
   FakePdfPrinterHandler(Profile* profile,
                         content::WebContents* contents,
-                        StickySettings* sticky_settings)
+                        PrintPreviewStickySettings* sticky_settings)
       : PdfPrinterHandler(profile, contents, sticky_settings),
         save_failed_(false) {}
 
@@ -61,8 +61,7 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
   }
 
   void StartPrintToPdf(const base::string16& job_title) {
-    StartPrint("", "", job_title, base::Value(), gfx::Size(), nullptr,
-               base::DoNothing());
+    StartPrint(job_title, base::Value(), nullptr, base::DoNothing());
     run_loop_.Run();
   }
 

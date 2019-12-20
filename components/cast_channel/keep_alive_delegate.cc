@@ -11,9 +11,9 @@
 #include "components/cast_channel/cast_channel_enum.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/logger.h"
-#include "components/cast_channel/proto/cast_channel.pb.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 
@@ -32,8 +32,7 @@ KeepAliveDelegate::KeepAliveDelegate(
       liveness_timeout_(liveness_timeout),
       ping_interval_(ping_interval),
       ping_message_(CreateKeepAlivePingMessage()),
-      pong_message_(CreateKeepAlivePongMessage()),
-      weak_factory_(this) {
+      pong_message_(CreateKeepAlivePongMessage()) {
   DCHECK(ping_interval_ < liveness_timeout_);
   DCHECK(inner_delegate_);
   DCHECK(socket_);
@@ -93,8 +92,8 @@ void KeepAliveDelegate::SendKeepAliveMessage(const CastMessage& message,
   DVLOG(2) << "Sending " << ToString(message_type);
 
   socket_->transport()->SendMessage(
-      message, base::Bind(&KeepAliveDelegate::SendKeepAliveMessageComplete,
-                          weak_factory_.GetWeakPtr(), message_type));
+      message, base::BindOnce(&KeepAliveDelegate::SendKeepAliveMessageComplete,
+                              weak_factory_.GetWeakPtr(), message_type));
 }
 
 void KeepAliveDelegate::SendKeepAliveMessageComplete(

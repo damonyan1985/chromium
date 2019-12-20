@@ -117,10 +117,10 @@ void FileSelectHelper::ProcessSelectedFilesMac(
     }
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&FileSelectHelper::ProcessSelectedFilesMacOnUIThread,
-                 base::Unretained(this), files_out, temporary_files));
+      base::BindOnce(&FileSelectHelper::ProcessSelectedFilesMacOnUIThread,
+                     base::Unretained(this), files_out, temporary_files));
 }
 
 void FileSelectHelper::ProcessSelectedFilesMacOnUIThread(
@@ -142,5 +142,5 @@ void FileSelectHelper::ProcessSelectedFilesMacOnUIThread(
     }
   }
 
-  NotifyRenderFrameHostAndEnd(files);
+  ConvertToFileChooserFileInfoList(files);
 }

@@ -9,6 +9,8 @@ import android.os.Build;
 import android.os.LocaleList;
 import android.text.TextUtils;
 
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.annotations.CalledByNative;
 
 import java.util.ArrayList;
@@ -172,8 +174,21 @@ public class LocaleUtils {
     }
 
     /**
-     * @return a comma separated language tags string that represents a default locale.
-     *         Each language tag is well-formed IETF BCP 47 language tag with language and country
+     * Extracts language from a language tag.
+     * @param languageTag language tag of the form xx-XX or xx.
+     * @return the xx part of the language tag.
+     */
+    public static String toLanguage(String languageTag) {
+        int pos = languageTag.indexOf('-');
+        if (pos < 0) {
+            return languageTag;
+        }
+        return languageTag.substring(0, pos);
+    }
+
+    /**
+     * @return a language tag string that represents the default locale.
+     *         The language tag is well-formed IETF BCP 47 language tag with language and country
      *         code.
      */
     @CalledByNative
@@ -186,6 +201,7 @@ public class LocaleUtils {
      *         Each language tag is well-formed IETF BCP 47 language tag with language and country
      *         code.
      */
+    @CalledByNative
     public static String getDefaultLocaleListString() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             return toLanguageTags(LocaleList.getDefault());

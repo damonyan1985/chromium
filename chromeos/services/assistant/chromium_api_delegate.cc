@@ -4,17 +4,18 @@
 
 #include "chromeos/services/assistant/chromium_api_delegate.h"
 
+#include <utility>
+
 #include "base/single_thread_task_runner.h"
-#include "chromeos/services/assistant/default_url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 namespace assistant {
 
 ChromiumApiDelegate::ChromiumApiDelegate(
-    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
-    : http_connection_factory_(
-          base::MakeRefCounted<DefaultURLRequestContextGetter>(
-              io_task_runner)) {}
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_url_loader_factory)
+    : http_connection_factory_(std::move(pending_url_loader_factory)) {}
 
 ChromiumApiDelegate::~ChromiumApiDelegate() = default;
 

@@ -104,8 +104,8 @@ IN_PROC_BROWSER_TEST_P(SubresourceFilterWebSocketBrowserTest,
                                  true /* expect_connection_success */);
 }
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     SubresourceFilterWebSocketBrowserTest,
     ::testing::Values(WebSocketCreationPolicy::IN_WORKER,
                       WebSocketCreationPolicy::IN_MAIN_FRAME));

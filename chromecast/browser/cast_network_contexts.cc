@@ -10,12 +10,23 @@
 
 #include "base/bind.h"
 #include "base/task/post_task.h"
+#include "chromecast/base/cast_features.h"
+#include "chromecast/browser/cast_browser_context.h"
+#include "chromecast/browser/cast_browser_process.h"
+#include "chromecast/browser/cast_http_user_agent_settings.h"
 #include "chromecast/browser/url_request_context_factory.h"
+#include "chromecast/common/cast_content_client.h"
+#include "components/proxy_config/pref_proxy_config_tracker_impl.h"
+#include "components/variations/net/variations_http_headers.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/cors_exempt_headers.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/storage_partition.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/network_context.h"
-#include "services/network/public/cpp/cross_thread_shared_url_loader_factory_info.h"
-#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/cross_thread_pending_shared_url_loader_factory.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromecast {
@@ -32,32 +43,34 @@ class CastNetworkContexts::URLLoaderFactoryForSystem
   }
 
   // mojom::URLLoaderFactory implementation:
-  void CreateLoaderAndStart(network::mojom::URLLoaderRequest request,
-                            int32_t routing_id,
-                            int32_t request_id,
-                            uint32_t options,
-                            const network::ResourceRequest& url_request,
-                            network::mojom::URLLoaderClientPtr client,
-                            const net::MutableNetworkTrafficAnnotationTag&
-                                traffic_annotation) override {
+  void CreateLoaderAndStart(
+      mojo::PendingReceiver<network::mojom::URLLoader> receiver,
+      int32_t routing_id,
+      int32_t request_id,
+      uint32_t options,
+      const network::ResourceRequest& url_request,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
+      override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     if (!network_context_)
       return;
     network_context_->GetSystemURLLoaderFactory()->CreateLoaderAndStart(
-        std::move(request), routing_id, request_id, options, url_request,
+        std::move(receiver), routing_id, request_id, options, url_request,
         std::move(client), traffic_annotation);
   }
 
-  void Clone(network::mojom::URLLoaderFactoryRequest request) override {
+  void Clone(mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver)
+      override {
     if (!network_context_)
       return;
-    network_context_->GetSystemURLLoaderFactory()->Clone(std::move(request));
+    network_context_->GetSystemURLLoaderFactory()->Clone(std::move(receiver));
   }
 
   // SharedURLLoaderFactory implementation:
-  std::unique_ptr<network::SharedURLLoaderFactoryInfo> Clone() override {
+  std::unique_ptr<network::PendingSharedURLLoaderFactory> Clone() override {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    return std::make_unique<network::CrossThreadSharedURLLoaderFactoryInfo>(
+    return std::make_unique<network::CrossThreadPendingSharedURLLoaderFactory>(
         this);
   }
 
@@ -73,47 +86,11 @@ class CastNetworkContexts::URLLoaderFactoryForSystem
   DISALLOW_COPY_AND_ASSIGN(URLLoaderFactoryForSystem);
 };
 
-// Class to own the NetworkContext wrapping the system URLRequestContext when
-// the network service is disabled.
-//
-// Created on the UI thread, but must be initialized and destroyed on the IO
-// thread.
-class CastNetworkContexts::SystemNetworkContextOwner {
- public:
-  SystemNetworkContextOwner() {
-    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  }
-
-  ~SystemNetworkContextOwner() {
-    DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  }
-
-  void Initialize(network::mojom::NetworkContextRequest network_context_request,
-                  scoped_refptr<net::URLRequestContextGetter> context_getter) {
-    DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-    context_getter_ = std::move(context_getter);
-    network_context_ = std::make_unique<network::NetworkContext>(
-        content::GetNetworkServiceImpl(), std::move(network_context_request),
-        context_getter_->GetURLRequestContext());
-  }
-
- private:
-  // Reference to the URLRequestContextGetter for the URLRequestContext used by
-  // NetworkContext. Depending on the embedder's implementation, this may be
-  // needed to keep the URLRequestContext alive until the NetworkContext is
-  // destroyed.
-  scoped_refptr<net::URLRequestContextGetter> context_getter_;
-  std::unique_ptr<network::mojom::NetworkContext> network_context_;
-
-  DISALLOW_COPY_AND_ASSIGN(SystemNetworkContextOwner);
-};
-
 CastNetworkContexts::CastNetworkContexts(
-    URLRequestContextFactory* url_request_context_factory)
-    : url_request_context_factory_(url_request_context_factory) {
-  system_shared_url_loader_factory_ =
-      base::MakeRefCounted<URLLoaderFactoryForSystem>(this);
-}
+    std::vector<std::string> cors_exempt_headers_list)
+    : cors_exempt_headers_list_(std::move(cors_exempt_headers_list)),
+      system_shared_url_loader_factory_(
+          base::MakeRefCounted<URLLoaderFactoryForSystem>(this)) {}
 
 CastNetworkContexts::~CastNetworkContexts() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -124,21 +101,7 @@ CastNetworkContexts::~CastNetworkContexts() {
 network::mojom::NetworkContext* CastNetworkContexts::GetSystemContext() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    if (!system_network_context_) {
-      system_network_context_owner_.reset(new SystemNetworkContextOwner);
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::IO},
-          base::BindOnce(&SystemNetworkContextOwner::Initialize,
-                         base::Unretained(system_network_context_owner_.get()),
-                         MakeRequest(&system_network_context_),
-                         base::WrapRefCounted(
-                             url_request_context_factory_->GetSystemGetter())));
-    }
-    return system_network_context_.get();
-  }
-
-  if (!system_network_context_ || system_network_context_.encountered_error()) {
+  if (!system_network_context_ || !system_network_context_.is_connected()) {
     // This should call into OnNetworkServiceCreated(), which will re-create
     // the network service, if needed. There's a chance that it won't be
     // invoked, if the NetworkContext has encountered an error but the
@@ -157,8 +120,7 @@ CastNetworkContexts::GetSystemURLLoaderFactory() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Create the URLLoaderFactory as needed.
-  if (system_url_loader_factory_ &&
-      !system_url_loader_factory_.encountered_error()) {
+  if (system_url_loader_factory_ && system_url_loader_factory_.is_connected()) {
     return system_url_loader_factory_.get();
   }
 
@@ -166,8 +128,10 @@ CastNetworkContexts::GetSystemURLLoaderFactory() {
       network::mojom::URLLoaderFactoryParams::New();
   params->process_id = network::mojom::kBrowserProcessId;
   params->is_corb_enabled = false;
+  params->is_trusted = true;
   GetSystemContext()->CreateURLLoaderFactory(
-      mojo::MakeRequest(&system_url_loader_factory_), std::move(params));
+      system_url_loader_factory_.BindNewPipeAndPassReceiver(),
+      std::move(params));
   return system_shared_url_loader_factory_.get();
 }
 
@@ -178,41 +142,83 @@ CastNetworkContexts::GetSystemSharedURLLoaderFactory() {
   return system_shared_url_loader_factory_;
 }
 
-network::mojom::NetworkContextPtr CastNetworkContexts::CreateNetworkContext(
+mojo::Remote<network::mojom::NetworkContext>
+CastNetworkContexts::CreateNetworkContext(
     content::BrowserContext* context,
     bool in_memory,
     const base::FilePath& relative_partition_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
 
-  network::mojom::NetworkContextPtr network_context;
+  mojo::Remote<network::mojom::NetworkContext> network_context;
   network::mojom::NetworkContextParamsPtr context_params =
       CreateDefaultNetworkContextParams();
 
+  content::UpdateCorsExemptHeader(context_params.get());
+
   // Copy of what's in ContentBrowserClient::CreateNetworkContext for now.
   context_params->accept_language = "en-us,en";
-  context_params->enable_data_url_support = true;
 
   content::GetNetworkService()->CreateNetworkContext(
-      MakeRequest(&network_context), std::move(context_params));
+      network_context.BindNewPipeAndPassReceiver(), std::move(context_params));
   return network_context;
 }
 
 void CastNetworkContexts::OnNetworkServiceCreated(
     network::mojom::NetworkService* network_service) {
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
-    return;
+  // Disable QUIC if instructed by DCS. This remains constant for the lifetime
+  // of the process.
+  if (!chromecast::IsFeatureEnabled(kEnableQuic))
+    network_service->DisableQuic();
 
   // The system NetworkContext must be created first, since it sets
   // |primary_network_context| to true.
-  network_service->CreateNetworkContext(MakeRequest(&system_network_context_),
-                                        CreateSystemNetworkContextParams());
+  network_service->CreateNetworkContext(
+      system_network_context_.BindNewPipeAndPassReceiver(),
+      CreateSystemNetworkContextParams());
+}
+
+void CastNetworkContexts::OnLocaleUpdate() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  auto accept_language = CastHttpUserAgentSettings::AcceptLanguage();
+
+  GetSystemContext()->SetAcceptLanguage(accept_language);
+
+  auto* browser_context = CastBrowserProcess::GetInstance()->browser_context();
+  content::BrowserContext::GetDefaultStoragePartition(browser_context)
+      ->GetNetworkContext()
+      ->SetAcceptLanguage(accept_language);
+}
+
+void CastNetworkContexts::OnPrefServiceShutdown() {
+  if (proxy_config_service_)
+    proxy_config_service_->RemoveObserver(this);
+
+  if (pref_proxy_config_tracker_impl_)
+    pref_proxy_config_tracker_impl_->DetachFromPrefService();
 }
 
 network::mojom::NetworkContextParamsPtr
 CastNetworkContexts::CreateDefaultNetworkContextParams() {
   network::mojom::NetworkContextParamsPtr network_context_params =
       network::mojom::NetworkContextParams::New();
+
+  network_context_params->http_cache_enabled = false;
+  network_context_params->user_agent = GetUserAgent();
+  network_context_params->accept_language =
+      CastHttpUserAgentSettings::AcceptLanguage();
+
+  // Disable idle sockets close on memory pressure, if instructed by DCS. On
+  // memory constrained devices:
+  // 1. if idle sockets are closed when memory pressure happens, cast_shell will
+  // close and re-open lots of connections to server.
+  // 2. if idle sockets are kept alive when memory pressure happens, this may
+  // cause JS engine gc frequently, leading to JS suspending.
+  network_context_params->disable_idle_sockets_close_on_memory_pressure =
+      IsFeatureEnabled(kDisableIdleSocketsCloseOnMemoryPressure);
+
+  AddProxyToNetworkContextParams(network_context_params.get());
+
+  network_context_params->cors_exempt_header_list = cors_exempt_headers_list_;
 
   return network_context_params;
 }
@@ -221,12 +227,66 @@ network::mojom::NetworkContextParamsPtr
 CastNetworkContexts::CreateSystemNetworkContextParams() {
   network::mojom::NetworkContextParamsPtr network_context_params =
       CreateDefaultNetworkContextParams();
+  content::UpdateCorsExemptHeader(network_context_params.get());
 
   network_context_params->context_name = std::string("system");
 
   network_context_params->primary_network_context = true;
 
   return network_context_params;
+}
+
+void CastNetworkContexts::AddProxyToNetworkContextParams(
+    network::mojom::NetworkContextParams* network_context_params) {
+  if (!proxy_config_service_) {
+    pref_proxy_config_tracker_impl_ =
+        std::make_unique<PrefProxyConfigTrackerImpl>(
+            CastBrowserProcess::GetInstance()->pref_service(), nullptr);
+    proxy_config_service_ =
+        pref_proxy_config_tracker_impl_->CreateTrackingProxyConfigService(
+            nullptr);
+    proxy_config_service_->AddObserver(this);
+  }
+
+  mojo::PendingRemote<network::mojom::ProxyConfigClient> proxy_config_client;
+  network_context_params->proxy_config_client_receiver =
+      proxy_config_client.InitWithNewPipeAndPassReceiver();
+  proxy_config_client_set_.Add(std::move(proxy_config_client));
+
+  poller_receiver_set_.Add(this,
+                           network_context_params->proxy_config_poller_client
+                               .InitWithNewPipeAndPassReceiver());
+
+  net::ProxyConfigWithAnnotation proxy_config;
+  net::ProxyConfigService::ConfigAvailability availability =
+      proxy_config_service_->GetLatestProxyConfig(&proxy_config);
+  if (availability != net::ProxyConfigService::CONFIG_PENDING)
+    network_context_params->initial_proxy_config = proxy_config;
+}
+
+void CastNetworkContexts::OnProxyConfigChanged(
+    const net::ProxyConfigWithAnnotation& config,
+    net::ProxyConfigService::ConfigAvailability availability) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  for (const auto& proxy_config_client : proxy_config_client_set_) {
+    switch (availability) {
+      case net::ProxyConfigService::CONFIG_VALID:
+        proxy_config_client->OnProxyConfigUpdated(config);
+        break;
+      case net::ProxyConfigService::CONFIG_UNSET:
+        proxy_config_client->OnProxyConfigUpdated(
+            net::ProxyConfigWithAnnotation::CreateDirect());
+        break;
+      case net::ProxyConfigService::CONFIG_PENDING:
+        NOTREACHED();
+        break;
+    }
+  }
+}
+
+void CastNetworkContexts::OnLazyProxyConfigPoll() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  proxy_config_service_->OnLazyPoll();
 }
 
 }  // namespace shell

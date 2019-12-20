@@ -17,7 +17,13 @@
 #include "base/run_loop.h"
 #include "base/sequence_checker.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_piece_forward.h"
 #include "base/system/sys_info.h"
+#include "components/policy/core/common/cloud/dm_token.h"
+
+namespace base {
+class TaskRunner;
+}
 
 namespace policy {
 
@@ -30,26 +36,33 @@ namespace policy {
 // called.
 class BrowserDMTokenStorage {
  public:
+  using StoreTask = base::OnceCallback<bool()>;
   using StoreCallback = base::OnceCallback<void(bool success)>;
 
   // Returns the global singleton object. Must be called from the UI thread.
   // This implementation is platform dependant.
   static BrowserDMTokenStorage* Get();
-  // Returns a client ID unique to the machine. Virtual for tests.
-  virtual std::string RetrieveClientId();
+  // Returns a client ID unique to the machine.
+  std::string RetrieveClientId();
   // Returns the serial number of the machine.
   std::string RetrieveSerialNumber();
-  // Returns the enrollment token, or an empty string if there is none. Virtual
-  // for tests.
-  virtual std::string RetrieveEnrollmentToken();
+  // Returns the enrollment token, or an empty string if there is none.
+  std::string RetrieveEnrollmentToken();
   // Asynchronously stores |dm_token| and calls |callback| with a boolean to
   // indicate success or failure. It is an error to attempt concurrent store
-  // operations. Virtual for tests.
-  virtual void StoreDMToken(const std::string& dm_token,
-                            StoreCallback callback);
+  // operations.
+  void StoreDMToken(const std::string& dm_token, StoreCallback callback);
+  // Asynchronously invalidates |dm_token_| and calls |callback| with a boolean
+  // to indicate success or failure. It is an error to attempt concurrent store
+  // operations.
+  void InvalidateDMToken(StoreCallback callback);
+  // Asynchronously clears |dm_token_| and calls |callback| with a boolean to
+  // indicate success or failure. It is an error to attempt concurrent store
+  // operations.
+  void ClearDMToken(StoreCallback callback);
   // Returns an already stored DM token. An empty token is returned if no DM
-  // token exists on the system or an error is encountered. Virtual for tests.
-  virtual std::string RetrieveDMToken();
+  // token exists on the system or an error is encountered.
+  DMToken RetrieveDMToken();
   // Must be called after the DM token is saved, to ensure that the callback is
   // invoked.
   void OnDMTokenStored(bool success);
@@ -63,10 +76,6 @@ class BrowserDMTokenStorage {
   static void SetForTesting(BrowserDMTokenStorage* storage) {
     storage_for_testing_ = storage;
   }
-
-  // Schedules a task to delete the empty policy directory that contains DM
-  // token.
-  void ScheduleUnusedPolicyDirectoryDeletion();
 
  protected:
   friend class base::NoDestructor<BrowserDMTokenStorage>;
@@ -97,11 +106,15 @@ class BrowserDMTokenStorage {
   // Gets the boolean value that determines if error message will be displayed
   // when enrollment fails.
   virtual bool InitEnrollmentErrorOption() = 0;
-  // Saves the DM token. This implementation is platform dependant.
-  virtual void SaveDMToken(const std::string& token) = 0;
-
-  // Deletes the policy directory if it's empty.
-  virtual void DeletePolicyDirectory();
+  // Function called by |SaveDMToken| that returns if the operation was a
+  // success.  This implementation is platform dependent.
+  virtual StoreTask SaveDMTokenTask(const std::string& token,
+                                    const std::string& client_id) = 0;
+  // Can optionally be overridden by platform implementation if a specific task
+  // runner should be used by |SaveDMToken|.
+  virtual scoped_refptr<base::TaskRunner> SaveDMTokenTaskRunner() = 0;
+  // Saves the DM token.
+  void SaveDMToken(const std::string& token);
 
   // Will be called after the DM token is stored.
   StoreCallback store_callback_;
@@ -111,10 +124,12 @@ class BrowserDMTokenStorage {
   std::string client_id_;
   base::Optional<std::string> serial_number_;
   std::string enrollment_token_;
-  std::string dm_token_;
+  DMToken dm_token_;
   bool should_display_error_message_on_failure_;
 
   SEQUENCE_CHECKER(sequence_checker_);
+
+  base::WeakPtrFactory<BrowserDMTokenStorage> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowserDMTokenStorage);
 };

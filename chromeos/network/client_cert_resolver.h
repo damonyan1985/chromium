@@ -95,8 +95,7 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) ClientCertResolver
   void NetworkConnectionStateChanged(const NetworkState* network) override;
 
   // NetworkCertLoader::Observer overrides
-  void OnCertificatesLoaded(
-      const net::ScopedCERTCertificateList& cert_list) override;
+  void OnCertificatesLoaded() override;
 
   // NetworkPolicyObserver overrides
   void PolicyAppliedToNetwork(const std::string& service_path) override;
@@ -152,7 +151,7 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) ClientCertResolver
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<ClientCertResolver> weak_ptr_factory_;
+  base::WeakPtrFactory<ClientCertResolver> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ClientCertResolver);
 };

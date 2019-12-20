@@ -6,243 +6,194 @@
  * @fileoverview Test suite for the Material Design history page.
  */
 
-const ROOT_PATH = '../../../../../';
-
-GEN_INCLUDE(
-    [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
+GEN_INCLUDE(['//chrome/test/data/webui/polymer_browser_test_base.js']);
 GEN('#include "base/command_line.h"');
 GEN('#include "chrome/test/data/webui/history_ui_browsertest.h"');
+GEN('#include "services/network/public/cpp/features.h"');
 
-function MaterialHistoryBrowserTest() {}
-
-MaterialHistoryBrowserTest.prototype = {
-  __proto__: PolymerTest.prototype,
-
-  browsePreload: 'chrome://history',
+const HistoryBrowserTest = class extends PolymerTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/';
+  }
 
   /** @override */
-  runAccessibilityChecks: false,
-
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
-    'test_util.js',
-  ]),
+  get extraLibraries() {
+    return [
+      '//third_party/mocha/mocha.js',
+      '//chrome/test/data/webui/mocha_adapter.js',
+    ];
+  }
 
   /** @override */
-  setUp: function() {
-    PolymerTest.prototype.setUp.call(this);
-
-    suiteSetup(function() {
-      // Wait for the top-level app element to be upgraded.
-      return waitForAppUpgrade()
-          .then(function() {
-            return md_history.ensureLazyLoaded();
-          })
-          .then(function() {
-            $('history-app').queryState_.queryingDisabled = true;
-          });
-    });
-  },
+  get featureList() {
+    return {enabled: ['network::features::kOutOfBlinkCors']};
+  }
 };
 
-function MaterialHistoryBrowserServiceTest() {}
-
-MaterialHistoryBrowserServiceTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'browser_service_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryDrawerTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_drawer_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryBrowserServiceTest', 'All', function() {
+TEST_F('HistoryDrawerTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryDrawerTest() {}
-
-MaterialHistoryDrawerTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_drawer_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryItemTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_item_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryDrawerTest', 'All', function() {
+TEST_F('HistoryItemTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryItemTest() {}
-
-MaterialHistoryItemTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_item_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryLinkClickTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/link_click_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryItemTest', 'All', function() {
+TEST_F('HistoryLinkClickTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryListTest() {}
-
-MaterialHistoryListTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_list_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryListTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_list_test.js';
+  }
 };
 
 // Times out on debug builders because the History page can take several seconds
 // to load in a Debug build. See https://crbug.com/669227.
-GEN('#if !defined(NDEBUG)');
-GEN('#define MAYBE_All DISABLED_All');
-GEN('#else');
+//GEN('#if !defined(NDEBUG)');
+//GEN('#define MAYBE_All DISABLED_All');
+//GEN('#else');
 GEN('#define MAYBE_All All');
-GEN('#endif');
+//GEN('#endif');
 
-TEST_F('MaterialHistoryListTest', 'MAYBE_All', function() {
+TEST_F('HistoryListTest', 'MAYBE_All', function() {
   mocha.run();
 });
 
-function MaterialHistoryMetricsTest() {}
-
-MaterialHistoryMetricsTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_metrics_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryMetricsTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_metrics_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryMetricsTest', 'All', function() {
+TEST_F('HistoryMetricsTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryOverflowMenuTest() {}
-
-MaterialHistoryOverflowMenuTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_overflow_menu_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryOverflowMenuTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_overflow_menu_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryOverflowMenuTest', 'All', function() {
+TEST_F('HistoryOverflowMenuTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryRoutingTest() {}
-
-MaterialHistoryRoutingTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_routing_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryRoutingTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_routing_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryRoutingTest', 'All', function() {
-  md_history.history_routing_test.registerTests();
+TEST_F('HistoryRoutingTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistoryRoutingWithQueryParamTest() {}
+// eslint-disable-next-line no-var
+var HistoryRoutingWithQueryParamTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_routing_with_query_param_test.js';
+  }
+};
 
-MaterialHistoryRoutingWithQueryParamTest.prototype = {
-  __proto__: MaterialHistoryRoutingTest.prototype,
+TEST_F('HistoryRoutingWithQueryParamTest', 'All', function() {
+  mocha.run();
+});
 
-  browsePreload: 'chrome://history/?q=query',
+// eslint-disable-next-line no-var
+var HistorySyncedTabsTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_synced_tabs_test.js';
+  }
+};
+
+TEST_F('HistorySyncedTabsTest', 'All', function() {
+  mocha.run();
+});
+
+// eslint-disable-next-line no-var
+var HistorySupervisedUserTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_supervised_user_test.js';
+  }
+
+  get typedefCppFixture() {
+    return 'HistoryUIBrowserTest';
+  }
 
   /** @override */
-  setUp: function() {
-    PolymerTest.prototype.setUp.call(this);
-    // This message handler needs to be registered before the test since the
-    // query can happen immediately after the element is upgraded. However,
-    // since there may be a delay as well, the test might check the global var
-    // too early as well. In this case the test will have overtaken the
-    // callback.
-    registerMessageCallback('queryHistory', this, function(info) {
-      window.historyQueryInfo = info;
-    });
-
-    suiteSetup(function() {
-      // Wait for the top-level app element to be upgraded.
-      return waitForAppUpgrade().then(function() {
-        md_history.ensureLazyLoaded();
-      });
-    });
-  },
-};
-
-TEST_F('MaterialHistoryRoutingWithQueryParamTest', 'All', function() {
-  md_history.history_routing_test_with_query_param.registerTests();
-  mocha.run();
-});
-
-function MaterialHistorySyncedTabsTest() {}
-
-MaterialHistorySyncedTabsTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    '../settings/test_util.js',
-    'history_synced_tabs_test.js',
-  ]),
-};
-
-TEST_F('MaterialHistorySyncedTabsTest', 'All', function() {
-  mocha.run();
-});
-
-function MaterialHistorySupervisedUserTest() {}
-
-MaterialHistorySupervisedUserTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  typedefCppFixture: 'HistoryUIBrowserTest',
-
-  testGenPreamble: function() {
+  testGenPreamble() {
     GEN('  SetDeleteAllowed(false);');
-  },
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_supervised_user_test.js',
-  ]),
+  }
 };
 
-TEST_F('MaterialHistorySupervisedUserTest', 'All', function() {
+GEN('#if defined(OS_MACOSX)');
+GEN('#define MAYBE_AllSupervised DISABLED_All');
+GEN('#else');
+GEN('#define MAYBE_AllSupervised All');
+GEN('#endif');
+
+TEST_F('HistorySupervisedUserTest', 'MAYBE_AllSupervised', function() {
   mocha.run();
 });
 
-function MaterialHistoryToolbarTest() {}
-
-MaterialHistoryToolbarTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'history_toolbar_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistoryToolbarTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/history_toolbar_test.js';
+  }
 };
 
-TEST_F('MaterialHistoryToolbarTest', 'All', function() {
+TEST_F('HistoryToolbarTest', 'All', function() {
   mocha.run();
 });
 
-function MaterialHistorySearchedLabelTest() {}
-
-MaterialHistorySearchedLabelTest.prototype = {
-  __proto__: MaterialHistoryBrowserTest.prototype,
-
-  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
-    'searched_label_test.js',
-  ]),
+// eslint-disable-next-line no-var
+var HistorySearchedLabelTest = class extends HistoryBrowserTest {
+  /** @override */
+  get browsePreload() {
+    return 'chrome://history/test_loader.html?module=history/searched_label_test.js';
+  }
 };
 
-TEST_F('MaterialHistorySearchedLabelTest', 'All', function() {
+TEST_F('HistorySearchedLabelTest', 'All', function() {
   mocha.run();
 });

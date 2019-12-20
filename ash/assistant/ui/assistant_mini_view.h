@@ -12,6 +12,7 @@
 #include "ash/assistant/model/assistant_ui_model_observer.h"
 #include "base/component_export.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
 #include "ui/views/controls/button/button.h"
 
@@ -22,19 +23,6 @@ class Label;
 namespace ash {
 
 class AssistantViewDelegate;
-
-// AssistantMiniViewDelegate ---------------------------------------------------
-
-// TODO(wutao): Remove this class and call methods on AssistantViewDelegate
-// derectly.
-class COMPONENT_EXPORT(ASSISTANT_UI) AssistantMiniViewDelegate {
- public:
-  // Invoked when the AssistantMiniView is pressed.
-  virtual void OnAssistantMiniViewPressed() {}
-
- protected:
-  virtual ~AssistantMiniViewDelegate() = default;
-};
 
 // AssistantMiniView -----------------------------------------------------------
 
@@ -59,7 +47,7 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantMiniView
   // AssistantInteractionModelObserver:
   void OnInputModalityChanged(InputModality input_modality) override;
   void OnResponseChanged(
-      const std::shared_ptr<AssistantResponse>& response) override;
+      const scoped_refptr<AssistantResponse>& response) override;
 
   // AssistantUiModelObserver:
   void OnUiVisibilityChanged(
@@ -68,18 +56,12 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantMiniView
       base::Optional<AssistantEntryPoint> entry_point,
       base::Optional<AssistantExitPoint> exit_point) override;
 
-  void set_mini_view_delegate(AssistantMiniViewDelegate* delegate) {
-    mini_view_delegate_ = delegate;
-  }
-
  private:
   void InitLayout();
   void UpdatePrompt();
 
   AssistantViewDelegate* const delegate_;
   views::Label* label_;                              // Owned by view hierarchy.
-
-  AssistantMiniViewDelegate* mini_view_delegate_ = nullptr;
 
   // The most recent active query for the current Assistant UI session. If there
   // has been no active query for the current UI session, this is empty.

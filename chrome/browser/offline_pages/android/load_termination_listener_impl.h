@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_OFFLINE_PAGES_ANDROID_LOAD_TERMINATION_LISTENER_IMPL_H_
 
 #include "base/android/application_status_listener.h"
+#include "base/memory/weak_ptr.h"
 #include "components/offline_pages/core/background/load_termination_listener.h"
 
 namespace offline_pages {
@@ -24,7 +25,8 @@ class LoadTerminationListenerImpl : public LoadTerminationListener {
   // An instance of Android AppListener.
   std::unique_ptr<base::android::ApplicationStatusListener> app_listener_;
 
-  base::WeakPtrFactory<LoadTerminationListenerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<LoadTerminationListenerImpl> weak_ptr_factory_{this};
+
   DISALLOW_COPY_AND_ASSIGN(LoadTerminationListenerImpl);
 };
 

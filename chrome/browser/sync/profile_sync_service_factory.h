@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_SYNC_PROFILE_SYNC_SERVICE_FACTORY_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
@@ -19,10 +20,10 @@ struct DefaultSingletonTraits;
 
 namespace browser_sync {
 class ChromeSyncClient;
-class ProfileSyncService;
 }  // namespace browser_sync
 
 namespace syncer {
+class ProfileSyncService;
 class SyncService;
 }  // namespace syncer
 
@@ -32,18 +33,30 @@ class ProfileSyncServiceFactory : public BrowserContextKeyedServiceFactory {
       base::RepeatingCallback<std::unique_ptr<browser_sync::ChromeSyncClient>(
           Profile*)>;
 
-  // Returns the SyncService for the given profile. Prefer this over
-  // GetForProfile where possible.
-  static syncer::SyncService* GetSyncServiceForProfile(Profile* profile);
+  // Returns the SyncService for the given profile.
+  static syncer::SyncService* GetForProfile(Profile* profile);
   // Returns the ProfileSyncService for the given profile. DO NOT USE unless
-  // absolutely necessary! Prefer GetSyncServiceForProfile instead.
-  static browser_sync::ProfileSyncService* GetForProfile(Profile* profile);
-  static bool HasProfileSyncService(Profile* profile);
+  // absolutely necessary! Prefer GetForProfile instead.
+  static syncer::ProfileSyncService* GetAsProfileSyncServiceForProfile(
+      Profile* profile);
+
+  // Returns whether a SyncService has already been created for the profile.
+  // Note that GetForProfile will create the service if it doesn't exist yet.
+  static bool HasSyncService(Profile* profile);
+
+  // Checks whether sync is configurable by the user. Returns false if sync is
+  // disallowed by the command line or controlled by configuration management.
+  // |profile| must not be nullptr.
+  static bool IsSyncAllowed(Profile* profile);
 
   static ProfileSyncServiceFactory* GetInstance();
 
   // Overrides how the SyncClient is created for testing purposes.
   static void SetSyncClientFactoryForTest(SyncClientFactory* client_factory);
+
+  // Iterates over all profiles that have been loaded so far and extract their
+  // SyncService if present. Returned pointers are guaranteed to be not null.
+  static std::vector<const syncer::SyncService*> GetAllSyncServices();
 
  private:
   friend struct base::DefaultSingletonTraits<ProfileSyncServiceFactory>;

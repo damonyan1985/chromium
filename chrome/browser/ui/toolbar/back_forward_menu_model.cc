@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/numerics/ranges.h"
 #include "base/stl_util.h"
@@ -41,7 +42,7 @@ using content::WebContents;
 
 const int BackForwardMenuModel::kMaxHistoryItems = 12;
 const int BackForwardMenuModel::kMaxChapterStops = 5;
-static const int kMaxWidth = 700;
+static const int kMaxBackForwardMenuWidth = 700;
 
 BackForwardMenuModel::BackForwardMenuModel(Browser* browser,
                                            ModelType model_type)
@@ -100,8 +101,8 @@ base::string16 BackForwardMenuModel::GetLabelAt(int index) const {
   NavigationEntry* entry = GetNavigationEntry(index);
   base::string16 menu_text(entry->GetTitleForDisplay());
   menu_text = ui::EscapeMenuLabelAmpersands(menu_text);
-  menu_text = gfx::ElideText(menu_text, gfx::FontList(), kMaxWidth,
-                             gfx::ELIDE_TAIL, gfx::Typesetter::NATIVE);
+  menu_text = gfx::ElideText(menu_text, gfx::FontList(),
+                             kMaxBackForwardMenuWidth, gfx::ELIDE_TAIL);
 
   return menu_text;
 }
@@ -125,7 +126,7 @@ int BackForwardMenuModel::GetGroupIdAt(int index) const {
   return false;
 }
 
-bool BackForwardMenuModel::GetIconAt(int index, gfx::Image* icon) {
+bool BackForwardMenuModel::GetIconAt(int index, gfx::Image* icon) const {
   if (!ItemHasIcon(index))
     return false;
 
@@ -136,7 +137,13 @@ bool BackForwardMenuModel::GetIconAt(int index, gfx::Image* icon) {
     NavigationEntry* entry = GetNavigationEntry(index);
     *icon = entry->GetFavicon().image;
     if (!entry->GetFavicon().valid && menu_model_delegate()) {
-      FetchFavicon(entry);
+      // FetchFavicon is not const because it caches the result, but GetIconAt
+      // is const because it is not be apparent to outside observers that an
+      // internal change is taking place. Compared to spreading const in
+      // unintuitive places (e.g. making menu_model_delegate() const but
+      // returning a non-const while sprinkling virtual on member variables),
+      // this const_cast is the lesser evil.
+      const_cast<BackForwardMenuModel*>(this)->FetchFavicon(entry);
     }
   }
 
@@ -182,13 +189,16 @@ void BackForwardMenuModel::ActivatedAt(int index, int event_flags) {
   }
 
   int controller_index = MenuIndexToNavEntryIndex(index);
+
+  UMA_HISTOGRAM_BOOLEAN(
+      "Navigation.BackForward.NavigatingToEntryMarkedToBeSkipped",
+      GetWebContents()->GetController().IsEntryMarkedToBeSkipped(
+          controller_index));
+
   WindowOpenDisposition disposition =
       ui::DispositionFromEventFlags(event_flags);
-  if (!chrome::NavigateToIndexWithDisposition(browser_,
-                                              controller_index,
-                                              disposition)) {
-    NOTREACHED();
-  }
+  chrome::NavigateToIndexWithDisposition(browser_, controller_index,
+                                         disposition);
 }
 
 void BackForwardMenuModel::MenuWillShow() {
@@ -216,19 +226,10 @@ bool BackForwardMenuModel::IsSeparator(int index) const {
   return index == history_items;
 }
 
-void BackForwardMenuModel::SetMenuModelDelegate(
-      ui::MenuModelDelegate* menu_model_delegate) {
-  menu_model_delegate_ = menu_model_delegate;
-}
-
-ui::MenuModelDelegate* BackForwardMenuModel::GetMenuModelDelegate() const {
-  return menu_model_delegate_;
-}
-
 void BackForwardMenuModel::FetchFavicon(NavigationEntry* entry) {
   // If the favicon has already been requested for this menu, don't do
   // anything.
-  if (base::ContainsKey(requested_favicons_, entry->GetUniqueID()))
+  if (base::Contains(requested_favicons_, entry->GetUniqueID()))
     return;
 
   requested_favicons_.insert(entry->GetUniqueID());
@@ -430,11 +431,11 @@ int BackForwardMenuModel::MenuIndexToNavEntryIndex(int index) const {
 NavigationEntry* BackForwardMenuModel::GetNavigationEntry(int index) const {
   int controller_index = MenuIndexToNavEntryIndex(index);
   NavigationController& controller = GetWebContents()->GetController();
-  if (controller_index >= 0 && controller_index < controller.GetEntryCount())
-    return controller.GetEntryAtIndex(controller_index);
 
-  NOTREACHED();
-  return nullptr;
+  DCHECK_GE(controller_index, 0);
+  DCHECK_LT(controller_index, controller.GetEntryCount());
+
+  return controller.GetEntryAtIndex(controller_index);
 }
 
 std::string BackForwardMenuModel::BuildActionName(
@@ -449,7 +450,7 @@ std::string BackForwardMenuModel::BuildActionName(
   metric_string += action;
   if (index != -1) {
     // +1 is for historical reasons (indices used to start at 1).
-    metric_string += base::IntToString(index + 1);
+    metric_string += base::NumberToString(index + 1);
   }
   return metric_string;
 }

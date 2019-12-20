@@ -9,9 +9,7 @@
 #include "base/test/simple_test_tick_clock.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_factory.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_unittest_utils.h"
-#include "chrome/browser/resource_coordinator/page_signal_receiver.h"
 #include "chrome/browser/resource_coordinator/site_characteristics_data_store.h"
-#include "chrome/browser/resource_coordinator/tab_manager_features.h"
 #include "chrome/browser/resource_coordinator/time.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/favicon_url.h"
@@ -24,6 +22,11 @@ namespace resource_coordinator {
 
 using LoadingState = TabLoadTracker::LoadingState;
 
+constexpr base::TimeDelta kTitleOrFaviconChangePostLoadGracePeriod =
+    base::TimeDelta::FromSeconds(20);
+constexpr base::TimeDelta kFeatureUsagePostBackgroundGracePeriod =
+    base::TimeDelta::FromSeconds(10);
+
 // A mock implementation of a SiteCharacteristicsDataWriter.
 class LenientMockDataWriter : public SiteCharacteristicsDataWriter {
  public:
@@ -35,11 +38,11 @@ class LenientMockDataWriter : public SiteCharacteristicsDataWriter {
 
   MOCK_METHOD0(NotifySiteLoaded, void());
   MOCK_METHOD0(NotifySiteUnloaded, void());
-  MOCK_METHOD1(NotifySiteVisibilityChanged, void(TabVisibility));
+  MOCK_METHOD1(NotifySiteVisibilityChanged,
+               void(performance_manager::TabVisibility));
   MOCK_METHOD0(NotifyUpdatesFaviconInBackground, void());
   MOCK_METHOD0(NotifyUpdatesTitleInBackground, void());
   MOCK_METHOD0(NotifyUsesAudioInBackground, void());
-  MOCK_METHOD0(NotifyUsesNotificationsInBackground, void());
   MOCK_METHOD3(NotifyLoadTimePerformanceMeasurement,
                void(base::TimeDelta, base::TimeDelta, uint64_t));
 
@@ -65,7 +68,7 @@ class MockDataStore : public SiteCharacteristicsDataStore {
   }
   std::unique_ptr<SiteCharacteristicsDataWriter> GetWriterForOrigin(
       const url::Origin& origin,
-      TabVisibility tab_visibility) override {
+      performance_manager::TabVisibility tab_visibility) override {
     return std::make_unique<MockDataWriter>(origin);
   }
   bool IsRecordingForTesting() override { return true; }
@@ -95,11 +98,8 @@ class LocalSiteCharacteristicsWebContentsObserverTest
         browser_context(), base::BindRepeating(&BuildMockDataStoreForContext));
 
     TabLoadTracker::Get()->StartTracking(web_contents());
-    LocalSiteCharacteristicsWebContentsObserver::
-        SkipObserverRegistrationForTesting();
     observer_ = std::make_unique<LocalSiteCharacteristicsWebContentsObserver>(
         web_contents());
-    observer()->SetPageSignalReceiverForTesting(&receiver_);
   }
 
   void TearDown() override {
@@ -124,16 +124,10 @@ class LocalSiteCharacteristicsWebContentsObserverTest
     return observer_.get();
   }
 
-  PageNavigationIdentity GetNavIdForWebContents() {
-    return {CoordinationUnitID(),
-            receiver_.GetNavigationIDForWebContents(web_contents()), ""};
-  }
-
   base::SimpleTestTickClock& test_clock() { return test_clock_; }
 
  private:
   std::unique_ptr<LocalSiteCharacteristicsWebContentsObserver> observer_;
-  PageSignalReceiver receiver_;
   base::SimpleTestTickClock test_clock_;
   ScopedSetTickClockForTesting scoped_set_tick_clock_for_testing_;
 
@@ -149,7 +143,7 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
   MockDataWriter* mock_writer = NavigateAndReturnMockWriter(kTestUrl1);
   EXPECT_TRUE(mock_writer);
 
-  auto writer_origin = observer()->GetWriterOriginForTesting();
+  auto writer_origin = observer()->writer_origin();
 
   EXPECT_EQ(url::Origin::Create(kTestUrl1), writer_origin);
 
@@ -171,8 +165,8 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
   mock_writer = NavigateAndReturnMockWriter(kTestUrl2);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
-  EXPECT_FALSE(writer_origin == observer()->GetWriterOriginForTesting());
-  writer_origin = observer()->GetWriterOriginForTesting();
+  EXPECT_FALSE(writer_origin == observer()->writer_origin());
+  writer_origin = observer()->writer_origin();
 
   EXPECT_EQ(url::Origin::Create(kTestUrl2), mock_writer->Origin());
 
@@ -190,10 +184,12 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
   observer()->DidUpdateFaviconURL({});
   observer()->TitleWasSet(nullptr);
 
+  EXPECT_CALL(*mock_writer, NotifySiteLoaded());
   TabLoadTracker::Get()->TransitionStateForTesting(web_contents(),
                                                    LoadingState::LOADED);
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kForeground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kForeground));
   EXPECT_CALL(*mock_writer, NotifySiteLoaded());
   web_contents()->WasShown();
   observer()->OnLoadingStateChange(web_contents(),
@@ -208,28 +204,19 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
   ::testing::Mock::VerifyAndClear(mock_writer);
   observer()->OnAudioStateChanged(true);
   ::testing::Mock::VerifyAndClear(mock_writer);
-  observer()->OnNonPersistentNotificationCreated(web_contents(),
-                                                 GetNavIdForWebContents());
-  ::testing::Mock::VerifyAndClear(mock_writer);
 
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kBackground));
   web_contents()->WasHidden();
   ::testing::Mock::VerifyAndClear(mock_writer);
 
-  // Notification usage events always get forwarded.
-  EXPECT_CALL(*mock_writer, NotifyUsesNotificationsInBackground());
-  observer()->OnNonPersistentNotificationCreated(web_contents(),
-                                                 GetNavIdForWebContents());
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  auto params = GetStaticSiteCharacteristicsDatabaseParams();
   // Title and Favicon should be ignored during the post-loading grace period.
   observer()->DidUpdateFaviconURL({});
   observer()->TitleWasSet(nullptr);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
-  test_clock().Advance(params.title_or_favicon_change_grace_period);
+  test_clock().Advance(kTitleOrFaviconChangePostLoadGracePeriod);
 
   EXPECT_CALL(*mock_writer, NotifyUpdatesFaviconInBackground());
   observer()->DidUpdateFaviconURL({});
@@ -240,21 +227,28 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
 
   // Brievly switch the tab to foreground to reset the last backgrounded time.
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kForeground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kForeground));
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kBackground));
   web_contents()->WasShown();
   web_contents()->WasHidden();
   ::testing::Mock::VerifyAndClear(mock_writer);
 
-  // Audio usage events should be ignored during the post-background grace
-  // period.
+  // These events should be ignored during the post-background grace period.
   observer()->OnAudioStateChanged(true);
+  observer()->DidUpdateFaviconURL({});
+  observer()->TitleWasSet(nullptr);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
-  test_clock().Advance(params.audio_usage_grace_period);
+  test_clock().Advance(kFeatureUsagePostBackgroundGracePeriod);
   EXPECT_CALL(*mock_writer, NotifyUsesAudioInBackground());
+  EXPECT_CALL(*mock_writer, NotifyUpdatesFaviconInBackground());
+  EXPECT_CALL(*mock_writer, NotifyUpdatesTitleInBackground());
   observer()->OnAudioStateChanged(true);
+  observer()->DidUpdateFaviconURL({});
+  observer()->TitleWasSet(nullptr);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
   EXPECT_CALL(*mock_writer, OnDestroy());
@@ -273,7 +267,8 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
                                                    LoadingState::LOADING);
 
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kBackground));
   web_contents()->WasHidden();
   ::testing::Mock::VerifyAndClear(mock_writer);
 
@@ -287,40 +282,22 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
   EXPECT_CALL(*mock_writer, OnDestroy());
 }
 
-TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
-       NotificationEventsWhenLoadingInBackground) {
-  MockDataWriter* mock_writer = NavigateAndReturnMockWriter(kTestUrl1);
-
-  TabLoadTracker::Get()->TransitionStateForTesting(web_contents(),
-                                                   LoadingState::LOADING);
-
-  EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground));
-  web_contents()->WasHidden();
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  EXPECT_CALL(*mock_writer, NotifyUsesNotificationsInBackground());
-  observer()->OnNonPersistentNotificationCreated(web_contents(),
-                                                 GetNavIdForWebContents());
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  EXPECT_CALL(*mock_writer, OnDestroy());
-}
-
 TEST_F(LocalSiteCharacteristicsWebContentsObserverTest, VisibilityEvent) {
   MockDataWriter* mock_writer = NavigateAndReturnMockWriter(kTestUrl1);
 
   // Test that the visibility events get forwarded to the writer.
 
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground))
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kBackground))
       .Times(2);
   observer()->OnVisibilityChanged(content::Visibility::OCCLUDED);
   observer()->OnVisibilityChanged(content::Visibility::HIDDEN);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
   EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kForeground));
+              NotifySiteVisibilityChanged(
+                  performance_manager::TabVisibility::kForeground));
   observer()->OnVisibilityChanged(content::Visibility::VISIBLE);
   ::testing::Mock::VerifyAndClear(mock_writer);
 
@@ -354,71 +331,6 @@ TEST_F(LocalSiteCharacteristicsWebContentsObserverTest, LoadEvent) {
   observer()->OnLoadingStateChange(web_contents(),
                                    TabLoadTracker::LoadingState::LOADING,
                                    TabLoadTracker::LoadingState::UNLOADED);
-
-  EXPECT_CALL(*mock_writer, OnDestroy());
-}
-
-TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
-       LateNotificationUsageSignalIsIgnored) {
-  MockDataWriter* mock_writer = NavigateAndReturnMockWriter(kTestUrl1);
-  TabLoadTracker::Get()->TransitionStateForTesting(web_contents(),
-                                                   LoadingState::LOADED);
-
-  EXPECT_CALL(*mock_writer,
-              NotifySiteVisibilityChanged(TabVisibility::kBackground));
-  web_contents()->WasHidden();
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  auto nav_id = GetNavIdForWebContents();
-  EXPECT_CALL(*mock_writer, NotifyUsesNotificationsInBackground());
-  observer()->OnNonPersistentNotificationCreated(web_contents(), nav_id);
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  // Invalidate the navigation ID but keep the same origin, the notification
-  // should get forwarded to the writer.
-  nav_id.navigation_id++;
-  nav_id.url = web_contents()->GetLastCommittedURL().spec();
-  EXPECT_CALL(*mock_writer, NotifyUsesNotificationsInBackground());
-  observer()->OnNonPersistentNotificationCreated(web_contents(), nav_id);
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  // Make the URL of the navigation ID point to a different origin, the writer
-  // shouldn't get notified about this event.
-  nav_id.url = "https://not-the-same-url.com";
-  observer()->OnNonPersistentNotificationCreated(web_contents(), nav_id);
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  EXPECT_CALL(*mock_writer, OnDestroy());
-}
-
-TEST_F(LocalSiteCharacteristicsWebContentsObserverTest,
-       OnLoadTimePerformanceMeasurement) {
-  MockDataWriter* mock_writer = NavigateAndReturnMockWriter(kTestUrl1);
-  TabLoadTracker::Get()->TransitionStateForTesting(web_contents(),
-                                                   LoadingState::LOADED);
-
-  constexpr base::TimeDelta kExpectedLoadDuration =
-      base::TimeDelta::FromMicroseconds(501);
-  constexpr base::TimeDelta kExpectedCPUTime =
-      base::TimeDelta::FromMicroseconds(1003);
-  constexpr uint64_t kExpectedMemory = 123u;
-  auto nav_id = GetNavIdForWebContents();
-  EXPECT_CALL(*mock_writer,
-              NotifyLoadTimePerformanceMeasurement(
-                  kExpectedLoadDuration, kExpectedCPUTime, kExpectedMemory));
-  observer()->OnLoadTimePerformanceEstimate(web_contents(), nav_id,
-                                            kExpectedLoadDuration,
-                                            kExpectedCPUTime, kExpectedMemory);
-  ::testing::Mock::VerifyAndClear(mock_writer);
-
-  // Verify that a late notification is not persisted (for now).
-  // TODO(siggi): Fix late notifications such that they persist to another
-  //     writer.
-  nav_id.navigation_id++;
-  observer()->OnLoadTimePerformanceEstimate(web_contents(), nav_id,
-                                            kExpectedLoadDuration,
-                                            kExpectedCPUTime, kExpectedMemory);
-  ::testing::Mock::VerifyAndClear(mock_writer);
 
   EXPECT_CALL(*mock_writer, OnDestroy());
 }

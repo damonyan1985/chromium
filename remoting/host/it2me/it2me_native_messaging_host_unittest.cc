@@ -16,10 +16,10 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/stringize_macros.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/policy/core/common/fake_async_policy_loader.h"
@@ -35,6 +35,7 @@
 #include "remoting/host/setup/test_util.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/ice_config.h"
+#include "remoting/signaling/log_to_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace remoting {
@@ -47,7 +48,6 @@ const char kTestAccessCode[] = "888888";
 constexpr base::TimeDelta kTestAccessCodeLifetime =
     base::TimeDelta::FromSeconds(666);
 const char kTestClientUsername[] = "some_user@gmail.com";
-const char kTestBotJid[] = "remoting@bot.talk.google.com";
 const char kTestStunServer[] = "test_relay_server.com";
 
 void VerifyId(std::unique_ptr<base::DictionaryValue> response,
@@ -90,13 +90,12 @@ base::DictionaryValue CreateConnectMessage(int id) {
   connect_message.SetString("type", "connect");
   connect_message.SetString("xmppServerAddress", "talk.google.com:5222");
   connect_message.SetBoolean("xmppServerUseTls", true);
-  connect_message.SetString("directoryBotJid", kTestBotJid);
   connect_message.SetString("userName", kTestClientUsername);
   connect_message.SetString("authServiceWithToken", "oauth2:sometoken");
-  connect_message.Set(
-      "iceConfig",
-      base::JSONReader::Read("{ \"iceServers\": [ { \"urls\": [ \"stun:" +
-                             std::string(kTestStunServer) + "\" ] } ] }"));
+  connect_message.Set("iceConfig",
+                      base::JSONReader::ReadDeprecated(
+                          "{ \"iceServers\": [ { \"urls\": [ \"stun:" +
+                          std::string(kTestStunServer) + "\" ] } ] }"));
 
   return connect_message;
 }
@@ -118,10 +117,11 @@ class MockIt2MeHost : public It2MeHost {
   void Connect(std::unique_ptr<ChromotingHostContext> context,
                std::unique_ptr<base::DictionaryValue> policies,
                std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+               std::unique_ptr<RegisterSupportHostRequest> register_request,
+               std::unique_ptr<LogToServer> log_to_server,
                base::WeakPtr<It2MeHost::Observer> observer,
                std::unique_ptr<SignalStrategy> signal_strategy,
                const std::string& username,
-               const std::string& directory_bot_jid,
                const protocol::IceConfig& ice_config) override;
   void Disconnect() override;
 
@@ -137,21 +137,22 @@ void MockIt2MeHost::Connect(
     std::unique_ptr<ChromotingHostContext> context,
     std::unique_ptr<base::DictionaryValue> policies,
     std::unique_ptr<It2MeConfirmationDialogFactory> dialog_factory,
+    std::unique_ptr<RegisterSupportHostRequest> register_request,
+    std::unique_ptr<LogToServer> log_to_server,
     base::WeakPtr<It2MeHost::Observer> observer,
     std::unique_ptr<SignalStrategy> signal_strategy,
     const std::string& username,
-    const std::string& directory_bot_jid,
     const protocol::IceConfig& ice_config) {
   DCHECK(context->ui_task_runner()->BelongsToCurrentThread());
 
   // Verify that parameters are passed correctly.
   EXPECT_EQ(username, kTestClientUsername);
-  EXPECT_EQ(directory_bot_jid, kTestBotJid);
   EXPECT_EQ(ice_config.stun_servers[0].hostname(), kTestStunServer);
 
   host_context_ = std::move(context);
   observer_ = std::move(observer);
   signal_strategy_ = std::move(signal_strategy);
+  register_request_ = std::move(register_request);
 
   OnPolicyUpdate(std::move(policies));
 
@@ -159,15 +160,16 @@ void MockIt2MeHost::Connect(
   RunSetState(kRequestedAccessCode);
 
   host_context()->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnStoreAccessCode, observer_,
-                            kTestAccessCode, kTestAccessCodeLifetime));
+      FROM_HERE,
+      base::BindOnce(&It2MeHost::Observer::OnStoreAccessCode, observer_,
+                     kTestAccessCode, kTestAccessCodeLifetime));
 
   RunSetState(kReceivedAccessCode);
   RunSetState(kConnecting);
 
   host_context()->ui_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&It2MeHost::Observer::OnClientAuthenticated,
-                            observer_, kTestClientUsername));
+      FROM_HERE, base::BindOnce(&It2MeHost::Observer::OnClientAuthenticated,
+                                observer_, kTestClientUsername));
 
   RunSetState(kConnected);
 }
@@ -176,7 +178,7 @@ void MockIt2MeHost::Disconnect() {
   if (!host_context()->network_task_runner()->BelongsToCurrentThread()) {
     DCHECK(host_context()->ui_task_runner()->BelongsToCurrentThread());
     host_context()->network_task_runner()->PostTask(
-        FROM_HERE, base::Bind(&MockIt2MeHost::Disconnect, this));
+        FROM_HERE, base::BindOnce(&MockIt2MeHost::Disconnect, this));
     return;
   }
 
@@ -186,8 +188,8 @@ void MockIt2MeHost::Disconnect() {
 void MockIt2MeHost::RunSetState(It2MeHostState state) {
   if (!host_context()->network_task_runner()->BelongsToCurrentThread()) {
     host_context()->network_task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&It2MeHost::SetStateForTesting, this, state, ErrorCode::OK));
+        FROM_HERE, base::BindOnce(&It2MeHost::SetStateForTesting, this, state,
+                                  ErrorCode::OK));
   } else {
     SetStateForTesting(state, ErrorCode::OK);
   }
@@ -251,8 +253,7 @@ class It2MeNativeMessagingHostTest : public testing::Test {
   base::File input_write_file_;
   base::File output_read_file_;
 
-  // Message loop of the test thread.
-  std::unique_ptr<base::MessageLoop> test_message_loop_;
+  std::unique_ptr<base::test::SingleThreadTaskEnvironment> task_environment_;
   std::unique_ptr<base::RunLoop> test_run_loop_;
 
   std::unique_ptr<base::Thread> host_thread_;
@@ -272,7 +273,8 @@ class It2MeNativeMessagingHostTest : public testing::Test {
 };
 
 void It2MeNativeMessagingHostTest::SetUp() {
-  test_message_loop_.reset(new base::MessageLoop());
+  task_environment_ =
+      std::make_unique<base::test::SingleThreadTaskEnvironment>();
   test_run_loop_.reset(new base::RunLoop());
 
   // Run the host on a dedicated thread.
@@ -285,9 +287,8 @@ void It2MeNativeMessagingHostTest::SetUp() {
                  base::Unretained(this)));
 
   host_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&It2MeNativeMessagingHostTest::StartHost,
-                 base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&It2MeNativeMessagingHostTest::StartHost,
+                                base::Unretained(this)));
 
   // Wait until the host finishes starting.
   test_run_loop_->Run();
@@ -317,7 +318,8 @@ void It2MeNativeMessagingHostTest::TearDown() {
 
 void It2MeNativeMessagingHostTest::SetPolicies(
     const base::DictionaryValue& dict) {
-  DCHECK(test_message_loop_->task_runner()->RunsTasksInCurrentSequence());
+  DCHECK(task_environment_->GetMainThreadTaskRunner()
+             ->RunsTasksInCurrentSequence());
   // Copy |dict| into |policy_bundle|.
   policy::PolicyNamespace policy_namespace =
       policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string());
@@ -355,7 +357,8 @@ It2MeNativeMessagingHostTest::ReadMessageFromOutputPipe() {
       return nullptr;
     }
 
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(message_json);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(message_json);
     if (!message || !message->is_dict()) {
       LOG(ERROR) << "Malformed message:" << message_json;
       return nullptr;
@@ -555,7 +558,7 @@ void It2MeNativeMessagingHostTest::StartHost() {
           std::move(context), std::move(factory)));
   it2me_host->SetPolicyErrorClosureForTesting(
       base::Bind(base::IgnoreResult(&base::TaskRunner::PostTask),
-                 test_message_loop_->task_runner(), FROM_HERE,
+                 task_environment_->GetMainThreadTaskRunner(), FROM_HERE,
                  base::Bind(&It2MeNativeMessagingHostTest::ExitPolicyRunLoop,
                             base::Unretained(this))));
   it2me_host->Start(pipe_.get());
@@ -563,23 +566,23 @@ void It2MeNativeMessagingHostTest::StartHost() {
   pipe_->Start(std::move(it2me_host), std::move(channel));
 
   // Notify the test that the host has finished starting up.
-  test_message_loop_->task_runner()->PostTask(
-      FROM_HERE, test_run_loop_->QuitClosure());
+  test_run_loop_->Quit();
 }
 
 void It2MeNativeMessagingHostTest::ExitTest() {
-  if (!test_message_loop_->task_runner()->RunsTasksInCurrentSequence()) {
-    test_message_loop_->task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&It2MeNativeMessagingHostTest::ExitTest,
-                   base::Unretained(this)));
+  if (!task_environment_->GetMainThreadTaskRunner()
+           ->RunsTasksInCurrentSequence()) {
+    task_environment_->GetMainThreadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&It2MeNativeMessagingHostTest::ExitTest,
+                                  base::Unretained(this)));
     return;
   }
   test_run_loop_->Quit();
 }
 
 void It2MeNativeMessagingHostTest::ExitPolicyRunLoop() {
-  DCHECK(test_message_loop_->task_runner()->RunsTasksInCurrentSequence());
+  DCHECK(task_environment_->GetMainThreadTaskRunner()
+             ->RunsTasksInCurrentSequence());
   if (policy_run_loop_) {
     policy_run_loop_->Quit();
   }
@@ -634,13 +637,13 @@ TEST_F(It2MeNativeMessagingHostTest, ConnectMultiple) {
 }
 
 TEST_F(It2MeNativeMessagingHostTest,
-       ConnectRespectsNoDialogsParameterOnChromeOsOnly) {
+       ConnectRespectsSuppressUserDialogsParameterOnChromeOsOnly) {
   int next_id = 1;
   base::DictionaryValue connect_message = CreateConnectMessage(next_id);
-  connect_message.SetBoolean("noDialogs", true);
+  connect_message.SetBoolean("suppressUserDialogs", true);
   WriteMessageToInputPipe(connect_message);
   VerifyConnectResponses(next_id);
-#if defined(OS_CHROMEOS)
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
   EXPECT_FALSE(factory_raw_ptr_->host->enable_dialogs());
 #else
   EXPECT_TRUE(factory_raw_ptr_->host->enable_dialogs());
@@ -650,6 +653,22 @@ TEST_F(It2MeNativeMessagingHostTest,
   VerifyDisconnectResponses(next_id);
 }
 
+TEST_F(It2MeNativeMessagingHostTest,
+       ConnectRespectsSuppressNotificationsParameterOnChromeOsOnly) {
+  int next_id = 1;
+  base::DictionaryValue connect_message = CreateConnectMessage(next_id);
+  connect_message.SetBoolean("suppressNotifications", true);
+  WriteMessageToInputPipe(connect_message);
+  VerifyConnectResponses(next_id);
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
+  EXPECT_FALSE(factory_raw_ptr_->host->enable_notifications());
+#else
+  EXPECT_TRUE(factory_raw_ptr_->host->enable_notifications());
+#endif
+  ++next_id;
+  WriteMessageToInputPipe(CreateDisconnectMessage(next_id));
+  VerifyDisconnectResponses(next_id);
+}
 
 // Verify non-Dictionary requests are rejected.
 TEST_F(It2MeNativeMessagingHostTest, WrongFormat) {

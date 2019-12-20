@@ -21,14 +21,13 @@ LanguageState::LanguageState(TranslateDriver* driver)
   DCHECK(translate_driver_);
 }
 
-LanguageState::~LanguageState() {
-}
+LanguageState::~LanguageState() {}
 
 void LanguageState::DidNavigate(bool is_same_document_navigation,
                                 bool is_main_frame,
                                 bool reload,
                                 const std::string& href_translate,
-                                bool navigation_from_dse) {
+                                bool navigation_from_google) {
   is_same_document_navigation_ = is_same_document_navigation;
   if (is_same_document_navigation_ || !is_main_frame)
     return;  // Don't reset our states, the page has not changed.
@@ -51,7 +50,7 @@ void LanguageState::DidNavigate(bool is_same_document_navigation,
   translation_error_ = false;
   translation_declined_ = false;
   href_translate_ = href_translate;
-  navigation_from_dse_ = navigation_from_dse;
+  navigation_from_google_ = navigation_from_google;
 
   SetTranslateEnabled(false);
 }
@@ -76,11 +75,14 @@ bool LanguageState::InTranslateNavigation() const {
   //   - this page is in the same language as the previous page
   //   - the previous page had been translated
   //   - the new page was navigated through a link.
-  return
-      !translation_pending_ &&
-      prev_original_lang_ == original_lang_ &&
-      prev_original_lang_ != prev_current_lang_ &&
-      translate_driver_->IsLinkNavigation();
+  return !translation_pending_ && prev_original_lang_ == original_lang_ &&
+         prev_original_lang_ != prev_current_lang_ &&
+         translate_driver_->IsLinkNavigation();
+}
+
+void LanguageState::SetOriginalLanguage(const std::string& language) {
+  original_lang_ = language;
+  SetIsPageTranslated(current_lang_ != original_lang_);
 }
 
 void LanguageState::SetCurrentLanguage(const std::string& language) {

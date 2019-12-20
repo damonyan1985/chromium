@@ -12,25 +12,24 @@ from core import perf_benchmark
 
 from telemetry import benchmark as benchmark_module
 from telemetry import decorators
-from telemetry.internal.browser import browser_options
+from telemetry.testing import options_for_unittests
 from telemetry.testing import progress_reporter
 
 from py_utils import discover
 
 def _GetAllPerfBenchmarks():
   return discover.DiscoverClasses(
-      path_util.GetPerfBenchmarksDir(), path_util.GetPerfDir(),
+      path_util.GetOfficialBenchmarksDir(), path_util.GetPerfDir(),
       benchmark_module.Benchmark, index_by_class_name=True).values()
 
 
 def _BenchmarkOptionsTestGenerator(benchmark):
-  def testBenchmarkOptions(self):  # pylint: disable=unused-argument
-    """Invalid options will raise benchmark.InvalidOptionsError."""
-    options = browser_options.BrowserFinderOptions()
-    parser = options.CreateParser()
-    benchmark.AddCommandLineArgs(parser)
-    benchmark_module.AddCommandLineArgs(parser)
-    benchmark.SetArgumentDefaults(parser)
+  def testBenchmarkOptions(self):
+    """Tests whether benchmark options can be constructed without errors."""
+    try:
+      options_for_unittests.GetRunOptions(benchmark_cls=benchmark)
+    except benchmark_module.InvalidOptionsError as exc:
+      self.fail(str(exc))
   return testBenchmarkOptions
 
 
@@ -68,7 +67,7 @@ class TestBenchmarkNamingMobile(unittest.TestCase):
                             str(disabled_tags), str(enabled_tags)]))
 
 
-class TestNoOverrideCustomizeBrowserOptions(unittest.TestCase):
+class TestNoOverrideCustomizeOptions(unittest.TestCase):
 
   def runTest(self):
     all_benchmarks = _GetAllPerfBenchmarks()
@@ -78,9 +77,9 @@ class TestNoOverrideCustomizeBrowserOptions(unittest.TestCase):
                         'Benchmark %s needs to subclass from PerfBenchmark'
                         % benchmark.Name())
       self.assertEquals(
-          benchmark.CustomizeBrowserOptions,
-          perf_benchmark.PerfBenchmark.CustomizeBrowserOptions,
-          'Benchmark %s should not override CustomizeBrowserOptions' %
+          benchmark.CustomizeOptions,
+          perf_benchmark.PerfBenchmark.CustomizeOptions,
+          'Benchmark %s should not override CustomizeOptions' %
           benchmark.Name())
 
 

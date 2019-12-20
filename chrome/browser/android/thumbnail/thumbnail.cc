@@ -50,9 +50,7 @@ Thumbnail::Thumbnail(TabId tab_id,
       ui_resource_id_(0),
       retrieved_(false),
       ui_resource_provider_(ui_resource_provider),
-      thumbnail_delegate_(thumbnail_delegate),
-      weak_factory_(this) {
-}
+      thumbnail_delegate_(thumbnail_delegate) {}
 
 Thumbnail::~Thumbnail() {
   ClearUIResourceId();
@@ -94,7 +92,7 @@ cc::UIResourceBitmap Thumbnail::GetBitmap(cc::UIResourceId uid,
     // to avoid reentry there.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&Thumbnail::DoInvalidate, weak_factory_.GetWeakPtr()));
+        base::BindOnce(&Thumbnail::DoInvalidate, weak_factory_.GetWeakPtr()));
     return bitmap_;
   }
 

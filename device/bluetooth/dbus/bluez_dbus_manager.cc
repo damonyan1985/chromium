@@ -22,6 +22,7 @@
 #include "device/base/features.h"
 #include "device/bluetooth/dbus/bluetooth_adapter_client.h"
 #include "device/bluetooth/dbus/bluetooth_agent_manager_client.h"
+#include "device/bluetooth/dbus/bluetooth_debug_manager_client.h"
 #include "device/bluetooth/dbus/bluetooth_device_client.h"
 #include "device/bluetooth/dbus/bluetooth_gatt_characteristic_client.h"
 #include "device/bluetooth/dbus/bluetooth_gatt_descriptor_client.h"
@@ -35,10 +36,6 @@
 #include "device/bluetooth/dbus/bluez_dbus_thread_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
-#if defined(OS_CHROMEOS)
-#include "chromeos/dbus/dbus_thread_manager.h"
-#endif
-
 namespace bluez {
 
 static BluezDBusManager* g_bluez_dbus_manager = nullptr;
@@ -50,8 +47,7 @@ BluezDBusManager::BluezDBusManager(dbus::Bus* bus,
     : bus_(bus),
       alternate_bus_(alternate_bus),
       object_manager_support_known_(false),
-      object_manager_supported_(false),
-      weak_ptr_factory_(this) {
+      object_manager_supported_(false) {
   // On Chrome OS, Bluez might not be ready by the time we initialize the
   // BluezDBusManager so we initialize the clients anyway.
   bool should_check_object_manager = true;
@@ -72,7 +68,7 @@ BluezDBusManager::BluezDBusManager(dbus::Bus* bus,
                                dbus::kObjectManagerGetManagedObjects);
   GetSystemBus()
       ->GetObjectProxy(
-          GetBluetoothServiceName(),
+          bluez_object_manager::kBluezObjectManagerServiceName,
           dbus::ObjectPath(
               bluetooth_object_manager::kBluetoothObjectManagerServicePath))
       ->CallMethodWithErrorCallback(
@@ -112,6 +108,12 @@ BluetoothAgentManagerClient*
 bluez::BluezDBusManager::GetBluetoothAgentManagerClient() {
   DCHECK(object_manager_support_known_);
   return client_bundle_->bluetooth_agent_manager_client();
+}
+
+BluetoothDebugManagerClient*
+bluez::BluezDBusManager::GetBluetoothDebugManagerClient() {
+  DCHECK(object_manager_support_known_);
+  return client_bundle_->bluetooth_debug_manager_client();
 }
 
 BluetoothDeviceClient* bluez::BluezDBusManager::GetBluetoothDeviceClient() {
@@ -204,10 +206,13 @@ void BluezDBusManager::OnObjectManagerNotSupported(
 }
 
 void BluezDBusManager::InitializeClients() {
-  std::string bluetooth_service_name = GetBluetoothServiceName();
+  std::string bluetooth_service_name =
+      bluez_object_manager::kBluezObjectManagerServiceName;
   client_bundle_->bluetooth_adapter_client()->Init(GetSystemBus(),
                                                    bluetooth_service_name);
   client_bundle_->bluetooth_agent_manager_client()->Init(
+      GetSystemBus(), bluetooth_service_name);
+  client_bundle_->bluetooth_debug_manager_client()->Init(
       GetSystemBus(), bluetooth_service_name);
   client_bundle_->bluetooth_device_client()->Init(GetSystemBus(),
                                                   bluetooth_service_name);
@@ -239,19 +244,8 @@ void BluezDBusManager::InitializeClients() {
       alternate_bus_, bluetooth_service_name);
 }
 
-std::string BluezDBusManager::GetBluetoothServiceName() {
-  bool use_newblue = false;
-#if defined(OS_CHROMEOS)
-  use_newblue = base::FeatureList::IsEnabled(device::kNewblueDaemon);
-#endif  // defined(OS_CHROMEOS)
-
-  return use_newblue
-             ? bluetooth_object_manager::kBluetoothObjectManagerServiceName
-             : bluez_object_manager::kBluezObjectManagerServiceName;
-}
-
 // static
-void BluezDBusManager::Initialize() {
+void BluezDBusManager::Initialize(dbus::Bus* system_bus) {
   // If we initialize BluezDBusManager twice we may also be shutting it down
   // early; do not allow that.
   if (g_using_bluez_dbus_manager_for_testing)
@@ -259,22 +253,33 @@ void BluezDBusManager::Initialize() {
 
   CHECK(!g_bluez_dbus_manager);
 
+  BluezDBusThreadManager::Initialize();
+
 #if defined(OS_CHROMEOS)
+  DCHECK(system_bus);
   // On ChromeOS, BluetoothSystem needs a separate connection to Bluez, so we
   // use BluezDBusThreadManager to get two different connections to the same
   // services. This allows us to have two separate sets of clients in the same
   // process.
-  BluezDBusThreadManager::Initialize();
-
-  CreateGlobalInstance(chromeos::DBusThreadManager::Get()->GetSystemBus(),
+  CreateGlobalInstance(system_bus,
                        BluezDBusThreadManager::Get()->GetSystemBus(),
-                       chromeos::DBusThreadManager::Get()->IsUsingFakes());
+                       false /* use_dbus_stubs */);
 #elif defined(OS_LINUX)
   // BluetoothSystem, the client that needs the extra connection, is not
   // implemented on Linux, so no need for an extra Bus.
   CreateGlobalInstance(BluezDBusThreadManager::Get()->GetSystemBus(), nullptr,
                        false /* use_dbus_stubs */);
+#else
+  NOTREACHED();
 #endif
+}
+
+void BluezDBusManager::InitializeFake() {
+  if (g_using_bluez_dbus_manager_for_testing)
+    return;
+  CHECK(!g_bluez_dbus_manager);
+  BluezDBusThreadManager::Initialize();
+  CreateGlobalInstance(nullptr, nullptr, true /* use_dbus_stubs */);
 }
 
 // static
@@ -346,6 +351,12 @@ void BluezDBusManagerSetter::SetBluetoothAgentManagerClient(
     std::unique_ptr<BluetoothAgentManagerClient> client) {
   bluez::BluezDBusManager::Get()
       ->client_bundle_->bluetooth_agent_manager_client_ = std::move(client);
+}
+
+void BluezDBusManagerSetter::SetBluetoothDebugManagerClient(
+    std::unique_ptr<BluetoothDebugManagerClient> client) {
+  bluez::BluezDBusManager::Get()
+      ->client_bundle_->bluetooth_debug_manager_client_ = std::move(client);
 }
 
 void BluezDBusManagerSetter::SetBluetoothDeviceClient(

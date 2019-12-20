@@ -5,43 +5,30 @@
 #include "ui/views/controls/slider.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/logging.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/widget/widget.h"
-
-namespace {
-const int kSlideValueChangeDurationMs = 150;
-
-// The image chunks.
-enum BorderElements {
-  LEFT,
-  CENTER_LEFT,
-  CENTER_RIGHT,
-  RIGHT,
-};
-}  // namespace
 
 namespace views {
 
 namespace {
-
-// Color of slider at the active and the disabled state, respectively.
-const SkColor kActiveColor = SkColorSetARGB(0xFF, 0x42, 0x85, 0xF4);
-const SkColor kDisabledColor = SkColorSetARGB(0xFF, 0xBD, 0xBD, 0xBD);
-constexpr uint8_t kHighlightColorAlpha = 0x4D;
 
 // The thickness of the slider.
 constexpr int kLineThickness = 2;
@@ -49,28 +36,22 @@ constexpr int kLineThickness = 2;
 // The radius used to draw rounded slider ends.
 constexpr float kSliderRoundedRadius = 2.f;
 
+// The padding used to hide the slider underneath the thumb.
+constexpr int kSliderPadding = 2;
+
 // The radius of the thumb and the highlighted thumb of the slider,
 // respectively.
-constexpr float kThumbRadius = 6.f;
+constexpr float kThumbRadius = 4.f;
 constexpr float kThumbWidth = 2 * kThumbRadius;
-constexpr float kThumbHighlightRadius = 10.f;
-
-// The stroke of the thumb when the slider is disabled.
-constexpr int kSliderThumbStroke = 2;
-
-// Duration of the thumb highlight growing effect animation.
-constexpr int kSlideHighlightChangeDurationMs = 150;
+constexpr float kThumbHighlightRadius = 12.f;
 
 }  // namespace
-
-// static
-const char Slider::kViewClassName[] = "Slider";
 
 Slider::Slider(SliderListener* listener)
     : listener_(listener),
       highlight_animation_(this),
       pending_accessibility_value_change_(false) {
-  highlight_animation_.SetSlideDuration(kSlideHighlightChangeDurationMs);
+  highlight_animation_.SetSlideDuration(base::TimeDelta::FromMilliseconds(150));
   EnableCanvasFlippingForRTLUI(true);
 #if defined(OS_MACOSX)
   SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
@@ -81,15 +62,25 @@ Slider::Slider(SliderListener* listener)
   SchedulePaint();
 }
 
-Slider::~Slider() {}
+Slider::~Slider() = default;
+
+float Slider::GetValue() const {
+  return value_;
+}
 
 void Slider::SetValue(float value) {
   SetValueInternal(value, VALUE_CHANGED_BY_API);
 }
 
-void Slider::UpdateState(bool control_on) {
-  is_active_ = control_on;
-  SchedulePaint();
+bool Slider::GetEnableAccessibilityEvents() const {
+  return accessibility_events_enabled_;
+}
+
+void Slider::SetEnableAccessibilityEvents(bool enabled) {
+  if (accessibility_events_enabled_ == enabled)
+    return;
+  accessibility_events_enabled_ = enabled;
+  OnPropertyChanged(&accessibility_events_enabled_, kPropertyEffectsNone);
 }
 
 float Slider::GetAnimatingValue() const{
@@ -143,12 +134,13 @@ void Slider::SetValueInternal(float value, SliderChangeReason reason) {
     // There is no message-loop when running tests. So we cannot animate then.
     if (!move_animation_) {
       initial_animating_value_ = old_value;
-      move_animation_.reset(new gfx::SlideAnimation(this));
-      move_animation_->SetSlideDuration(kSlideValueChangeDurationMs);
+      move_animation_ = std::make_unique<gfx::SlideAnimation>(this);
+      move_animation_->SetSlideDuration(base::TimeDelta::FromMilliseconds(150));
       move_animation_->Show();
     }
+    OnPropertyChanged(&value_, kPropertyEffectsNone);
   } else {
-    SchedulePaint();
+    OnPropertyChanged(&value_, kPropertyEffectsPaint);
   }
 
   if (accessibility_events_enabled_) {
@@ -200,13 +192,9 @@ void Slider::OnSliderDragEnded() {
     listener_->SliderDragEnded(this);
 }
 
-const char* Slider::GetClassName() const {
-  return kViewClassName;
-}
-
 gfx::Size Slider::CalculatePreferredSize() const {
-  const int kSizeMajor = 200;
-  const int kSizeMinor = 40;
+  constexpr int kSizeMajor = 200;
+  constexpr int kSizeMinor = 40;
 
   return gfx::Size(std::max(width(), kSizeMajor), kSizeMinor);
 }
@@ -267,49 +255,37 @@ void Slider::OnPaint(gfx::Canvas* canvas) {
   const int empty = width - full;
   const int y = content.height() / 2 - kLineThickness / 2;
   const int x = content.x() + full + kThumbRadius;
-  const SkColor current_thumb_color =
-      is_active_ ? kActiveColor : kDisabledColor;
-
-  // Extra space used to hide slider ends behind the thumb.
-  const int extra_padding = 1;
 
   cc::PaintFlags slider_flags;
   slider_flags.setAntiAlias(true);
-  slider_flags.setColor(current_thumb_color);
+  slider_flags.setColor(GetThumbColor());
   canvas->DrawRoundRect(
-      gfx::Rect(content.x(), y, full + extra_padding, kLineThickness),
+      gfx::Rect(content.x(), y, full - GetSliderExtraPadding(), kLineThickness),
       kSliderRoundedRadius, slider_flags);
-  slider_flags.setColor(kDisabledColor);
-  canvas->DrawRoundRect(gfx::Rect(x + kThumbRadius - extra_padding, y,
-                                  empty + extra_padding, kLineThickness),
-                        kSliderRoundedRadius, slider_flags);
+  slider_flags.setColor(GetTroughColor());
+  canvas->DrawRoundRect(
+      gfx::Rect(x + kThumbRadius + GetSliderExtraPadding(), y,
+                empty - GetSliderExtraPadding(), kLineThickness),
+      kSliderRoundedRadius, slider_flags);
 
   gfx::Point thumb_center(x, content.height() / 2);
 
   // Paint the thumb highlight if it exists.
   const int thumb_highlight_radius =
       HasFocus() ? kThumbHighlightRadius : thumb_highlight_radius_;
-  if (is_active_ && thumb_highlight_radius > kThumbRadius) {
+  if (thumb_highlight_radius > kThumbRadius) {
     cc::PaintFlags highlight;
-    SkColor kHighlightColor = SkColorSetA(kActiveColor, kHighlightColorAlpha);
-    highlight.setColor(kHighlightColor);
+    highlight.setColor(GetTroughColor());
     highlight.setAntiAlias(true);
     canvas->DrawCircle(thumb_center, thumb_highlight_radius, highlight);
   }
 
   // Paint the thumb of the slider.
   cc::PaintFlags flags;
-  flags.setColor(current_thumb_color);
+  flags.setColor(GetThumbColor());
   flags.setAntiAlias(true);
 
-  if (!is_active_) {
-    flags.setStrokeWidth(kSliderThumbStroke);
-    flags.setStyle(cc::PaintFlags::kStroke_Style);
-  }
-  canvas->DrawCircle(
-      thumb_center,
-      is_active_ ? kThumbRadius : (kThumbRadius - kSliderThumbStroke / 2),
-      flags);
+  canvas->DrawCircle(thumb_center, kThumbRadius, flags);
 }
 
 void Slider::OnFocus() {
@@ -363,5 +339,44 @@ void Slider::OnGestureEvent(ui::GestureEvent* event) {
       break;
   }
 }
+
+SkColor Slider::GetThumbColor() const {
+  switch (style_) {
+    case RenderingStyle::kDefaultStyle:
+      return GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_SliderThumbDefault);
+    case RenderingStyle::kMinimalStyle:
+      return GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_SliderThumbMinimal);
+  }
+}
+
+SkColor Slider::GetTroughColor() const {
+  switch (style_) {
+    case RenderingStyle::kDefaultStyle:
+      return GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_SliderTroughDefault);
+    case RenderingStyle::kMinimalStyle:
+      return GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_SliderTroughMinimal);
+  }
+}
+
+int Slider::GetSliderExtraPadding() const {
+  // Padding is negative when slider style is default so that there is no
+  // separation between slider and thumb.
+  switch (style_) {
+    case RenderingStyle::kDefaultStyle:
+      return -kSliderPadding;
+    case RenderingStyle::kMinimalStyle:
+      return kSliderPadding;
+  }
+}
+
+BEGIN_METADATA(Slider)
+METADATA_PARENT_CLASS(View)
+ADD_PROPERTY_METADATA(Slider, float, Value)
+ADD_PROPERTY_METADATA(Slider, bool, EnableAccessibilityEvents)
+END_METADATA()
 
 }  // namespace views

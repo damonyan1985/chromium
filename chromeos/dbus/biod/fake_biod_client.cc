@@ -30,6 +30,8 @@ const char kRecordObjectPathPrefix[] = "/Record/";
 // time.
 const char kAuthSessionObjectPath[] = "/AuthSession/";
 
+FakeBiodClient* g_instance = nullptr;
+
 }  // namespace
 
 // FakeRecord is the definition of a fake stored fingerprint template.
@@ -41,9 +43,21 @@ struct FakeBiodClient::FakeRecord {
   std::vector<std::string> fake_fingerprint;
 };
 
-FakeBiodClient::FakeBiodClient() = default;
+FakeBiodClient::FakeBiodClient() {
+  DCHECK(!g_instance);
+  g_instance = this;
+}
 
-FakeBiodClient::~FakeBiodClient() = default;
+FakeBiodClient::~FakeBiodClient() {
+  DCHECK_EQ(this, g_instance);
+  g_instance = nullptr;
+}
+
+// static
+FakeBiodClient* FakeBiodClient::Get() {
+  DCHECK(g_instance);
+  return g_instance;
+}
 
 void FakeBiodClient::SendEnrollScanDone(const std::string& fingerprint,
                                         biod::ScanResult type_result,
@@ -83,7 +97,7 @@ void FakeBiodClient::SendAuthScanDone(const std::string& fingerprint,
   // more than five entries.
   for (const auto& entry : records_) {
     const std::unique_ptr<FakeRecord>& record = entry.second;
-    if (base::ContainsValue(record->fake_fingerprint, fingerprint)) {
+    if (base::Contains(record->fake_fingerprint, fingerprint)) {
       const std::string& user_id = record->user_id;
       matches[user_id].push_back(entry.first);
     }
@@ -108,8 +122,6 @@ void FakeBiodClient::Reset() {
   current_session_ = FingerprintSession::NONE;
 }
 
-void FakeBiodClient::Init(dbus::Bus* bus) {}
-
 void FakeBiodClient::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);
 }
@@ -124,7 +136,7 @@ bool FakeBiodClient::HasObserver(const Observer* observer) const {
 
 void FakeBiodClient::StartEnrollSession(const std::string& user_id,
                                         const std::string& label,
-                                        const ObjectPathCallback& callback) {
+                                        ObjectPathCallback callback) {
   DCHECK_EQ(current_session_, FingerprintSession::NONE);
 
   // Create the enrollment with |user_id|, |label| and a empty fake fingerprint.
@@ -136,8 +148,8 @@ void FakeBiodClient::StartEnrollSession(const std::string& user_id,
   current_session_ = FingerprintSession::ENROLL;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(callback, dbus::ObjectPath(kEnrollSessionObjectPath)));
+      FROM_HERE, base::BindOnce(std::move(callback),
+                                dbus::ObjectPath(kEnrollSessionObjectPath)));
 }
 
 void FakeBiodClient::GetRecordsForUser(const std::string& user_id,
@@ -159,13 +171,13 @@ void FakeBiodClient::DestroyAllRecords(VoidDBusMethodCallback callback) {
       FROM_HERE, base::BindOnce(std::move(callback), true));
 }
 
-void FakeBiodClient::StartAuthSession(const ObjectPathCallback& callback) {
+void FakeBiodClient::StartAuthSession(ObjectPathCallback callback) {
   DCHECK_EQ(current_session_, FingerprintSession::NONE);
 
   current_session_ = FingerprintSession::AUTH;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(callback, dbus::ObjectPath(kAuthSessionObjectPath)));
+      FROM_HERE, base::BindOnce(std::move(callback),
+                                dbus::ObjectPath(kAuthSessionObjectPath)));
 }
 
 void FakeBiodClient::RequestType(BiometricTypeCallback callback) {

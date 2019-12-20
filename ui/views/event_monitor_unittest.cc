@@ -36,7 +36,7 @@ class TestEventObserver : public ui::EventObserver {
 
 class EventMonitorTest : public WidgetTest {
  public:
-  EventMonitorTest() : widget_(nullptr) {}
+  EventMonitorTest() = default;
 
   // testing::Test:
   void SetUp() override {
@@ -54,7 +54,7 @@ class EventMonitorTest : public WidgetTest {
   }
 
  protected:
-  Widget* widget_;
+  Widget* widget_ = nullptr;
   std::unique_ptr<ui::test::EventGenerator> generator_;
   TestEventObserver observer_;
 
@@ -109,6 +109,18 @@ TEST_F(EventMonitorTest, ShouldOnlyReceiveRequestedEventTypes) {
   generator_->ClickLeftButton();
   EXPECT_EQ(1u, observer_.observed_event_count());
 
+  monitor.reset();
+}
+
+TEST_F(EventMonitorTest, WindowMonitorTornDownOnWindowClose) {
+  Widget* widget2 = CreateTopLevelNativeWidget();
+  widget2->Show();
+
+  std::unique_ptr<EventMonitor> monitor(EventMonitor::CreateWindowMonitor(
+      &observer_, widget2->GetNativeWindow(), {ui::ET_MOUSE_PRESSED}));
+
+  // Closing the widget before destroying the monitor should not crash.
+  widget2->CloseNow();
   monitor.reset();
 }
 

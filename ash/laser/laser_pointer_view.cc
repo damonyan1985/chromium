@@ -130,15 +130,14 @@ class LaserSegment {
     path_.moveTo(ordered_points[0].x(), ordered_points[0].y());
     if (!is_first_segment) {
       path_.arcTo(start_radius, start_radius, 180.0f, SkPath::kSmall_ArcSize,
-                  SkPath::kCW_Direction, ordered_points[1].x(),
+                  SkPathDirection::kCW, ordered_points[1].x(),
                   ordered_points[1].y());
     }
 
     path_.lineTo(ordered_points[2].x(), ordered_points[2].y());
-    path_.arcTo(
-        end_radius, end_radius, 180.0f, SkPath::kSmall_ArcSize,
-        is_last_segment ? SkPath::kCW_Direction : SkPath::kCCW_Direction,
-        ordered_points[3].x(), ordered_points[3].y());
+    path_.arcTo(end_radius, end_radius, 180.0f, SkPath::kSmall_ArcSize,
+                is_last_segment ? SkPathDirection::kCW : SkPathDirection::kCCW,
+                ordered_points[3].x(), ordered_points[3].y());
     path_.lineTo(ordered_points[0].x(), ordered_points[0].y());
 
     // Store data to be used by the next segment.
@@ -168,8 +167,7 @@ LaserPointerView::LaserPointerView(base::TimeDelta life_duration,
       stationary_timer_(FROM_HERE,
                         stationary_point_delay,
                         base::BindRepeating(&LaserPointerView::UpdateTime,
-                                            base::Unretained(this))),
-      weak_ptr_factory_(this) {}
+                                            base::Unretained(this))) {}
 
 LaserPointerView::~LaserPointerView() = default;
 

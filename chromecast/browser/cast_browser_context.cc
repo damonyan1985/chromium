@@ -5,32 +5,39 @@
 #include "chromecast/browser/cast_browser_context.h"
 
 #include <memory>
+#include <utility>
 
+#include "base/barrier_closure.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/path_service.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chromecast/base/cast_paths.h"
 #include "chromecast/browser/cast_download_manager_delegate.h"
 #include "chromecast/browser/cast_permission_manager.h"
 #include "chromecast/browser/url_request_context_factory.h"
+#include "components/keyed_service/core/simple_key_map.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/cors_origin_pattern_setter.h"
 #include "content/public/browser/resource_context.h"
+#include "content/public/browser/shared_cors_origin_access_list.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
 
 namespace chromecast {
 namespace shell {
 
 namespace {
 const void* const kDownloadManagerDelegateKey = &kDownloadManagerDelegateKey;
-}
+}  // namespace
 
-class CastBrowserContext::CastResourceContext :
-    public content::ResourceContext {
+using content::CorsOriginPatternSetter;
+
+class CastBrowserContext::CastResourceContext
+    : public content::ResourceContext {
  public:
   CastResourceContext() {}
   ~CastResourceContext() override {}
@@ -39,20 +46,22 @@ class CastBrowserContext::CastResourceContext :
   DISALLOW_COPY_AND_ASSIGN(CastResourceContext);
 };
 
-CastBrowserContext::CastBrowserContext(
-    URLRequestContextFactory* url_request_context_factory)
-    : url_request_context_factory_(url_request_context_factory),
-      resource_context_(new CastResourceContext) {
+CastBrowserContext::CastBrowserContext()
+    : resource_context_(new CastResourceContext),
+      shared_cors_origin_access_list_(
+          content::SharedCorsOriginAccessList::Create()) {
   InitWhileIOAllowed();
+  simple_factory_key_ =
+      std::make_unique<SimpleFactoryKey>(GetPath(), IsOffTheRecord());
+  SimpleKeyMap::GetInstance()->Associate(this, simple_factory_key_.get());
 }
 
 CastBrowserContext::~CastBrowserContext() {
+  SimpleKeyMap::GetInstance()->Dissociate(this);
   BrowserContext::NotifyWillBeDestroyed(this);
   ShutdownStoragePartitions();
-  content::BrowserThread::DeleteSoon(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      resource_context_.release());
+  base::DeleteSoon(FROM_HERE, {content::BrowserThread::IO},
+                   resource_context_.release());
 }
 
 void CastBrowserContext::InitWhileIOAllowed() {
@@ -80,16 +89,12 @@ CastBrowserContext::CreateZoomLevelDelegate(
 }
 #endif  // !defined(OS_ANDROID)
 
-base::FilePath CastBrowserContext::GetPath() const {
+base::FilePath CastBrowserContext::GetPath() {
   return path_;
 }
 
-bool CastBrowserContext::IsOffTheRecord() const {
+bool CastBrowserContext::IsOffTheRecord() {
   return false;
-}
-
-net::URLRequestContextGetter* CastBrowserContext::GetSystemRequestContext() {
-  return url_request_context_factory_->GetSystemGetter();
 }
 
 content::ResourceContext* CastBrowserContext::GetResourceContext() {
@@ -115,6 +120,11 @@ storage::SpecialStoragePolicy* CastBrowserContext::GetSpecialStoragePolicy() {
 }
 
 content::PushMessagingService* CastBrowserContext::GetPushMessagingService() {
+  return nullptr;
+}
+
+content::StorageNotificationService*
+CastBrowserContext::GetStorageNotificationService() {
   return nullptr;
 }
 
@@ -149,30 +159,32 @@ CastBrowserContext::GetBrowsingDataRemoverDelegate() {
   return nullptr;
 }
 
-net::URLRequestContextGetter* CastBrowserContext::CreateRequestContext(
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  return url_request_context_factory_->CreateMainGetter(
-      this, protocol_handlers, std::move(request_interceptors));
+void CastBrowserContext::SetCorsOriginAccessListForOrigin(
+    const url::Origin& source_origin,
+    std::vector<network::mojom::CorsOriginPatternPtr> allow_patterns,
+    std::vector<network::mojom::CorsOriginPatternPtr> block_patterns,
+    base::OnceClosure closure) {
+  auto barrier_closure = BarrierClosure(2, std::move(closure));
+
+  // Keep profile storage partitions' NetworkContexts synchronized.
+  auto profile_setter = base::MakeRefCounted<CorsOriginPatternSetter>(
+      source_origin, CorsOriginPatternSetter::ClonePatterns(allow_patterns),
+      CorsOriginPatternSetter::ClonePatterns(block_patterns), barrier_closure);
+  ForEachStoragePartition(
+      this, base::BindRepeating(&CorsOriginPatternSetter::SetLists,
+                                base::RetainedRef(profile_setter.get())));
+
+  // Keep the per-profile access list up to date so that we can use this to
+  // restore NetworkContext settings at anytime, e.g. on restarting the
+  // network service.
+  shared_cors_origin_access_list_->SetForOrigin(
+      source_origin, std::move(allow_patterns), std::move(block_patterns),
+      barrier_closure);
 }
 
-net::URLRequestContextGetter*
-CastBrowserContext::CreateRequestContextForStoragePartition(
-    const base::FilePath& partition_path,
-    bool in_memory,
-    content::ProtocolHandlerMap* protocol_handlers,
-    content::URLRequestInterceptorScopedVector request_interceptors) {
-  return nullptr;
-}
-
-net::URLRequestContextGetter* CastBrowserContext::CreateMediaRequestContext() {
-  return url_request_context_factory_->GetMediaGetter();
-}
-
-net::URLRequestContextGetter*
-CastBrowserContext::CreateMediaRequestContextForStoragePartition(
-    const base::FilePath& partition_path, bool in_memory) {
-  return nullptr;
+content::SharedCorsOriginAccessList*
+CastBrowserContext::GetSharedCorsOriginAccessList() {
+  return shared_cors_origin_access_list_.get();
 }
 
 }  // namespace shell

@@ -10,15 +10,23 @@
 #include "base/mac/foundation_util.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/sys_string_conversions.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/send_tab_to_self/send_tab_to_self_model.h"
+#include "components/send_tab_to_self/send_tab_to_self_sync_service.h"
+#include "components/send_tab_to_self/target_device_info.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #import "ios/chrome/browser/passwords/password_form_filler.h"
+#import "ios/chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
+#include "ios/chrome/browser/sync/send_tab_to_self_sync_service_factory.h"
 #import "ios/chrome/browser/ui/activity_services/activities/bookmark_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activities/copy_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activities/find_in_page_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activities/print_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activities/reading_list_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activities/request_desktop_or_mobile_site_activity.h"
+#import "ios/chrome/browser/ui/activity_services/activities/send_tab_to_self_activity.h"
 #import "ios/chrome/browser/ui/activity_services/activity_type_util.h"
 #import "ios/chrome/browser/ui/activity_services/appex_constants.h"
 #import "ios/chrome/browser/ui/activity_services/chrome_activity_item_source.h"
@@ -45,11 +53,11 @@ NSString* const kActivityServicesSnackbarCategory =
 }  // namespace
 
 @interface ActivityServiceController () {
-  BOOL active_;
-  __weak id<ActivityServicePassword> passwordProvider_;
-  __weak id<ActivityServicePresentation> presentationProvider_;
-  UIActivityViewController* activityViewController_;
-  __weak id<SnackbarCommands> dispatcher_;
+  BOOL _active;
+  __weak id<ActivityServicePassword> _passwordProvider;
+  __weak id<ActivityServicePresentation> _presentationProvider;
+  UIActivityViewController* _activityViewController;
+  __weak id<SnackbarCommands> _dispatcher;
 }
 
 // Resets the controller's user interface and delegate.
@@ -67,7 +75,8 @@ NSString* const kActivityServicesSnackbarCategory =
 - (NSArray*)applicationActivitiesForData:(ShareToData*)data
                               dispatcher:(id<BrowserCommands>)dispatcher
                            bookmarkModel:
-                               (bookmarks::BookmarkModel*)bookmarkModel;
+                               (bookmarks::BookmarkModel*)bookmarkModel
+                        canSendTabToSelf:(BOOL)canSendTabToSelf;
 // Processes |extensionItems| returned from App Extension invocation returning
 // the |activityType|. Calls shareDelegate_ with the processed returned items
 // and |result| of activity. Returns whether caller should reset UI.
@@ -87,14 +96,14 @@ NSString* const kActivityServicesSnackbarCategory =
 #pragma mark - ShareProtocol
 
 - (BOOL)isActive {
-  return active_;
+  return _active;
 }
 
 - (void)cancelShareAnimated:(BOOL)animated {
-  if (!active_) {
+  if (!_active) {
     return;
   }
-  DCHECK(activityViewController_);
+  DCHECK(_activityViewController);
   // There is no guarantee that the completion callback will be called because
   // the |activityViewController_| may have been dismissed already. For example,
   // if the user selects Facebook Share Extension, the UIActivityViewController
@@ -107,7 +116,7 @@ NSString* const kActivityServicesSnackbarCategory =
   // -shareFinishedWithActivityType:completed:returnedItems:error: must be
   // called explicitly to do the clean up or else future attempts to use
   // Share will fail.
-  [activityViewController_ dismissViewControllerAnimated:animated
+  [_activityViewController dismissViewControllerAnimated:animated
                                               completion:nil];
   [self shareFinishedWithActivityType:nil
                             completed:NO
@@ -122,7 +131,7 @@ NSString* const kActivityServicesSnackbarCategory =
         positionProvider:(id<ActivityServicePositioner>)positionProvider
     presentationProvider:(id<ActivityServicePresentation>)presentationProvider {
   DCHECK(data);
-  DCHECK(!active_);
+  DCHECK(!_active);
 
   CGRect fromRect = CGRectZero;
   UIView* inView = nil;
@@ -135,34 +144,40 @@ NSString* const kActivityServicesSnackbarCategory =
     DCHECK(inView);
   }
 
-  DCHECK(!passwordProvider_);
-  DCHECK(!presentationProvider_);
-  passwordProvider_ = passwordProvider;
-  presentationProvider_ = presentationProvider;
+  DCHECK(!_passwordProvider);
+  DCHECK(!_presentationProvider);
+  _passwordProvider = passwordProvider;
+  _presentationProvider = presentationProvider;
 
-  dispatcher_ = dispatcher;
+  _dispatcher = dispatcher;
 
   bookmarks::BookmarkModel* bookmarkModel =
       ios::BookmarkModelFactory::GetForBrowserState(browserState);
-  DCHECK(!activityViewController_);
-  activityViewController_ = [[UIActivityViewController alloc]
+
+  BOOL canSendTabToSelf =
+      send_tab_to_self::ShouldOfferFeature(browserState, data.shareURL);
+
+  DCHECK(!_activityViewController);
+  _activityViewController = [[UIActivityViewController alloc]
       initWithActivityItems:[self activityItemsForData:data]
-      applicationActivities:[self applicationActivitiesForData:data
-                                                    dispatcher:dispatcher
-                                                 bookmarkModel:bookmarkModel]];
+      applicationActivities:[self
+                                applicationActivitiesForData:data
+                                                  dispatcher:dispatcher
+                                               bookmarkModel:bookmarkModel
+                                            canSendTabToSelf:canSendTabToSelf]];
 
   // Reading List and Print activities refer to iOS' version of these.
-  // Chrome-specific implementations of these two activities are provided below
-  // in applicationActivitiesForData:dispatcher:bookmarkModel:
-  // The "Copy" action is also provided by chrome in order to change its icon.
+  // Chrome-specific implementations of these two activities are provided
+  // below in applicationActivitiesForData:dispatcher:bookmarkModel: The
+  // "Copy" action is also provided by chrome in order to change its icon.
   NSArray* excludedActivityTypes = @[
     UIActivityTypeAddToReadingList, UIActivityTypeCopyToPasteboard,
     UIActivityTypePrint, UIActivityTypeSaveToCameraRoll
   ];
-  [activityViewController_ setExcludedActivityTypes:excludedActivityTypes];
+  [_activityViewController setExcludedActivityTypes:excludedActivityTypes];
 
   __weak ActivityServiceController* weakSelf = self;
-  [activityViewController_ setCompletionWithItemsHandler:^(
+  [_activityViewController setCompletionWithItemsHandler:^(
                                NSString* activityType, BOOL completed,
                                NSArray* returnedItems, NSError* activityError) {
     [weakSelf shareFinishedWithActivityType:activityType
@@ -171,30 +186,30 @@ NSString* const kActivityServicesSnackbarCategory =
                                       error:activityError];
   }];
 
-  active_ = YES;
-  activityViewController_.modalPresentationStyle = UIModalPresentationPopover;
-  activityViewController_.popoverPresentationController.sourceView = inView;
-  activityViewController_.popoverPresentationController.sourceRect = fromRect;
-  [presentationProvider_
-      presentActivityServiceViewController:activityViewController_];
+  _active = YES;
+  _activityViewController.modalPresentationStyle = UIModalPresentationPopover;
+  _activityViewController.popoverPresentationController.sourceView = inView;
+  _activityViewController.popoverPresentationController.sourceRect = fromRect;
+  [_presentationProvider
+      presentActivityServiceViewController:_activityViewController];
 }
 
 #pragma mark - Private
 
 - (void)resetUserInterface {
-  passwordProvider_ = nil;
-  presentationProvider_ = nil;
-  activityViewController_ = nil;
-  active_ = NO;
+  _passwordProvider = nil;
+  _presentationProvider = nil;
+  _activityViewController = nil;
+  _active = NO;
 }
 
 - (void)shareFinishedWithActivityType:(NSString*)activityType
                             completed:(BOOL)completed
                         returnedItems:(NSArray*)returnedItems
                                 error:(NSError*)activityError {
-  DCHECK(active_);
-  DCHECK(passwordProvider_);
-  DCHECK(presentationProvider_);
+  DCHECK(_active);
+  DCHECK(_passwordProvider);
+  DCHECK(_presentationProvider);
 
   BOOL shouldResetUI = YES;
   if (activityType) {
@@ -244,46 +259,68 @@ NSString* const kActivityServicesSnackbarCategory =
   return activityItems;
 }
 
+- (NSString*)sendTabToSelfContextMenuTitleForDevice:(NSString*)device_name
+                                daysSinceLastUpdate:(int)days {
+  NSString* active_time = @"";
+  if (days == 0) {
+    active_time = l10n_util::GetNSString(
+        IDS_IOS_SEND_TAB_TO_SELF_TARGET_DEVICE_ITEM_SUBTITLE_TODAY);
+  } else if (days == 1) {
+    active_time = l10n_util::GetNSString(
+        IDS_IOS_SEND_TAB_TO_SELF_TARGET_DEVICE_ITEM_SUBTITLE_DAY);
+  } else {
+    active_time = l10n_util::GetNSStringF(
+        IDS_IOS_SEND_TAB_TO_SELF_TARGET_DEVICE_ITEM_SUBTITLE_DAYS,
+        base::NumberToString16(days));
+  }
+  return [NSString stringWithFormat:@"%@ \u2022 %@", device_name, active_time];
+}
+
 - (NSArray*)applicationActivitiesForData:(ShareToData*)data
                               dispatcher:(id<BrowserCommands>)dispatcher
                            bookmarkModel:
-                               (bookmarks::BookmarkModel*)bookmarkModel {
+                               (bookmarks::BookmarkModel*)bookmarkModel
+                        canSendTabToSelf:(BOOL)canSendTabToSelf {
   NSMutableArray* applicationActivities = [NSMutableArray array];
 
   [applicationActivities
       addObject:[[CopyActivity alloc] initWithURL:data.shareURL]];
 
   if (data.shareURL.SchemeIsHTTPOrHTTPS()) {
+    if (canSendTabToSelf) {
+      SendTabToSelfActivity* sendTabToSelfActivity =
+          [[SendTabToSelfActivity alloc] initWithDispatcher:dispatcher];
+      [applicationActivities addObject:sendTabToSelfActivity];
+    }
+
     ReadingListActivity* readingListActivity =
         [[ReadingListActivity alloc] initWithURL:data.shareURL
                                            title:data.title
                                       dispatcher:dispatcher];
     [applicationActivities addObject:readingListActivity];
 
-    if (IsUIRefreshPhase1Enabled()) {
-      if (bookmarkModel) {
-        BOOL bookmarked = bookmarkModel->loaded() &&
-                          bookmarkModel->IsBookmarked(data.visibleURL);
-        BookmarkActivity* bookmarkActivity =
-            [[BookmarkActivity alloc] initWithURL:data.visibleURL
-                                       bookmarked:bookmarked
-                                       dispatcher:dispatcher];
-        [applicationActivities addObject:bookmarkActivity];
-      }
+    if (bookmarkModel) {
+      BOOL bookmarked = bookmarkModel->loaded() &&
+                        bookmarkModel->IsBookmarked(data.visibleURL);
+      BookmarkActivity* bookmarkActivity =
+          [[BookmarkActivity alloc] initWithURL:data.visibleURL
+                                     bookmarked:bookmarked
+                                     dispatcher:dispatcher];
+      [applicationActivities addObject:bookmarkActivity];
+    }
 
-      if (data.isPageSearchable) {
-        FindInPageActivity* findInPageActivity =
-            [[FindInPageActivity alloc] initWithDispatcher:dispatcher];
-        [applicationActivities addObject:findInPageActivity];
-      }
+    if (data.isPageSearchable) {
+      FindInPageActivity* findInPageActivity =
+          [[FindInPageActivity alloc] initWithDispatcher:dispatcher];
+      [applicationActivities addObject:findInPageActivity];
+    }
 
-      if (data.userAgent != web::UserAgentType::NONE) {
-        RequestDesktopOrMobileSiteActivity* requestActivity =
-            [[RequestDesktopOrMobileSiteActivity alloc]
-                initWithDispatcher:dispatcher
-                         userAgent:data.userAgent];
-        [applicationActivities addObject:requestActivity];
-      }
+    if (data.userAgent != web::UserAgentType::NONE) {
+      RequestDesktopOrMobileSiteActivity* requestActivity =
+          [[RequestDesktopOrMobileSiteActivity alloc]
+              initWithDispatcher:dispatcher
+                       userAgent:data.userAgent];
+      [applicationActivities addObject:requestActivity];
     }
   }
   if (data.isPagePrintable) {
@@ -373,7 +410,7 @@ NSString* const kActivityServicesSnackbarCategory =
       // Flag to limit user feedback after form filled to just once.
       __block BOOL shown = NO;
       id<PasswordFormFiller> passwordFormFiller =
-          [passwordProvider_ currentPasswordFormFiller];
+          [_passwordProvider currentPasswordFormFiller];
       [passwordFormFiller findAndFillPasswordForms:username
                                           password:password
                                  completionHandler:^(BOOL completed) {
@@ -396,7 +433,7 @@ NSString* const kActivityServicesSnackbarCategory =
   // The shareTo dialog dismisses itself instead of through
   // |-dismissViewControllerAnimated:completion:| so we must notify the
   // presentation provider here so that it can clear its presenting state.
-  [presentationProvider_ activityServiceDidEndPresenting];
+  [_presentationProvider activityServiceDidEndPresenting];
 
   switch (shareStatus) {
     case ShareTo::SHARE_SUCCESS:
@@ -428,7 +465,7 @@ NSString* const kActivityServicesSnackbarCategory =
 - (void)showErrorAlert:(int)titleMessageId message:(int)messageId {
   NSString* title = l10n_util::GetNSString(titleMessageId);
   NSString* message = l10n_util::GetNSString(messageId);
-  [presentationProvider_ showActivityServiceErrorAlertWithStringTitle:title
+  [_presentationProvider showActivityServiceErrorAlertWithStringTitle:title
                                                               message:message];
 }
 
@@ -437,7 +474,7 @@ NSString* const kActivityServicesSnackbarCategory =
   message.accessibilityLabel = text;
   message.duration = 2.0;
   message.category = kActivityServicesSnackbarCategory;
-  [dispatcher_ showSnackbarMessage:message];
+  [_dispatcher showSnackbarMessage:message];
 }
 
 #pragma mark - For Testing
@@ -445,9 +482,9 @@ NSString* const kActivityServicesSnackbarCategory =
 - (void)setProvidersForTesting:
             (id<ActivityServicePassword, ActivityServicePresentation>)provider
                     dispatcher:(id<SnackbarCommands>)dispatcher {
-  passwordProvider_ = provider;
-  presentationProvider_ = provider;
-  dispatcher_ = dispatcher;
+  _passwordProvider = provider;
+  _presentationProvider = provider;
+  _dispatcher = dispatcher;
 }
 
 @end

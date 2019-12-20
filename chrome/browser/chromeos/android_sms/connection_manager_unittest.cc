@@ -12,8 +12,8 @@
 #include "chrome/browser/chromeos/android_sms/fake_connection_establisher.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/fake_service_worker_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -24,6 +24,12 @@ namespace {
 
 const int64_t kDummyVersionId = 123l;
 const int64_t kDummyVersionId2 = 456l;
+
+GURL GetAndroidMessagesURLOld() {
+  // For this test, consider the staging server to be the "old" URL.
+  return GetAndroidMessagesURL(false /* use_install_url */,
+                               PwaDomain::kStaging);
+}
 
 }  // namespace
 
@@ -167,7 +173,7 @@ class ConnectionManagerTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   TestingProfile profile_;
   std::unique_ptr<content::FakeServiceWorkerContext>
@@ -300,6 +306,11 @@ TEST_F(ConnectionManagerTest, FeatureStateChange) {
   // Verify that enabling feature establishes connection again.
   SetPwaState(PwaState::kEnabledWithNewUrl);
   VerifyEstablishConnectionCalls(3u /* expected_count */);
+
+  // Verify that connection is established if the version id changes.
+  fake_new_service_worker_context()->NotifyObserversOnNoControllees(
+      kDummyVersionId2, GetAndroidMessagesURL());
+  VerifyEstablishConnectionCalls(4u /* expected_count */);
 }
 
 TEST_F(ConnectionManagerTest, AppUrlMigration) {

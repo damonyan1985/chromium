@@ -21,14 +21,14 @@
 #include "content/public/browser/tts_controller.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_registry.h"
-#include "third_party/blink/public/platform/web_speech_synthesis_constants.h"
+#include "third_party/blink/public/mojom/speech/speech_synthesis.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace constants = tts_extension_api_constants;
 
 namespace events {
 const char kOnEvent[] = "tts.onEvent";
-};  // namespace events
+}  // namespace events
 
 const char* TtsEventTypeToString(content::TtsEventType event_type) {
   switch (event_type) {
@@ -122,7 +122,7 @@ void TtsExtensionEventHandler::OnTtsEvent(content::TtsUtterance* utterance,
 
   const std::set<content::TtsEventType>& desired_event_types =
       utterance->GetDesiredEventTypes();
-  if (desired_event_types.size() > 0 &&
+  if (!desired_event_types.empty() &&
       desired_event_types.find(event_type) == desired_event_types.end()) {
     if (utterance->IsFinished())
       delete this;
@@ -194,7 +194,7 @@ bool TtsSpeakFunction::RunAsync() {
   UMA_HISTOGRAM_BOOLEAN("TextToSpeech.Utterance.HasGender",
                         !gender_str.empty());
 
-  double rate = blink::kWebSpeechSynthesisDoublePrefNotSet;
+  double rate = blink::mojom::kSpeechSynthesisDoublePrefNotSet;
   if (options->HasKey(constants::kRateKey)) {
     EXTENSION_FUNCTION_VALIDATE(
         options->GetDouble(constants::kRateKey, &rate));
@@ -204,7 +204,7 @@ bool TtsSpeakFunction::RunAsync() {
     }
   }
 
-  double pitch = blink::kWebSpeechSynthesisDoublePrefNotSet;
+  double pitch = blink::mojom::kSpeechSynthesisDoublePrefNotSet;
   if (options->HasKey(constants::kPitchKey)) {
     EXTENSION_FUNCTION_VALIDATE(
         options->GetDouble(constants::kPitchKey, &pitch));
@@ -214,7 +214,7 @@ bool TtsSpeakFunction::RunAsync() {
     }
   }
 
-  double volume = blink::kWebSpeechSynthesisDoublePrefNotSet;
+  double volume = blink::mojom::kSpeechSynthesisDoublePrefNotSet;
   if (options->HasKey(constants::kVolumeKey)) {
     EXTENSION_FUNCTION_VALIDATE(
         options->GetDouble(constants::kVolumeKey, &volume));
@@ -272,7 +272,7 @@ bool TtsSpeakFunction::RunAsync() {
   // the behavior more predictable and easier to write unit tests for too.
   SendResponse(true);
 
-  content::TtsUtterance* utterance =
+  std::unique_ptr<content::TtsUtterance> utterance =
       content::TtsUtterance::Create(GetProfile());
   utterance->SetText(text);
   utterance->SetVoiceName(voice_name);
@@ -288,12 +288,12 @@ bool TtsSpeakFunction::RunAsync() {
   utterance->SetEventDelegate(new TtsExtensionEventHandler(extension_id()));
 
   content::TtsController* controller = content::TtsController::GetInstance();
-  controller->SpeakOrEnqueue(utterance);
+  controller->SpeakOrEnqueue(std::move(utterance));
   return true;
 }
 
 ExtensionFunction::ResponseAction TtsStopSpeakingFunction::Run() {
-  content::TtsController::GetInstance()->Stop();
+  content::TtsController::GetInstance()->Stop(source_url());
   return RespondNow(NoArguments());
 }
 

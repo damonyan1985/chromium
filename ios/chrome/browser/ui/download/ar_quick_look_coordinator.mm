@@ -13,6 +13,7 @@
 #include "base/scoped_observer.h"
 #import "ios/chrome/browser/download/ar_quick_look_tab_helper.h"
 #import "ios/chrome/browser/download/ar_quick_look_tab_helper_delegate.h"
+#import "ios/chrome/browser/main/browser.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 
@@ -58,7 +59,7 @@ PresentQLPreviewController GetHistogramEnum(
 }
 
 // The WebStateList being observed.
-@property(nonatomic, assign) WebStateList* webStateList;
+@property(nonatomic, readonly) WebStateList* webStateList;
 
 // Whether the coordinator is started.
 @property(nonatomic, assign) BOOL started;
@@ -66,24 +67,16 @@ PresentQLPreviewController GetHistogramEnum(
 // The file URL pointing to the downloaded USDZ format file.
 @property(nonatomic, copy) NSURL* fileURL;
 
-// Displays USDZ format files.
-@property(nonatomic, strong) QLPreviewController* viewController;
+// Displays USDZ format files. Set as a weak reference so it only exists while
+// its being presented by baseViewController.
+@property(nonatomic, weak) QLPreviewController* viewController;
 
 @end
 
 @implementation ARQuickLookCoordinator
 
-- (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                              browserState:
-                                  (ios::ChromeBrowserState*)browserState
-                              webStateList:(WebStateList*)webStateList {
-  DCHECK(webStateList);
-  self = [super initWithBaseViewController:viewController
-                              browserState:browserState];
-  if (self) {
-    _webStateList = webStateList;
-  }
-  return self;
+- (WebStateList*)webStateList {
+  return self.browser->GetWebStateList();
 }
 
 - (void)start {
@@ -183,18 +176,18 @@ PresentQLPreviewController GetHistogramEnum(
       kIOSPresentQLPreviewControllerHistogram,
       GetHistogramEnum(self.baseViewController, self.fileURL));
 
-  // QLPreviewController should not be presented if there is already a view
-  // controller presented by the base view controller or the file URL is nil.
-  if (self.baseViewController.presentedViewController || !self.fileURL) {
+  // QLPreviewController should not be presented if the file URL is nil.
+  if (!self.fileURL) {
     return;
   }
 
-  self.viewController = [[QLPreviewController alloc] init];
-  self.viewController.dataSource = self;
-  self.viewController.delegate = self;
-  [self.baseViewController presentViewController:self.viewController
+  QLPreviewController* viewController = [[QLPreviewController alloc] init];
+  viewController.dataSource = self;
+  viewController.delegate = self;
+  [self.baseViewController presentViewController:viewController
                                         animated:YES
                                       completion:nil];
+  self.viewController = viewController;
 }
 
 #pragma mark - QLPreviewControllerDataSource

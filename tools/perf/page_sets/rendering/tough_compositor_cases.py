@@ -63,12 +63,14 @@ class ToughCompositorWaitPage(ToughCompositorPage):
 class CCPosterCirclePage(ToughCompositorWaitPage):
   BASE_NAME = 'cc_poster_circle'
   URL = 'http://jsbin.com/falefice/1/quiet?CC_POSTER_CIRCLE'
+  TAGS = ToughCompositorWaitPage.TAGS + [story_tags.REPRESENTATIVE_WIN_DESKTOP]
 
 
 # Why: JS poster circle animates/commits many layers """
 class JSPosterCirclePage(ToughCompositorWaitPage):
   BASE_NAME = 'js_poster_circle'
   URL = 'http://jsbin.com/giqafofe/1/quiet?JS_POSTER_CIRCLE'
+  TAGS = ToughCompositorWaitPage.TAGS + [story_tags.REPRESENTATIVE_WIN_DESKTOP]
 
 
 # Why: JS invalidation does lots of uploads """
@@ -81,6 +83,10 @@ class JSFullScreenPage(ToughCompositorWaitPage):
 class NewTilingsPage(ToughCompositorWaitPage):
   BASE_NAME = 'new_tilings'
   URL = 'http://jsbin.com/covoqi/1/quiet?NEW_TILINGS'
+  TAGS = ToughCompositorWaitPage.TAGS + [
+    story_tags.REPRESENTATIVE_MOBILE,
+    story_tags.REPRESENTATIVE_MAC_DESKTOP
+  ]
 
 
 # Why: CSS property update baseline """

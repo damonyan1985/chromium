@@ -18,7 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/media_galleries/fileapi/mtp_device_async_delegate.h"
-#include "storage/browser/fileapi/async_file_util.h"
+#include "storage/browser/file_system/async_file_util.h"
 
 namespace base {
 class FilePath;
@@ -147,14 +147,13 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   void AddWatcher(const GURL& origin,
                   const base::FilePath& file_path,
                   const bool recursive,
-                  const storage::WatcherManager::StatusCallback& callback,
-                  const storage::WatcherManager::NotificationCallback&
+                  storage::WatcherManager::StatusCallback callback,
+                  storage::WatcherManager::NotificationCallback
                       notification_callback) override;
-  void RemoveWatcher(
-      const GURL& origin,
-      const base::FilePath& file_path,
-      const bool recursive,
-      const storage::WatcherManager::StatusCallback& callback) override;
+  void RemoveWatcher(const GURL& origin,
+                     const base::FilePath& file_path,
+                     const bool recursive,
+                     storage::WatcherManager::StatusCallback callback) override;
   void CancelPendingTasksAndDeleteDelegate() override;
 
   // Ensures the device is initialized for communication by doing a
@@ -260,7 +259,7 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
   bool task_in_progress_;
 
   // For callbacks that may run after destruction.
-  base::WeakPtrFactory<MTPDeviceDelegateImplWin> weak_ptr_factory_;
+  base::WeakPtrFactory<MTPDeviceDelegateImplWin> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MTPDeviceDelegateImplWin);
 };

@@ -210,7 +210,7 @@ CALL_WITH_ARGUMENTS = {
     'ScriptState': 'script_state',
     'ExecutionContext': 'execution_context',
     'Document': 'document',
-    'ThisValue': 'ScriptValue(script_state, info.Holder())',
+    'ThisValue': 'ScriptValue(info.GetIsolate(), info.Holder())',
 }
 # List because key order matters, as we want arguments in deterministic order
 CALL_WITH_VALUES = [
@@ -348,14 +348,27 @@ def secure_context(member, interface):
     """Returns C++ code that checks whether an interface/method/attribute/etc. is exposed
     to the current context. Requires that the surrounding code defines an |is_secure_context|
     variable prior to this check."""
-    if 'SecureContext' in member.extended_attributes or 'SecureContext' in interface.extended_attributes:
-        conditions = ['is_secure_context']
-        if 'SecureContext' in member.extended_attributes and member.extended_attributes['SecureContext'] is not None:
-            conditions.append('!%s' % runtime_enabled_function(member.extended_attributes['SecureContext']))
-        if 'SecureContext' in interface.extended_attributes and interface.extended_attributes['SecureContext'] is not None:
-            conditions.append('!%s' % runtime_enabled_function(interface.extended_attributes['SecureContext']))
-        return ' || '.join(conditions)
-    return None
+    member_is_secure_context = 'SecureContext' in member.extended_attributes
+    interface_is_secure_context = ((member.defined_in is None or
+                                    member.defined_in == interface.name) and
+                                   'SecureContext' in interface.extended_attributes)
+
+    if not (member_is_secure_context or interface_is_secure_context):
+        return None
+
+    conditions = ['is_secure_context']
+
+    if member_is_secure_context:
+        conditional = member.extended_attributes['SecureContext']
+        if conditional:
+            conditions.append('!{}'.format(runtime_enabled_function(conditional)))
+
+    if interface_is_secure_context:
+        conditional = interface.extended_attributes['SecureContext']
+        if conditional:
+            conditions.append('!{}'.format(runtime_enabled_function(conditional)))
+
+    return ' || '.join(conditions)
 
 
 # [ImplementedAs]
@@ -383,14 +396,35 @@ def cpp_name_or_partial(interface):
     return cpp_class_name
 
 
+def cpp_encoded_property_name(member):
+    """
+    Returns a property name that the bindings generator can use in generated
+    code internally.
+
+    Note that Web IDL allows '-' (hyphen-minus) and '_' (low line) in
+    identifiers but C++ does not allow or recommend them.  This function
+    encodes these characters.
+    """
+    property_name = member.name
+    # We're optimistic about name conflict.  It's highly unlikely that these
+    # replacements will cause a conflict.
+    assert "Dec45" not in property_name
+    assert "Dec95" not in property_name
+    property_name = property_name.replace("-", "Dec45")
+    property_name = property_name.replace("_", "Dec95")
+    return property_name
+
+
 # [MeasureAs]
 def measure_as(definition_or_member, interface):
     extended_attributes = definition_or_member.extended_attributes
     if 'MeasureAs' in extended_attributes:
-        includes.add('core/frame/use_counter.h')
+        includes.add('core/frame/web_feature.h')
+        includes.add('platform/instrumentation/use_counter.h')
         return lambda suffix: extended_attributes['MeasureAs']
     if 'Measure' in extended_attributes:
-        includes.add('core/frame/use_counter.h')
+        includes.add('core/frame/web_feature.h')
+        includes.add('platform/instrumentation/use_counter.h')
         measure_as_name = capitalize(definition_or_member.name)
         if interface is not None:
             measure_as_name = '%s_%s' % (capitalize(interface.name), measure_as_name)
@@ -411,31 +445,27 @@ def high_entropy(definition_or_member):
     return False
 
 
-# [OriginTrialEnabled]
-def origin_trial_feature_name(definition_or_member):
-    """Returns the name of the feature for the OriginTrialEnabled attribute.
+# [RuntimeEnabled]
+def _is_origin_trial_feature(feature_name, runtime_features):
+    assert feature_name in runtime_features, feature_name + ' is not a runtime feature.'
+    feature = runtime_features[feature_name]
+    return feature['in_origin_trial']
 
-    An exception is raised if OriginTrialEnabled is used in conjunction with any
-    of the following (which must be mutually exclusive with origin trials):
-      - RuntimeEnabled
 
-    If the OriginTrialEnabled extended attribute is found, the includes are
-    also updated as a side-effect.
+def origin_trial_feature_name(definition_or_member, runtime_features):
+    """
+    Returns the name of the origin trial feature if found, None otherwise.
+    Looks for origin trial feature specified by the RuntimeEnabled attribute.
     """
     extended_attributes = definition_or_member.extended_attributes
-    feature_name = extended_attributes.get('OriginTrialEnabled')
-
-    if feature_name and 'RuntimeEnabled' in extended_attributes:
-        raise Exception('[OriginTrialEnabled] and [RuntimeEnabled] must '
-                        'not be specified on the same definition: %s'
-                        % definition_or_member.name)
-
-    return feature_name
+    feature_name = extended_attributes.get('RuntimeEnabled')
+    if feature_name and _is_origin_trial_feature(feature_name, runtime_features):
+        return feature_name
 
 
 def origin_trial_function_call(feature_name, execution_context=None):
     """Returns a function call to determine if an origin trial is enabled."""
-    return 'origin_trials::{feature_name}Enabled({context})'.format(
+    return 'RuntimeEnabledFeatures::{feature_name}Enabled({context})'.format(
         feature_name=feature_name,
         context=execution_context if execution_context else "execution_context")
 
@@ -456,23 +486,17 @@ def rcs_counter_name(member, generic_counter_name):
 
 
 # [RuntimeEnabled]
-def runtime_enabled_feature_name(definition_or_member):
+def runtime_enabled_feature_name(definition_or_member, runtime_features):
     extended_attributes = definition_or_member.extended_attributes
-    if 'RuntimeEnabled' not in extended_attributes:
-        return None
-    includes.add('platform/runtime_enabled_features.h')
-    return extended_attributes['RuntimeEnabled']
+    feature_name = extended_attributes.get('RuntimeEnabled')
+    if feature_name and not _is_origin_trial_feature(feature_name, runtime_features):
+        includes.add('platform/runtime_enabled_features.h')
+        return feature_name
 
 
 # [Unforgeable]
 def is_unforgeable(member):
     return 'Unforgeable' in member.extended_attributes
-
-
-# [LegacyInterfaceTypeChecking]
-def is_legacy_interface_type_checking(interface, member):
-    return ('LegacyInterfaceTypeChecking' in interface.extended_attributes or
-            'LegacyInterfaceTypeChecking' in member.extended_attributes)
 
 
 # [Unforgeable], [Global]

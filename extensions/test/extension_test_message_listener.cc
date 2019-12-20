@@ -55,11 +55,11 @@ void ExtensionTestMessageListener::Reply(const std::string& message) {
 
   replied_ = true;
   function_->Reply(message);
-  function_ = NULL;
+  function_.reset();
 }
 
 void ExtensionTestMessageListener::Reply(int message) {
-  Reply(base::IntToString(message));
+  Reply(base::NumberToString(message));
 }
 
 void ExtensionTestMessageListener::ReplyWithError(const std::string& error) {
@@ -68,7 +68,7 @@ void ExtensionTestMessageListener::ReplyWithError(const std::string& error) {
 
   replied_ = true;
   function_->ReplyWithError(error);
-  function_ = NULL;
+  function_.reset();
 }
 
 void ExtensionTestMessageListener::Reset() {

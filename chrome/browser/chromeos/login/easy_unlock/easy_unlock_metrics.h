@@ -45,8 +45,8 @@ enum EasyUnlockAuthEvent {
   // Password is used because phone is not close enough (roughly, at least 30
   // feet away).
   PASSWORD_ENTRY_RSSI_TOO_LOW = 12,
-  // Password is used because phone is not supported.
-  PASSWORD_ENTRY_PHONE_UNSUPPORTED = 13,
+  // Deprecated. Password is used because phone is not supported.
+  DEPRECATED_PASSWORD_ENTRY_PHONE_UNSUPPORTED = 13,
   // Password is used because user types in password. This is unlikely to happen
   // though.
   PASSWORD_ENTRY_WITH_AUTHENTICATED_PHONE = 14,
@@ -70,6 +70,10 @@ enum EasyUnlockAuthEvent {
 
   // Password entry was forced because sign-in with Smart Lock is disabled.
   PASSWORD_ENTRY_LOGIN_DISABLED = 21,
+
+  // Password is used because primary user was in background or user is
+  // secondary user.
+  PASSWORD_ENTRY_PRIMARY_USER_ABSENT = 22,
 
   EASY_UNLOCK_AUTH_EVENT_COUNT  // Must be the last entry.
 };

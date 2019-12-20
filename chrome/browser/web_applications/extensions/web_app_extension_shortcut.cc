@@ -9,20 +9,26 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/web_applications/components/file_handler_manager.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/manifest_handlers/file_handler_info.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/grit/extensions_browser_resources.h"
 #include "skia/ext/image_operations.h"
@@ -92,27 +98,16 @@ void UpdateAllShortcutsForShortcutInfo(
   base::FilePath shortcut_data_dir =
       internals::GetShortcutDataDir(*shortcut_info);
   internals::PostShortcutIOTaskAndReply(
-      base::BindOnce(&internals::UpdatePlatformShortcuts, shortcut_data_dir,
-                     old_app_title),
+      base::BindOnce(&internals::UpdatePlatformShortcuts,
+                     std::move(shortcut_data_dir), old_app_title),
       std::move(shortcut_info), std::move(callback));
-}
-
-void ScheduleCreatePlatformShortcut(
-    ShortcutCreationReason reason,
-    const ShortcutLocations& locations,
-    std::unique_ptr<ShortcutInfo> shortcut_info) {
-  base::FilePath shortcut_data_dir =
-      internals::GetShortcutDataDir(*shortcut_info);
-  internals::PostShortcutIOTask(
-      base::BindOnce(base::IgnoreResult(&internals::CreatePlatformShortcuts),
-                     shortcut_data_dir, locations, reason),
-      std::move(shortcut_info));
 }
 
 }  // namespace
 
 void CreateShortcutsWithInfo(ShortcutCreationReason reason,
                              const ShortcutLocations& locations,
+                             CreateShortcutsCallback callback,
                              std::unique_ptr<ShortcutInfo> shortcut_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -120,26 +115,36 @@ void CreateShortcutsWithInfo(ShortcutCreationReason reason,
   // flow disabled, there will be no corresponding extension.
   if (!shortcut_info->extension_id.empty()) {
     // The profile manager does not exist in some unit tests.
-    if (!g_browser_process->profile_manager())
+    if (!g_browser_process->profile_manager()) {
+      std::move(callback).Run(false /* created_shortcut */);
       return;
+    }
 
     // It's possible for the extension to be deleted before we get here.
     // For example, creating a hosted app from a website. Double check that
     // it still exists.
     Profile* profile = g_browser_process->profile_manager()->GetProfileByPath(
         shortcut_info->profile_path);
-    if (!profile)
+    if (!profile) {
+      std::move(callback).Run(false /* created_shortcut */);
       return;
+    }
 
     extensions::ExtensionRegistry* registry =
         extensions::ExtensionRegistry::Get(profile);
     const extensions::Extension* extension = registry->GetExtensionById(
         shortcut_info->extension_id, extensions::ExtensionRegistry::EVERYTHING);
-    if (!extension)
+    if (!extension) {
+      std::move(callback).Run(false /* created_shortcut */);
       return;
+    }
   }
 
-  ScheduleCreatePlatformShortcut(reason, locations, std::move(shortcut_info));
+  base::FilePath shortcut_data_dir =
+      internals::GetShortcutDataDir(*shortcut_info);
+  internals::ScheduleCreatePlatformShortcuts(shortcut_data_dir, locations,
+                                             reason, std::move(shortcut_info),
+                                             std::move(callback));
 }
 
 void GetShortcutInfoForApp(const extensions::Extension* extension,
@@ -194,22 +199,19 @@ std::unique_ptr<ShortcutInfo> ShortcutInfoForExtensionAndProfile(
     Profile* profile) {
   std::unique_ptr<ShortcutInfo> shortcut_info(new ShortcutInfo);
   shortcut_info->extension_id = app->id();
-  shortcut_info->is_platform_app = app->is_platform_app();
-
-  // Some default-installed apps are converted into bookmark apps on Chrome
-  // first run. These should not be considered as being created (by the user)
-  // from a web page.
-  shortcut_info->from_bookmark =
-      app->from_bookmark() && !app->was_installed_by_default();
-
   shortcut_info->url = extensions::AppLaunchInfo::GetLaunchWebURL(app);
   shortcut_info->title = base::UTF8ToUTF16(app->name());
   shortcut_info->description = base::UTF8ToUTF16(app->description());
-  shortcut_info->extension_path = app->path();
   shortcut_info->profile_path = profile->GetPath();
   shortcut_info->profile_name =
       profile->GetPrefs()->GetString(prefs::kProfileName);
   shortcut_info->version_for_display = app->GetVersionForDisplay();
+  if (const auto* info = extensions::FileHandlers::GetFileHandlers(app)) {
+    shortcut_info->file_handler_extensions =
+        web_app::GetFileExtensionsFromFileHandlers(*info);
+    shortcut_info->file_handler_mime_types =
+        web_app::GetMimeTypesFromFileHandlers(*info);
+  }
   return shortcut_info;
 }
 
@@ -228,54 +230,33 @@ bool ShouldCreateShortcutFor(ShortcutCreationReason reason,
     return true;
 
 #if defined(OS_MACOSX)
-  // A bookmark app installs itself as an extension, then automatically triggers
-  // a shortcut request with SHORTCUT_CREATION_AUTOMATED. Allow this flow, but
-  // do not automatically create shortcuts for default-installed extensions,
-  // until it is explicitly requested by the user.
-  if (extension->was_installed_by_default() &&
-      reason == SHORTCUT_CREATION_AUTOMATED)
+  if (extension->is_hosted_app() &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableHostedAppShimCreation)) {
     return false;
-
-  if (extension->from_bookmark())
-    return true;
-
-  // Otherwise, don't create shortcuts for automated codepaths.
-  if (reason == SHORTCUT_CREATION_AUTOMATED)
-    return false;
-
-  if (extension->is_hosted_app()) {
-    return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-        switches::kDisableHostedAppShimCreation);
   }
-
-  // Only reached for "legacy" packaged apps. Default to false on Mac.
-  return false;
-#else
-  // For other platforms, allow shortcut creation if it was explicitly
-  // requested by the user (i.e. is not automatic).
-  return reason == SHORTCUT_CREATION_BY_USER;
 #endif
-}
 
-base::FilePath GetWebAppDataDirectory(const base::FilePath& profile_path,
-                                      const extensions::Extension& extension) {
-  return GetWebAppDataDirectory(
-      profile_path, extension.id(),
-      GURL(extensions::AppLaunchInfo::GetLaunchWebURL(&extension)));
+  // Allow shortcut creation if it was explicitly requested by the user (i.e. is
+  // not automatic).
+  return reason == SHORTCUT_CREATION_BY_USER;
 }
 
 void CreateShortcuts(ShortcutCreationReason reason,
                      const ShortcutLocations& locations,
                      Profile* profile,
-                     const extensions::Extension* app) {
+                     const extensions::Extension* app,
+                     CreateShortcutsCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (!ShouldCreateShortcutFor(reason, profile, app))
+  if (!ShouldCreateShortcutFor(reason, profile, app)) {
+    std::move(callback).Run(false /* created_shortcut */);
     return;
+  }
 
-  GetShortcutInfoForApp(
-      app, profile,
-      base::BindOnce(&CreateShortcutsWithInfo, reason, locations));
+  GetShortcutInfoForApp(app, profile,
+                        base::BindOnce(&CreateShortcutsWithInfo, reason,
+                                       locations, std::move(callback)));
 }
 
 void DeleteAllShortcuts(Profile* profile, const extensions::Extension* app) {

@@ -54,12 +54,12 @@ class MockSharedImageBacking : public SharedImageBacking {
                            size,
                            color_space,
                            usage,
-                           estimated_size) {}
+                           estimated_size,
+                           false /* is_thread_safe */) {}
 
-  MOCK_CONST_METHOD0(IsCleared, bool());
-  MOCK_METHOD0(SetCleared, void());
-  MOCK_METHOD0(Update, void());
-  MOCK_METHOD0(Destroy, void());
+  MOCK_CONST_METHOD0(ClearedRect, gfx::Rect());
+  MOCK_METHOD1(SetClearedRect, void(const gfx::Rect&));
+  MOCK_METHOD1(Update, void(std::unique_ptr<gfx::GpuFence>));
   MOCK_METHOD1(ProduceLegacyMailbox, bool(MailboxManager*));
 
  private:
@@ -84,7 +84,6 @@ TEST(SharedImageManagerTest, BasicRefCounting) {
 
   auto mock_backing = std::make_unique<StrictMock<MockSharedImageBacking>>(
       mailbox, format, size, color_space, usage, kSizeBytes);
-  auto* mock_backing_ptr = mock_backing.get();
 
   auto factory_ref = manager.Register(std::move(mock_backing), tracker.get());
   EXPECT_EQ(kSizeBytes, tracker->GetMemRepresented());
@@ -105,8 +104,6 @@ TEST(SharedImageManagerTest, BasicRefCounting) {
     EXPECT_EQ(0u, tracker2->GetMemRepresented());
   }
 
-  // We should get one call to destroy when we release the factory ref.
-  EXPECT_CALL(*mock_backing_ptr, Destroy());
   factory_ref.reset();
   EXPECT_EQ(0u, tracker->GetMemRepresented());
 }
@@ -124,7 +121,6 @@ TEST(SharedImageManagerTest, TransferRefSameTracker) {
 
   auto mock_backing = std::make_unique<StrictMock<MockSharedImageBacking>>(
       mailbox, format, size, color_space, usage, kSizeBytes);
-  auto* mock_backing_ptr = mock_backing.get();
 
   auto factory_ref = manager.Register(std::move(mock_backing), tracker.get());
   EXPECT_EQ(kSizeBytes, tracker->GetMemRepresented());
@@ -136,8 +132,6 @@ TEST(SharedImageManagerTest, TransferRefSameTracker) {
   factory_ref.reset();
   EXPECT_EQ(kSizeBytes, tracker->GetMemRepresented());
 
-  // We should get one call to destroy when we release the gl representation.
-  EXPECT_CALL(*mock_backing_ptr, Destroy());
   gl_representation.reset();
   EXPECT_EQ(0u, tracker->GetMemRepresented());
 }
@@ -156,7 +150,6 @@ TEST(SharedImageManagerTest, TransferRefNewTracker) {
 
   auto mock_backing = std::make_unique<StrictMock<MockSharedImageBacking>>(
       mailbox, format, size, color_space, usage, kSizeBytes);
-  auto* mock_backing_ptr = mock_backing.get();
 
   auto factory_ref = manager.Register(std::move(mock_backing), tracker.get());
   EXPECT_EQ(kSizeBytes, tracker->GetMemRepresented());
@@ -175,8 +168,6 @@ TEST(SharedImageManagerTest, TransferRefNewTracker) {
   // We can now safely destroy the original tracker.
   tracker.reset();
 
-  // We should get one call to destroy when we release the gl representation.
-  EXPECT_CALL(*mock_backing_ptr, Destroy());
   gl_representation.reset();
   EXPECT_EQ(0u, tracker2->GetMemRepresented());
 }

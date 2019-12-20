@@ -21,12 +21,9 @@
 #include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
-#include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/ui_manager.h"
 #include "components/history/core/browser/history_types.h"
-#include "content/public/common/resource_type.h"
+#include "components/security_interstitials/content/unsafe_resource.h"
 #include "url/gurl.h"
-
 
 namespace content {
 class WebContents;
@@ -34,37 +31,16 @@ class WebContents;
 
 namespace history {
 class HistoryService;
+struct VisibleVisitCountToHostResult;
+struct QueryURLResult;
 }
 
 namespace safe_browsing {
-class ClientMalwareRequest;
 class ClientPhishingRequest;
-class ClientSideDetectionHost;
-
-struct IPUrlInfo {
-  // The url on the bad IP address.
-  std::string url;
-  std::string method;
-  std::string referrer;
-  content::ResourceType resource_type;
-
-  IPUrlInfo(const std::string& url,
-            const std::string& method,
-            const std::string& referrer,
-            const content::ResourceType& resource_type);
-  IPUrlInfo(const IPUrlInfo& other);
-  ~IPUrlInfo();
-};
-
-typedef std::map<std::string, std::vector<IPUrlInfo> > IPUrlMap;
 
 struct BrowseInfo {
   // The URL we're currently browsing.
   GURL url;
-
-  // List of IPv4 and IPv6 addresses from which content was requested
-  // together with the hosts on it, while browsing to the |url|.
-  IPUrlMap ips;
 
   // If a SafeBrowsing interstitial was shown for the current URL
   // this will contain the UnsafeResource struct for that URL.
@@ -92,18 +68,15 @@ class BrowserFeatureExtractor {
  public:
   // Called when feature extraction is done.  The first argument will be
   // true iff feature extraction succeeded.  The second argument is the
-  // phishing request which was modified by the feature extractor.  The
-  // DoneCallback takes ownership of the request object.
-  typedef base::Callback<void(bool, std::unique_ptr<ClientPhishingRequest>)>
-      DoneCallback;
-  typedef base::Callback<void(bool, std::unique_ptr<ClientMalwareRequest>)>
-      MalwareDoneCallback;
+  // phishing request which was modified by the feature extractor.
+  using DoneCallback =
+      base::OnceCallback<void(bool feature_extraction_succeeded,
+                              std::unique_ptr<ClientPhishingRequest> request)>;
 
   // The caller keeps ownership of the tab and host objects and is
   // responsible for ensuring that they stay valid for the entire
   // lifetime of this object.
-  BrowserFeatureExtractor(content::WebContents* tab,
-                          ClientSideDetectionHost* host);
+  explicit BrowserFeatureExtractor(content::WebContents* tab);
 
   // The destructor will cancel any pending requests.
   virtual ~BrowserFeatureExtractor();
@@ -115,17 +88,8 @@ class BrowserFeatureExtractor {
   // take ownership of the |callback| object.  |info| may not be valid after
   // ExtractFeatures returns.  This method must run on the UI thread.
   virtual void ExtractFeatures(const BrowseInfo* info,
-                               ClientPhishingRequest* request,
-                               const DoneCallback& callback);
-
-  // Begins extraction of the malware related features.  We take ownership
-  // of the request object until |callback| is called.  Once feature extraction
-  // is complete, |callback| will run on the UI thread.  |info| is not expected
-  // to stay valid after ExtractMalwareFeatures returns.  All IPs stored in
-  // |info| will be cleared by calling this function.
-  virtual void ExtractMalwareFeatures(BrowseInfo* info,
-                                      ClientMalwareRequest* request,
-                                      const MalwareDoneCallback& callback);
+                               std::unique_ptr<ClientPhishingRequest> request,
+                               DoneCallback callback);
 
  private:
   // Synchronous browser feature extraction.
@@ -134,31 +98,25 @@ class BrowserFeatureExtractor {
 
   // Actually starts feature extraction (does the real work).
   void StartExtractFeatures(std::unique_ptr<ClientPhishingRequest> request,
-                            const DoneCallback& callback);
+                            DoneCallback callback);
 
   // HistoryService callback which is called when we're done querying URL visits
   // in the history.
   void QueryUrlHistoryDone(std::unique_ptr<ClientPhishingRequest> request,
-                           const DoneCallback& callback,
-                           bool success,
-                           const history::URLRow& row,
-                           const history::VisitVector& visits);
+                           DoneCallback callback,
+                           history::QueryURLResult result);
 
   // HistoryService callback which is called when we're done querying HTTP host
   // visits in the history.
   void QueryHttpHostVisitsDone(std::unique_ptr<ClientPhishingRequest> request,
-                               const DoneCallback& callback,
-                               bool success,
-                               int num_visits,
-                               base::Time first_visit);
+                               DoneCallback callback,
+                               history::VisibleVisitCountToHostResult result);
 
   // HistoryService callback which is called when we're done querying HTTPS host
   // visits in the history.
   void QueryHttpsHostVisitsDone(std::unique_ptr<ClientPhishingRequest> request,
-                                const DoneCallback& callback,
-                                bool success,
-                                int num_visits,
-                                base::Time first_visit);
+                                DoneCallback callback,
+                                history::VisibleVisitCountToHostResult result);
 
   // Helper function which sets the host history features given the
   // number of host visits and the time of the fist host visit.  Set
@@ -173,17 +131,9 @@ class BrowserFeatureExtractor {
   // is set it will return true and false otherwise.
   bool GetHistoryService(history::HistoryService** history);
 
-  // Helper function which is called when we're done filtering out benign IPs
-  // on the IO thread.  This function is called on the UI thread.
-  void FinishExtractMalwareFeatures(
-      std::unique_ptr<IPUrlMap> bad_ips,
-      MalwareDoneCallback callback,
-      std::unique_ptr<ClientMalwareRequest> request);
-
   content::WebContents* tab_;
-  ClientSideDetectionHost* host_;
   base::CancelableTaskTracker cancelable_task_tracker_;
-  base::WeakPtrFactory<BrowserFeatureExtractor> weak_factory_;
+  base::WeakPtrFactory<BrowserFeatureExtractor> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BrowserFeatureExtractor);
 };

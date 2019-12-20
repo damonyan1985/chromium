@@ -15,11 +15,11 @@
 
 namespace sync_preferences {
 class PrefServiceSyncable;
-}
+}  // namespace sync_preferences
 
 namespace user_prefs {
 class PrefRegistrySyncable;
-}
+}  // namespace user_prefs
 
 namespace chromeos {
 namespace input_method {
@@ -58,7 +58,7 @@ class InputMethodSyncer : public sync_preferences::PrefServiceSyncableObserver {
       const std::string& synced_pref,
       const char* pref_name);
 
-  // Sets prefs::kLanguagePreferredLanguages and sets |merging_| to false.
+  // Sets language::prefs::kPreferredLanguages and sets |merging_| to false.
   void FinishMerge(const std::string& languages);
 
   // Callback method for preference changes. Updates the syncable prefs using
@@ -85,7 +85,7 @@ class InputMethodSyncer : public sync_preferences::PrefServiceSyncableObserver {
   // Used to ignore PrefChanged events while InputMethodManager is merging.
   bool merging_;
 
-  base::WeakPtrFactory<InputMethodSyncer> weak_factory_;
+  base::WeakPtrFactory<InputMethodSyncer> weak_factory_{this};
 };
 
 }  // namespace input_method

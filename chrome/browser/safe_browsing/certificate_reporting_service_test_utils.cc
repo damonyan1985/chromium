@@ -8,16 +8,15 @@
 #include "base/strings/string_piece.h"
 #include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/ssl/certificate_error_report.h"
 #include "components/encrypted_messages/encrypted_message.pb.h"
 #include "components/encrypted_messages/message_encrypter.h"
+#include "components/security_interstitials/content/certificate_error_report.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
-#include "net/base/upload_bytes_element_reader.h"
-#include "net/base/upload_data_stream.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/http/http_response_headers.h"
-#include "net/url_request/url_request_filter.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/curve25519.h"
@@ -153,73 +152,6 @@ void RequestObserver::ClearObservedReports() {
   full_reports_.clear();
 }
 
-DelayableCertReportURLRequestJob::DelayableCertReportURLRequestJob(
-    bool delayed,
-    bool should_fail,
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate,
-    const base::Callback<void()>& destruction_callback)
-    : net::URLRequestJob(request, network_delegate),
-      delayed_(delayed),
-      should_fail_(should_fail),
-      started_(false),
-      destruction_callback_(destruction_callback),
-      weak_factory_(this) {}
-
-DelayableCertReportURLRequestJob::~DelayableCertReportURLRequestJob() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           destruction_callback_);
-}
-
-base::WeakPtr<DelayableCertReportURLRequestJob>
-DelayableCertReportURLRequestJob::GetWeakPtr() {
-  return weak_factory_.GetWeakPtr();
-}
-
-void DelayableCertReportURLRequestJob::Start() {
-  started_ = true;
-  if (delayed_) {
-    // Do nothing until Resume() is called.
-    return;
-  }
-  Resume();
-}
-
-int DelayableCertReportURLRequestJob::ReadRawData(net::IOBuffer* buf,
-                                                  int buf_size) {
-  // Report sender ignores responses. Return empty response.
-  return 0;
-}
-
-void DelayableCertReportURLRequestJob::GetResponseInfo(
-    net::HttpResponseInfo* info) {
-  // Report sender ignores responses. Return empty response.
-  if (!should_fail_) {
-    info->headers = new net::HttpResponseHeaders("HTTP/1.1 200 OK");
-  }
-}
-
-void DelayableCertReportURLRequestJob::Resume() {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  if (!started_) {
-    // If Start() hasn't been called yet, then unset |delayed_| so that when
-    // Start() is called, the request will begin immediately.
-    delayed_ = false;
-    return;
-  }
-  if (should_fail_) {
-    NotifyStartError(net::URLRequestStatus(net::URLRequestStatus::FAILED,
-                                           net::ERR_SSL_PROTOCOL_ERROR));
-    return;
-  }
-  // Start reading asynchronously as would a normal network request.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(&DelayableCertReportURLRequestJob::NotifyHeadersComplete,
-                     weak_factory_.GetWeakPtr()));
-}
-
 ReportExpectation::ReportExpectation() {}
 
 ReportExpectation::ReportExpectation(const ReportExpectation& other) = default;
@@ -348,29 +280,31 @@ void CertificateReportingServiceTestHelper::ExpectNoRequests(
 }
 
 void CertificateReportingServiceTestHelper::SendResponse(
-    network::mojom::URLLoaderClientPtr client,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client,
     bool fail) {
+  mojo::Remote<network::mojom::URLLoaderClient> client_remote(
+      std::move(client));
   if (fail) {
-    client->OnComplete(
+    client_remote->OnComplete(
         network::URLLoaderCompletionStatus(net::ERR_SSL_PROTOCOL_ERROR));
     return;
   }
 
-  network::ResourceResponseHead head;
-  head.headers = new net::HttpResponseHeaders(
+  auto head = network::mojom::URLResponseHead::New();
+  head->headers = new net::HttpResponseHeaders(
       "HTTP/1.1 200 OK\nContent-type: text/html\n\n");
-  head.mime_type = "text/html";
-  client->OnReceiveResponse(head);
-  client->OnComplete(network::URLLoaderCompletionStatus());
+  head->mime_type = "text/html";
+  client_remote->OnReceiveResponse(std::move(head));
+  client_remote->OnComplete(network::URLLoaderCompletionStatus());
 }
 
 void CertificateReportingServiceTestHelper::CreateLoaderAndStart(
-    network::mojom::URLLoaderRequest request,
+    mojo::PendingReceiver<network::mojom::URLLoader> receiver,
     int32_t routing_id,
     int32_t request_id,
     uint32_t options,
     const network::ResourceRequest& url_request,
-    network::mojom::URLLoaderClientPtr client,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
   const std::string serialized_report =
       GetReportContents(url_request, server_private_key_);
@@ -398,11 +332,11 @@ void CertificateReportingServiceTestHelper::CreateLoaderAndStart(
 }
 
 void CertificateReportingServiceTestHelper::Clone(
-    network::mojom::URLLoaderFactoryRequest request) {
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) {
   NOTREACHED();
 }
 
-std::unique_ptr<network::SharedURLLoaderFactoryInfo>
+std::unique_ptr<network::PendingSharedURLLoaderFactory>
 CertificateReportingServiceTestHelper::Clone() {
   NOTREACHED();
   return nullptr;

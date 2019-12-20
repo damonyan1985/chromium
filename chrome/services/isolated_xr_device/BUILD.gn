@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//services/service_manager/public/service_manifest.gni")
+import("//device/vr/buildflags/buildflags.gni")
 
 source_set("lib") {
   sources = [
@@ -10,11 +10,15 @@ source_set("lib") {
     "xr_device_service.h",
     "xr_runtime_provider.cc",
     "xr_runtime_provider.h",
-    "xr_test_hook_registration.cc",
-    "xr_test_hook_registration.h",
+    "xr_service_test_hook.cc",
+    "xr_service_test_hook.h",
     "xr_test_hook_wrapper.cc",
     "xr_test_hook_wrapper.h",
   ]
+
+  if (enable_openxr) {
+    configs += [ "//third_party/openxr:config" ]
+  }
 
   deps = [
     "//base",
@@ -22,12 +26,5 @@ source_set("lib") {
     "//device/vr:vr",
     "//device/vr/public/mojom",
     "//device/vr/public/mojom:test_mojom",
-    "//services/service_manager/public/cpp",
-    "//services/service_manager/public/mojom",
   ]
-}
-
-service_manifest("manifest") {
-  name = "xr_device_service"
-  source = "manifest.json"
 }

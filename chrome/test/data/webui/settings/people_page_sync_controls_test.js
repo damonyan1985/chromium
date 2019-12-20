@@ -7,44 +7,6 @@ cr.define('settings_people_page_sync_controls', function() {
     let syncControls = null;
     let browserProxy = null;
 
-    /**
-     * Returns sync prefs with everything synced.
-     * @return {!settings.SyncPrefs}
-     */
-    function getSyncAllPrefs() {
-      return {
-        appsEnforced: false,
-        appsRegistered: true,
-        appsSynced: true,
-        autofillEnforced: false,
-        autofillRegistered: true,
-        autofillSynced: true,
-        bookmarksEnforced: false,
-        bookmarksRegistered: true,
-        bookmarksSynced: true,
-        extensionsEnforced: false,
-        extensionsRegistered: true,
-        extensionsSynced: true,
-        passwordsEnforced: false,
-        passwordsRegistered: true,
-        passwordsSynced: true,
-        paymentsIntegrationEnabled: true,
-        preferencesEnforced: false,
-        preferencesRegistered: true,
-        preferencesSynced: true,
-        syncAllDataTypes: true,
-        tabsEnforced: false,
-        tabsRegistered: true,
-        tabsSynced: true,
-        themesEnforced: false,
-        themesRegistered: true,
-        themesSynced: true,
-        typedUrlsEnforced: false,
-        typedUrlsRegistered: true,
-        typedUrlsSynced: true,
-      };
-    }
-
     setup(function() {
       browserProxy = new TestSyncBrowserProxy();
       settings.SyncBrowserProxyImpl.instance_ = browserProxy;
@@ -54,7 +16,8 @@ cr.define('settings_people_page_sync_controls', function() {
       document.body.appendChild(syncControls);
 
       // Start with Sync All.
-      cr.webUIListenerCallback('sync-prefs-changed', getSyncAllPrefs());
+      cr.webUIListenerCallback(
+          'sync-prefs-changed', sync_test_util.getSyncAllPrefs());
       Polymer.dom.flush();
     });
 
@@ -68,8 +31,9 @@ cr.define('settings_people_page_sync_controls', function() {
       assertTrue(syncAllDataTypesControl.checked);
 
       // Assert that all the individual datatype controls are disabled.
-      const datatypeControls =
-          syncControls.shadowRoot.querySelectorAll('.list-item cr-toggle');
+      const datatypeControls = syncControls.shadowRoot.querySelectorAll(
+          '.list-item:not([hidden]) > cr-toggle');
+
       for (const control of datatypeControls) {
         assertTrue(control.disabled);
         assertTrue(control.checked);
@@ -79,7 +43,7 @@ cr.define('settings_people_page_sync_controls', function() {
       syncAllDataTypesControl.click();
 
       function verifyPrefs(prefs) {
-        const expected = getSyncAllPrefs();
+        const expected = sync_test_util.getSyncAllPrefs();
         expected.syncAllDataTypes = false;
         assertEquals(JSON.stringify(expected), JSON.stringify(prefs));
 
@@ -97,13 +61,47 @@ cr.define('settings_people_page_sync_controls', function() {
         datatypeControls[2].click();
         return browserProxy.whenCalled('setSyncDatatypes')
             .then(function(prefs) {
-              const expected = getSyncAllPrefs();
+              const expected = sync_test_util.getSyncAllPrefs();
               expected.syncAllDataTypes = false;
               expected.extensionsSynced = false;
               assertEquals(JSON.stringify(expected), JSON.stringify(prefs));
             });
       }
       return browserProxy.whenCalled('setSyncDatatypes').then(verifyPrefs);
+    });
+
+    test('SignedIn', function() {
+      // Controls are available by default.
+      assertFalse(syncControls.hidden);
+
+      syncControls
+          .syncStatus = {disabled: false, hasError: false, signedIn: true};
+      // Controls are available when signed in and there is no error.
+      assertFalse(syncControls.hidden);
+    });
+
+    test('SyncDisabled', function() {
+      syncControls
+          .syncStatus = {disabled: true, hasError: false, signedIn: true};
+      // Controls are hidden when sync is disabled.
+      assertTrue(syncControls.hidden);
+    });
+
+    test('SyncError', function() {
+      syncControls
+          .syncStatus = {disabled: false, hasError: true, signedIn: true};
+      // Controls are hidden when there is an error but it's not a
+      // passphrase error.
+      assertTrue(syncControls.hidden);
+
+      syncControls.syncStatus = {
+        disabled: false,
+        hasError: true,
+        signedIn: true,
+        statusAction: settings.StatusAction.ENTER_PASSPHRASE
+      };
+      // Controls are available when there is a passphrase error.
+      assertFalse(syncControls.hidden);
     });
   });
 

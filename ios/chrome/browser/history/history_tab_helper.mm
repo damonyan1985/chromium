@@ -13,10 +13,10 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/history/history_service_factory.h"
-#import "ios/web/public/navigation_item.h"
-#import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/navigation_context.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/navigation/navigation_context.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#import "ios/web/public/web_state.h"
 #include "net/http/http_response_headers.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -105,7 +105,10 @@ void HistoryTabHelper::DidFinishNavigation(
     return;
   }
 
-  if (!navigation_context->HasCommitted()) {
+  // TODO(crbug.com/931841): Remove GetLastCommittedItem nil check once
+  // HasComitted has been fixed.
+  if (!navigation_context->HasCommitted() ||
+      !web_state_->GetNavigationManager()->GetLastCommittedItem()) {
     // Navigation was replaced or aborted.
     return;
   }
@@ -242,3 +245,5 @@ history::HistoryService* HistoryTabHelper::GetHistoryService() {
   return ios::HistoryServiceFactory::GetForBrowserState(
       browser_state, ServiceAccessType::IMPLICIT_ACCESS);
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(HistoryTabHelper)

@@ -6,31 +6,29 @@
 
 #include <stddef.h>
 
-#include <map>
-#include <utility>
-
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
-#include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_metadata.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_metadata.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/protocol/model_type_state.pb.h"
 
 using autofill::AutofillMetadata;
 using autofill::AutofillProfile;
 using autofill::AutofillTable;
 using autofill::AutofillWebDataService;
 using autofill::CreditCard;
+using autofill::CreditCardCloudTokenData;
 using autofill::PaymentsCustomerData;
 using autofill::PersonalDataManager;
 using autofill::data_util::TruncateUTF8;
@@ -95,7 +93,7 @@ bool ListsMatch(int profile_a,
     list_a_map.erase(item->server_id());
   }
 
-  if (list_a_map.size()) {
+  if (!list_a_map.empty()) {
     DVLOG(1) << "Entries present in profile " << profile_a
              << " but not in profile" << profile_b << ".";
     return false;
@@ -108,15 +106,15 @@ void LogLists(const std::vector<Item*>& list_a,
               const std::vector<Item*>& list_b) {
   int x = 0;
   for (Item* item : list_a) {
-    LOG(WARNING) << "A#" << x++ << " " << *item;
+    DVLOG(1) << "A#" << x++ << " " << *item;
   }
   x = 0;
   for (Item* item : list_b) {
-    LOG(WARNING) << "B#" << x++ << " " << *item;
+    DVLOG(1) << "B#" << x++ << " " << *item;
   }
 }
 
-bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
+bool WalletDataAndMetadataMatch(
     int profile_a,
     const std::vector<CreditCard*>& server_cards_a,
     const std::vector<AutofillProfile*>& server_profiles_a,
@@ -131,11 +129,15 @@ bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
     LogLists(server_profiles_a, server_profiles_b);
     return false;
   }
-  // Check that all server profiles have converted to local ones.
-  for (AutofillProfile* profile : server_profiles_a) {
+  return true;
+}
+
+bool AddressesHaveConverted(
+    const std::vector<AutofillProfile*>& server_profiles) {
+  for (AutofillProfile* profile : server_profiles) {
     if (!profile->has_converted()) {
-      LOG(WARNING) << "Not all profiles are converted";
-      LogLists(server_profiles_a, server_profiles_b);
+      DVLOG(1) << "Not all profiles are converted";
+      LogLists(server_profiles, std::vector<AutofillProfile*>());
       return false;
     }
   }
@@ -143,10 +145,14 @@ bool WalletDataAndMetadataMatchAndAddressesHaveConverted(
 }
 
 void WaitForCurrentTasksToComplete(base::SequencedTaskRunner* task_runner) {
-  base::RunLoop loop;
-  task_runner->PostTask(
-      FROM_HERE, base::BindOnce(&base::RunLoop::Quit, base::Unretained(&loop)));
-  loop.Run();
+  // We are fine with the UI thread getting blocked. If using RunLoop here, in
+  // some uses of this functions, we would get nested RunLoops that tend to
+  // cause troubles. This is a more robust solution.
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&base::WaitableEvent::Signal,
+                                                  base::Unretained(&event)));
+  event.Wait();
 }
 
 void WaitForPDMToRefresh(int profile) {
@@ -183,6 +189,14 @@ void SetPaymentsCustomerDataOnDBSequence(
       ->SetPaymentsCustomerData(&customer_data);
 }
 
+void SetCreditCardCloudTokenDataOnDBSequence(
+    AutofillWebDataService* wds,
+    const std::vector<CreditCardCloudTokenData>& cloud_token_data) {
+  DCHECK(wds->GetDBTaskRunner()->RunsTasksInCurrentSequence());
+  AutofillTable::FromWebDatabase(wds->GetDatabase())
+      ->SetCreditCardCloudTokenData(cloud_token_data);
+}
+
 void GetServerCardsMetadataOnDBSequence(
     AutofillWebDataService* wds,
     std::map<std::string, AutofillMetadata>* cards_metadata) {
@@ -199,6 +213,16 @@ void GetServerAddressesMetadataOnDBSequence(
       ->GetServerAddressesMetadata(addresses_metadata);
 }
 
+void GetWalletDataModelTypeStateOnDBSequence(
+    AutofillWebDataService* wds,
+    sync_pb::ModelTypeState* model_type_state) {
+  DCHECK(wds->GetDBTaskRunner()->RunsTasksInCurrentSequence());
+  syncer::MetadataBatch metadata_batch;
+  AutofillTable::FromWebDatabase(wds->GetDatabase())
+      ->GetAllSyncMetadata(syncer::AUTOFILL_WALLET_DATA, &metadata_batch);
+  *model_type_state = metadata_batch.GetModelTypeState();
+}
+
 }  // namespace
 
 namespace wallet_helper {
@@ -207,6 +231,7 @@ const char kDefaultCardID[] = "wallet card ID";
 const char kDefaultAddressID[] = "wallet address ID";
 const char kDefaultCustomerID[] = "deadbeef";
 const char kDefaultBillingAddressID[] = "billing address entity ID";
+const char kDefaultCreditCardCloudTokenDataID[] = "cloud token data ID";
 
 PersonalDataManager* GetPersonalDataManager(int index) {
   return autofill::PersonalDataManagerFactory::GetForProfile(
@@ -252,6 +277,15 @@ void SetPaymentsCustomerData(
   WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
 }
 
+void SetCreditCardCloudTokenData(
+    int profile,
+    const std::vector<autofill::CreditCardCloudTokenData>& cloud_token_data) {
+  scoped_refptr<AutofillWebDataService> wds = GetProfileWebDataService(profile);
+  wds->GetDBTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&SetCreditCardCloudTokenDataOnDBSequence,
+                                base::Unretained(wds.get()), cloud_token_data));
+}
+
 void UpdateServerCardMetadata(int profile, const CreditCard& credit_card) {
   scoped_refptr<AutofillWebDataService> wds = GetProfileWebDataService(profile);
   wds->UpdateServerCardMetadata(credit_card);
@@ -265,25 +299,36 @@ void UpdateServerAddressMetadata(int profile,
   WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
 }
 
-void GetServerCardsMetadata(
-    int profile,
-    std::map<std::string, AutofillMetadata>* cards_metadata) {
+std::map<std::string, AutofillMetadata> GetServerCardsMetadata(int profile) {
+  std::map<std::string, AutofillMetadata> cards_metadata;
   scoped_refptr<AutofillWebDataService> wds = GetProfileWebDataService(profile);
   wds->GetDBTaskRunner()->PostTask(
       FROM_HERE, base::BindOnce(&GetServerCardsMetadataOnDBSequence,
-                                base::Unretained(wds.get()), cards_metadata));
+                                base::Unretained(wds.get()), &cards_metadata));
   WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
+  return cards_metadata;
 }
 
-void GetServerAddressesMetadata(
-    int profile,
-    std::map<std::string, AutofillMetadata>* addresses_metadata) {
+std::map<std::string, AutofillMetadata> GetServerAddressesMetadata(
+    int profile) {
+  std::map<std::string, AutofillMetadata> addresses_metadata;
   scoped_refptr<AutofillWebDataService> wds = GetProfileWebDataService(profile);
   wds->GetDBTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&GetServerAddressesMetadataOnDBSequence,
-                     base::Unretained(wds.get()), addresses_metadata));
+                     base::Unretained(wds.get()), &addresses_metadata));
   WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
+  return addresses_metadata;
+}
+
+sync_pb::ModelTypeState GetWalletDataModelTypeState(int profile) {
+  sync_pb::ModelTypeState result;
+  scoped_refptr<AutofillWebDataService> wds = GetProfileWebDataService(profile);
+  wds->GetDBTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&GetWalletDataModelTypeStateOnDBSequence,
+                                base::Unretained(wds.get()), &result));
+  WaitForCurrentTasksToComplete(wds->GetDBTaskRunner());
+  return result;
 }
 
 void UnmaskServerCard(int profile,
@@ -412,6 +457,28 @@ sync_pb::SyncEntity CreateSyncWalletAddress(const std::string& name,
   return result;
 }
 
+sync_pb::SyncEntity CreateSyncCreditCardCloudTokenData(
+    const std::string& cloud_token_data_id) {
+  sync_pb::SyncEntity entity;
+  entity.set_name(cloud_token_data_id);
+  entity.set_id_string(cloud_token_data_id);
+  entity.set_version(0);  // Will be overridden by the fake server.
+  entity.set_ctime(12345);
+  entity.set_mtime(12345);
+  sync_pb::AutofillWalletSpecifics* wallet_specifics =
+      entity.mutable_specifics()->mutable_autofill_wallet();
+  wallet_specifics->set_type(
+      sync_pb::AutofillWalletSpecifics::CREDIT_CARD_CLOUD_TOKEN_DATA);
+  sync_pb::WalletCreditCardCloudTokenData* cloud_token_data =
+      wallet_specifics->mutable_cloud_token_data();
+  cloud_token_data->set_instrument_token(cloud_token_data_id);
+  return entity;
+}
+
+sync_pb::SyncEntity CreateDefaultSyncCreditCardCloudTokenData() {
+  return CreateSyncCreditCardCloudTokenData(kDefaultCreditCardCloudTokenDataID);
+}
+
 void ExpectDefaultCreditCardValues(const CreditCard& card) {
   EXPECT_EQ(CreditCard::MASKED_SERVER_CARD, card.record_type());
   EXPECT_EQ(kDefaultCardID, card.server_id());
@@ -493,21 +560,49 @@ bool AutofillWalletChecker::Wait() {
   return StatusChangeChecker::Wait();
 }
 
-bool AutofillWalletChecker::IsExitConditionSatisfied() {
+bool AutofillWalletChecker::IsExitConditionSatisfied(std::ostream* os) {
+  *os << "Waiting for matching autofill wallet cards and addresses";
   autofill::PersonalDataManager* pdm_a =
       wallet_helper::GetPersonalDataManager(profile_a_);
   autofill::PersonalDataManager* pdm_b =
       wallet_helper::GetPersonalDataManager(profile_b_);
-  return WalletDataAndMetadataMatchAndAddressesHaveConverted(
-      profile_a_, pdm_a->GetServerCreditCards(), pdm_a->GetServerProfiles(),
-      profile_b_, pdm_b->GetServerCreditCards(), pdm_b->GetServerProfiles());
-}
-
-std::string AutofillWalletChecker::GetDebugMessage() const {
-  return "Waiting for matching autofill wallet cards and addresses";
+  return WalletDataAndMetadataMatch(profile_a_, pdm_a->GetServerCreditCards(),
+                                    pdm_a->GetServerProfiles(), profile_b_,
+                                    pdm_b->GetServerCreditCards(),
+                                    pdm_b->GetServerProfiles()) &&
+         // If data matches, it suffices to check addresses from profile_a_.
+         AddressesHaveConverted(pdm_a->GetServerProfiles());
 }
 
 void AutofillWalletChecker::OnPersonalDataChanged() {
+  CheckExitCondition();
+}
+
+AutofillWalletConversionChecker::AutofillWalletConversionChecker(int profile)
+    : profile_(profile) {
+  wallet_helper::GetPersonalDataManager(profile_)->AddObserver(this);
+}
+
+AutofillWalletConversionChecker::~AutofillWalletConversionChecker() {
+  wallet_helper::GetPersonalDataManager(profile_)->RemoveObserver(this);
+}
+
+bool AutofillWalletConversionChecker::Wait() {
+  // We need to make sure we are not reading before any locally instigated async
+  // writes. This is run exactly one time before the first
+  // IsExitConditionSatisfied() is called.
+  WaitForPDMToRefresh(profile_);
+  return StatusChangeChecker::Wait();
+}
+
+bool AutofillWalletConversionChecker::IsExitConditionSatisfied(
+    std::ostream* os) {
+  *os << "Waiting for converted autofill wallet addresses";
+  return AddressesHaveConverted(
+      wallet_helper::GetPersonalDataManager(profile_)->GetServerProfiles());
+}
+
+void AutofillWalletConversionChecker::OnPersonalDataChanged() {
   CheckExitCondition();
 }
 
@@ -524,58 +619,49 @@ AutofillWalletMetadataSizeChecker::~AutofillWalletMetadataSizeChecker() {
   wallet_helper::GetPersonalDataManager(profile_b_)->RemoveObserver(this);
 }
 
-bool AutofillWalletMetadataSizeChecker::IsExitConditionSatisfied() {
-  // There could be trailing metadata left on one of the clients. Check that
-  // metadata.size() is the same on both clients.
-  std::map<std::string, AutofillMetadata> addresses_metadata_a,
-      addresses_metadata_b;
-  wallet_helper::GetServerAddressesMetadata(profile_a_, &addresses_metadata_a);
-  wallet_helper::GetServerAddressesMetadata(profile_b_, &addresses_metadata_b);
-  if (addresses_metadata_a.size() != addresses_metadata_b.size()) {
-    LOG(WARNING) << "Server addresses metadata mismatch, expected "
-                 << addresses_metadata_a.size()
-                 << ", found: " << addresses_metadata_b.size();
-    return false;
-  }
-  std::map<std::string, AutofillMetadata> cards_metadata_a, cards_metadata_b;
-  wallet_helper::GetServerCardsMetadata(profile_a_, &cards_metadata_a);
-  wallet_helper::GetServerCardsMetadata(profile_b_, &cards_metadata_b);
-  if (cards_metadata_a.size() != cards_metadata_b.size()) {
-    LOG(WARNING) << "Server cards metadata mismatch, expected "
-                 << cards_metadata_a.size() << ", found "
-                 << cards_metadata_b.size();
-    return false;
-  }
-  return true;
-}
-
-std::string AutofillWalletMetadataSizeChecker::GetDebugMessage() const {
-  return "Waiting for matching autofill wallet metadata sizes";
+bool AutofillWalletMetadataSizeChecker::IsExitConditionSatisfied(
+    std::ostream* os) {
+  *os << "Waiting for matching autofill wallet metadata sizes";
+  // This checker used to be flaky (crbug.com/921386) because of using RunLoops
+  // to load synchronously data from the DB in IsExitConditionSatisfiedImpl.
+  // Such a waiting RunLoop often processed another OnPersonalDataChanged() call
+  // resulting in nested RunLoops. This should be avoided now by blocking using
+  // WaitableEvent, instead. This check enforces that we do not nest it anymore.
+  DCHECK(!checking_exit_condition_in_flight_)
+      << "There should be no nested calls for "
+         "IsExitConditionSatisfied(std::ostream* os)";
+  checking_exit_condition_in_flight_ = true;
+  bool exit_condition_is_satisfied = IsExitConditionSatisfiedImpl();
+  checking_exit_condition_in_flight_ = false;
+  return exit_condition_is_satisfied;
 }
 
 void AutofillWalletMetadataSizeChecker::OnPersonalDataChanged() {
   CheckExitCondition();
 }
 
-UssWalletSwitchToggler::UssWalletSwitchToggler() {}
-
-void UssWalletSwitchToggler::InitWithDefaultFeatures() {
-  InitWithFeatures({}, {});
-}
-
-void UssWalletSwitchToggler::InitWithFeatures(
-    std::vector<base::Feature> enabled_features,
-    std::vector<base::Feature> disabled_features) {
-  if (GetParam().first) {
-    enabled_features.push_back(switches::kSyncUSSAutofillWalletData);
-  } else {
-    disabled_features.push_back(switches::kSyncUSSAutofillWalletData);
+bool AutofillWalletMetadataSizeChecker::IsExitConditionSatisfiedImpl() {
+  // There could be trailing metadata left on one of the clients. Check that
+  // metadata.size() is the same on both clients.
+  std::map<std::string, AutofillMetadata> addresses_metadata_a =
+      wallet_helper::GetServerAddressesMetadata(profile_a_);
+  std::map<std::string, AutofillMetadata> addresses_metadata_b =
+      wallet_helper::GetServerAddressesMetadata(profile_b_);
+  if (addresses_metadata_a.size() != addresses_metadata_b.size()) {
+    DVLOG(1) << "Server addresses metadata mismatch, expected "
+             << addresses_metadata_a.size()
+             << ", found: " << addresses_metadata_b.size();
+    return false;
   }
-  if (GetParam().second) {
-    enabled_features.push_back(switches::kSyncUSSAutofillWalletMetadata);
-  } else {
-    disabled_features.push_back(switches::kSyncUSSAutofillWalletMetadata);
+  std::map<std::string, AutofillMetadata> cards_metadata_a =
+      wallet_helper::GetServerCardsMetadata(profile_a_);
+  std::map<std::string, AutofillMetadata> cards_metadata_b =
+      wallet_helper::GetServerCardsMetadata(profile_b_);
+  if (cards_metadata_a.size() != cards_metadata_b.size()) {
+    DVLOG(1) << "Server cards metadata mismatch, expected "
+             << cards_metadata_a.size() << ", found "
+             << cards_metadata_b.size();
+    return false;
   }
-
-  override_features_.InitWithFeatures(enabled_features, disabled_features);
+  return true;
 }

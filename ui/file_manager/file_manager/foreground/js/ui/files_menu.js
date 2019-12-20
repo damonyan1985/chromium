@@ -2,48 +2,49 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cr.define('cr.ui', function() {
+cr.define('cr.ui', () => {
   /**
    * Menu item with ripple animation.
-   * @constructor
-   * @extends {cr.ui.MenuItem}
-   *
-   * TODO(mtomasz): Upstream to cr.ui.MenuItem.
    */
-  var FilesMenuItem = cr.ui.define(cr.ui.MenuItem);
+  class FilesMenuItem extends cr.ui.MenuItem {
+    constructor() {
+      super();
 
-  FilesMenuItem.prototype = {
-    __proto__: cr.ui.MenuItem.prototype,
+      /** @private {boolean} */
+      this.animating_ = false;
 
-    /**
-     * @private {boolean}
-     */
-    animating_: false,
+      /** @private {(boolean|undefined)} */
+      this.hidden_ = undefined;
 
-    /**
-     * @private {(boolean|undefined)}
-     */
-    hidden_: undefined,
+      /** @private {?HTMLElement} */
+      this.label_ = null;
 
-    /**
-     * @private {HTMLElement}
-     */
-    label_: null,
+      /** @private {?HTMLElement} */
+      this.iconStart_ = null;
 
-    /**
-     * @private {HTMLElement}
-     */
-    iconStart_: null,
+      /** @private {?HTMLElement} */
+      this.ripple_ = null;
+
+      throw new Error('Designed to decorate elements');
+    }
 
     /**
-     * @private {HTMLElement}
+     * Decorates the element.
+     * @param {!Element} element Element to be decorated.
+     * @return {!cr.ui.FilesMenuItem} Decorated element.
      */
-    ripple_: null,
-
+    static decorate(element) {
+      element.__proto__ = FilesMenuItem.prototype;
+      element = /** @type {!cr.ui.FilesMenuItem} */ (element);
+      element.decorate();
+      return element;
+    }
     /**
      * @override
      */
-    decorate: function() {
+    decorate() {
+      this.animating_ = false;
+
       // Custom menu item can have sophisticated content (elements).
       if (!this.children.length) {
         this.label_ =
@@ -65,21 +66,21 @@ cr.define('cr.ui', function() {
       this.appendChild(this.ripple_);
 
       this.addEventListener('activate', this.onActivated_.bind(this));
-    },
+    }
 
     /**
      * Handles activate event.
      * @param {Event} event
      * @private
      */
-    onActivated_: function(event) {
+    onActivated_(event) {
       // Perform ripple animation if it's activated by keyboard.
       if (event.originalEvent instanceof KeyboardEvent) {
         this.ripple_.simulatedRipple();
       }
 
       // Perform fade out animation.
-      var menu = assertInstanceof(this.parentNode, cr.ui.Menu);
+      const menu = assertInstanceof(this.parentNode, cr.ui.Menu);
       // If activation was on a menu-item that hosts a sub-menu, don't animate
       const subMenuId = event.target.getAttribute('sub-menu');
       if (subMenuId !== null) {
@@ -89,17 +90,23 @@ cr.define('cr.ui', function() {
       }
       this.setMenuAsAnimating_(menu, true /* animating */);
 
-      var player = menu.animate([{
-        opacity: 1,
-        offset: 0
-      }, {
-        opacity: 0,
-        offset: 1
-      }], 300);
+      const player = menu.animate(
+          [
+            {
+              opacity: 1,
+              offset: 0,
+            },
+            {
+              opacity: 0,
+              offset: 1,
+            },
+          ],
+          300);
 
-      player.addEventListener('finish',
+      player.addEventListener(
+          'finish',
           this.setMenuAsAnimating_.bind(this, menu, false /* not animating */));
-    },
+    }
 
     /**
      * Sets menu as animating.
@@ -107,11 +114,11 @@ cr.define('cr.ui', function() {
      * @param {boolean} value True to set it as animating.
      * @private
      */
-    setMenuAsAnimating_: function(menu, value) {
+    setMenuAsAnimating_(menu, value) {
       menu.classList.toggle('animating', value);
 
-      for (var i = 0; i < menu.menuItems.length; i++) {
-        var menuItem = menu.menuItems[i];
+      for (let i = 0; i < menu.menuItems.length; i++) {
+        const menuItem = menu.menuItems[i];
         if (menuItem instanceof cr.ui.FilesMenuItem) {
           menuItem.setAnimating_(value);
         }
@@ -120,14 +127,14 @@ cr.define('cr.ui', function() {
       if (!value) {
         menu.classList.remove('toolbar-menu');
       }
-    },
+    }
 
     /**
      * Sets thie menu item as animating.
      * @param {boolean} value True to set this as animating.
      * @private
      */
-    setAnimating_: function(value) {
+    setAnimating_(value) {
       this.animating_ = value;
 
       if (this.animating_) {
@@ -139,7 +146,7 @@ cr.define('cr.ui', function() {
         this.hidden = this.hidden_;
         this.hidden_ = undefined;
       }
-    },
+    }
 
     /**
      * @return {boolean}
@@ -149,9 +156,9 @@ cr.define('cr.ui', function() {
         return this.hidden_;
       }
 
-      return Object.getOwnPropertyDescriptor(
-          HTMLElement.prototype, 'hidden').get.call(this);
-    },
+      return Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden')
+          .get.call(this);
+    }
 
     /**
      * Overrides hidden property to block the change of hidden property while
@@ -164,30 +171,30 @@ cr.define('cr.ui', function() {
         return;
       }
 
-      Object.getOwnPropertyDescriptor(
-          HTMLElement.prototype, 'hidden').set.call(this, value);
-    },
+      Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden')
+          .set.call(this, value);
+    }
 
     /**
      * @return {string}
      */
     get label() {
       return this.label_.textContent;
-    },
+    }
 
     /**
      * @param {string} value
      */
     set label(value) {
       this.label_.textContent = value;
-    },
+    }
 
     /**
      * @return {string}
      */
     get iconStartImage() {
       return this.iconStart_.style.backgroundImage;
-    },
+    }
 
     /**
      * @param {string} value
@@ -195,9 +202,9 @@ cr.define('cr.ui', function() {
     set iconStartImage(value) {
       this.iconStart_.setAttribute('style', 'background-image: ' + value);
     }
-  };
+  }
 
   return {
-    FilesMenuItem: FilesMenuItem
+    FilesMenuItem: FilesMenuItem,
   };
 });

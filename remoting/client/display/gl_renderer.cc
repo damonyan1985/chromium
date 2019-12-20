@@ -27,8 +27,7 @@ bool CompareDrawableZOrder(base::WeakPtr<Drawable> a,
 
 }  // namespace
 
-GlRenderer::GlRenderer() :
-    weak_factory_(this) {
+GlRenderer::GlRenderer() {
   weak_ptr_ = weak_factory_.GetWeakPtr();
   thread_checker_.DetachFromThread();
 }
@@ -147,7 +146,7 @@ void GlRenderer::RequestRender() {
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&GlRenderer::OnRender, weak_ptr_));
+      FROM_HERE, base::BindOnce(&GlRenderer::OnRender, weak_ptr_));
   render_scheduled_ = true;
 }
 

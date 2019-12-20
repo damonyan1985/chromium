@@ -5,7 +5,9 @@
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_ui_updater.h"
 
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_animator.h"
+#import "ios/chrome/browser/ui/fullscreen/fullscreen_model.h"
 #import "ios/chrome/browser/ui/fullscreen/fullscreen_ui_element.h"
+#import "ios/chrome/browser/ui/fullscreen/test/test_fullscreen_controller.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #include "testing/platform_test.h"
 
@@ -22,9 +24,29 @@
 @property(nonatomic, readonly) UIEdgeInsets maxViewportInsets;
 @property(nonatomic, readonly, getter=isEnabled) BOOL enabled;
 @property(nonatomic, readonly) FullscreenAnimator* animator;
+// Whether the UI element should implement optional selectors.  Defaults to YES.
+@property(nonatomic, assign) BOOL implementsOptionalSelectors;
 @end
 
 @implementation TestFullscreenUIElement
+
+- (instancetype)init {
+  if (self = [super init]) {
+    _implementsOptionalSelectors = YES;
+  }
+  return self;
+}
+
+- (BOOL)respondsToSelector:(SEL)aSelector {
+  if (!self.implementsOptionalSelectors &&
+      (aSelector == @selector(updateForFullscreenMinViewportInsets:
+                                                 maxViewportInsets:) ||
+       aSelector == @selector(updateForFullscreenEnabled:) ||
+       aSelector == @selector(animateFullscreenWithAnimator:))) {
+    return NO;
+  }
+  return [super respondsToSelector:aSelector];
+}
 
 - (void)updateForFullscreenMinViewportInsets:(UIEdgeInsets)minViewportInsets
                            maxViewportInsets:(UIEdgeInsets)maxViewportInsets {
@@ -52,14 +74,16 @@
 class FullscreenUIUpdaterTest : public PlatformTest {
  public:
   FullscreenUIUpdaterTest()
-      : PlatformTest(),
+      : controller_(&model_),
         element_([[TestFullscreenUIElement alloc] init]),
-        updater_(element_) {}
+        updater_(&controller_, element_) {}
 
+  TestFullscreenController* controller() { return &controller_; }
   TestFullscreenUIElement* element() { return element_; }
-  FullscreenControllerObserver* observer() { return &updater_; }
 
  private:
+  FullscreenModel model_;
+  TestFullscreenController controller_;
   __strong TestFullscreenUIElement* element_;
   FullscreenUIUpdater updater_;
 };
@@ -68,7 +92,7 @@ class FullscreenUIUpdaterTest : public PlatformTest {
 TEST_F(FullscreenUIUpdaterTest, Progress) {
   ASSERT_TRUE(AreCGFloatsEqual(element().progress, 0.0));
   const CGFloat kProgress = 0.5;
-  observer()->FullscreenProgressUpdated(nullptr, kProgress);
+  controller()->OnFullscreenProgressUpdated(kProgress);
   EXPECT_TRUE(AreCGFloatsEqual(element().progress, kProgress));
 }
 
@@ -76,8 +100,7 @@ TEST_F(FullscreenUIUpdaterTest, Progress) {
 TEST_F(FullscreenUIUpdaterTest, Insets) {
   const UIEdgeInsets kMinInsets = UIEdgeInsetsMake(10, 10, 10, 10);
   const UIEdgeInsets kMaxInsets = UIEdgeInsetsMake(20, 20, 20, 20);
-  observer()->FullscreenViewportInsetRangeChanged(nullptr, kMinInsets,
-                                                  kMaxInsets);
+  controller()->OnFullscreenViewportInsetRangeChanged(kMinInsets, kMaxInsets);
   EXPECT_TRUE(
       UIEdgeInsetsEqualToEdgeInsets(element().minViewportInsets, kMinInsets));
   EXPECT_TRUE(
@@ -87,9 +110,9 @@ TEST_F(FullscreenUIUpdaterTest, Insets) {
 // Tests that the updater correctly changes the UI element's enabled state.
 TEST_F(FullscreenUIUpdaterTest, EnabledDisabled) {
   ASSERT_FALSE(element().enabled);
-  observer()->FullscreenEnabledStateChanged(nullptr, true);
+  controller()->OnFullscreenEnabledStateChanged(true);
   EXPECT_TRUE(element().enabled);
-  observer()->FullscreenEnabledStateChanged(nullptr, false);
+  controller()->OnFullscreenEnabledStateChanged(false);
   EXPECT_FALSE(element().enabled);
 }
 
@@ -101,6 +124,26 @@ TEST_F(FullscreenUIUpdaterTest, ScrollEnd) {
   FullscreenAnimator* const kAnimator = [[FullscreenAnimator alloc]
       initWithStartProgress:0.0
                       style:FullscreenAnimatorStyle::ENTER_FULLSCREEN];
-  observer()->FullscreenWillAnimate(nullptr, kAnimator);
+  controller()->OnFullscreenWillAnimate(kAnimator);
   EXPECT_EQ(element().animator, kAnimator);
+}
+
+// Tests the default behavior of FullscreenUIUpdater when optional
+// FullscreenUIElement selectors aren not implemented.
+TEST_F(FullscreenUIUpdaterTest, OptionalSelectors) {
+  element().implementsOptionalSelectors = NO;
+  // Verify that the fullscreen progress gets reset to 1.0 when the enabled
+  // state selector is not implemented.
+  ASSERT_TRUE(AreCGFloatsEqual(element().progress, 0.0));
+  controller()->OnFullscreenEnabledStateChanged(false);
+  EXPECT_TRUE(AreCGFloatsEqual(element().progress, 1.0));
+  // Verify that the fullscreen progress gets reset to 0.0 for an
+  // ENTER_FULLSCREEN animator when the animation selector is not implemented.
+  FullscreenAnimator* animator = [[FullscreenAnimator alloc]
+      initWithStartProgress:0.0
+                      style:FullscreenAnimatorStyle::ENTER_FULLSCREEN];
+  controller()->OnFullscreenWillAnimate(animator);
+  [animator startAnimation];
+  EXPECT_TRUE(AreCGFloatsEqual(element().progress, 0.0));
+  [animator stopAnimation:YES];
 }

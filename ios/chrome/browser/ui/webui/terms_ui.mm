@@ -10,8 +10,8 @@
 #include "base/memory/ref_counted_memory.h"
 #import "base/strings/sys_string_conversions.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/ui/file_locations.h"
-#include "ios/web/public/url_data_source_ios.h"
+#include "ios/chrome/browser/ui/util/terms_util.h"
+#include "ios/web/public/webui/url_data_source_ios.h"
 #include "ios/web/public/webui/web_ui_ios.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -29,14 +29,13 @@ class TermsUIHTMLSource : public web::URLDataSourceIOS {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      const web::URLDataSourceIOS::GotDataCallback& callback) override;
+      web::URLDataSourceIOS::GotDataCallback callback) override;
   std::string GetMimeType(const std::string& path) const override;
   bool ShouldDenyXFrameOptions() const override;
 
   // Send the response data.
-  void FinishDataRequest(
-      const std::string& html,
-      const web::URLDataSourceIOS::GotDataCallback& callback);
+  void FinishDataRequest(const std::string& html,
+                         web::URLDataSourceIOS::GotDataCallback callback);
 
  private:
   ~TermsUIHTMLSource() override;
@@ -59,7 +58,7 @@ std::string TermsUIHTMLSource::GetSource() const {
 
 void TermsUIHTMLSource::StartDataRequest(
     const std::string& path,
-    const web::URLDataSourceIOS::GotDataCallback& callback) {
+    web::URLDataSourceIOS::GotDataCallback callback) {
   NSString* terms_of_service_path =
       base::SysUTF8ToNSString(GetTermsOfServicePath());
   NSString* bundle_path = [base::mac::FrameworkBundle() bundlePath];
@@ -72,14 +71,14 @@ void TermsUIHTMLSource::StartDataRequest(
                                                 encoding:NSUTF8StringEncoding
                                                    error:&error];
   DCHECK(!error && [content length]);
-  FinishDataRequest(base::SysNSStringToUTF8(content), callback);
+  FinishDataRequest(base::SysNSStringToUTF8(content), std::move(callback));
 }
 
 void TermsUIHTMLSource::FinishDataRequest(
     const std::string& html,
-    const web::URLDataSourceIOS::GotDataCallback& callback) {
+    web::URLDataSourceIOS::GotDataCallback callback) {
   std::string html_copy(html);
-  callback.Run(base::RefCountedString::TakeString(&html_copy));
+  std::move(callback).Run(base::RefCountedString::TakeString(&html_copy));
 }
 
 std::string TermsUIHTMLSource::GetMimeType(const std::string& path) const {

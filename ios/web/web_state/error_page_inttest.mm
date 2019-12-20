@@ -2,20 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <functional>
+
 #include "base/bind.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "ios/testing/embedded_test_server_handlers.h"
-#include "ios/web/public/features.h"
-#import "ios/web/public/navigation_manager.h"
-#include "ios/web/public/reload_type.h"
+#import "ios/web/public/navigation/navigation_item.h"
+#import "ios/web/public/navigation/navigation_manager.h"
+#include "ios/web/public/navigation/reload_type.h"
+#include "ios/web/public/security/security_style.h"
+#include "ios/web/public/security/ssl_status.h"
 #include "ios/web/public/test/element_selector.h"
+#import "ios/web/public/test/error_test_util.h"
 #include "ios/web/public/test/fakes/test_browser_state.h"
+#import "ios/web/public/test/fakes/test_web_client.h"
+#include "ios/web/public/test/fakes/test_web_state_observer.h"
 #import "ios/web/public/test/navigation_test_util.h"
 #import "ios/web/public/test/web_test_with_web_state.h"
 #import "ios/web/public/test/web_view_content_test_util.h"
 #import "ios/web/public/web_client.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state.h"
 #include "net/test/embedded_test_server/default_handlers.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
 
@@ -25,81 +33,125 @@
 
 using base::test::ios::kWaitForPageLoadTimeout;
 using base::test::ios::WaitUntilConditionOrTimeout;
-using web::test::ElementSelector;
 
 namespace web {
 
 namespace {
-// Overrides PrepareErrorPage to render all important arguments.
-class TestWebClient : public WebClient {
-  void PrepareErrorPage(NSError* error,
-                        bool is_post,
-                        bool is_off_the_record,
-                        NSString** error_html) override {
-    *error_html =
-        [NSString stringWithFormat:@"domain: %@ code: %ld post: %d otr: %d",
-                                   error.domain, static_cast<long>(error.code),
-                                   is_post, is_off_the_record];
-  }
-};
-}  // namespace
 
-// ErrorPageTest is parameterized on this enum to test both
-// LegacyNavigationManagerImpl and WKBasedNavigationManagerImpl.
-enum class NavigationManagerChoice {
-  LEGACY,
-  WK_BASED,
-};
+// Waits for text for and error in NSURLErrorDomain and
+// kCFURLErrorNetworkConnectionLost error code.
+bool WaitForErrorText(WebState* web_state, const GURL& url) WARN_UNUSED_RESULT;
+bool WaitForErrorText(WebState* web_state, const GURL& url) {
+  return test::WaitForWebViewContainingText(
+      web_state,
+      testing::GetErrorText(web_state, url, "NSURLErrorDomain",
+                            /*error_code=*/NSURLErrorNetworkConnectionLost,
+                            /*is_post=*/false, /*is_otr=*/false,
+                            /*has_ssl_info=*/false));
+}
+}  // namespace
 
 // Test fixture for error page testing. Error page simply renders the arguments
 // passed to WebClient::PrepareErrorPage, so the test also acts as integration
 // test for PrepareErrorPage WebClient method.
-class ErrorPageTest
-    : public WebTestWithWebState,
-      public ::testing::WithParamInterface<NavigationManagerChoice> {
+class ErrorPageTest : public WebTestWithWebState {
  protected:
   ErrorPageTest() : WebTestWithWebState(std::make_unique<TestWebClient>()) {
     RegisterDefaultHandlers(&server_);
     server_.RegisterRequestHandler(base::BindRepeating(
         &net::test_server::HandlePrefixedRequest, "/echo-query",
-        base::BindRepeating(&testing::HandleEchoQueryOrCloseSocket,
-                            base::ConstRef(server_responds_with_content_))));
+        base::BindRepeating(::testing::HandleEchoQueryOrCloseSocket,
+                            std::cref(server_responds_with_content_))));
     server_.RegisterRequestHandler(
         base::BindRepeating(&net::test_server::HandlePrefixedRequest, "/iframe",
-                            base::BindRepeating(&testing::HandleIFrame)));
+                            base::BindRepeating(::testing::HandleIFrame)));
     server_.RegisterRequestHandler(
         base::BindRepeating(&net::test_server::HandlePrefixedRequest, "/form",
-                            base::BindRepeating(&testing::HandleForm)));
-
-    if (GetParam() == NavigationManagerChoice::LEGACY) {
-      scoped_feature_list_.InitAndDisableFeature(
-          web::features::kSlimNavigationManager);
-    } else {
-      scoped_feature_list_.InitAndEnableFeature(
-          web::features::kSlimNavigationManager);
-    }
+                            base::BindRepeating(::testing::HandleForm)));
   }
 
   void SetUp() override {
     WebTestWithWebState::SetUp();
+
+    web_state_observer_ = std::make_unique<TestWebStateObserver>(web_state());
     ASSERT_TRUE(server_.Start());
+  }
+
+  TestDidChangeVisibleSecurityStateInfo* security_state_info() {
+    return web_state_observer_->did_change_visible_security_state_info();
   }
 
   net::EmbeddedTestServer server_;
   bool server_responds_with_content_ = false;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+  std::unique_ptr<TestWebStateObserver> web_state_observer_;
   DISALLOW_COPY_AND_ASSIGN(ErrorPageTest);
 };
 
+// Tests that the error page is correctly displayed after navigating back to it
+// multiple times. See http://crbug.com/944037 .
+// TODO(crbug.com/954231): this test is flaky on device.
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_BackForwardErrorPage BackForwardErrorPage
+#else
+#define MAYBE_BackForwardErrorPage FLAKY_BackForwardErrorPage
+#endif
+TEST_F(ErrorPageTest, MAYBE_BackForwardErrorPage) {
+  test::LoadUrl(web_state(), server_.GetURL("/close-socket"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
+
+  test::LoadUrl(web_state(), server_.GetURL("/echo"));
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
+
+  web_state()->GetNavigationManager()->GoBack();
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
+
+  web_state()->GetNavigationManager()->GoForward();
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
+
+  web_state()->GetNavigationManager()->GoBack();
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
+
+  // Make sure that the forward history isn't destroyed.
+  web_state()->GetNavigationManager()->GoForward();
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
+}
+
+// Tests that reloading a page that is no longer accessible doesn't destroy
+// forward history.
+TEST_F(ErrorPageTest, ReloadOfflinePage) {
+  server_responds_with_content_ = true;
+
+  test::LoadUrl(web_state(), server_.GetURL("/echo-query?foo"));
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "foo"));
+
+  test::LoadUrl(web_state(), server_.GetURL("/echoall?bar"));
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "bar"));
+
+  web_state()->GetNavigationManager()->GoBack();
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "foo"));
+
+  server_responds_with_content_ = false;
+  web_state()->GetNavigationManager()->Reload(ReloadType::NORMAL,
+                                              /*check_for_repost=*/false);
+
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/echo-query?foo")));
+  server_responds_with_content_ = true;
+
+  // Make sure that forward history hasn't been destroyed.
+  ASSERT_TRUE(web_state()->GetNavigationManager()->CanGoForward());
+  web_state()->GetNavigationManager()->GoForward();
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "bar"));
+}
+
 // Loads the URL which fails to load, then sucessfully reloads the page.
-TEST_P(ErrorPageTest, ReloadErrorPage) {
-  // No response leads to -1005 error code.
+TEST_F(ErrorPageTest, ReloadErrorPage) {
+  // No response leads to -1005 error code (NSURLErrorNetworkConnectionLost).
   server_responds_with_content_ = false;
   test::LoadUrl(web_state(), server_.GetURL("/echo-query?foo"));
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/echo-query?foo")));
+  ASSERT_FALSE(security_state_info());
 
   // Reload the page, which should load without errors.
   server_responds_with_content_ = true;
@@ -109,23 +161,27 @@ TEST_P(ErrorPageTest, ReloadErrorPage) {
 }
 
 // Sucessfully loads the page, stops the server and reloads the page.
-TEST_P(ErrorPageTest, ReloadPageAfterServerIsDown) {
+TEST_F(ErrorPageTest, ReloadPageAfterServerIsDown) {
   // Sucessfully load the page.
   server_responds_with_content_ = true;
   test::LoadUrl(web_state(), server_.GetURL("/echo-query?foo"));
   ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "foo"));
 
-  // Reload the page, no response leads to -1005 error code.
+  // Reload the page, no response leads to -1005 error code
+  // (NSURLErrorNetworkConnectionLost).
   server_responds_with_content_ = false;
   web_state()->GetNavigationManager()->Reload(ReloadType::NORMAL,
                                               /*check_for_repost=*/false);
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/echo-query?foo")));
+  ASSERT_TRUE(security_state_info());
+  ASSERT_TRUE(security_state_info()->visible_ssl_status);
+  EXPECT_EQ(SECURITY_STYLE_UNKNOWN,
+            security_state_info()->visible_ssl_status->security_style);
 }
 
 // Sucessfully loads the page, goes back, stops the server, goes forward and
 // reloads.
-TEST_P(ErrorPageTest, GoForwardAfterServerIsDownAndReload) {
+TEST_F(ErrorPageTest, GoForwardAfterServerIsDownAndReload) {
   // First page loads sucessfully.
   test::LoadUrl(web_state(), server_.GetURL("/echo"));
   ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
@@ -150,23 +206,25 @@ TEST_P(ErrorPageTest, GoForwardAfterServerIsDownAndReload) {
   // Reload bypasses the cache.
   web_state()->GetNavigationManager()->Reload(ReloadType::NORMAL,
                                               /*check_for_repost=*/false);
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/echo-query?foo")));
+  ASSERT_TRUE(security_state_info());
+  ASSERT_TRUE(security_state_info()->visible_ssl_status);
+  EXPECT_EQ(SECURITY_STYLE_UNKNOWN,
+            security_state_info()->visible_ssl_status->security_style);
 #endif  // TARGET_IPHONE_SIMULATOR
 }
 
 // Sucessfully loads the page, then loads the URL which fails to load, then
 // sucessfully goes back to the first page and goes forward to error page.
 // Back-forward navigations are browser-initiated.
-TEST_P(ErrorPageTest, GoBackFromErrorPageAndForwardToErrorPage) {
+TEST_F(ErrorPageTest, GoBackFromErrorPageAndForwardToErrorPage) {
   // First page loads sucessfully.
   test::LoadUrl(web_state(), server_.GetURL("/echo"));
   ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
 
   // Second page fails to load.
   test::LoadUrl(web_state(), server_.GetURL("/close-socket"));
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
 
   // Going back should sucessfully load the first page.
   web_state()->GetNavigationManager()->GoBack();
@@ -174,28 +232,26 @@ TEST_P(ErrorPageTest, GoBackFromErrorPageAndForwardToErrorPage) {
 
   // Going forward fails the load.
   web_state()->GetNavigationManager()->GoForward();
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
+  ASSERT_TRUE(security_state_info());
+  ASSERT_TRUE(security_state_info()->visible_ssl_status);
+  EXPECT_EQ(SECURITY_STYLE_UNKNOWN,
+            security_state_info()->visible_ssl_status->security_style);
 }
 
 // Sucessfully loads the page, then loads the URL which fails to load, then
 // sucessfully goes back to the first page and goes forward to error page.
 // Back-forward navigations are renderer-initiated.
-TEST_P(ErrorPageTest,
-       RendererInitiatedGoBackFromErrorPageAndForwardToErrorPage) {
-  if (GetParam() == NavigationManagerChoice::WK_BASED) {
-    // TODO(crbug.com/867927): Re-enable this test.
-    return;
-  }
-
+// TODO(crbug.com/867927): Re-enable this test.
+TEST_F(ErrorPageTest,
+       DISABLED_RendererInitiatedGoBackFromErrorPageAndForwardToErrorPage) {
   // First page loads sucessfully.
   test::LoadUrl(web_state(), server_.GetURL("/echo"));
   ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(), "Echo"));
 
   // Second page fails to load.
   test::LoadUrl(web_state(), server_.GetURL("/close-socket"));
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
 
   // Going back should sucessfully load the first page.
   ExecuteJavaScript(@"window.history.back();");
@@ -203,62 +259,87 @@ TEST_P(ErrorPageTest,
 
   // Going forward fails the load.
   ExecuteJavaScript(@"window.history.forward();");
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/close-socket")));
+  ASSERT_TRUE(security_state_info());
+  ASSERT_TRUE(security_state_info()->visible_ssl_status);
+  EXPECT_EQ(SECURITY_STYLE_UNKNOWN,
+            security_state_info()->visible_ssl_status->security_style);
 }
 
 // Loads the URL which redirects to unresponsive server.
-TEST_P(ErrorPageTest, RedirectToFailingURL) {
-  // No response leads to -1005 error code.
+TEST_F(ErrorPageTest, RedirectToFailingURL) {
+  // No response leads to -1005 error code (NSURLErrorNetworkConnectionLost).
   server_responds_with_content_ = false;
   test::LoadUrl(web_state(), server_.GetURL("/server-redirect?echo-query"));
-  ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 0"));
+  // Error is displayed after the resdirection to /echo-query.
+  ASSERT_TRUE(WaitForErrorText(web_state(), server_.GetURL("/echo-query")));
 }
 
 // Loads the page with iframe, and that iframe fails to load. There should be no
 // error page if the main frame has sucessfully loaded.
-TEST_P(ErrorPageTest, ErrorPageInIFrame) {
+TEST_F(ErrorPageTest, ErrorPageInIFrame) {
   test::LoadUrl(web_state(), server_.GetURL("/iframe?echo-query"));
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
     return test::IsWebViewContainingElement(
         web_state(),
-        ElementSelector::ElementSelectorCss("iframe[src*='echo-query']"));
+        [ElementSelector selectorWithCSSSelector:"iframe[src*='echo-query']"]);
   }));
 }
 
 // Loads the URL with off the record browser state.
-TEST_P(ErrorPageTest, OtrError) {
+TEST_F(ErrorPageTest, OtrError) {
   TestBrowserState browser_state;
   browser_state.SetOffTheRecord(true);
   WebState::CreateParams params(&browser_state);
   auto web_state = WebState::Create(params);
 
-  // No response leads to -1005 error code.
+  // No response leads to -1005 error code (NSURLErrorNetworkConnectionLost).
   server_responds_with_content_ = false;
   test::LoadUrl(web_state.get(), server_.GetURL("/echo-query?foo"));
   // LoadIfNecessary is needed because the view is not created (but needed) when
   // loading the page. TODO(crbug.com/705819): Remove this call.
   web_state->GetNavigationManager()->LoadIfNecessary();
   ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state.get(), "domain: NSURLErrorDomain code: -1005 post: 0 otr: 1"));
+      web_state.get(),
+      testing::GetErrorText(web_state.get(), server_.GetURL("/echo-query?foo"),
+                            "NSURLErrorDomain",
+                            /*error_code=*/NSURLErrorNetworkConnectionLost,
+                            /*is_post=*/false, /*is_otr=*/true,
+                            /*has_ssl_info=*/false)));
 }
 
 // Loads the URL with form which fails to submit.
-TEST_P(ErrorPageTest, FormSubmissionError) {
+TEST_F(ErrorPageTest, FormSubmissionError) {
   test::LoadUrl(web_state(), server_.GetURL("/form?close-socket"));
-  ASSERT_TRUE(
-      test::WaitForWebViewContainingText(web_state(), testing::kTestFormPage));
+  ASSERT_TRUE(test::WaitForWebViewContainingText(web_state(),
+                                                 ::testing::kTestFormPage));
 
   // Submit the form using JavaScript.
   ExecuteJavaScript(@"document.getElementById('form').submit();");
 
+  // Error is displayed after the form submission navigation.
   ASSERT_TRUE(test::WaitForWebViewContainingText(
-      web_state(), "domain: NSURLErrorDomain code: -1005 post: 1 otr: 0"));
+      web_state(),
+      testing::GetErrorText(
+          web_state(), server_.GetURL("/close-socket"), "NSURLErrorDomain",
+          /*error_code=*/NSURLErrorNetworkConnectionLost,
+          /*is_post=*/true, /*is_otr=*/false, /*has_ssl_info=*/false)));
 }
 
-INSTANTIATE_TEST_SUITE_P(ProgrammaticErrorPageTest,
-                         ErrorPageTest,
-                         ::testing::Values(NavigationManagerChoice::LEGACY,
-                                           NavigationManagerChoice::WK_BASED));
+// Loads an item and checks that virtualURL and URL after displaying the error
+// are correct.
+TEST_F(ErrorPageTest, URLAndVirtualURLAfterError) {
+  GURL url(server_.GetURL("/close-socket"));
+  GURL virtual_url("http://virual_url.test");
+  web::NavigationManager::WebLoadParams params(url);
+  params.virtual_url = virtual_url;
+  web::NavigationManager* manager = web_state()->GetNavigationManager();
+  manager->LoadURLWithParams(params);
+  manager->LoadIfNecessary();
+  ASSERT_TRUE(WaitForErrorText(web_state(), url));
+
+  EXPECT_EQ(url, manager->GetLastCommittedItem()->GetURL());
+  EXPECT_EQ(virtual_url, manager->GetLastCommittedItem()->GetVirtualURL());
+}
+
 }  // namespace web

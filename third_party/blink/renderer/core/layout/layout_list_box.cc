@@ -38,8 +38,8 @@
 #include "third_party/blink/renderer/core/html/html_div_element.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_alignment.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
+#include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
+#include "third_party/blink/renderer/core/scroll/scroll_types.h"
 
 namespace blink {
 
@@ -52,13 +52,13 @@ const int kDefaultPaddingBottom = 1;
 LayoutListBox::LayoutListBox(Element* element) : LayoutBlockFlow(element) {
   DCHECK(element);
   DCHECK(element->IsHTMLElement());
-  DCHECK(IsHTMLSelectElement(element));
+  DCHECK(IsA<HTMLSelectElement>(element));
 }
 
 LayoutListBox::~LayoutListBox() = default;
 
 inline HTMLSelectElement* LayoutListBox::SelectElement() const {
-  return ToHTMLSelectElement(GetNode());
+  return To<HTMLSelectElement>(GetNode());
 }
 
 unsigned LayoutListBox::size() const {
@@ -78,17 +78,21 @@ LayoutUnit LayoutListBox::DefaultItemHeight() const {
 }
 
 LayoutUnit LayoutListBox::ItemHeight() const {
+  // If the intrinsic-inline-size is specified, then we shouldn't ever need to
+  // get the ItemHeight.
+  DCHECK(!HasOverrideIntrinsicContentLogicalHeight());
+
   HTMLSelectElement* select = SelectElement();
   if (!select)
     return LayoutUnit();
 
   const auto& items = select->GetListItems();
-  if (items.IsEmpty())
+  if (items.IsEmpty() || ShouldApplySizeContainment())
     return DefaultItemHeight();
 
   LayoutUnit max_height;
   for (Element* element : items) {
-    if (auto* optgroup = ToHTMLOptGroupElementOrNull(element))
+    if (auto* optgroup = DynamicTo<HTMLOptGroupElement>(element))
       element = &optgroup->OptGroupLabelElement();
     LayoutObject* layout_object = element->GetLayoutObject();
     LayoutUnit item_height;
@@ -105,7 +109,13 @@ void LayoutListBox::ComputeLogicalHeight(
     LayoutUnit,
     LayoutUnit logical_top,
     LogicalExtentComputedValues& computed_values) const {
-  LayoutUnit height = ItemHeight() * size();
+  LayoutUnit height;
+  if (HasOverrideIntrinsicContentLogicalHeight()) {
+    height = OverrideIntrinsicContentLogicalHeight();
+  } else {
+    height = ItemHeight() * size();
+  }
+
   // FIXME: The item height should have been added before updateLogicalHeight
   // was called to avoid this hack.
   SetIntrinsicContentLogicalHeight(height);
@@ -131,7 +141,7 @@ void LayoutListBox::ComputeIntrinsicLogicalWidths(
     min_logical_width = LayoutUnit();
 }
 
-void LayoutListBox::ScrollToRect(const LayoutRect& absolute_rect) {
+void LayoutListBox::ScrollToRect(const PhysicalRect& absolute_rect) {
   if (HasOverflowClip()) {
     DCHECK(Layer());
     DCHECK(Layer()->GetScrollableArea());

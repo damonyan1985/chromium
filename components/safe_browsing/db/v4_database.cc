@@ -71,7 +71,7 @@ void V4Database::Create(
   db_task_runner->PostTask(
       FROM_HERE, base::BindOnce(&V4Database::CreateOnTaskRunner, db_task_runner,
                                 base_path, list_infos, callback_task_runner,
-                                new_db_callback, TimeTicks::Now()));
+                                std::move(new_db_callback)));
 }
 
 // static
@@ -80,8 +80,7 @@ void V4Database::CreateOnTaskRunner(
     const base::FilePath& base_path,
     const ListInfos& list_infos,
     const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
-    NewDatabaseReadyCallback new_db_callback,
-    const TimeTicks create_start_time) {
+    NewDatabaseReadyCallback new_db_callback) {
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 
   if (!g_store_factory.Get())
@@ -111,10 +110,8 @@ void V4Database::CreateOnTaskRunner(
   // Database is done loading, pass it to the new_db_callback on the caller's
   // thread. This would unblock resource loads.
   callback_task_runner->PostTask(
-      FROM_HERE, base::BindOnce(new_db_callback, std::move(v4_database)));
-
-  UMA_HISTOGRAM_TIMES("SafeBrowsing.V4DatabaseOpen.Time",
-                      TimeTicks::Now() - create_start_time);
+      FROM_HERE,
+      base::BindOnce(std::move(new_db_callback), std::move(v4_database)));
 }
 
 // static
@@ -134,8 +131,7 @@ V4Database::V4Database(
     std::unique_ptr<StoreMap> store_map)
     : store_map_(std::move(store_map)),
       db_task_runner_(db_task_runner),
-      pending_store_updates_(0),
-      weak_factory_on_io_(this) {
+      pending_store_updates_(0) {
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 }
 
@@ -176,13 +172,13 @@ void V4Database::ApplyUpdate(
         // A different state implies there are updates to process.
         pending_store_updates_++;
         UpdatedStoreReadyCallback store_ready_callback =
-            base::Bind(&V4Database::UpdatedStoreReady,
-                       weak_factory_on_io_.GetWeakPtr(), identifier);
+            base::BindOnce(&V4Database::UpdatedStoreReady,
+                           weak_factory_on_io_.GetWeakPtr(), identifier);
         db_task_runner_->PostTask(
             FROM_HERE, base::BindOnce(&V4Store::ApplyUpdate,
                                       base::Unretained(old_store.get()),
                                       std::move(response), current_task_runner,
-                                      store_ready_callback));
+                                      std::move(store_ready_callback)));
       }
     } else {
       NOTREACHED() << "Got update for unexpected identifier: " << identifier;
@@ -282,33 +278,24 @@ void V4Database::VerifyChecksum(
   }
 
   base::PostTaskAndReplyWithResult(
-      db_task_runner_.get(), FROM_HERE, base::Bind(&VerifyChecksums, stores),
-      base::Bind(&V4Database::OnChecksumVerified,
-                 weak_factory_on_io_.GetWeakPtr(),
-                 std::move(db_ready_for_updates_callback)));
+      db_task_runner_.get(), FROM_HERE,
+      base::BindOnce(&VerifyChecksums, stores),
+      base::BindOnce(&V4Database::OnChecksumVerified,
+                     weak_factory_on_io_.GetWeakPtr(),
+                     std::move(db_ready_for_updates_callback)));
 }
 
 void V4Database::OnChecksumVerified(
     DatabaseReadyForUpdatesCallback db_ready_for_updates_callback,
     const std::vector<ListIdentifier>& stores_to_reset) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  db_ready_for_updates_callback.Run(stores_to_reset);
+  std::move(db_ready_for_updates_callback).Run(stores_to_reset);
 }
 
 bool V4Database::IsStoreAvailable(const ListIdentifier& identifier) const {
   const auto& store_pair = store_map_->find(identifier);
-  bool store_found = store_pair != store_map_->end();
-  UMA_HISTOGRAM_BOOLEAN("SafeBrowsing.V4Store.IsStoreAvailable.ValidStore",
-                        store_found);
-  if (!store_found) {
-    // Store not in our list
-    return false;
-  }
-  if (!store_pair->second->HasValidData()) {
-    // Store never properly populated
-    return false;
-  }
-  return true;
+  return (store_pair != store_map_->end()) &&
+         store_pair->second->HasValidData();
 }
 
 void V4Database::RecordFileSizeHistograms() {

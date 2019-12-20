@@ -5,6 +5,10 @@
 #ifndef CHROME_BROWSER_BROWSING_DATA_SITE_DATA_SIZE_COLLECTOR_H_
 #define CHROME_BROWSER_BROWSING_DATA_SITE_DATA_SIZE_COLLECTOR_H_
 
+#include <list>
+#include <string>
+#include <vector>
+
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/browsing_data/browsing_data_appcache_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_cache_storage_helper.h"
@@ -18,22 +22,18 @@
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/storage_partition.h"
 
-namespace {
-
-typedef std::list<net::CanonicalCookie> CookieList;
-typedef std::list<BrowsingDataDatabaseHelper::DatabaseInfo> DatabaseInfoList;
-typedef std::list<content::StorageUsageInfo> LocalStorageInfoList;
-typedef std::list<content::StorageUsageInfo> IndexedDBInfoList;
-typedef std::list<BrowsingDataFileSystemHelper::FileSystemInfo>
-    FileSystemInfoList;
-typedef std::list<content::StorageUsageInfo> ServiceWorkerUsageInfoList;
-typedef std::list<content::StorageUsageInfo> CacheStorageUsageInfoList;
-typedef std::vector<std::string> FlashLSODomainList;
-
-}  // namespace
-
 class SiteDataSizeCollector {
  public:
+  using CookieList = std::list<net::CanonicalCookie>;
+  using DatabaseInfoList = std::list<content::StorageUsageInfo>;
+  using LocalStorageInfoList = std::list<content::StorageUsageInfo>;
+  using IndexedDBInfoList = std::list<content::StorageUsageInfo>;
+  using FileSystemInfoList =
+      std::list<BrowsingDataFileSystemHelper::FileSystemInfo>;
+  using ServiceWorkerUsageInfoList = std::list<content::StorageUsageInfo>;
+  using CacheStorageUsageInfoList = std::list<content::StorageUsageInfo>;
+  using FlashLSODomainList = std::vector<std::string>;
+
   SiteDataSizeCollector(const base::FilePath& default_storage_partition_path,
                         BrowsingDataCookieHelper* cookie_helper,
                         BrowsingDataDatabaseHelper* database_helper,
@@ -54,7 +54,7 @@ class SiteDataSizeCollector {
  private:
   // Callback methods to be invoked when fetching the data is complete.
   void OnAppCacheModelInfoLoaded(
-      scoped_refptr<content::AppCacheInfoCollection>);
+      const std::list<content::StorageUsageInfo>& info_list);
   void OnCookiesModelInfoLoaded(const net::CookieList& cookie_list);
   void OnDatabaseModelInfoLoaded(const DatabaseInfoList& database_info_list);
   void OnLocalStorageModelInfoLoaded(
@@ -96,7 +96,7 @@ class SiteDataSizeCollector {
   // Keeps track of the sum of all fetched size.
   int64_t total_bytes_;
 
-  base::WeakPtrFactory<SiteDataSizeCollector> weak_ptr_factory_;
+  base::WeakPtrFactory<SiteDataSizeCollector> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SiteDataSizeCollector);
 };

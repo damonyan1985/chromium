@@ -2,30 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-function clobberJSON() {
-  JSON.parse = function() {
-    return "JSON.parse clobbered by content script.";
-  };
-
-  JSON.stringify = function() {
-    return "JSON.stringify clobbered by content script.";
-  };
-
-  Array.prototype.toJSON = function() {
-    return "Array.prototype.toJSON clobbered by content script.";
-  };
-
-  Object.prototype.toJSON = function() {
-    return "Object.prototype.toJSON clobbered by content script.";
-  };
-}
-
-chrome.test.getConfig((config) => {
-  // We don't clobber JSON with native bindings. See https://crbug.com/792602.
-  if (!config.nativeCrxBindingsEnabled)
-    clobberJSON();
-});
-
 // For complex connect tests.
 chrome.runtime.onConnect.addListener(function onConnect(port) {
   console.log('connected');
@@ -39,6 +15,8 @@ chrome.runtime.onConnect.addListener(function onConnect(port) {
       testSendMessageFromTab();
     } else if (msg.testSendMessageFromFrame) {
       testSendMessageFromFrame();
+    } else if (msg.testSendMessageFromSandboxedFrame) {
+      testSendMessageFromSandboxedFrame();
     } else if (msg.testSendMessageToFrame) {
       port.postMessage('from_main');
     } else if (msg.testDisconnect) {
@@ -87,11 +65,24 @@ function testSendMessageFromTab() {
 function testSendMessageFromFrame() {
   // Add two frames. The content script declared in manifest.json (frame.js)
   // runs in frames whose URL matches ?testSendMessageFromFrame.
-  // frame.js sends a message to the background page, which checks that
-  // sender.frameId exists and is different for both frames.
+  // frame.js sends a message to the background page, which checks that the
+  // sender has the expected frameId, url, origin, tab and runtime id.
   for (var i = 0; i < 2; ++i) {
     var f = document.createElement('iframe');
     f.src = '?testSendMessageFromFrame' + i;
+    document.body.appendChild(f);
+  }
+}
+
+function testSendMessageFromSandboxedFrame() {
+  // Add two frames. The content script declared in manifest.json (frame.js)
+  // runs in frames whose URL matches ?testSendMessageFromSandboxFrame.
+  // frame.js sends a message to the background page, which checks that the
+  // sender has the expected frameId, url, origin, tab and runtime id.
+  for (var i = 2; i < 4; ++i) {
+    var f = document.createElement('iframe');
+    f.sandbox = 'allow-scripts';
+    f.src = '?testSendMessageFromSandboxedFrame' + i;
     document.body.appendChild(f);
   }
 }
@@ -130,6 +121,6 @@ function testConnectFromTabError() {
 
 // For test sendMessage.
 chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  chrome.test.assertEq({id: chrome.runtime.id}, sender);
+  chrome.test.assertEq({id: chrome.runtime.id, origin: 'null'}, sender);
   sendResponse({success: (request.step2 == 1)});
 });

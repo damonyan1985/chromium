@@ -14,7 +14,8 @@
 #include "chromecast/common/mojom/application_media_capabilities.mojom.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "media/base/audio_codecs.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "media/base/audio_parameters.h"
+#include "mojo/public/cpp/bindings/receiver.h"
 
 namespace extensions {
 class ExtensionsClient;
@@ -22,15 +23,15 @@ class ExtensionsGuestViewContainerDispatcher;
 class CastExtensionsRendererClient;
 }  // namespace extensions
 
-namespace network_hints {
-class PrescientNetworkingDispatcher;
-}  // namespace network_hints
-
 namespace chromecast {
 class MemoryPressureObserverImpl;
 namespace media {
 class MediaCapsObserverImpl;
 class SupportedCodecProfileLevelsMemo;
+
+#if defined(OS_ANDROID)
+class CastAudioDeviceFactory;
+#endif  // defined(OS_ANDROID)
 }
 
 namespace shell {
@@ -62,12 +63,19 @@ class CastContentRendererClient
   bool IsSupportedAudioType(const ::media::AudioType& type) override;
   bool IsSupportedVideoType(const ::media::VideoType& type) override;
   bool IsSupportedBitstreamAudioCodec(::media::AudioCodec codec) override;
-  blink::WebPrescientNetworking* GetPrescientNetworking() override;
+  std::unique_ptr<blink::WebPrescientNetworking> CreatePrescientNetworking(
+      content::RenderFrame* render_frame) override;
   bool DeferMediaLoad(content::RenderFrame* render_frame,
                       bool render_frame_has_played_media_before,
                       base::OnceClosure closure) override;
   bool IsIdleMediaSuspendEnabled() override;
   void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() override;
+  std::unique_ptr<content::URLLoaderThrottleProvider>
+  CreateURLLoaderThrottleProvider(
+      content::URLLoaderThrottleProviderType type) override;
+  base::Optional<::media::AudioRendererAlgorithmParameters>
+  GetAudioRendererAlgorithmParameters(
+      ::media::AudioParameters audio_parameters) override;
 
  protected:
   CastContentRendererClient();
@@ -79,14 +87,13 @@ class CastContentRendererClient
 
  private:
   // mojom::ApplicationMediaCapabilitiesObserver implementation:
-  void OnSupportedBitstreamAudioCodecsChanged(int codecs) override;
+  void OnSupportedBitstreamAudioCodecsChanged(
+      const BitstreamAudioCodecsInfo& info) override;
 
-  std::unique_ptr<network_hints::PrescientNetworkingDispatcher>
-      prescient_networking_dispatcher_;
   std::unique_ptr<media::MediaCapsObserverImpl> media_caps_observer_;
   std::unique_ptr<media::SupportedCodecProfileLevelsMemo> supported_profiles_;
-  mojo::Binding<mojom::ApplicationMediaCapabilitiesObserver>
-      app_media_capabilities_observer_binding_;
+  mojo::Receiver<mojom::ApplicationMediaCapabilitiesObserver>
+      app_media_capabilities_observer_receiver_{this};
 #if !defined(OS_ANDROID)
   std::unique_ptr<MemoryPressureObserverImpl> memory_pressure_observer_;
 #endif
@@ -99,7 +106,11 @@ class CastContentRendererClient
       guest_view_container_dispatcher_;
 #endif
 
-  int supported_bitstream_audio_codecs_;
+#if defined(OS_ANDROID)
+  std::unique_ptr<media::CastAudioDeviceFactory> cast_audio_device_factory_;
+#endif
+
+  BitstreamAudioCodecsInfo supported_bitstream_audio_codecs_info_;
 
   DISALLOW_COPY_AND_ASSIGN(CastContentRendererClient);
 };

@@ -21,9 +21,11 @@
 #include "base/win/scoped_variant.h"
 #include "base/win/shortcut.h"
 #include "base/win/win_util.h"
-#include "chrome/browser/conflicts/module_info_util_win.h"
+#include "chrome/browser/win/conflicts/module_info_util.h"
 #include "chrome/installer/util/install_util.h"
+#include "chrome/services/util_win/av_products.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "third_party/metrics_proto/system_profile.pb.h"
 #include "ui/shell_dialogs/execute_select_file_win.h"
 
 namespace {
@@ -217,9 +219,8 @@ bool IsPinnedToTaskbarHelper::GetResult() {
 
 }  // namespace
 
-UtilWinImpl::UtilWinImpl(
-    std::unique_ptr<service_manager::ServiceContextRef> service_ref)
-    : service_ref_(std::move(service_ref)) {}
+UtilWinImpl::UtilWinImpl(mojo::PendingReceiver<chrome::mojom::UtilWin> receiver)
+    : receiver_(this, std::move(receiver)) {}
 
 UtilWinImpl::~UtilWinImpl() = default;
 
@@ -249,4 +250,10 @@ void UtilWinImpl::CallExecuteSelectFile(
 void UtilWinImpl::InspectModule(const base::FilePath& module_path,
                                 InspectModuleCallback callback) {
   std::move(callback).Run(::InspectModule(module_path));
+}
+
+void UtilWinImpl::GetAntiVirusProducts(bool report_full_names,
+                                       GetAntiVirusProductsCallback callback) {
+  base::win::ScopedCOMInitializer scoped_com_initializer;
+  std::move(callback).Run(::GetAntiVirusProducts(report_full_names));
 }

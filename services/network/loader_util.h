@@ -7,11 +7,14 @@
 
 #include "base/component_export.h"
 #include "base/memory/ref_counted.h"
+#include "services/network/public/mojom/http_raw_request_response_info.mojom-forward.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 
 class GURL;
 
 namespace net {
 class HttpRawRequestHeaders;
+class HttpRequestHeaders;
 class HttpResponseHeaders;
 class URLRequest;
 }  // namespace net
@@ -21,7 +24,25 @@ class URLRequest;
 // only path this should move out of the public directory.
 namespace network {
 struct HttpRawRequestResponseInfo;
-struct ResourceResponse;
+
+// Enumeration for UMA histograms logged by LogConcerningRequestHeaders().
+// Entries should not be renumbered and numeric values should never be reused.
+// Please keep in sync with "NetworkServiceConcerningRequestHeaders" in
+// src/tools/metrics/histograms/enums.xml.
+enum class ConcerningHeaderId {
+  kConnection = 0,
+  kCookie = 1,
+  kCookie2 = 2,
+  kContentTransferEncoding = 3,
+  kDate = 4,
+  kExpect = 5,
+  kKeepAlive = 6,
+  kReferer = 7,
+  kTe = 8,
+  kTransferEncoding = 9,
+  kVia = 10,
+  kMaxValue = kVia,
+};
 
 // The name of the "Accept" header.
 COMPONENT_EXPORT(NETWORK_SERVICE) extern const char kAcceptHeader[];
@@ -41,11 +62,11 @@ extern const char kDefaultAcceptHeader[];
 // type of the response.
 COMPONENT_EXPORT(NETWORK_SERVICE)
 bool ShouldSniffContent(net::URLRequest* url_request,
-                        ResourceResponse* response);
+                        const mojom::URLResponseHead& response);
 
 // Fill HttpRawRequestResponseInfo based on raw headers.
 COMPONENT_EXPORT(NETWORK_SERVICE)
-scoped_refptr<HttpRawRequestResponseInfo> BuildRawRequestResponseInfo(
+mojom::HttpRawRequestResponseInfoPtr BuildRawRequestResponseInfo(
     const net::URLRequest& request,
     const net::HttpRawRequestHeaders& raw_request_headers,
     const net::HttpResponseHeaders* raw_response_headers);
@@ -53,6 +74,10 @@ scoped_refptr<HttpRawRequestResponseInfo> BuildRawRequestResponseInfo(
 // Returns the referrer based on the validity of the URL and command line flags.
 COMPONENT_EXPORT(NETWORK_SERVICE)
 std::string ComputeReferrer(const GURL& referrer);
+
+COMPONENT_EXPORT(NETWORK_SERVICE)
+void LogConcerningRequestHeaders(const net::HttpRequestHeaders& request_headers,
+                                 bool added_during_redirect);
 
 }  // namespace network
 

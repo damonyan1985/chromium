@@ -6,8 +6,13 @@
 #define ASH_WM_OVERVIEW_OVERVIEW_CONSTANTS_H_
 
 #include "ash/ash_export.h"
+#include "ash/wm/window_mini_view.h"
+#include "base/time/time.h"
 
 namespace ash {
+
+// The time duration for transformation animations.
+constexpr base::TimeDelta kTransition = base::TimeDelta::FromMilliseconds(300);
 
 // In the conceptual overview table, the window margin is the space reserved
 // around the window within the cell. This margin does not overlap so the
@@ -17,22 +22,21 @@ constexpr int kWindowMargin = 5;
 // Cover the transformed window including the gaps between the windows with a
 // transparent shield to block the input events from reaching the transformed
 // window while in overview.
-constexpr int kOverviewMargin = kWindowMargin * 2;
+ASH_EXPORT constexpr int kOverviewMargin = kWindowMargin * 2;
 
 // Height of an item header.
-constexpr int kHeaderHeightDp = 40;
+constexpr int kHeaderHeightDp = WindowMiniView::kHeaderHeightDp;
 
-// The opacity of the shield widget that is used to darken the background of
-// the grid.
-constexpr float kShieldOpacity = 0.4f;
+namespace overview_constants {
 
-// The amount of rounding on window edges in overview mode.
-constexpr int kOverviewWindowRoundingDp = 4;
+// The opacity of the wallpaper in overview mode.
+constexpr float kOpacity = 0.4f;
 
 // Amount of blur to apply on the wallpaper when we enter or exit overview
 // mode.
-constexpr float kWallpaperBlurSigma = 10.f;
-constexpr float kWallpaperClearBlurSigma = 0.f;
+constexpr float kBlurSigma = 10.f;
+
+}  // namespace overview_constants
 
 }  // namespace ash
 

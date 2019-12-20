@@ -8,7 +8,7 @@
 #include <limits>
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
@@ -36,6 +36,10 @@ class WeakIdentifierMap final
       } while (!LIKELY(Instance().Put(object, result)));
     }
     return result;
+  }
+
+  static IdentifierType ExistingIdentifier(T* object) {
+    return Instance().object_to_identifier_.at(object);
   }
 
   static T* Lookup(IdentifierType identifier) {
@@ -95,7 +99,7 @@ class WeakIdentifierMap final
   template <>                                      \
   WeakIdentifierMap<T, ##__VA_ARGS__>&             \
   WeakIdentifierMap<T, ##__VA_ARGS__>::Instance(); \
-  extern template class WeakIdentifierMap<T, ##__VA_ARGS__>;
+  extern template class WeakIdentifierMap<T, ##__VA_ARGS__>
 
 #define DEFINE_WEAK_IDENTIFIER_MAP(T, ...)                              \
   template class WeakIdentifierMap<T, ##__VA_ARGS__>;                   \

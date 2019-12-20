@@ -29,7 +29,7 @@
 #include "ui/views/view_model.h"
 #include "ui/views/widget/widget.h"
 
-namespace app_list {
+namespace ash {
 namespace test {
 
 namespace {
@@ -43,12 +43,12 @@ class GridViewVisibleWaiter {
   ~GridViewVisibleWaiter() {}
 
   void Wait() {
-    if (grid_view_->visible())
+    if (grid_view_->GetVisible())
       return;
 
     check_timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(50),
-                       base::Bind(&GridViewVisibleWaiter::OnTimerCheck,
-                                  base::Unretained(this)));
+                       base::BindRepeating(&GridViewVisibleWaiter::OnTimerCheck,
+                                           base::Unretained(this)));
     run_loop_ = std::make_unique<base::RunLoop>();
     run_loop_->Run();
     check_timer_.Stop();
@@ -56,7 +56,7 @@ class GridViewVisibleWaiter {
 
  private:
   void OnTimerCheck() {
-    if (grid_view_->visible())
+    if (grid_view_->GetVisible())
       run_loop_->Quit();
   }
 
@@ -102,7 +102,7 @@ class AppListMainViewTest : public views::ViewsTestBase {
         CreateParams(views::Widget::InitParams::TYPE_CONTROL);
     search_box_widget_params.parent = main_widget_->GetNativeView();
     search_box_widget_params.opacity =
-        views::Widget::InitParams::TRANSLUCENT_WINDOW;
+        views::Widget::InitParams::WindowOpacity::kTranslucent;
     search_box_widget_->Init(search_box_widget_params);
     search_box_widget_->SetContentsView(search_box_view_);
 #endif
@@ -131,7 +131,7 @@ class AppListMainViewTest : public views::ViewsTestBase {
       }
     }
 
-    return NULL;
+    return nullptr;
   }
 
   void SimulateClick(views::View* view) {
@@ -205,10 +205,10 @@ class AppListMainViewTest : public views::ViewsTestBase {
     EXPECT_EQ(folder_item_view->item(), folder_item);
 
     // Click on the folder to open it.
-    EXPECT_FALSE(FolderView()->visible());
+    EXPECT_FALSE(FolderView()->GetVisible());
     SimulateClick(folder_item_view);
     base::RunLoop().RunUntilIdle();
-    EXPECT_TRUE(FolderView()->visible());
+    EXPECT_TRUE(FolderView()->GetVisible());
 
     return folder_item_view;
   }
@@ -220,8 +220,8 @@ class AppListMainViewTest : public views::ViewsTestBase {
     AppListItemView* dragged =
         SimulateInitiateDrag(FolderGridView(), AppsGridView::MOUSE, point);
     EXPECT_EQ(item_view, dragged);
-    EXPECT_FALSE(RootGridView()->visible());
-    EXPECT_TRUE(FolderView()->visible());
+    EXPECT_FALSE(RootGridView()->GetVisible());
+    EXPECT_TRUE(FolderView()->GetVisible());
 
     // Drag it to top left corner.
     point = gfx::Point(0, 0);
@@ -234,7 +234,7 @@ class AppListMainViewTest : public views::ViewsTestBase {
 
     // Wait until the folder view is invisible and root grid view shows up.
     GridViewVisibleWaiter(RootGridView()).Wait();
-    EXPECT_TRUE(RootGridView()->visible());
+    EXPECT_TRUE(RootGridView()->GetVisible());
     EXPECT_EQ(0, FolderView()->layer()->opacity());
 
     return dragged;
@@ -303,7 +303,7 @@ TEST_F(AppListMainViewTest, DISABLED_DragLastItemFromFolderAndDropAtLastSlot) {
   EXPECT_EQ(first_slot_tile, RootViewModel()->view_at(0)->bounds());
 
   // Single item folder should be auto removed.
-  EXPECT_EQ(NULL,
+  EXPECT_EQ(nullptr,
             delegate_->GetTestModel()->FindFolderItem("single_item_folder"));
 
   // Ensure keyboard selection works on the root grid view after a reparent.
@@ -325,7 +325,7 @@ TEST_F(AppListMainViewTest, DISABLED_DragReparentItemOntoPageSwitcher) {
   const int kNumApps = 30;
 
   // Ensure we are on the apps grid view page.
-  app_list::ContentsView* contents_view = GetContentsView();
+  ContentsView* contents_view = GetContentsView();
   contents_view->SetActiveState(ash::AppListState::kStateApps);
   contents_view->Layout();
 
@@ -351,7 +351,7 @@ TEST_F(AppListMainViewTest, DISABLED_DragReparentItemOntoPageSwitcher) {
 
   // The folder should be destroyed.
   EXPECT_EQ(kNumApps + 1, RootViewModel()->view_size());
-  EXPECT_EQ(NULL,
+  EXPECT_EQ(nullptr,
             delegate_->GetTestModel()->FindFolderItem("single_item_folder"));
 }
 
@@ -413,4 +413,4 @@ TEST_F(AppListMainViewTest, DISABLED_ReparentSingleItemOntoSelf) {
 }
 
 }  // namespace test
-}  // namespace app_list
+}  // namespace ash

@@ -20,7 +20,7 @@ class CONTENT_EXPORT BackgroundSyncNetworkObserver
   // Creates a BackgroundSyncNetworkObserver. |network_changed_callback| is
   // called when the network connection changes asynchronously via PostMessage.
   BackgroundSyncNetworkObserver(
-      const base::RepeatingClosure& network_changed_callback);
+      base::RepeatingClosure network_changed_callback);
 
   ~BackgroundSyncNetworkObserver() override;
 
@@ -66,7 +66,7 @@ class CONTENT_EXPORT BackgroundSyncNetworkObserver
   // (to prevent flakes in tests).
   static bool ignore_network_changes_;
 
-  base::WeakPtrFactory<BackgroundSyncNetworkObserver> weak_ptr_factory_;
+  base::WeakPtrFactory<BackgroundSyncNetworkObserver> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BackgroundSyncNetworkObserver);
 };

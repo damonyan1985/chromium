@@ -29,18 +29,18 @@ class V4Database;
 // Scheduled when the database has been read from disk and is ready to process
 // resource reputation requests.
 using NewDatabaseReadyCallback =
-    base::Callback<void(std::unique_ptr<V4Database>)>;
+    base::OnceCallback<void(std::unique_ptr<V4Database>)>;
 
 // Scheduled when the checksum for all the stores in the database has been
 // verified to match the expected value. Stores for which the checksum did not
 // match are passed as the argument and need to be reset.
 using DatabaseReadyForUpdatesCallback =
-    base::Callback<void(const std::vector<ListIdentifier>&)>;
+    base::OnceCallback<void(const std::vector<ListIdentifier>&)>;
 
 // This callback is scheduled once the database has finished processing the
 // update requests for all stores and is ready to process the next set of update
 // requests.
-using DatabaseUpdatedCallback = base::Closure;
+using DatabaseUpdatedCallback = base::RepeatingClosure;
 
 // Maps the ListIdentifiers to their corresponding in-memory stores, which
 // contain the hash prefixes for that ListIdentifier as well as manage their
@@ -198,8 +198,7 @@ class V4Database {
       const base::FilePath& base_path,
       const ListInfos& list_infos,
       const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
-      NewDatabaseReadyCallback callback,
-      const base::TimeTicks create_start_time);
+      NewDatabaseReadyCallback callback);
 
   // Makes the passed |factory| the factory used to instantiate a V4Database.
   // Only for tests.
@@ -236,7 +235,7 @@ class V4Database {
 
   // Only meant to be dereferenced and invalidated on the IO thread and hence
   // named. For details, see the comment at the top of weak_ptr.h
-  base::WeakPtrFactory<V4Database> weak_factory_on_io_;
+  base::WeakPtrFactory<V4Database> weak_factory_on_io_{this};
 
   DISALLOW_COPY_AND_ASSIGN(V4Database);
 };

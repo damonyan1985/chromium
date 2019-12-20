@@ -19,8 +19,8 @@
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension_set.h"
-#include "storage/browser/fileapi/file_system_url.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/browser/file_system/file_system_url.h"
+#include "storage/common/file_system/file_system_util.h"
 
 using ::sync_file_system::SyncEventObserver;
 
@@ -112,7 +112,8 @@ void ExtensionSyncEventObserver::OnFileSynced(
   params->AppendString(sync_file_system::ToString(direction_enum));
 
   BroadcastOrDispatchEvent(
-      url.origin(), extensions::events::SYNC_FILE_SYSTEM_ON_FILE_STATUS_CHANGED,
+      url.origin().GetURL(),
+      extensions::events::SYNC_FILE_SYSTEM_ON_FILE_STATUS_CHANGED,
       sync_file_system::OnFileStatusChanged::kEventName, std::move(params));
 }
 

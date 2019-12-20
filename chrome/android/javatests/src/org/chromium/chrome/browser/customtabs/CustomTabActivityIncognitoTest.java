@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,10 +6,11 @@ package org.chromium.chrome.browser.customtabs;
 
 import android.content.Intent;
 import android.graphics.Color;
-import android.support.customtabs.CustomTabsIntent;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 import android.view.MenuItem;
+
+import androidx.browser.customtabs.CustomTabsIntent;
 
 import org.junit.Assert;
 import org.junit.Rule;
@@ -17,18 +18,18 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.incognito.IncognitoNotificationService;
-import org.chromium.chrome.browser.test.ScreenShooter;
 import org.chromium.chrome.browser.toolbar.top.CustomTabToolbar;
-import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.ExecutionException;
 
@@ -36,21 +37,24 @@ import java.util.concurrent.ExecutionException;
  * Instrumentation tests for {@link CustomTabActivity} launched in incognito mode.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.FORCE_FIRST_RUN_FLOW_COMPLETE_FOR_TESTING,
-        ChromeSwitches.ENABLE_INCOGNITO_CUSTOM_TABS,
-        ChromeSwitches.ALLOW_INCOGNITO_CUSTOM_TABS_FROM_THIRD_PARTY,
-        ChromeSwitches.ENABLE_INCOGNITO_SNAPSHOTS_IN_ANDROID_RECENTS})
+@CommandLineFlags.Add({ChromeSwitches.FORCE_FIRST_RUN_FLOW_COMPLETE_FOR_TESTING})
 public class CustomTabActivityIncognitoTest {
     @Rule
     public CustomTabActivityTestRule mCustomTabActivityTestRule = new CustomTabActivityTestRule();
-    @Rule
-    public final ScreenShooter mScreenShooter = new ScreenShooter();
 
     private CustomTabActivity mActivity;
+
+    // TODO(https://crbug.com/1023759): Update all test to cover both cases
+    // where CCT_INCOGNITO is enabled and disabled.
+    public boolean isEnabled() {
+        return ChromeFeatureList.isInitialized()
+                && ChromeFeatureList.isEnabled(ChromeFeatureList.CCT_INCOGNITO);
+    }
 
     @Test
     @SmallTest
     public void tabIsIncognito() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab();
 
         Assert.assertTrue(mActivity.getActivityTab().isIncognito());
@@ -60,16 +64,16 @@ public class CustomTabActivityIncognitoTest {
     @SmallTest
     @Feature({"UiCatalogue"})
     public void toolbarHasIncognitoThemeColor() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab();
 
         Assert.assertEquals(getIncognitoThemeColor(), getToolbarColor());
-
-        mScreenShooter.shoot("Incognito Custom Tab");
     }
 
     @Test
     @SmallTest
     public void ignoresCustomizedToolbarColor() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab(
                 intent -> intent.putExtra(CustomTabsIntent.EXTRA_TOOLBAR_COLOR, Color.RED));
 
@@ -80,6 +84,7 @@ public class CustomTabActivityIncognitoTest {
     @SmallTest
     @Feature({"UiCatalogue"})
     public void openInBrowserMenuItemHasCorrectTitle() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab();
 
         CustomTabsTestUtils.openAppMenuAndAssertMenuShown(mActivity);
@@ -89,16 +94,17 @@ public class CustomTabActivityIncognitoTest {
                                    .getTitle()
                                    .toString();
         Assert.assertEquals(mActivity.getString(R.string.menu_open_in_incognito_chrome), menuTitle);
-
-        mScreenShooter.shoot("Incognito Custom Tab Menu");
     }
 
     @Test
     @SmallTest
     public void incognitoNotificationClosesCustomTab() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab();
 
-        IncognitoNotificationService.getRemoveAllIncognitoTabsIntent(mActivity).send();
+        IncognitoNotificationService.getRemoveAllIncognitoTabsIntent(mActivity)
+                .getPendingIntent()
+                .send();
 
         CriteriaHelper.pollUiThread(mActivity::isFinishing);
     }
@@ -106,6 +112,7 @@ public class CustomTabActivityIncognitoTest {
     @Test
     @SmallTest
     public void doesNotHaveAddToHomeScreenMenuItem() throws Exception {
+        if (!isEnabled()) return;
         launchIncognitoCustomTab();
         CustomTabsTestUtils.openAppMenuAndAssertMenuShown(mActivity);
 
@@ -133,12 +140,12 @@ public class CustomTabActivityIncognitoTest {
     }
 
     private int getIncognitoThemeColor() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(
-                () -> ColorUtils.getDefaultThemeColor(mActivity.getResources(), true));
+        return TestThreadUtils.runOnUiThreadBlocking(
+                () -> ChromeColors.getDefaultThemeColor(mActivity.getResources(), true));
     }
 
     private int getToolbarColor() throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(() -> {
+        return TestThreadUtils.runOnUiThreadBlocking(() -> {
             CustomTabToolbar toolbar = mActivity.findViewById(R.id.toolbar);
             return toolbar.getBackground().getColor();
         });

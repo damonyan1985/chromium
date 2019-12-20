@@ -3,22 +3,8 @@
 # found in the LICENSE file.
 
 from gpu_tests import gpu_integration_test
-from gpu_tests.gpu_test_expectations import GpuTestExpectations
 
 import sys
-
-# Please expand the following lists when we expand to new bot configs.
-_SUPPORTED_WIN_VERSIONS = ['win7', 'win10']
-_SUPPORTED_WIN_VERSIONS_WITH_DIRECT_COMPOSITION = ['win10']
-_SUPPORTED_WIN_GPU_VENDORS = [0x8086, 0x10de, 0x1002]
-_SUPPORTED_WIN_INTEL_GPUS = [0x5912]
-_SUPPORTED_WIN_INTEL_GPUS_WITH_YUY2_OVERLAYS = [0x5912]
-_SUPPORTED_WIN_INTEL_GPUS_WITH_NV12_OVERLAYS = [0x5912]
-
-# There are no expectations for info_collection
-class InfoCollectionExpectations(GpuTestExpectations):
-  def SetExpectations(self):
-    pass
 
 class InfoCollectionTest(gpu_integration_test.GpuIntegrationTest):
   @classmethod
@@ -35,39 +21,20 @@ class InfoCollectionTest(gpu_integration_test.GpuIntegrationTest):
 
   @classmethod
   def GenerateGpuTests(cls, options):
-    yield ('_', '_', (options.expected_vendor_id, options.expected_device_id))
+    yield ('InfoCollection_basic', '_',
+           ('_RunBasicTest',
+            options.expected_vendor_id,
+            options.expected_device_id))
+    yield ('InfoCollection_direct_composition', '_',
+           ('_RunDirectCompositionTest', '_', '_'))
+    yield ('InfoCollection_dx12_vulkan', '_',
+           ('_RunDX12VulkanTest', '_', '_'))
 
   @classmethod
   def SetUpProcess(cls):
     super(cls, InfoCollectionTest).SetUpProcess()
     cls.CustomizeBrowserArgs([])
     cls.StartBrowser()
-
-  def _GetOverlayExpectations(self, os_version, gpu_vendor_id, gpu_device_id):
-    # The rules to set up per bot expectations are:
-    #  1) Only win10 or newer supports DirectComposition
-    #  2) Only Intel supports hardware overlays with DirectComposition
-    #  3) Currently the Win/Intel GPU bot supports YUY2 and NV12 overlays
-    expectations = {
-      'direct_composition': False,
-      'supports_overlays': False,
-      'overlay_cap_yuy2': 'NONE',
-      'overlay_cap_nv12': 'NONE',
-    }
-    assert os_version is not None
-    os_version = os_version.lower()
-    assert os_version in _SUPPORTED_WIN_VERSIONS
-    assert gpu_vendor_id in _SUPPORTED_WIN_GPU_VENDORS
-    if os_version in _SUPPORTED_WIN_VERSIONS_WITH_DIRECT_COMPOSITION:
-      expectations['direct_composition'] = True
-      if gpu_vendor_id == 0x8086:
-        expectations['supports_overlays'] = True
-        assert gpu_device_id in _SUPPORTED_WIN_INTEL_GPUS
-        if gpu_device_id in _SUPPORTED_WIN_INTEL_GPUS_WITH_YUY2_OVERLAYS:
-          expectations['overlay_cap_yuy2'] = 'SCALING'
-        if gpu_device_id in _SUPPORTED_WIN_INTEL_GPUS_WITH_NV12_OVERLAYS:
-          expectations['overlay_cap_nv12'] = 'SCALING'
-    return expectations
 
   def RunActualGpuTest(self, test_path, *args):
     # Make sure the GPU process is started
@@ -78,19 +45,27 @@ class InfoCollectionTest(gpu_integration_test.GpuIntegrationTest):
     if not system_info:
       self.fail("Browser doesn't support GetSystemInfo")
 
-    gpu = system_info.gpu.devices[0]
-    if not gpu:
+    test_func = args[0]
+    getattr(self, test_func)(system_info.gpu, args[1], args[2])
+
+  ######################################
+  # Helper functions for the tests below
+
+  def _RunBasicTest(self, gpu, expected_vendor_id_str,
+                    expected_device_id_str):
+    device = gpu.devices[0]
+    if not device:
       self.fail("System Info doesn't have a gpu")
 
-    detected_vendor_id = gpu.vendor_id
-    detected_device_id = gpu.device_id
+    detected_vendor_id = device.vendor_id
+    detected_device_id = device.device_id
 
     # Gather the expected IDs passed on the command line
-    if args[0] is None or args[1] is None:
+    if expected_vendor_id_str is None or expected_device_id_str is None:
       self.fail("Missing --expected-[vendor|device]-id command line args")
 
-    expected_vendor_id = int(args[0], 16)
-    expected_device_id = int(args[1], 16)
+    expected_vendor_id = int(expected_vendor_id_str, 16)
+    expected_device_id = int(expected_device_id_str, 16)
 
     # Check expected and detected GPUs match
     if detected_vendor_id != expected_vendor_id:
@@ -101,32 +76,51 @@ class InfoCollectionTest(gpu_integration_test.GpuIntegrationTest):
       self.fail('Device ID mismatch, expected %s but got %s.' %
           (expected_device_id, detected_device_id))
 
+  def _RunDirectCompositionTest(self, gpu, unused_arg_0, unused_arg_1):
     os_name = self.browser.platform.GetOSName()
     if os_name and os_name.lower() == 'win':
-      expectations = self._GetOverlayExpectations(
-          self.browser.platform.GetOSVersionName(),
-          detected_vendor_id, detected_device_id)
-
-      aux_attributes = system_info.gpu.aux_attributes
+      overlay_bot_config = self.GetOverlayBotConfig()
+      aux_attributes = gpu.aux_attributes
       if not aux_attributes:
         self.fail('GPU info does not have aux_attributes.')
-
-      for (field, expected) in expectations.iteritems():
+      for field, expected in overlay_bot_config.iteritems():
         detected = aux_attributes.get(field, 'NONE')
-        if  expected != detected:
+        if expected != detected:
           self.fail('%s mismatch, expected %s but got %s.' %
               (field, self._ValueToStr(expected), self._ValueToStr(detected)))
 
-  def _ValueToStr(self, value):
+  def _RunDX12VulkanTest(self, unused_arg_0, unused_arg_1, unused_arg_2):
+    os_name = self.browser.platform.GetOSName()
+    if os_name and os_name.lower() == 'win':
+      self.RestartBrowserIfNecessaryWithArgs([
+        '--no-delay-for-dx12-vulkan-info-collection'])
+      # Need to re-request system info for DX12/Vulkan bits.
+      system_info = self.browser.GetSystemInfo()
+      if not system_info:
+        self.fail("Browser doesn't support GetSystemInfo")
+      gpu = system_info.gpu
+      if gpu is None:
+        raise Exception("System Info doesn't have a gpu")
+      aux_attributes = gpu.aux_attributes
+      if not aux_attributes:
+        self.fail('GPU info does not have aux_attributes.')
+
+      dx12_vulkan_bot_config = self.GetDx12VulkanBotConfig()
+      for field, expected in dx12_vulkan_bot_config.iteritems():
+        detected = aux_attributes.get(field)
+        if expected != detected:
+          self.fail('%s mismatch, expected %s but got %s.' %
+              (field, self._ValueToStr(expected), self._ValueToStr(detected)))
+
+  @staticmethod
+  def _ValueToStr(value):
     if type(value) is str:
       return value
+    if type(value) is unicode:
+      return str(value)
     if type(value) is bool:
       return 'supported' if value else 'unsupported'
     assert False
-
-  @classmethod
-  def _CreateExpectations(cls):
-    return InfoCollectionExpectations()
 
 def load_tests(loader, tests, pattern):
   del loader, tests, pattern  # Unused.

@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/optional.h"
+#include "base/timer/elapsed_timer.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
@@ -55,17 +57,14 @@ class ExtensionInstallDialogView : public views::BubbleDialogDelegateView,
   gfx::Size CalculatePreferredSize() const override;
   void VisibilityChanged(views::View* starting_from, bool is_visible) override;
   void AddedToWidget() override;
-  views::View* CreateExtraView() override;
   bool Cancel() override;
   bool Accept() override;
   int GetDialogButtons() const override;
-  int GetDefaultDialogButton() const override;
-  base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
   bool ShouldShowCloseButton() const override;
 
   // views::WidgetDelegate:
-  ax::mojom::Role GetAccessibleWindowRole() const override;
+  ax::mojom::Role GetAccessibleWindowRole() override;
   base::string16 GetAccessibleWindowTitle() const override;
   ui::ModalType GetModalType() const override;
 
@@ -100,62 +99,17 @@ class ExtensionInstallDialogView : public views::BubbleDialogDelegateView,
   // has been run.
   bool handled_result_;
 
+  // Used to record time between dialog creation and acceptance, cancellation,
+  // or dismissal.
+  base::Optional<base::ElapsedTimer> install_result_timer_;
+
   // Used to delay the activation of the install button.
-  base::OneShotTimer timer_;
+  base::OneShotTimer enable_install_timer_;
 
   // Used to determine whether the install button should be enabled.
   bool install_button_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionInstallDialogView);
-};
-
-// A view that displays a list of details, along with a link that expands and
-// collapses those details.
-class ExpandableContainerView : public views::View, public views::LinkListener {
- public:
-  ExpandableContainerView(const std::vector<base::string16>& details,
-                          int available_width);
-  ~ExpandableContainerView() override;
-
-  // views::View:
-  void ChildPreferredSizeChanged(views::View* child) override;
-
-  // views::LinkListener:
-  void LinkClicked(views::Link* source, int event_flags) override;
-
- private:
-  // Helper class representing the list of details, that can hide itself.
-  class DetailsView : public views::View {
-   public:
-    explicit DetailsView(const std::vector<base::string16>& details);
-    ~DetailsView() override {}
-
-    // views::View:
-    gfx::Size CalculatePreferredSize() const override;
-
-    // Expands or collapses this view.
-    void ToggleExpanded();
-
-    bool expanded() { return expanded_; }
-
-   private:
-    // Whether this details section is expanded.
-    bool expanded_ = false;
-
-    DISALLOW_COPY_AND_ASSIGN(DetailsView);
-  };
-
-  // Expands or collapses |details_view_|.
-  void ToggleDetailLevel();
-
-  // The view that expands or collapses when |details_link_| is clicked.
-  DetailsView* details_view_;
-
-  // The 'Show Details' link, which changes to 'Hide Details' when the details
-  // section is expanded.
-  views::Link* details_link_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExpandableContainerView);
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_INSTALL_DIALOG_VIEW_H_

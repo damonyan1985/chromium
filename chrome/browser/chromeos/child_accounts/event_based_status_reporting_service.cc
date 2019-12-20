@@ -6,11 +6,13 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service.h"
-#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service_factory.h"
+#include "chrome/browser/chromeos/child_accounts/child_status_reporting_service.h"
+#include "chrome/browser/chromeos/child_accounts/child_status_reporting_service_factory.h"
+#include "chrome/browser/chromeos/child_accounts/screen_time_controller_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/session_manager/core/session_manager.h"
+#include "content/public/browser/network_service_instance.h"
 
 namespace chromeos {
 
@@ -31,6 +33,9 @@ const std::string StatusReportEventToString(
       return "Request status report due to device going online.";
     case EventBasedStatusReportingService::StatusReportEvent::kSuspendDone:
       return "Request status report after a suspend has been completed.";
+    case EventBasedStatusReportingService::StatusReportEvent::
+        kUsageTimeLimitWarning:
+      return "Request status report before usage time limit finish.";
     default:
       NOTREACHED();
   }
@@ -49,8 +54,10 @@ EventBasedStatusReportingService::EventBasedStatusReportingService(
   if (arc_app_prefs)
     arc_app_prefs->AddObserver(this);
   session_manager::SessionManager::Get()->AddObserver(this);
-  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
-  DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
+  content::GetNetworkConnectionTracker()->AddNetworkConnectionObserver(this);
+  PowerManagerClient::Get()->AddObserver(this);
+  ScreenTimeControllerFactory::GetForBrowserContext(context_)->AddObserver(
+      this);
 }
 
 EventBasedStatusReportingService::~EventBasedStatusReportingService() = default;
@@ -85,9 +92,9 @@ void EventBasedStatusReportingService::OnSessionStateChanged() {
   }
 }
 
-void EventBasedStatusReportingService::OnNetworkChanged(
-    net::NetworkChangeNotifier::ConnectionType type) {
-  if (type != net::NetworkChangeNotifier::CONNECTION_NONE)
+void EventBasedStatusReportingService::OnConnectionChanged(
+    network::mojom::ConnectionType type) {
+  if (type != network::mojom::ConnectionType::CONNECTION_NONE)
     RequestStatusReport(StatusReportEvent::kDeviceOnline);
 }
 
@@ -96,12 +103,18 @@ void EventBasedStatusReportingService::SuspendDone(
   RequestStatusReport(StatusReportEvent::kSuspendDone);
 }
 
+void EventBasedStatusReportingService::UsageTimeLimitWarning() {
+  RequestStatusReport(StatusReportEvent::kUsageTimeLimitWarning);
+}
+
 void EventBasedStatusReportingService::RequestStatusReport(
     StatusReportEvent event) {
   VLOG(1) << StatusReportEventToString(event);
-  ConsumerStatusReportingServiceFactory::GetForBrowserContext(context_)
-      ->RequestImmediateStatusReport();
-  LogStatusReportEventUMA(event);
+  bool was_scheduled =
+      ChildStatusReportingServiceFactory::GetForBrowserContext(context_)
+          ->RequestImmediateStatusReport();
+  if (was_scheduled)
+    LogStatusReportEventUMA(event);
 }
 
 void EventBasedStatusReportingService::LogStatusReportEventUMA(
@@ -115,8 +128,10 @@ void EventBasedStatusReportingService::Shutdown() {
   if (arc_app_prefs)
     arc_app_prefs->RemoveObserver(this);
   session_manager::SessionManager::Get()->RemoveObserver(this);
-  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
-  DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
+  content::GetNetworkConnectionTracker()->RemoveNetworkConnectionObserver(this);
+  PowerManagerClient::Get()->RemoveObserver(this);
+  ScreenTimeControllerFactory::GetForBrowserContext(context_)->RemoveObserver(
+      this);
 }
 
 }  // namespace chromeos

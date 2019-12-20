@@ -4,13 +4,15 @@
 
 package org.chromium.chrome.browser.fullscreen;
 
-import android.support.annotation.Nullable;
 import android.view.View;
 import android.view.Window;
 
+import androidx.annotation.Nullable;
+
 import org.chromium.chrome.browser.fullscreen.FullscreenHtmlApiHandler.FullscreenHtmlApiDelegate;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tab.TabBrowserControlsOffsetHelper;
+import org.chromium.content_public.browser.GestureListenerManager;
+import org.chromium.content_public.browser.WebContents;
 
 /**
  * Manages the basic fullscreen functionality required by a Tab.
@@ -18,8 +20,6 @@ import org.chromium.chrome.browser.tab.TabBrowserControlsOffsetHelper;
 // TODO(tedchoc): Remove Tab's requirement on the fullscreen tokens to slim down the API of this
 //                class.
 public abstract class FullscreenManager {
-    public static final int INVALID_TOKEN = -1;
-
     private final FullscreenHtmlApiHandler mHtmlApiHandler;
     private boolean mOverlayVideoMode;
     @Nullable private Tab mTab;
@@ -47,9 +47,14 @@ public abstract class FullscreenManager {
     }
 
     /**
-     * @return The height of the top controls in pixels in px.
+     * @return The height of the top controls in pixels.
      */
     public abstract int getTopControlsHeight();
+
+    /**
+     * @return The minimum visible height top controls can have in pixels.
+     */
+    public abstract int getTopControlsMinHeight();
 
     /**
      * @return The offset of the controls from the top of the screen.
@@ -57,9 +62,19 @@ public abstract class FullscreenManager {
     public abstract int getTopControlOffset();
 
     /**
-     * @return The height of the bottom controls in pixels in px.
+     * @return The height of the bottom controls in pixels.
      */
     public abstract int getBottomControlsHeight();
+
+    /**
+     * @return The minimum visible height bottom controls can have in pixels.
+     */
+    public abstract int getBottomControlsMinHeight();
+
+    /**
+     * @return Whether or not the browser controls height changes should be animated.
+     */
+    public abstract boolean shouldAnimateBrowserControlsHeightChanges();
 
     /**
      * @return The offset of the controls from the bottom of the screen.
@@ -120,19 +135,7 @@ public abstract class FullscreenManager {
     public void setTab(@Nullable Tab tab) {
         if (mTab == tab) return;
 
-        // Remove the fullscreen manager from the old tab before setting the new tab.
-        setFullscreenManager(null);
-
         mTab = tab;
-
-        // Initialize the new tab with the correct fullscreen manager reference.
-        setFullscreenManager(this);
-    }
-
-    private void setFullscreenManager(FullscreenManager manager) {
-        if (mTab == null) return;
-        mTab.setFullscreenManager(manager);
-        TabBrowserControlsOffsetHelper.from(mTab).resetPositions();
     }
 
     /**
@@ -146,13 +149,9 @@ public abstract class FullscreenManager {
      * Enters persistent fullscreen mode.  In this mode, the browser controls will be
      * permanently hidden until this mode is exited.
      */
-    public void enterPersistentFullscreenMode(FullscreenOptions options) {
+    protected void enterPersistentFullscreenMode(FullscreenOptions options) {
         mHtmlApiHandler.enterPersistentFullscreenMode(options);
-
-        Tab tab = getTab();
-        if (tab != null) {
-            tab.updateFullscreenEnabledState();
-        }
+        updateMultiTouchZoomSupport(false);
     }
 
     /**
@@ -161,10 +160,19 @@ public abstract class FullscreenManager {
      */
     public void exitPersistentFullscreenMode() {
         mHtmlApiHandler.exitPersistentFullscreenMode();
+        updateMultiTouchZoomSupport(true);
+    }
 
+    /**
+     * @see GestureListenerManager#updateMultiTouchZoomSupport(boolean).
+     */
+    protected void updateMultiTouchZoomSupport(boolean enable) {
         Tab tab = getTab();
-        if (tab != null) {
-            tab.updateFullscreenEnabledState();
+        if (tab == null || tab.isHidden()) return;
+        WebContents webContents = tab.getWebContents();
+        if (webContents != null) {
+            GestureListenerManager manager = GestureListenerManager.fromWebContents(webContents);
+            if (manager != null) manager.updateMultiTouchZoomSupport(enable);
         }
     }
 

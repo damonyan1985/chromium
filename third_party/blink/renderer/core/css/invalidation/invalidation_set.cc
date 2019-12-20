@@ -37,7 +37,6 @@
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -61,7 +60,7 @@ void InvalidationSet::CacheTracingFlag() {
 }
 
 InvalidationSet::InvalidationSet(InvalidationType type)
-    : type_(type),
+    : type_(static_cast<unsigned>(type)),
       invalidates_self_(false),
       is_alive_(true) {}
 
@@ -136,10 +135,10 @@ void InvalidationSet::Combine(const InvalidationSet& other) {
 
   CHECK_NE(&other, this);
 
-  if (GetType() == kInvalidateSiblings) {
-    SiblingInvalidationSet& siblings = ToSiblingInvalidationSet(*this);
+  if (auto* invalidation_set = DynamicTo<SiblingInvalidationSet>(this)) {
+    SiblingInvalidationSet& siblings = *invalidation_set;
     const SiblingInvalidationSet& other_siblings =
-        ToSiblingInvalidationSet(other);
+        To<SiblingInvalidationSet>(other);
 
     siblings.UpdateMaxDirectAdjacentSelectors(
         other_siblings.MaxDirectAdjacentSelectors());
@@ -195,10 +194,10 @@ void InvalidationSet::Combine(const InvalidationSet& other) {
 }
 
 void InvalidationSet::Destroy() const {
-  if (IsDescendantInvalidationSet())
-    delete ToDescendantInvalidationSet(this);
+  if (auto* invalidation_set = DynamicTo<DescendantInvalidationSet>(this))
+    delete invalidation_set;
   else
-    delete ToSiblingInvalidationSet(this);
+    delete To<SiblingInvalidationSet>(this);
 }
 
 void InvalidationSet::ClearAllBackings() {
@@ -235,13 +234,13 @@ StringImpl* InvalidationSet::FindAnyClass(Element& element) const {
 
 StringImpl* InvalidationSet::FindAnyAttribute(Element& element) const {
   if (StringImpl* string_impl = attributes_.GetStringImpl(backing_flags_)) {
-    if (element.hasAttribute(AtomicString(string_impl)))
+    if (element.HasAttributeIgnoringNamespace(AtomicString(string_impl)))
       return string_impl;
   }
   if (const HashSet<AtomicString>* set =
           attributes_.GetHashSet(backing_flags_)) {
     for (const auto& attribute : *set) {
-      if (element.hasAttribute(attribute))
+      if (element.HasAttributeIgnoringNamespace(attribute))
         return attribute.Impl();
     }
   }
@@ -367,19 +366,23 @@ void InvalidationSet::ToTracedValue(TracedValue* value) const {
 
 #ifndef NDEBUG
 void InvalidationSet::Show() const {
-  std::unique_ptr<TracedValue> value = TracedValue::Create();
-  value->BeginArray("InvalidationSet");
-  ToTracedValue(value.get());
-  value->EndArray();
-  fprintf(stderr, "%s\n", value->ToString().Ascii().data());
+  TracedValueJSON value;
+  value.BeginArray("InvalidationSet");
+  ToTracedValue(&value);
+  value.EndArray();
+  LOG(ERROR) << value.ToJSON().Ascii();
 }
 #endif  // NDEBUG
 
 SiblingInvalidationSet::SiblingInvalidationSet(
     scoped_refptr<DescendantInvalidationSet> descendants)
-    : InvalidationSet(kInvalidateSiblings),
+    : InvalidationSet(InvalidationType::kInvalidateSiblings),
       max_direct_adjacent_selectors_(1),
       descendant_invalidation_set_(std::move(descendants)) {}
+
+SiblingInvalidationSet::SiblingInvalidationSet()
+    : InvalidationSet(InvalidationType::kInvalidateNthSiblings),
+      max_direct_adjacent_selectors_(kDirectAdjacentMax) {}
 
 DescendantInvalidationSet& SiblingInvalidationSet::EnsureSiblingDescendants() {
   if (!sibling_descendant_invalidation_set_)

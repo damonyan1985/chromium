@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "components/gcm_driver/common/gcm_messages.h"
+#include "components/gcm_driver/common/gcm_message.h"
 #include "components/gcm_driver/gcm_app_handler.h"
 #include "components/gcm_driver/gcm_client.h"
 #include "components/gcm_driver/gcm_connection_observer.h"
@@ -35,6 +35,8 @@ class IdentityProvider;
 // Core lives on IO thread. Core implements GCMNetworkChannelDelegate and posts
 // all function calls to GCMInvalidationBridge which does actual work to perform
 // them.
+// TODO(crbug.com/1029481): Part of the legacy implementation of invalidations,
+// scheduled for deletion.
 class GCMInvalidationBridge : public gcm::GCMAppHandler,
                               public gcm::GCMConnectionObserver {
  public:
@@ -101,7 +103,7 @@ class GCMInvalidationBridge : public gcm::GCMAppHandler,
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<GCMInvalidationBridge> weak_factory_;
+  base::WeakPtrFactory<GCMInvalidationBridge> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GCMInvalidationBridge);
 };

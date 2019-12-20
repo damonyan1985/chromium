@@ -59,10 +59,7 @@ class EnrollmentStatus;
 // handles the enrollment process.
 class DeviceCloudPolicyInitializer : public CloudPolicyStore::Observer {
  public:
-  using EnrollmentLicenseMap = std::map<LicenseType, int>;
   using EnrollmentCallback = base::Callback<void(EnrollmentStatus)>;
-  using AvailableLicensesCallback =
-      base::Callback<void(const EnrollmentLicenseMap&)>;
 
   // |background_task_runner| is used to execute long-running background tasks
   // that may involve file I/O.
@@ -84,8 +81,7 @@ class DeviceCloudPolicyInitializer : public CloudPolicyStore::Observer {
   virtual void Shutdown();
 
   // Prepares enrollment or re-enrollment. Enrollment should be started by
-  // either calling StartEnrollment or CheckAvailableLicenses /
-  // StartEnrollmentWithLicense. Once the enrollment process
+  // calling StartEnrollment. Once the enrollment process
   // completes, |enrollment_callback| is invoked and gets passed the status of
   // the operation.
   virtual void PrepareEnrollment(
@@ -95,15 +91,8 @@ class DeviceCloudPolicyInitializer : public CloudPolicyStore::Observer {
       std::unique_ptr<DMAuth> dm_auth,
       const EnrollmentCallback& enrollment_callback);
 
-  // Starts enrollment using server-based license type selection.
+  // Starts enrollment.
   virtual void StartEnrollment();
-
-  // Queries server about available license types and their count.
-  virtual void CheckAvailableLicenses(
-      const AvailableLicensesCallback& callback);
-
-  // Starts enrollment using user-selected license type.
-  virtual void StartEnrollmentWithLicense(policy::LicenseType license_type);
 
   // Get the enrollment configuration that has been set up via signals such as
   // device requisition, OEM manifest, pre-existing installation-time attributes
@@ -125,6 +114,8 @@ class DeviceCloudPolicyInitializer : public CloudPolicyStore::Observer {
       std::unique_ptr<policy::SigningService> signing_service);
   void SetSystemURLLoaderFactoryForTesting(
       scoped_refptr<network::SharedURLLoaderFactory> system_url_loader_factory);
+  void SetAttestationFlowForTesting(
+      std::unique_ptr<chromeos::attestation::AttestationFlow> attestation_flow);
 
  private:
   // Signing class implementing the policy::SigningService interface to
@@ -147,7 +138,8 @@ class DeviceCloudPolicyInitializer : public CloudPolicyStore::Observer {
     cryptohome::AsyncMethodCaller* async_method_caller_;
 
     // Used to create tasks which run delayed on the UI thread.
-    base::WeakPtrFactory<TpmEnrollmentKeySigningService> weak_ptr_factory_;
+    base::WeakPtrFactory<TpmEnrollmentKeySigningService> weak_ptr_factory_{
+        this};
   };
 
   // Handles completion signaled by |enrollment_handler_|.

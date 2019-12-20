@@ -12,7 +12,7 @@
 #include "content/public/common/content_features.h"
 #include "storage/browser/blob/blob_registry_impl.h"
 #include "storage/browser/blob/blob_storage_context.h"
-#include "storage/browser/fileapi/file_system_context.h"
+#include "storage/browser/file_system/file_system_context.h"
 
 namespace content {
 
@@ -38,6 +38,11 @@ class BindingDelegate : public storage::BlobRegistryImpl::Delegate {
         ChildProcessSecurityPolicyImpl::GetInstance();
     return security_policy->CanCommitURL(process_id_, url);
   }
+  bool IsProcessValid() override {
+    ChildProcessSecurityPolicyImpl* security_policy =
+        ChildProcessSecurityPolicyImpl::GetInstance();
+    return security_policy->HasSecurityState(process_id_);
+  }
 
  private:
   const int process_id_;
@@ -50,21 +55,21 @@ scoped_refptr<BlobRegistryWrapper> BlobRegistryWrapper::Create(
     scoped_refptr<ChromeBlobStorageContext> blob_storage_context,
     scoped_refptr<storage::FileSystemContext> file_system_context) {
   scoped_refptr<BlobRegistryWrapper> result(new BlobRegistryWrapper());
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&BlobRegistryWrapper::InitializeOnIOThread, result,
-                     std::move(blob_storage_context),
-                     std::move(file_system_context)));
+  base::PostTask(FROM_HERE, {BrowserThread::IO},
+                 base::BindOnce(&BlobRegistryWrapper::InitializeOnIOThread,
+                                result, std::move(blob_storage_context),
+                                std::move(file_system_context)));
   return result;
 }
 
 BlobRegistryWrapper::BlobRegistryWrapper() {
 }
 
-void BlobRegistryWrapper::Bind(int process_id,
-                               blink::mojom::BlobRegistryRequest request) {
+void BlobRegistryWrapper::Bind(
+    int process_id,
+    mojo::PendingReceiver<blink::mojom::BlobRegistry> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  blob_registry_->Bind(std::move(request),
+  blob_registry_->Bind(std::move(receiver),
                        std::make_unique<BindingDelegate>(process_id));
 }
 

@@ -4,9 +4,8 @@
 
 #include "chrome/browser/chromeos/first_run/steps/tray_step.h"
 
+#include "ash/public/cpp/first_run_helper.h"
 #include "ash/public/cpp/shelf_types.h"
-#include "ash/public/interfaces/first_run_helper.mojom.h"
-#include "base/bind.h"
 #include "base/i18n/rtl.h"
 #include "chrome/browser/chromeos/first_run/first_run_controller.h"
 #include "chrome/browser/chromeos/first_run/step_names.h"
@@ -22,18 +21,15 @@ TrayStep::TrayStep(FirstRunController* controller, FirstRunActor* actor)
 
 void TrayStep::DoShow() {
   // FirstRunController owns this object, so use Unretained.
-  first_run_controller()->first_run_helper_ptr()->OpenTrayBubble(
-      base::BindOnce(&TrayStep::ShowWithBubbleBounds, base::Unretained(this)));
-}
-
-void TrayStep::ShowWithBubbleBounds(const gfx::Rect& bounds) {
+  gfx::Rect bounds =
+      first_run_controller()->first_run_helper()->OpenTrayBubble();
   actor()->AddRectangularHole(bounds.x(), bounds.y(), bounds.width(),
       bounds.height());
   FirstRunActor::StepPosition position;
   position.SetTop(bounds.y());
   ash::ShelfAlignment alignment = first_run_controller()->GetShelfAlignment();
-  if ((!base::i18n::IsRTL() && alignment != ash::SHELF_ALIGNMENT_LEFT) ||
-      alignment == ash::SHELF_ALIGNMENT_RIGHT) {
+  if ((!base::i18n::IsRTL() && alignment != ash::ShelfAlignment::kLeft) ||
+      alignment == ash::ShelfAlignment::kRight) {
     // Compute pixel inset from right side of screen.
     const gfx::Size overlay_size = first_run_controller()->GetOverlaySize();
     position.SetRight(overlay_size.width() - bounds.x());
@@ -45,4 +41,3 @@ void TrayStep::ShowWithBubbleBounds(const gfx::Rect& bounds) {
 
 }  // namespace first_run
 }  // namespace chromeos
-

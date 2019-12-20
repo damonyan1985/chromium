@@ -13,12 +13,13 @@ MockSSLHostStateDelegate::~MockSSLHostStateDelegate() {}
 
 void MockSSLHostStateDelegate::AllowCert(const std::string& host,
                                          const net::X509Certificate& cert,
-                                         int error) {
+                                         int error,
+                                         WebContents* web_contents) {
   exceptions_.insert(host);
 }
 
 void MockSSLHostStateDelegate::Clear(
-    const base::Callback<bool(const std::string&)>& host_filter) {
+    base::RepeatingCallback<bool(const std::string&)> host_filter) {
   if (host_filter.is_null()) {
     exceptions_.clear();
   } else {
@@ -37,7 +38,7 @@ SSLHostStateDelegate::CertJudgment MockSSLHostStateDelegate::QueryPolicy(
     const std::string& host,
     const net::X509Certificate& cert,
     int error,
-    bool* expired_previous_decision) {
+    WebContents* web_contents) {
   if (exceptions_.find(host) == exceptions_.end())
     return SSLHostStateDelegate::DENIED;
 
@@ -52,7 +53,7 @@ void MockSSLHostStateDelegate::HostRanInsecureContent(
 bool MockSSLHostStateDelegate::DidHostRunInsecureContent(
     const std::string& host,
     int child_id,
-    InsecureContentType content_type) const {
+    InsecureContentType content_type) {
   return false;
 }
 
@@ -61,8 +62,8 @@ void MockSSLHostStateDelegate::RevokeUserAllowExceptions(
   exceptions_.erase(exceptions_.find(host));
 }
 
-bool MockSSLHostStateDelegate::HasAllowException(
-    const std::string& host) const {
+bool MockSSLHostStateDelegate::HasAllowException(const std::string& host,
+                                                 WebContents* web_contents) {
   return exceptions_.find(host) != exceptions_.end();
 }
 

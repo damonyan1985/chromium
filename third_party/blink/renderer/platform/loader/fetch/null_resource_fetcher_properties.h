@@ -39,9 +39,11 @@ class PLATFORM_EXPORT NullResourceFetcherProperties final
   bool IsDetached() const override { return true; }
   bool IsLoadComplete() const override { return true; }
   bool ShouldBlockLoadingSubResource() const override { return true; }
+  bool IsSubframeDeprioritizationEnabled() const override { return false; }
   scheduler::FrameStatus GetFrameStatus() const override {
     return scheduler::FrameStatus::kNone;
   }
+  const KURL& WebBundlePhysicalUrl() const override;
 
  private:
   const Member<const FetchClientSettingsObject> fetch_client_settings_object_;

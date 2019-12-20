@@ -16,12 +16,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/predictors/loading_data_collector.h"
+#include "chrome/browser/predictors/navigation_id.h"
 #include "chrome/browser/predictors/preconnect_manager.h"
-#include "chrome/browser/predictors/resource_prefetch_common.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 class Profile;
 
@@ -85,6 +86,10 @@ class LoadingPredictor : public KeyedService,
     return active_navigations_.size();
   }
 
+  const std::map<GURL, base::TimeTicks>& active_hints_for_testing() const {
+    return active_hints_;
+  }
+
  private:
   // Cancels an active hint, from its iterator inside |active_hints_|. If the
   // iterator is .end(), does nothing. Returns the iterator after deletion of
@@ -134,13 +139,14 @@ class LoadingPredictor : public KeyedService,
   bool shutdown_ = false;
   size_t total_hints_activated_ = 0;
 
-  GURL last_omnibox_origin_;
+  url::Origin last_omnibox_origin_;
   base::TimeTicks last_omnibox_preconnect_time_;
   base::TimeTicks last_omnibox_preresolve_time_;
 
   friend class LoadingPredictorTest;
   friend class LoadingPredictorPreconnectTest;
   friend class LoadingPredictorTabHelperTest;
+  friend class LoadingPredictorTabHelperTestCollectorTest;
   FRIEND_TEST_ALL_PREFIXES(LoadingPredictorTest,
                            TestMainFrameResponseCancelsHint);
   FRIEND_TEST_ALL_PREFIXES(LoadingPredictorTest,
@@ -157,7 +163,7 @@ class LoadingPredictor : public KeyedService,
                            TestDontTrackNonPrefetchableUrls);
   FRIEND_TEST_ALL_PREFIXES(LoadingPredictorTest, TestDontPredictOmniboxHints);
 
-  base::WeakPtrFactory<LoadingPredictor> weak_factory_;
+  base::WeakPtrFactory<LoadingPredictor> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(LoadingPredictor);
 };

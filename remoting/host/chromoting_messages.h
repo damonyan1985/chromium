@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/files/file_path.h"
-#include "base/memory/shared_memory_handle.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/time/time.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_platform_file.h"
@@ -16,6 +16,7 @@
 #include "remoting/host/desktop_environment_options.h"
 #include "remoting/host/screen_resolution.h"
 #include "remoting/proto/action.pb.h"
+#include "remoting/proto/control.pb.h"
 #include "remoting/proto/process_stats.pb.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/file_transfer_helpers.h"
@@ -124,6 +125,11 @@ IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_HostStarted,
 
 IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_HostShutdown)
 
+// Instructs the daemon process to update the config file, replacing the current
+// OAuth refresh token with the one provided.
+IPC_MESSAGE_CONTROL(ChromotingNetworkDaemonMsg_UpdateConfigRefreshToken,
+                    std::string /* token */)
+
 //-----------------------------------------------------------------------------
 // Chromoting messages sent from the desktop to the daemon process.
 
@@ -143,7 +149,7 @@ IPC_MESSAGE_CONTROL(ChromotingDesktopDaemonMsg_InjectSas)
 // Notifies the network process that a shared buffer has been created.
 IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_CreateSharedBuffer,
                     int /* id */,
-                    base::SharedMemoryHandle /* handle */,
+                    base::ReadOnlySharedMemoryRegion /* region */,
                     uint32_t /* size */)
 
 // Request the network process to stop using a shared buffer.
@@ -197,6 +203,10 @@ IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_MouseCursor,
 // |serialized_event| is a serialized protocol::ClipboardEvent.
 IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_InjectClipboardEvent,
                     std::string /* serialized_event */)
+
+// Notifies the network process that the active keyboard layout has changed.
+IPC_MESSAGE_CONTROL(ChromotingDesktopNetworkMsg_KeyboardChanged,
+                    remoting::protocol::KeyboardLayout /* layout */)
 
 IPC_ENUM_TRAITS_MAX_VALUE(remoting::protocol::ErrorCode,
                           remoting::protocol::ERROR_CODE_MAX)
@@ -314,8 +324,10 @@ IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_ReadFileChunk,
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_CloseFile,
                     uint64_t /* file_id */)
 
-// Requests that the desktop process cancel the currently-being-written file
-// identified by |file_id|, which will be deleted. There is no response message.
+// Requests that the desktop process cancel the file identified by |file_id|.
+// If the file is being written, the partial file will be deleted. If the file
+// is being read, it will be closed. In either case, there is no response
+// message.
 IPC_MESSAGE_CONTROL(ChromotingNetworkDesktopMsg_CancelFile,
                     uint64_t /* file_id */)
 

@@ -8,13 +8,18 @@
 #include "third_party/blink/public/platform/web_string.h"
 
 #if INSIDE_BLINK
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"  // nogncheck
+#include "third_party/blink/renderer/core/scroll/scroll_types.h"  // nogncheck
 #endif
 
 namespace blink {
 
 struct WebFrameOwnerProperties {
-  enum class ScrollingMode { kAuto, kAlwaysOff, kAlwaysOn, kLast = kAlwaysOn };
+  enum class ScrollingMode {
+    kAuto,
+    kAlwaysOff,
+    kAlwaysOn,
+    kMaxValue = kAlwaysOn
+  };
 
   WebString name;  // browsing context container's name
   ScrollingMode scrolling_mode;

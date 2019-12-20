@@ -12,6 +12,11 @@ namespace blink {
 namespace {
 
 char EmojiSegmentationCategory(UChar32 codepoint) {
+  if (codepoint <= 0x7F) {
+    if (Character::IsEmojiKeycapBase(codepoint))
+      return UTF16RagelIterator::KEYCAP_BASE;
+    return UTF16RagelIterator::kMaxEmojiScannerCategory;
+  }
   // For the grammar to work, we need to check for more specific character
   // classes first, then expand towards more generic ones. So we match single
   // characters and small ranges first, then return EMOJI and
@@ -41,8 +46,6 @@ char EmojiSegmentationCategory(UChar32 codepoint) {
     return UTF16RagelIterator::EMOJI_MODIFIER;
   if (Character::IsRegionalIndicator(codepoint))
     return UTF16RagelIterator::REGIONAL_INDICATOR;
-  if (Character::IsEmojiKeycapBase(codepoint))
-    return UTF16RagelIterator::KEYCAP_BASE;
 
   if (Character::IsEmojiEmojiDefault(codepoint))
     return UTF16RagelIterator::EMOJI_EMOJI_PRESENTATION;
@@ -57,7 +60,17 @@ char EmojiSegmentationCategory(UChar32 codepoint) {
 
 }  // namespace
 
+UTF16RagelIterator& UTF16RagelIterator::SetCursor(unsigned new_cursor) {
+  CHECK_GE(new_cursor, 0u);
+  CHECK_LT(new_cursor, buffer_size_);
+  cursor_ = new_cursor;
+  UpdateCachedCategory();
+  return *this;
+}
+
 void UTF16RagelIterator::UpdateCachedCategory() {
+  if (cursor_ >= buffer_size_)
+    return;
   cached_category_ = EmojiSegmentationCategory(Codepoint());
 }
 

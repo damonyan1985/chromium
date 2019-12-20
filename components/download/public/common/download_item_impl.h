@@ -16,26 +16,26 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/threading/thread_checker_impl.h"
 #include "base/time/time.h"
+#include "components/download/database/in_progress/download_entry.h"
 #include "components/download/public/common/download_create_info.h"
 #include "components/download/public/common/download_destination_observer.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
 #include "components/download/public/common/download_item.h"
-#include "components/download/public/common/download_request_handle_interface.h"
-#include "components/download/public/common/download_url_loader_factory_getter.h"
+#include "components/download/public/common/download_job.h"
 #include "components/download/public/common/download_url_parameters.h"
 #include "components/download/public/common/resume_mode.h"
+#include "components/download/public/common/url_loader_factory_provider.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "url/gurl.h"
-
-namespace net {
-class URLRequestContextGetter;
-}
+#include "url/origin.h"
 
 namespace download {
 class DownloadFile;
 class DownloadItemImplDelegate;
-class DownloadJob;
 
 // See download_item.h for usage.
 class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
@@ -53,6 +53,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
                 const GURL& site_url,
                 const GURL& tab_url,
                 const GURL& tab_referrer_url,
+                const base::Optional<url::Origin>& request_initiator,
+                const net::NetworkIsolationKey& network_isolation_key,
                 const std::string& suggested_filename,
                 const base::FilePath& forced_file_path,
                 ui::PageTransition transition_type,
@@ -61,7 +63,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
                 base::Time start_time);
     RequestInfo();
     explicit RequestInfo(const RequestInfo& other);
-    explicit RequestInfo(const GURL& url);
+    explicit RequestInfo(const GURL& url,
+                         const net::NetworkIsolationKey& network_isolation_key);
     ~RequestInfo();
 
     // The chain of redirects that leading up to and including the final URL.
@@ -78,6 +81,13 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
     // The URL of the referrer of the tab that initiated the download.
     GURL tab_referrer_url;
+
+    // The origin of the requester that originally initiated the download.
+    base::Optional<url::Origin> request_initiator;
+
+    // The key used to isolate requests from different contexts in accessing
+    // shared network resources like the cache.
+    net::NetworkIsolationKey network_isolation_key;
 
     // Filename suggestion from DownloadSaveInfo. It could, among others, be the
     // suggested filename in 'download' attribute of an anchor. Details:
@@ -120,6 +130,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
     // Target path of an in-progress download. We may be downloading to a
     // temporary or intermediate file (specified by |current_path|).  Once the
     // download completes, we will rename the file to |target_path|.
+    // |target_path| should be a valid file path on the system. On Android, this
+    // could be a content Uri.
     base::FilePath target_path;
 
     // Full path to the downloaded or downloading file. This is the path to the
@@ -169,6 +181,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
       const GURL& site_url,
       const GURL& tab_url,
       const GURL& tab_referrer_url,
+      const base::Optional<url::Origin>& request_initiator,
       const std::string& mime_type,
       const std::string& original_mime_type,
       base::Time start_time,
@@ -187,7 +200,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
       bool opened,
       base::Time last_access_time,
       bool transient,
-      const std::vector<DownloadItem::ReceivedSlice>& received_slices);
+      const std::vector<DownloadItem::ReceivedSlice>& received_slices,
+      std::unique_ptr<DownloadEntry> download_entry);
 
   // Constructing for a regular download.
   // |net_log| is constructed externally for our use.
@@ -197,13 +211,13 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   // Constructing for the "Save Page As..." feature:
   // |net_log| is constructed externally for our use.
-  DownloadItemImpl(
-      DownloadItemImplDelegate* delegate,
-      uint32_t id,
-      const base::FilePath& path,
-      const GURL& url,
-      const std::string& mime_type,
-      std::unique_ptr<DownloadRequestHandleInterface> request_handle);
+  DownloadItemImpl(DownloadItemImplDelegate* delegate,
+                   uint32_t id,
+                   const base::FilePath& path,
+                   const GURL& url,
+                   const std::string& mime_type,
+                   const net::NetworkIsolationKey& network_isolation_key,
+                   DownloadJob::CancelRequestCallback cancel_request_callback);
 
   ~DownloadItemImpl() override;
 
@@ -220,6 +234,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   void Remove() override;
   void OpenDownload() override;
   void ShowDownloadInShell() override;
+  void Rename(const base::FilePath& name,
+              RenameDownloadCallback callback) override;
   uint32_t GetId() const override;
   const std::string& GetGuid() const override;
   DownloadState GetState() const override;
@@ -238,6 +254,8 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   const GURL& GetSiteUrl() const override;
   const GURL& GetTabUrl() const override;
   const GURL& GetTabReferrerUrl() const override;
+  const base::Optional<url::Origin>& GetRequestInitiator() const override;
+  const net::NetworkIsolationKey& GetNetworkIsolationKey() const override;
   std::string GetSuggestedFilename() const override;
   const scoped_refptr<const net::HttpResponseHeaders>& GetResponseHeaders()
       const override;
@@ -250,6 +268,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   const std::string& GetLastModifiedTime() const override;
   const std::string& GetETag() const override;
   bool IsSavePackageDownload() const override;
+  DownloadSource GetDownloadSource() const override;
   const base::FilePath& GetFullPath() const override;
   const base::FilePath& GetTargetFilePath() const override;
   const base::FilePath& GetForcedFilePath() const override;
@@ -258,7 +277,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   TargetDisposition GetTargetDisposition() const override;
   const std::string& GetHash() const override;
   bool GetFileExternallyRemoved() const override;
-  void DeleteFile(const base::Callback<void(bool)>& callback) override;
+  void DeleteFile(base::OnceCallback<void(bool)> callback) override;
   DownloadFile* GetDownloadFile() override;
   bool IsDangerous() const override;
   DownloadDangerType GetDangerType() const override;
@@ -284,6 +303,7 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   DownloadCreationType GetDownloadCreationType() const override;
   void OnContentCheckCompleted(DownloadDangerType danger_type,
                                DownloadInterruptReason reason) override;
+  void OnAsyncScanningCompleted(DownloadDangerType danger_type) override;
   void SetOpenWhenComplete(bool open) override;
   void SetOpened(bool opened) override;
   void SetLastAccessTime(base::Time last_access_time) override;
@@ -298,17 +318,16 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   // Start the download.
   // |download_file| is the associated file on the storage medium.
-  // |req_handle| is the new request handle associated with the download.
+  // |cancel_request_callback| is the callback to cancel the download.
   // |new_create_info| is a DownloadCreateInfo containing the new response
   // parameters. It may be different from the DownloadCreateInfo used to create
   // the DownloadItem if Start() is being called in response for a
   // download resumption request.
   virtual void Start(std::unique_ptr<DownloadFile> download_file,
-                     std::unique_ptr<DownloadRequestHandleInterface> req_handle,
+                     DownloadJob::CancelRequestCallback cancel_request_callback,
                      const DownloadCreateInfo& new_create_info,
-                     scoped_refptr<download::DownloadURLLoaderFactoryGetter>
-                         url_loader_factory_getter,
-                     net::URLRequestContextGetter* url_request_context_getter);
+                     URLLoaderFactoryProvider::URLLoaderFactoryProviderPtr
+                         url_loader_factory_provider);
 
   // Needed because of intertwining with DownloadManagerImpl -------------------
 
@@ -349,15 +368,20 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   void SetDelegate(DownloadItemImplDelegate* delegate);
 
+  void SetDownloadId(uint32_t download_id);
+
   const DownloadUrlParameters::RequestHeadersType& request_headers() const {
     return request_headers_;
   }
 
   bool fetch_error_body() const { return fetch_error_body_; }
 
-  DownloadSource download_source() const { return download_source_; }
-
   uint64_t ukm_download_id() const { return ukm_download_id_; }
+
+  void SetAutoResumeCountForTesting(int32_t auto_resume_count);
+
+  // Gets the approximate memory usage of this item.
+  size_t GetApproximateMemoryUsage() const;
 
  private:
   // Fine grained states of a download.
@@ -596,6 +620,9 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // resets |current_path_|.
   void ReleaseDownloadFile(bool destroy_file);
 
+  // Deletes the download file at |current_path_|.
+  void DeleteDownloadFile();
+
   // Check if a download is ready for completion.  The callback provided
   // may be called at some point in the future if an external entity
   // state has change s.t. this routine should be checked again.
@@ -628,6 +655,19 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // last_reason_ to be set, but doesn't require the download to be in
   // INTERRUPTED state.
   ResumeMode GetResumeMode() const;
+
+  // Whether strong validators are present.
+  bool HasStrongValidators() const;
+
+  // Binds a device.mojom.WakeLockProvider receiver for any job that needs one.
+  void BindWakeLockProvider(
+      mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver);
+
+  DownloadItem::DownloadRenameResult RenameDownloadedFile(
+      const std::string& name);
+  void RenameDownloadedFileDone(RenameDownloadCallback callback,
+                                const base::FilePath& new_path,
+                                DownloadRenameResult result);
 
   static DownloadState InternalToExternalState(
       DownloadInternalState internal_state);
@@ -689,6 +729,10 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
 
   // The current state of this download.
   DownloadInternalState state_ = INITIAL_INTERNAL;
+
+  // The state before download was interrupted.
+  // Remove this once http://crbug.com/1029746 is fixed.
+  DownloadInternalState state_before_interruption_ = INITIAL_INTERNAL;
 
   // Current danger type for the download.
   DownloadDangerType danger_type_ = DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS;
@@ -801,9 +845,12 @@ class COMPONENTS_DOWNLOAD_EXPORT DownloadItemImpl
   // UKM ID for reporting, default to 0 if uninitialized.
   uint64_t ukm_download_id_ = 0;
 
+  // Whether download has been resumed.
+  bool has_resumed_ = false;
+
   THREAD_CHECKER(thread_checker_);
 
-  base::WeakPtrFactory<DownloadItemImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<DownloadItemImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DownloadItemImpl);
 };

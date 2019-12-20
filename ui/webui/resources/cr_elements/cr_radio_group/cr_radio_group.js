@@ -21,14 +21,16 @@
         type: Boolean,
         value: false,
         reflectToAttribute: true,
+        observer: 'update_',
       },
 
       selected: {
         type: String,
         notify: true,
+        observer: 'update_',
       },
 
-      selectable: {
+      selectableElements: {
         type: String,
         value: 'cr-radio-button, controlled-radio-button',
       },
@@ -39,7 +41,7 @@
        */
       selectableRegExp_: {
         value: Object,
-        computed: 'computeSelectableRegExp_(selectable)',
+        computed: 'computeSelectableRegExp_(selectableElements)',
       },
     },
 
@@ -48,15 +50,12 @@
       click: 'onClick_',
     },
 
-    observers: [
-      'update_(disabled, selected)',
-    ],
-
     hostAttributes: {
+      'aria-disabled': 'false',
       role: 'radiogroup',
     },
 
-    /** @private {Array<!Element>} */
+    /** @private {Array<!CrRadioButtonElement>} */
     buttons_: null,
 
     /** @private {EventTracker} */
@@ -119,7 +118,7 @@
       }
 
       const radio =
-          this.buttons_.find(radio => radio.getAttribute('tabindex') == '0');
+          this.buttons_.find(radio => this.isButtonEnabledAndSelected_(radio));
       if (radio) {
         radio.focus();
       }
@@ -138,14 +137,14 @@
         return;
       }
 
-      const targetElement = /** @type {!Element} */ (event.target);
+      const targetElement = /** @type {!CrRadioButtonElement} */ (event.target);
       if (!this.buttons_.includes(targetElement)) {
         return;
       }
 
       if (event.key == ' ' || event.key == 'Enter') {
         event.preventDefault();
-        this.select_(/** @type {!Element} */ (event.target));
+        this.select_(/** @type {!CrRadioButtonElement} */ (event.target));
         return;
       }
 
@@ -165,7 +164,12 @@
         // If nothing selected, start from the first radio then add |delta|.
         const lastSelection = enabledRadios.findIndex(radio => radio.checked);
         selectedIndex = Math.max(0, lastSelection) + delta;
-        selectedIndex = Math.min(max, Math.max(0, selectedIndex));
+        // Wrap the selection, if needed.
+        if (selectedIndex > max) {
+          selectedIndex = 0;
+        } else if (selectedIndex < 0) {
+          selectedIndex = max;
+        }
       } else {
         return;
       }
@@ -184,7 +188,7 @@
      * @private
      */
     computeSelectableRegExp_: function() {
-      const tags = this.selectable.split(', ').join('|');
+      const tags = this.selectableElements.split(', ').join('|');
       return new RegExp(`^(${tags})$`, 'i');
     },
 
@@ -197,10 +201,10 @@
       if (path.some(target => /^a$/i.test(target.tagName))) {
         return;
       }
-      const target = /** @type {!Element} */ (
+      const target = /** @type {!CrRadioButtonElement} */ (
           path.find(n => this.selectableRegExp_.test(n.tagName)));
       if (target && this.buttons_.includes(target)) {
-        this.select_(/** @type {!Element} */ (target));
+        this.select_(/** @type {!CrRadioButtonElement} */ (target));
       }
     },
 
@@ -212,7 +216,7 @@
           this.$$('slot')
               .assignedNodes({flatten: true})
               .filter(n => this.selectableRegExp_.test(n.tagName)) :
-          this.queryAllEffectiveChildren(this.selectable);
+          this.queryAllEffectiveChildren(this.selectableElements);
       this.buttonEventTracker_.removeAll();
       this.buttons_.forEach(el => {
         this.buttonEventTracker_.add(
@@ -224,7 +228,7 @@
     },
 
     /**
-     * @param {!Element} button
+     * @param {!CrRadioButtonElement} button
      * @private
      */
     select_: function(button) {
@@ -238,6 +242,15 @@
       }
     },
 
+    /**
+     * @param {!Element} button
+     * @return {boolean}
+     * @private
+     */
+    isButtonEnabledAndSelected_: function(button) {
+      return !this.disabled && button.checked && isEnabled(button);
+    },
+
     /** @private */
     update_: function() {
       if (!this.buttons_) {
@@ -247,15 +260,21 @@
       this.buttons_.forEach(radio => {
         radio.checked = this.selected != undefined &&
             radio.name == this.selected;
-        const canBeFocused =
-            radio.checked && !this.disabled && isEnabled(radio);
-        noneMadeFocusable &= !canBeFocused;
-        radio.setAttribute('tabindex', canBeFocused ? '0' : '-1');
+        const disabled = this.disabled || !isEnabled(radio);
+        const canBeFocused = radio.checked && !disabled;
+        if (canBeFocused) {
+          radio.focusable = true;
+          noneMadeFocusable = false;
+        } else {
+          radio.focusable = false;
+        }
+        radio.setAttribute('aria-disabled', `${disabled}`);
       });
+      this.setAttribute('aria-disabled', `${this.disabled}`);
       if (noneMadeFocusable && !this.disabled) {
-        const focusable = this.buttons_.find(isEnabled);
-        if (focusable) {
-          focusable.setAttribute('tabindex', '0');
+        const radio = this.buttons_.find(isEnabled);
+        if (radio) {
+          radio.focusable = true;
         }
       }
     },

@@ -2,12 +2,6 @@
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
 
-<style>
-.hideAllContainers .container {
-    display: none;
-}
-</style>
-
 <div class="container">
     <div id="div">Div Contents</div>
 </div>
@@ -127,7 +121,7 @@ test(function(t){
 
 <script>
 test(function(t){
-    assert_equals(accessibilityController.accessibleElementById("label7"), undefined);
+    assert_true(accessibilityController.accessibleElementById("label7").isIgnored);
     var axLabelledby7 = accessibilityController.accessibleElementById("labelledby7");
     assert_equals(axLabelledby7.name, "Invisible label");
     assert_equals(axLabelledby7.nameFrom, "relatedElement");
@@ -143,16 +137,11 @@ test(function(t){
 
 <script>
 test(function(t){
-    assert_equals(accessibilityController.accessibleElementById("label8"), undefined);
+    assert_true(accessibilityController.accessibleElementById("label8").isIgnored);
     var axLabelledby8 = accessibilityController.accessibleElementById("labelledby8");
     assert_equals(axLabelledby8.name, "Display-none label");
     assert_equals(axLabelledby8.nameFrom, "relatedElement");
     assert_equals(axLabelledby8.nameElementCount(), 1);
     assert_equals(axLabelledby8.nameElementAtIndex(0).role, "AXRole: AXHeading");
 }, "Button with aria-labelledby reference to display-none element.");
-</script>
-
-<script>
-if (window.testRunner)
-    document.body.className = "hideAllContainers";
 </script>

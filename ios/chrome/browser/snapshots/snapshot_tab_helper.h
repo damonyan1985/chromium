@@ -11,8 +11,8 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "components/infobars/core/infobar_manager.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 @class SnapshotGenerator;
 @protocol SnapshotGeneratorDelegate;
@@ -74,6 +74,8 @@ class SnapshotTabHelper : public infobars::InfoBarManager::Observer,
   void IgnoreNextLoad();
 
  private:
+  friend class web::WebStateUserData<SnapshotTabHelper>;
+
   SnapshotTabHelper(web::WebState* web_state, NSString* session_id);
 
   // web::WebStateObserver implementation.
@@ -110,6 +112,8 @@ class SnapshotTabHelper : public infobars::InfoBarManager::Observer,
   // Used to ensure |UpdateSnapshotWithCallback()| is not run when this object
   // is destroyed.
   base::WeakPtrFactory<SnapshotTabHelper> weak_ptr_factory_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(SnapshotTabHelper);
 };

@@ -7,20 +7,6 @@
 // require: list_selection_controller.js
 // require: list_item.js
 
-cr.exportPath('cr.ui');
-
-/**
- *  @typedef {{
- *    height: number,
- *    marginBottom: number,
- *    marginLeft: number,
- *    marginRight: number,
- *    marginTop: number,
- *    width: number
- *  }}
- */
-cr.ui.Size;
-
 /**
  * @fileoverview This implements a list control.
  */
@@ -29,6 +15,18 @@ cr.define('cr.ui', function() {
   /** @const */ const ListSelectionModel = cr.ui.ListSelectionModel;
   /** @const */ const ListSelectionController = cr.ui.ListSelectionController;
   /** @const */ const ArrayDataModel = cr.ui.ArrayDataModel;
+
+  /**
+   *  @typedef {{
+   *    height: number,
+   *    marginBottom: number,
+   *    marginLeft: number,
+   *    marginRight: number,
+   *    marginTop: number,
+   *    width: number
+   *  }}
+   */
+  let Size;
 
   /**
    * Whether a mouse event is inside the element viewport. This will return
@@ -632,10 +630,10 @@ cr.define('cr.ui', function() {
         const listItem = this.getListItemByIndex(change.index);
         if (listItem) {
           listItem.selected = change.selected;
+          listItem.setAttribute('aria-selected', listItem.selected);
           if (change.selected) {
             listItem.setAttribute('aria-posinset', change.index + 1);
             listItem.setAttribute('aria-setsize', this.dataModel.length);
-            this.setAttribute('aria-activedescendant', listItem.id);
           } else {
             listItem.removeAttribute('aria-posinset');
             listItem.removeAttribute('aria-setsize');
@@ -664,6 +662,9 @@ cr.define('cr.ui', function() {
           element.lead = true;
         }
         if (e.oldValue != e.newValue) {
+          if (element) {
+            this.setAttribute('aria-activedescendant', element.id);
+          }
           this.scrollIndexIntoView(e.newValue);
           // If the lead item has a different height than other items, then we
           // may run into a problem that requires a second attempt to scroll
@@ -1442,5 +1443,8 @@ cr.define('cr.ui', function() {
     return false;
   }
 
-  return {List: List};
+  return {
+    List: List,
+    Size: Size,
+  };
 });

@@ -12,10 +12,8 @@
 
 namespace blink {
 
-using namespace css_test_helpers;
-
 TEST(CSSPageRule, Serializing) {
-  TestStyleSheet sheet;
+  css_test_helpers::TestStyleSheet sheet;
 
   const char* css_rule = "@page :left { size: auto; }";
   sheet.AddCSSRules(css_rule);
@@ -23,20 +21,20 @@ TEST(CSSPageRule, Serializing) {
     EXPECT_EQ(1u, sheet.CssRules()->length());
     EXPECT_EQ(String(css_rule), sheet.CssRules()->item(0)->cssText());
     EXPECT_EQ(CSSRule::kPageRule, sheet.CssRules()->item(0)->type());
-    if (CSSPageRule* page_rule = ToCSSPageRule(sheet.CssRules()->item(0)))
-      EXPECT_EQ(":left", page_rule->selectorText());
+    auto* page_rule = To<CSSPageRule>(sheet.CssRules()->item(0));
+    EXPECT_EQ(":left", page_rule->selectorText());
   }
 }
 
 TEST(CSSPageRule, selectorText) {
-  TestStyleSheet sheet;
+  css_test_helpers::TestStyleSheet sheet;
 
   const char* css_rule = "@page :left { size: auto; }";
   sheet.AddCSSRules(css_rule);
   DCHECK(sheet.CssRules());
   EXPECT_EQ(1u, sheet.CssRules()->length());
 
-  CSSPageRule* page_rule = ToCSSPageRule(sheet.CssRules()->item(0));
+  auto* page_rule = To<CSSPageRule>(sheet.CssRules()->item(0));
   EXPECT_EQ(":left", page_rule->selectorText());
 
   // set invalid page selector.

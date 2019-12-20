@@ -7,7 +7,7 @@
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/post_task.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/elapsed_timer.h"
@@ -54,7 +54,7 @@ class MockDhcpPacFileAdapterFetcher : public DhcpPacFileAdapterFetcher {
 
   void Cancel() override {
     DhcpPacFileAdapterFetcher::Cancel();
-    fetcher_ = NULL;
+    fetcher_ = nullptr;
   }
 
   std::unique_ptr<PacFileFetcher> ImplCreateScriptFetcher() override {
@@ -116,7 +116,7 @@ class MockDhcpPacFileAdapterFetcher : public DhcpPacFileAdapterFetcher {
     // the simple approach currently used in ImplCreateScriptFetcher above).
     DCHECK(fetcher_ && fetcher_->has_pending_request());
     fetcher_->NotifyFetchCompletion(fetcher_result_, pac_script_);
-    fetcher_ = NULL;
+    fetcher_ = nullptr;
   }
 
   bool IsWaitingForFetcher() const {
@@ -149,8 +149,8 @@ class FetcherClient {
       : url_request_context_(new TestURLRequestContext()),
         fetcher_(new MockDhcpPacFileAdapterFetcher(
             url_request_context_.get(),
-            base::CreateSequencedTaskRunnerWithTraits(
-                {base::MayBlock(),
+            base::CreateSequencedTaskRunner(
+                {base::ThreadPool(), base::MayBlock(),
                  base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN}))) {}
 
   void WaitForResult(int expected_error) {
@@ -174,7 +174,7 @@ class FetcherClient {
 };
 
 TEST(DhcpPacFileAdapterFetcher, NormalCaseURLNotInDhcp) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   client.fetcher_->configured_url_ = "";
@@ -182,23 +182,24 @@ TEST(DhcpPacFileAdapterFetcher, NormalCaseURLNotInDhcp) {
   client.WaitForResult(ERR_PAC_NOT_IN_DHCP);
   ASSERT_TRUE(client.fetcher_->DidFinish());
   EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_PAC_NOT_IN_DHCP));
-  EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(), client.fetcher_->GetPacScript());
 }
 
 TEST(DhcpPacFileAdapterFetcher, NormalCaseURLInDhcp) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   client.RunTest();
   client.WaitForResult(OK);
   ASSERT_TRUE(client.fetcher_->DidFinish());
   EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
-  EXPECT_EQ(base::string16(L"bingo"), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(STRING16_LITERAL("bingo")),
+            client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
 }
 
 TEST(DhcpPacFileAdapterFetcher, TimeoutDuringDhcp) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   // Does a Fetch() with a long enough delay on accessing DHCP that the
   // fetcher should time out.  This is to test a case manual testing found,
@@ -218,13 +219,13 @@ TEST(DhcpPacFileAdapterFetcher, TimeoutDuringDhcp) {
 
   ASSERT_TRUE(client.fetcher_->DidFinish());
   EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_TIMED_OUT));
-  EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
 }
 
 TEST(DhcpPacFileAdapterFetcher, CancelWhileDhcp) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   client.RunTest();
@@ -233,13 +234,13 @@ TEST(DhcpPacFileAdapterFetcher, CancelWhileDhcp) {
   ASSERT_FALSE(client.fetcher_->DidFinish());
   ASSERT_TRUE(client.fetcher_->WasCancelled());
   EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_ABORTED));
-  EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(), client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
 }
 
 TEST(DhcpPacFileAdapterFetcher, CancelWhileFetcher) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   // This causes the mock fetcher not to pretend the
@@ -256,14 +257,14 @@ TEST(DhcpPacFileAdapterFetcher, CancelWhileFetcher) {
   ASSERT_FALSE(client.fetcher_->DidFinish());
   ASSERT_TRUE(client.fetcher_->WasCancelled());
   EXPECT_THAT(client.fetcher_->GetResult(), IsError(ERR_ABORTED));
-  EXPECT_EQ(base::string16(L""), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(), client.fetcher_->GetPacScript());
   // GetPacURL() still returns the URL fetched in this case.
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
 }
 
 TEST(DhcpPacFileAdapterFetcher, CancelAtCompletion) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   client.RunTest();
@@ -273,7 +274,8 @@ TEST(DhcpPacFileAdapterFetcher, CancelAtCompletion) {
   // are identical expectations to the NormalCaseURLInDhcp test.
   ASSERT_TRUE(client.fetcher_->DidFinish());
   EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
-  EXPECT_EQ(base::string16(L"bingo"), client.fetcher_->GetPacScript());
+  EXPECT_EQ(base::string16(STRING16_LITERAL("bingo")),
+            client.fetcher_->GetPacScript());
   EXPECT_EQ(GURL(kPacUrl), client.fetcher_->GetPacURL());
   client.FinishTestAllowCleanup();
 }
@@ -297,7 +299,7 @@ class MockDhcpRealFetchPacFileAdapterFetcher
 };
 
 TEST(DhcpPacFileAdapterFetcher, MockDhcpRealFetch) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   EmbeddedTestServer test_server;
   test_server.ServeFilesFromSourceDirectory(
@@ -310,15 +312,15 @@ TEST(DhcpPacFileAdapterFetcher, MockDhcpRealFetch) {
   TestURLRequestContext url_request_context;
   client.fetcher_.reset(new MockDhcpRealFetchPacFileAdapterFetcher(
       &url_request_context,
-      base::CreateTaskRunnerWithTraits(
-          {base::MayBlock(),
+      base::CreateTaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})));
   client.fetcher_->configured_url_ = configured_url.spec();
   client.RunTest();
   client.WaitForResult(OK);
   ASSERT_TRUE(client.fetcher_->DidFinish());
   EXPECT_THAT(client.fetcher_->GetResult(), IsOk());
-  EXPECT_EQ(base::string16(L"-downloadable.pac-\n"),
+  EXPECT_EQ(base::string16(STRING16_LITERAL("-downloadable.pac-\n")),
             client.fetcher_->GetPacScript());
   EXPECT_EQ(configured_url,
             client.fetcher_->GetPacURL());
@@ -327,7 +329,7 @@ TEST(DhcpPacFileAdapterFetcher, MockDhcpRealFetch) {
 #define BASE_URL "http://corpserver/proxy.pac"
 
 TEST(DhcpPacFileAdapterFetcher, SanitizeDhcpApiString) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   const size_t kBaseUrlLen = strlen(BASE_URL);
 

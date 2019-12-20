@@ -30,8 +30,7 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
       const std::string& service_type)
       : delegate_(delegate),
         service_discovery_client_(service_discovery_client),
-        service_type_(service_type),
-        weak_factory_(this) {}
+        service_type_(service_type) {}
 
   ~ServiceDiscoveryDeviceListerImpl() override = default;
 
@@ -71,7 +70,7 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
     }
 
     // If there is already a resolver working on this service, don't add one.
-    if (base::ContainsKey(resolvers_, service_name)) {
+    if (base::Contains(resolvers_, service_name)) {
       VLOG(1) << "Resolver already exists, service_name: " << service_name;
       return;
     }
@@ -81,8 +80,8 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
     std::unique_ptr<ServiceResolver> resolver =
         service_discovery_client_->CreateServiceResolver(
             service_name,
-            base::Bind(&ServiceDiscoveryDeviceListerImpl::OnResolveComplete,
-                       weak_factory_.GetWeakPtr(), added, service_name));
+            base::BindOnce(&ServiceDiscoveryDeviceListerImpl::OnResolveComplete,
+                           weak_factory_.GetWeakPtr(), added, service_name));
     resolver->StartResolving();
     resolvers_[service_name] = std::move(resolver);
   }
@@ -103,9 +102,10 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
       // service to detect non-graceful shutdowns.
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
-          base::Bind(&ServiceDiscoveryDeviceListerImpl::OnServiceUpdated,
-                     weak_factory_.GetWeakPtr(), ServiceWatcher::UPDATE_CHANGED,
-                     service_description.service_name),
+          base::BindOnce(&ServiceDiscoveryDeviceListerImpl::OnServiceUpdated,
+                         weak_factory_.GetWeakPtr(),
+                         ServiceWatcher::UPDATE_CHANGED,
+                         service_description.service_name),
           base::TimeDelta::FromSeconds(kMacServiceResolvingIntervalSecs));
 #endif
     } else {
@@ -118,8 +118,8 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
   void CreateServiceWatcher() {
     service_watcher_ = service_discovery_client_->CreateServiceWatcher(
         service_type_,
-        base::Bind(&ServiceDiscoveryDeviceListerImpl::OnServiceUpdated,
-                   weak_factory_.GetWeakPtr()));
+        base::BindRepeating(&ServiceDiscoveryDeviceListerImpl::OnServiceUpdated,
+                            weak_factory_.GetWeakPtr()));
     service_watcher_->Start();
   }
 
@@ -130,7 +130,7 @@ class ServiceDiscoveryDeviceListerImpl : public ServiceDiscoveryDeviceLister {
   std::unique_ptr<ServiceWatcher> service_watcher_;
   ServiceResolverMap resolvers_;
 
-  base::WeakPtrFactory<ServiceDiscoveryDeviceListerImpl> weak_factory_;
+  base::WeakPtrFactory<ServiceDiscoveryDeviceListerImpl> weak_factory_{this};
 };
 }  // namespace
 

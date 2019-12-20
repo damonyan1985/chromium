@@ -6,7 +6,6 @@
 
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/media_router/media_router_ui_service.h"
-#include "chrome/browser/ui/toolbar/component_toolbar_actions_factory.h"
 #include "chrome/browser/ui/toolbar/media_router_action_controller.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/media_router/cast_toolbar_button.h"
@@ -83,18 +82,6 @@ base::string16 MediaRemotingDialogView::GetWindowTitle() const {
   return dialog_title_;
 }
 
-base::string16 MediaRemotingDialogView::GetDialogButtonLabel(
-    ui::DialogButton button) const {
-  return l10n_util::GetStringUTF16(
-      button == ui::DIALOG_BUTTON_OK
-          ? IDS_MEDIA_ROUTER_REMOTING_DIALOG_OPTIMIZE_BUTTON
-          : IDS_MEDIA_ROUTER_REMOTING_DIALOG_CANCEL_BUTTON);
-}
-
-int MediaRemotingDialogView::GetDialogButtons() const {
-  return ui::DIALOG_BUTTON_OK | ui::DIALOG_BUTTON_CANCEL;
-}
-
 bool MediaRemotingDialogView::Accept() {
   ReportPermission(true);
   return true;
@@ -128,8 +115,16 @@ MediaRemotingDialogView::MediaRemotingDialogView(
       dialog_title_(
           l10n_util::GetStringUTF16(IDS_MEDIA_ROUTER_REMOTING_DIALOG_TITLE)) {
   DCHECK(pref_service_);
-  SetLayoutManager(
-      std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
+  DialogDelegate::set_button_label(
+      ui::DIALOG_BUTTON_OK,
+      l10n_util::GetStringUTF16(
+          IDS_MEDIA_ROUTER_REMOTING_DIALOG_OPTIMIZE_BUTTON));
+  DialogDelegate::set_button_label(
+      ui::DIALOG_BUTTON_CANCEL,
+      l10n_util::GetStringUTF16(
+          IDS_MEDIA_ROUTER_REMOTING_DIALOG_CANCEL_BUTTON));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
   // Depress the Cast toolbar icon.
   action_controller_->OnDialogShown();
 }
@@ -159,7 +154,7 @@ void MediaRemotingDialogView::WindowClosing() {
 void MediaRemotingDialogView::ReportPermission(bool allowed) {
   DCHECK(remember_choice_checkbox_);
   DCHECK(permission_callback_);
-  if (remember_choice_checkbox_->checked()) {
+  if (remember_choice_checkbox_->GetChecked()) {
     pref_service_->SetBoolean(::prefs::kMediaRouterMediaRemotingEnabled,
                               allowed);
   }

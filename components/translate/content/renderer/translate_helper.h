@@ -16,7 +16,8 @@
 #include "components/translate/content/common/translate.mojom.h"
 #include "components/translate/core/common/translate_errors.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -118,7 +119,7 @@ class TranslateHelper : public content::RenderFrameObserver,
   static std::string BuildTranslationScript(const std::string& source_lang,
                                             const std::string& target_lang);
 
-  const mojom::ContentTranslateDriverPtr& GetTranslateHandler();
+  const mojo::Remote<mojom::ContentTranslateDriver>& GetTranslateHandler();
 
   // Cleanups all states and pending callbacks associated with the current
   // running page translation.
@@ -171,12 +172,12 @@ class TranslateHelper : public content::RenderFrameObserver,
   // refactor, the other end of the pipe is now attached to a
   // LanguageDetectionTabHelper (which implements the ContentTranslateDriver
   // Mojo interface).
-  mojom::ContentTranslateDriverPtr translate_handler_;
+  mojo::Remote<mojom::ContentTranslateDriver> translate_handler_;
 
-  mojo::Binding<mojom::Page> binding_;
+  mojo::Receiver<mojom::Page> receiver_{this};
 
   // Method factory used to make calls to TranslatePageImpl.
-  base::WeakPtrFactory<TranslateHelper> weak_method_factory_;
+  base::WeakPtrFactory<TranslateHelper> weak_method_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TranslateHelper);
 };

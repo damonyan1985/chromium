@@ -7,15 +7,20 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/base/load_flags.h"
 #include "net/base/mime_sniffer.h"
 #include "net/http/http_raw_request_headers.h"
+#include "net/http/http_request_headers.h"
 #include "net/http/http_util.h"
 #include "net/url_request/url_request.h"
 #include "services/network/public/cpp/http_raw_request_response_info.h"
 #include "services/network/public/cpp/network_switches.h"
-#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/mojom/http_raw_request_response_info.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 
 namespace network {
@@ -26,9 +31,25 @@ const char kFrameAcceptHeader[] =
     "image/apng,*/*;q=0.8";
 const char kDefaultAcceptHeader[] = "*/*";
 
+// Concerning headers that consumers probably shouldn't be allowed to set.
+// Gathering numbers on these before adding them to kUnsafeHeaders.
+const struct {
+  const char* name;
+  ConcerningHeaderId histogram_id;
+} kConcerningHeaders[] = {
+    {net::HttpRequestHeaders::kConnection, ConcerningHeaderId::kConnection},
+    {net::HttpRequestHeaders::kCookie, ConcerningHeaderId::kCookie},
+    {"Date", ConcerningHeaderId::kDate},
+    {"Expect", ConcerningHeaderId::kExpect},
+    // The referer is passed in from the caller on a per-request basis, but
+    // there's a separate field for it that should be used instead.
+    {net::HttpRequestHeaders::kReferer, ConcerningHeaderId::kReferer},
+    {"Via", ConcerningHeaderId::kVia},
+};
+
 bool ShouldSniffContent(net::URLRequest* url_request,
-                        ResourceResponse* response) {
-  const std::string& mime_type = response->head.mime_type;
+                        const mojom::URLResponseHead& response) {
+  const std::string& mime_type = response.mime_type;
 
   std::string content_type_options;
   url_request->GetResponseHeaderByName("x-content-type-options",
@@ -49,20 +70,21 @@ bool ShouldSniffContent(net::URLRequest* url_request,
   return false;
 }
 
-scoped_refptr<HttpRawRequestResponseInfo> BuildRawRequestResponseInfo(
+mojom::HttpRawRequestResponseInfoPtr BuildRawRequestResponseInfo(
     const net::URLRequest& request,
     const net::HttpRawRequestHeaders& raw_request_headers,
     const net::HttpResponseHeaders* raw_response_headers) {
-  scoped_refptr<HttpRawRequestResponseInfo> info =
-      new HttpRawRequestResponseInfo();
+  auto info = mojom::HttpRawRequestResponseInfo::New();
 
   const net::HttpResponseInfo& response_info = request.response_info();
   // Unparsed headers only make sense if they were sent as text, i.e. HTTP 1.x.
   bool report_headers_text =
       !response_info.DidUseQuic() && !response_info.was_fetched_via_spdy;
 
-  for (const auto& pair : raw_request_headers.headers())
-    info->request_headers.push_back(pair);
+  for (const auto& pair : raw_request_headers.headers()) {
+    info->request_headers.push_back(
+        mojom::HttpRawHeaderPair::New(pair.first, pair.second));
+  }
   std::string request_line = raw_request_headers.request_line();
   if (report_headers_text && !request_line.empty()) {
     std::string text = std::move(request_line);
@@ -87,7 +109,8 @@ scoped_refptr<HttpRawRequestResponseInfo> BuildRawRequestResponseInfo(
     std::string value;
     for (size_t it = 0;
          raw_response_headers->EnumerateHeaderLines(&it, &name, &value);) {
-      info->response_headers.push_back(std::make_pair(name, value));
+      info->response_headers.push_back(
+          mojom::HttpRawHeaderPair::New(name, value));
     }
     if (report_headers_text) {
       info->response_headers_text =
@@ -98,13 +121,38 @@ scoped_refptr<HttpRawRequestResponseInfo> BuildRawRequestResponseInfo(
   return info;
 }
 
-std::string ComputeReferrer(const GURL& referrer) {
-  if (!referrer.is_valid() || base::CommandLine::ForCurrentProcess()->HasSwitch(
-                                  switches::kNoReferrers)) {
-    return std::string();
+void LogConcerningRequestHeaders(const net::HttpRequestHeaders& request_headers,
+                                 bool added_during_redirect) {
+  net::HttpRequestHeaders::Iterator it(request_headers);
+
+  bool concerning_header_found = false;
+
+  while (it.GetNext()) {
+    for (const auto& header : kConcerningHeaders) {
+      if (base::EqualsCaseInsensitiveASCII(header.name, it.name())) {
+        concerning_header_found = true;
+        if (added_during_redirect) {
+          UMA_HISTOGRAM_ENUMERATION(
+              "NetworkService.ConcerningRequestHeader.HeaderAddedOnRedirect",
+              header.histogram_id);
+        } else {
+          UMA_HISTOGRAM_ENUMERATION(
+              "NetworkService.ConcerningRequestHeader.HeaderPresentOnStart",
+              header.histogram_id);
+        }
+      }
+    }
   }
 
-  return referrer.spec();
+  if (added_during_redirect) {
+    UMA_HISTOGRAM_BOOLEAN(
+        "NetworkService.ConcerningRequestHeader.AddedOnRedirect",
+        concerning_header_found);
+  } else {
+    UMA_HISTOGRAM_BOOLEAN(
+        "NetworkService.ConcerningRequestHeader.PresentOnStart",
+        concerning_header_found);
+  }
 }
 
 }  // namespace network

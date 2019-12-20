@@ -12,6 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/policy_export.h"
@@ -26,7 +27,7 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
  public:
   // Callback invoked once the policy refresh attempt has completed. Passed
   // bool parameter is true if the refresh was successful (no error).
-  using RefreshPolicyCallback = base::Callback<void(bool)>;
+  using RefreshPolicyCallback = base::OnceCallback<void(bool)>;
 
   // Callback invoked once the unregister attempt has completed. Passed bool
   // parameter is true if unregistering was successful (no error).
@@ -55,7 +56,7 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
 
   // Refreshes policy. |callback| will be invoked after the operation completes
   // or aborts because of errors.
-  virtual void RefreshPolicy(const RefreshPolicyCallback& callback);
+  virtual void RefreshPolicy(RefreshPolicyCallback callback);
 
   // Unregisters the device. |callback| will be invoked after the operation
   // completes or aborts because of errors. All pending refresh policy requests
@@ -78,6 +79,13 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   void ReportValidationResult(CloudPolicyStore* store);
 
   bool IsInitializationComplete() const { return initialization_complete_; }
+
+  // If initial policy refresh was completed returns its result.
+  // This allows ChildPolicyObserver to know whether policy was fetched before
+  // profile creation.
+  base::Optional<bool> initial_policy_refresh_result() const {
+    return initial_policy_refresh_result_;
+  }
 
  private:
   // Helper function that is called when initialization may be complete, and
@@ -127,6 +135,10 @@ class POLICY_EXPORT CloudPolicyService : public CloudPolicyClient::Observer,
   // Set to true once the service is initialized (initial policy load/refresh
   // is complete).
   bool initialization_complete_;
+
+  // Set to true if initial policy refresh was successful. Set to false
+  // otherwise.
+  base::Optional<bool> initial_policy_refresh_result_;
 
   // Observers who will receive notifications when the service has finished
   // initializing.

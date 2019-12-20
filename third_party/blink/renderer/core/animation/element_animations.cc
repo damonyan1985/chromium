@@ -65,7 +65,7 @@ bool ShouldCheckComputedStyles(const ComputedStyle& base_computed_style,
   // Images use instance equality rather than value equality (see
   // crbug.com/781461).
   for (CSSPropertyID id :
-       {CSSPropertyBackgroundImage, CSSPropertyWebkitMaskImage}) {
+       {CSSPropertyID::kBackgroundImage, CSSPropertyID::kWebkitMaskImage}) {
     if (!CSSPropertyEquality::PropertiesEqual(
             PropertyHandle(CSSProperty::Get(id)), base_computed_style,
             computed_style)) {
@@ -87,8 +87,8 @@ void ElementAnimations::UpdateAnimationFlags(ComputedStyle& style) {
     const Animation& animation = *entry.key;
     DCHECK(animation.effect());
     // FIXME: Needs to consider AnimationGroup once added.
-    DCHECK(animation.effect()->IsKeyframeEffect());
-    const KeyframeEffect& effect = *ToKeyframeEffect(animation.effect());
+    DCHECK(IsA<KeyframeEffect>(animation.effect()));
+    const auto& effect = *To<KeyframeEffect>(animation.effect());
     if (!effect.IsCurrent())
       continue;
     UpdateAnimationFlagsForEffect(effect, style);
@@ -171,6 +171,18 @@ void ElementAnimations::UpdateBaseComputedStyle(
 
 void ElementAnimations::ClearBaseComputedStyle() {
   base_computed_style_ = nullptr;
+}
+
+bool ElementAnimations::AnimationsPreserveAxisAlignment() const {
+  for (const auto& entry : animations_) {
+    const Animation& animation = *entry.key;
+    DCHECK(animation.effect());
+    DCHECK(IsA<KeyframeEffect>(animation.effect()));
+    const auto& effect = *To<KeyframeEffect>(animation.effect());
+    if (!effect.AnimationsPreserveAxisAlignment())
+      return false;
+  }
+  return true;
 }
 
 }  // namespace blink

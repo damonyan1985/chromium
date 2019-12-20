@@ -27,6 +27,7 @@
 #include "google_apis/drive/time_util.h"
 #include "net/base/url_util.h"
 #include "net/http/http_response_headers.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace google_apis {
 namespace drive {
@@ -53,7 +54,6 @@ const char kHttpBr[] = "\r\n";
 const char kMultipartMixedMimeTypePrefix[] = "multipart/mixed; boundary=";
 
 // UMA names.
-const char kUMADriveBatchUploadResponseCode[] = "Drive.BatchUploadResponseCode";
 const char kUMADriveTotalFileCountInBatchUpload[] =
     "Drive.TotalFileCountInBatchUpload";
 const char kUMADriveTotalFileSizeInBatchUpload[] =
@@ -1110,8 +1110,7 @@ SingleBatchableDelegateRequest::SingleBatchableDelegateRequest(
               // class and cannot outlive this instance.
               base::Unretained(this)),
           ProgressCallback()),
-      delegate_(std::move(delegate)),
-      weak_ptr_factory_(this) {}
+      delegate_(std::move(delegate)) {}
 
 SingleBatchableDelegateRequest::~SingleBatchableDelegateRequest() {
 }
@@ -1129,8 +1128,8 @@ SingleBatchableDelegateRequest::GetExtraRequestHeaders() const {
   return delegate_->GetExtraRequestHeaders();
 }
 
-void SingleBatchableDelegateRequest::Prepare(const PrepareCallback& callback) {
-  delegate_->Prepare(callback);
+void SingleBatchableDelegateRequest::Prepare(PrepareCallback callback) {
+  delegate_->Prepare(std::move(callback));
 }
 
 bool SingleBatchableDelegateRequest::GetContentData(
@@ -1140,7 +1139,7 @@ bool SingleBatchableDelegateRequest::GetContentData(
 }
 
 void SingleBatchableDelegateRequest::ProcessURLFetchResults(
-    const network::ResourceResponseHead* response_head,
+    const network::mojom::URLResponseHead* response_head,
     base::FilePath response_file,
     std::string response_body) {
   delegate_->NotifyResult(
@@ -1182,8 +1181,7 @@ BatchUploadRequest::BatchUploadRequest(
       sender_(sender),
       url_generator_(url_generator),
       committed_(false),
-      last_progress_value_(0),
-      weak_ptr_factory_(this) {}
+      last_progress_value_(0) {}
 
 BatchUploadRequest::~BatchUploadRequest() {
 }
@@ -1227,10 +1225,10 @@ void BatchUploadRequest::Commit() {
   }
 }
 
-void BatchUploadRequest::Prepare(const PrepareCallback& callback) {
+void BatchUploadRequest::Prepare(PrepareCallback callback) {
   DCHECK(CalledOnValidThread());
-  DCHECK(!callback.is_null());
-  prepare_callback_ = callback;
+  DCHECK(callback);
+  prepare_callback_ = std::move(callback);
   MayCompletePrepare();
 }
 
@@ -1292,7 +1290,7 @@ void BatchUploadRequest::MayCompletePrepare() {
   for (size_t i = 0; i < child_requests_.size(); ++i) {
     child_requests_[i]->data_offset += part_data_offset[i];
   }
-  prepare_callback_.Run(HTTP_SUCCESS);
+  std::move(prepare_callback_).Run(HTTP_SUCCESS);
 }
 
 bool BatchUploadRequest::GetContentData(std::string* upload_content_type,
@@ -1322,22 +1320,9 @@ std::vector<std::string> BatchUploadRequest::GetExtraRequestHeaders() const {
 }
 
 void BatchUploadRequest::ProcessURLFetchResults(
-    const network::ResourceResponseHead* response_head,
+    const network::mojom::URLResponseHead* response_head,
     base::FilePath response_file,
     std::string response_body) {
-  // Return the detailed raw HTTP code if the error code is abstracted
-  // DRIVE_OTHER_ERROR. If HTTP connection is failed and the status code is -1,
-  // return network status error.
-  int histogram_error = 0;
-  if (GetErrorCode() != DRIVE_OTHER_ERROR) {
-    histogram_error = GetErrorCode();
-  } else if (response_head && response_head->headers->response_code() != -1) {
-    histogram_error = response_head->headers->response_code();
-  } else {
-    histogram_error = NetError();
-  }
-  base::UmaHistogramSparse(kUMADriveBatchUploadResponseCode, histogram_error);
-
   if (!IsSuccessfulDriveApiErrorCode(GetErrorCode())) {
     RunCallbackOnPrematureFailure(GetErrorCode());
     sender_->RequestFinished(this);

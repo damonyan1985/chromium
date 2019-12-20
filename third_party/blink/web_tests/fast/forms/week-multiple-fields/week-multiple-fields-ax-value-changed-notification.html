@@ -1,37 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
-<script src="../../../resources/js-test.js"></script>
+  <script src="../../../resources/testharness.js"></script>
+  <script src="../../../resources/testharnessreport.js"></script>
+  <script src="../resources/multiple-fields-ax-value-changed-notification-helper.js"></script>
 </head>
 <body>
 <input id="test" type="week" value="2012-W10">
 <script>
-description('This test checks value changed accessibility notifications.');
+async_test((t) => {
+    var testInput = document.getElementById('test');
 
-var testInput = document.getElementById("test");
-
-if (!window.accessibilityController || !window.eventSender)
-    debug("Please run inside DRT or WRT.");
-else {
-    accessibilityController.addNotificationListener(function (element, notification) {
-        if (notification == 'Focus' || notification == 'ValueChanged') {
-            debug(notification + ' ' + element.name.trim() + '=' + element.valueDescription.substr(20));
-        }
-    });
+    var listener = new TestAccessibilityControllerNotificationListener(t);
+    listener.queueExpectedNotification("Focus", "Week", "10", "\t");
+    listener.queueExpectedNotification("Focus", "Year", "2012", "4");
+    listener.queueExpectedNotification("ValueChanged", "Year", "0004");
+    listener.queueExpectedNotification("ValueChanged", "Year", "0004", "ArrowUp");
+    listener.queueExpectedNotification("ValueChanged", "Year", "0005");
+    listener.queueExpectedNotification("ValueChanged", "Year", "0005");
 
     testInput.focus();
-    eventSender.keyDown('\t');
-    eventSender.keyDown('4');
-    eventSender.keyDown('ArrowUp');
-
-    window.jsTestIsAsync = true;
 
     window.setTimeout(function() {
-        debug('');
-        testInput.remove();
-        finishJSTest();
-    }, 1);
-}
+        assert_unreached("Did not receive all accessibility notifications");
+        t.done();
+    }, 500);
+}, 'This test checks value changed accessibility notifications.');
 </script>
 </body>
 </html>

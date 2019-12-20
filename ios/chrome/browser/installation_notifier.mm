@@ -11,7 +11,7 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "net/base/backoff_entry.h"
 #include "url/gurl.h"
 
@@ -69,10 +69,10 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
   __weak NSNotificationCenter* _notificationCenter;
 
   // This object can be a fake application in unittests.
-  __weak UIApplication* sharedApplication_;
+  __weak UIApplication* _sharedApplication;
 }
 
-@synthesize lastCreatedBlockId = lastCreatedBlockId_;
+@synthesize lastCreatedBlockId = _lastCreatedBlockId;
 
 + (InstallationNotifier*)sharedInstance {
   static InstallationNotifier* instance = [[InstallationNotifier alloc] init];
@@ -82,7 +82,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 - (instancetype)init {
   self = [super init];
   if (self) {
-    lastCreatedBlockId_ = 0;
+    _lastCreatedBlockId = 0;
     _dispatcher = [[DefaultDispatcher alloc] init];
     _installedAppObservers = [[NSMutableDictionary alloc] init];
     _notificationCenter = [NSNotificationCenter defaultCenter];
@@ -141,7 +141,6 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
       [observers removeObject:weakReferenceToObserver];
       if ([observers count] == 0) {
         [_installedAppObservers removeObjectForKey:scheme];
-        UMA_HISTOGRAM_BOOLEAN("NativeAppLauncher.InstallationDetected", NO);
       }
     }
   }
@@ -155,7 +154,7 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
 
 - (void)dispatchInstallationNotifierBlock {
   DCHECK_CURRENTLY_ON(web::WebThread::UI);
-  int blockId = ++lastCreatedBlockId_;
+  int blockId = ++_lastCreatedBlockId;
   _backoffEntry->InformOfRequest(false);
   int64_t delayInNSec =
       _backoffEntry->GetTimeUntilRelease().InMicroseconds() * NSEC_PER_USEC;
@@ -190,7 +189,6 @@ const net::BackoffEntry::Policy kPollingBackoffPolicy = {
       }
       if (![keysToDelete containsObject:scheme]) {
         [keysToDelete addObject:scheme];
-        UMA_HISTOGRAM_BOOLEAN("NativeAppLauncher.InstallationDetected", YES);
       }
     } else {
       keepPolling = YES;

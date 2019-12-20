@@ -51,8 +51,7 @@ Commit::~Commit() {
 }
 
 // static
-std::unique_ptr<Commit> Commit::Init(ModelTypeSet requested_types,
-                                     ModelTypeSet enabled_types,
+std::unique_ptr<Commit> Commit::Init(ModelTypeSet enabled_types,
                                      size_t max_entries,
                                      const std::string& account_name,
                                      const std::string& cache_guid,
@@ -61,10 +60,8 @@ std::unique_ptr<Commit> Commit::Init(ModelTypeSet requested_types,
                                      CommitProcessor* commit_processor,
                                      ExtensionsActivity* extensions_activity) {
   // Gather per-type contributions.
-  ContributionMap contributions;
-  commit_processor->GatherCommitContributions(requested_types, max_entries,
-                                              cookie_jar_mismatch,
-                                              cookie_jar_empty, &contributions);
+  ContributionMap contributions = commit_processor->GatherCommitContributions(
+      max_entries, cookie_jar_mismatch, cookie_jar_empty);
 
   // Give up if no one had anything to commit.
   if (contributions.empty())
@@ -112,9 +109,11 @@ SyncerError Commit::PostAndProcessResponse(
   ModelTypeSet request_types;
   for (ContributionMap::const_iterator it = contributions_.begin();
        it != contributions_.end(); ++it) {
-    request_types.Put(it->first);
+    ModelType request_type = it->first;
+    request_types.Put(request_type);
+    UMA_HISTOGRAM_ENUMERATION("Sync.PostedDataTypeCommitRequest",
+                              ModelTypeHistogramValue(request_type));
   }
-  cycle->mutable_status_controller()->set_commit_request_types(request_types);
 
   if (cycle->context()->debug_info_getter()) {
     sync_pb::DebugInfo* debug_info = message_.mutable_debug_info();
@@ -122,6 +121,7 @@ SyncerError Commit::PostAndProcessResponse(
   }
 
   DVLOG(1) << "Sending commit message.";
+  SyncerProtoUtil::AddRequiredFieldsToClientToServerMessage(cycle, &message_);
 
   CommitRequestEvent request_event(base::Time::Now(),
                                    message_.commit().entries_size(),
@@ -131,7 +131,7 @@ SyncerError Commit::PostAndProcessResponse(
   TRACE_EVENT_BEGIN0("sync", "PostCommit");
   sync_pb::ClientToServerResponse response;
   const SyncerError post_result = SyncerProtoUtil::PostClientToServerMessage(
-      &message_, &response, cycle, nullptr);
+      message_, &response, cycle, nullptr);
   TRACE_EVENT_END0("sync", "PostCommit");
 
   // TODO(rlarocque): Use result that includes errors captured later?

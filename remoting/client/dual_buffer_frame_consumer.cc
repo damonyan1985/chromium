@@ -70,10 +70,7 @@ DualBufferFrameConsumer::DualBufferFrameConsumer(
     const RenderCallback& callback,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     protocol::FrameConsumer::PixelFormat format)
-    : callback_(callback),
-      task_runner_(task_runner),
-      pixel_format_(format),
-      weak_factory_(this) {
+    : callback_(callback), task_runner_(task_runner), pixel_format_(format) {
   weak_ptr_ = weak_factory_.GetWeakPtr();
   thread_checker_.DetachFromThread();
 }
@@ -155,9 +152,11 @@ void DualBufferFrameConsumer::RunRenderCallback(
   }
 
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback_, base::Passed(&frame), base::Bind(
-          base::IgnoreResult(&base::TaskRunner::PostTask),
-          base::ThreadTaskRunnerHandle::Get(), FROM_HERE, done)));
+      FROM_HERE,
+      base::BindOnce(
+          callback_, std::move(frame),
+          base::Bind(base::IgnoreResult(&base::TaskRunner::PostTask),
+                     base::ThreadTaskRunnerHandle::Get(), FROM_HERE, done)));
 }
 
 }  // namespace remoting

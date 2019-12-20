@@ -15,6 +15,7 @@ namespace web {
 
 enum class NavigationInitiationType;
 class NavigationItem;
+class NavigationItemImpl;
 class WebState;
 
 // Delegate for NavigationManager to hand off parts of the navigation flow.
@@ -26,6 +27,10 @@ class NavigationManagerDelegate {
   // navigation.
   virtual void ClearTransientContent() = 0;
 
+  // Instructs the delegate to clear any presented dialogs to prepare for a new
+  // navigation.
+  virtual void ClearDialogs() = 0;
+
   // Instructs the delegate to record page states (e.g. scroll position, form
   // values, whatever can be harvested) from the current page into the
   // navigation item.
@@ -35,22 +40,15 @@ class NavigationManagerDelegate {
   virtual void OnGoToIndexSameDocumentNavigation(NavigationInitiationType type,
                                                  bool has_user_gesture) = 0;
 
-  // Instructs the delegate to perform book keeping in preparation for a new
-  // navigation using a different user agent type.
-  virtual void WillChangeUserAgentType() = 0;
-
   // Instructs the delegate to load the current navigation item.
-  virtual void LoadCurrentItem() = 0;
+  virtual void LoadCurrentItem(NavigationInitiationType type) = 0;
 
   // Instructs the delegate to load the current navigation item if the current
-  // page has not loaded yet.
+  // page has not loaded yet. The navigation should be browser-initiated.
   virtual void LoadIfNecessary() = 0;
 
   // Instructs the delegate to reload.
   virtual void Reload() = 0;
-
-  // Informs the delegate that committed navigation items have been pruned.
-  virtual void OnNavigationItemsPruned(size_t pruned_item_count) = 0;
 
   // Informs the delegate that a navigation item has been committed.
   virtual void OnNavigationItemCommitted(NavigationItem* item) = 0;
@@ -74,6 +72,9 @@ class NavigationManagerDelegate {
   // currently is to clear back-forward history in web view before restoring
   // session history.
   virtual void RemoveWebView() = 0;
+
+  // Used to access pending item stored in NavigationContext.
+  virtual NavigationItemImpl* GetPendingItem() = 0;
 };
 
 }  // namespace web

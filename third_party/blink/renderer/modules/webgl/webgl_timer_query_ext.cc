@@ -11,10 +11,6 @@
 
 namespace blink {
 
-WebGLTimerQueryEXT* WebGLTimerQueryEXT::Create(WebGLRenderingContextBase* ctx) {
-  return MakeGarbageCollected<WebGLTimerQueryEXT>(ctx);
-}
-
 WebGLTimerQueryEXT::WebGLTimerQueryEXT(WebGLRenderingContextBase* ctx)
     : WebGLContextObject(ctx),
       target_(0),
@@ -27,9 +23,7 @@ WebGLTimerQueryEXT::WebGLTimerQueryEXT(WebGLRenderingContextBase* ctx)
   Context()->ContextGL()->GenQueriesEXT(1, &query_id_);
 }
 
-WebGLTimerQueryEXT::~WebGLTimerQueryEXT() {
-  RunDestructor();
-}
+WebGLTimerQueryEXT::~WebGLTimerQueryEXT() = default;
 
 void WebGLTimerQueryEXT::ResetCachedResult() {
   can_update_availability_ = false;

@@ -84,7 +84,7 @@ class MediaGalleriesEventRouter : public extensions::BrowserContextKeyedAPI,
   // Current profile.
   Profile* profile_;
 
-  base::WeakPtrFactory<MediaGalleriesEventRouter> weak_ptr_factory_;
+  base::WeakPtrFactory<MediaGalleriesEventRouter> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaGalleriesEventRouter);
 };
@@ -195,7 +195,7 @@ class MediaGalleriesAddGalleryWatchFunction
     : public ChromeAsyncExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("mediaGalleries.addGalleryWatch",
-                             MEDIAGALLERIES_ADDGALLERYWATCH);
+                             MEDIAGALLERIES_ADDGALLERYWATCH)
 
  protected:
   ~MediaGalleriesAddGalleryWatchFunction() override;
@@ -212,7 +212,7 @@ class MediaGalleriesRemoveGalleryWatchFunction
     : public ChromeAsyncExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("mediaGalleries.removeGalleryWatch",
-                             MEDIAGALLERIES_REMOVEGALLERYWATCH);
+                             MEDIAGALLERIES_REMOVEGALLERYWATCH)
 
  protected:
   ~MediaGalleriesRemoveGalleryWatchFunction() override;

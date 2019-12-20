@@ -118,6 +118,24 @@ void AssignBitset(const unsigned long* src,
     memset(&dst[src_len], 0, (dst_len - src_len) * sizeof(unsigned long));
 }
 
+bool IsBlacklistedAbsoluteMouseDevice(const input_id& id) {
+  static constexpr struct {
+    uint16_t vid;
+    uint16_t pid;
+  } kUSBLegacyBlackListedDevices[] = {
+      {0x222a, 0x0001},  // ILITEK ILITEK-TP
+  };
+
+  for (size_t i = 0; i < base::size(kUSBLegacyBlackListedDevices); ++i) {
+    if (id.vendor == kUSBLegacyBlackListedDevices[i].vid &&
+        id.product == kUSBLegacyBlackListedDevices[i].pid) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 }  // namespace
 
 EventDeviceInfo::EventDeviceInfo() {
@@ -262,6 +280,9 @@ void EventDeviceInfo::SetDeviceType(InputDeviceType type) {
 void EventDeviceInfo::SetId(input_id id) {
   input_id_ = id;
 }
+void EventDeviceInfo::SetName(const std::string& name) {
+  name_ = name;
+}
 
 bool EventDeviceInfo::HasEventType(unsigned int type) const {
   if (type > EV_MAX)
@@ -317,6 +338,10 @@ int32_t EventDeviceInfo::GetAbsMinimum(unsigned int code) const {
 
 int32_t EventDeviceInfo::GetAbsMaximum(unsigned int code) const {
   return abs_info_[code].maximum;
+}
+
+int32_t EventDeviceInfo::GetAbsResolution(unsigned int code) const {
+  return abs_info_[code].resolution;
 }
 
 int32_t EventDeviceInfo::GetAbsValue(unsigned int code) const {
@@ -462,8 +487,11 @@ ui::InputDeviceType EventDeviceInfo::GetInputDeviceTypeFromId(input_id id) {
     uint16_t vid;
     uint16_t pid;
   } kUSBInternalDevices[] = {
-    { 0x18d1, 0x5030 }, // Google, Hammer PID
-    { 0x1fd2, 0x8103 }  // LG, Internal TouchScreen PID
+      {0x18d1, 0x502b},  // Google, Hammer PID (soraka)
+      {0x18d1, 0x5030},  // Google, Whiskers PID (nocturne)
+      {0x18d1, 0x503c},  // Google, Masterball PID (krane)
+      {0x18d1, 0x503d},  // Google, Magnemite PID (kodama)
+      {0x1fd2, 0x8103},  // LG, Internal TouchScreen PID
   };
 
   if (id.bustype == BUS_USB) {
@@ -506,7 +534,8 @@ EventDeviceInfo::ProbeLegacyAbsoluteDevice() const {
     return LegacyAbsoluteDeviceType::TOUCHSCREEN;
 
   // ABS_Z mitigation for extra device on some Elo devices.
-  if (HasKeyEvent(BTN_LEFT) && !HasAbsEvent(ABS_Z))
+  if (HasKeyEvent(BTN_LEFT) && !HasAbsEvent(ABS_Z) &&
+      !IsBlacklistedAbsoluteMouseDevice(input_id_))
     return LegacyAbsoluteDeviceType::TOUCHSCREEN;
 
   return LegacyAbsoluteDeviceType::NONE;

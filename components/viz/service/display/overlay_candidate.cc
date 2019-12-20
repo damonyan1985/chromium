@@ -15,11 +15,12 @@
 #include "components/viz/common/quads/stream_video_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
+#include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "components/viz/common/quads/yuv_video_draw_quad.h"
 #include "components/viz/service/display/display_resource_provider.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/vector3d_f.h"
-#include "ui/gl/dc_renderer_layer_params.h"
+#include "ui/gfx/video_types.h"
 
 namespace viz {
 
@@ -86,7 +87,7 @@ OverlayCandidate::OverlayCandidate()
       uv_rect(0.f, 0.f, 1.f, 1.f),
       is_clipped(false),
       is_opaque(false),
-      use_output_surface_for_resource(false),
+      no_occluding_damage(false),
       resource_id(0),
 #if defined(OS_ANDROID)
       is_backed_by_surface_texture(false),
@@ -116,6 +117,9 @@ bool OverlayCandidate::FromDrawQuad(DisplayResourceProvider* resource_provider,
   // We don't support an opacity value different than one for an overlay plane.
   if (quad->shared_quad_state->opacity != 1.f)
     return false;
+  // We can't support overlays with rounded corner clipping.
+  if (!quad->shared_quad_state->rounded_corner_bounds.IsEmpty())
+    return false;
   // We support only kSrc (no blending) and kSrcOver (blending with premul).
   if (!(quad->shared_quad_state->blend_mode == SkBlendMode::kSrc ||
         quad->shared_quad_state->blend_mode == SkBlendMode::kSrcOver)) {
@@ -123,13 +127,16 @@ bool OverlayCandidate::FromDrawQuad(DisplayResourceProvider* resource_provider,
   }
 
   switch (quad->material) {
-    case DrawQuad::TEXTURE_CONTENT:
+    case DrawQuad::Material::kTextureContent:
       return FromTextureQuad(resource_provider,
                              TextureDrawQuad::MaterialCast(quad), candidate);
-    case DrawQuad::TILED_CONTENT:
+    case DrawQuad::Material::kTiledContent:
       return FromTileQuad(resource_provider, TileDrawQuad::MaterialCast(quad),
                           candidate);
-    case DrawQuad::STREAM_VIDEO_CONTENT:
+    case DrawQuad::Material::kVideoHole:
+      return FromVideoHoleQuad(
+          resource_provider, VideoHoleDrawQuad::MaterialCast(quad), candidate);
+    case DrawQuad::Material::kStreamVideoContent:
       return FromStreamVideoQuad(resource_provider,
                                  StreamVideoDrawQuad::MaterialCast(quad),
                                  candidate);
@@ -145,7 +152,7 @@ bool OverlayCandidate::IsInvisibleQuad(const DrawQuad* quad) {
   float opacity = quad->shared_quad_state->opacity;
   if (opacity < std::numeric_limits<float>::epsilon())
     return true;
-  if (quad->material != DrawQuad::SOLID_COLOR)
+  if (quad->material != DrawQuad::Material::kSolidColor)
     return false;
   const SkColor color = SolidColorDrawQuad::MaterialCast(quad)->color;
   const float alpha = (SkColorGetA(color) * (1.0f / 255.0f)) * opacity;
@@ -174,12 +181,14 @@ bool OverlayCandidate::IsOccluded(const OverlayCandidate& candidate,
 // static
 bool OverlayCandidate::RequiresOverlay(const DrawQuad* quad) {
   switch (quad->material) {
-    case DrawQuad::TEXTURE_CONTENT:
+    case DrawQuad::Material::kTextureContent:
       return TextureDrawQuad::MaterialCast(quad)->protected_video_type ==
-             ui::ProtectedVideoType::kHardwareProtected;
-    case DrawQuad::YUV_VIDEO_CONTENT:
+             gfx::ProtectedVideoType::kHardwareProtected;
+    case DrawQuad::Material::kVideoHole:
+      return true;
+    case DrawQuad::Material::kYuvVideoContent:
       return YUVVideoDrawQuad::MaterialCast(quad)->protected_video_type ==
-             ui::ProtectedVideoType::kHardwareProtected;
+             gfx::ProtectedVideoType::kHardwareProtected;
     default:
       return false;
   }
@@ -194,7 +203,7 @@ bool OverlayCandidate::IsOccludedByFilteredQuad(
         render_pass_backdrop_filters) {
   for (auto overlap_iter = quad_list_begin; overlap_iter != quad_list_end;
        ++overlap_iter) {
-    if (overlap_iter->material == DrawQuad::RENDER_PASS) {
+    if (overlap_iter->material == DrawQuad::Material::kRenderPass) {
       gfx::RectF overlap_rect = cc::MathUtil::MapClippedRect(
           overlap_iter->shared_quad_state->quad_to_target_transform,
           gfx::RectF(overlap_iter->rect));
@@ -221,7 +230,8 @@ bool OverlayCandidate::FromDrawQuadResource(
     return false;
 
   candidate->format = resource_provider->GetBufferFormat(resource_id);
-  if (!base::ContainsValue(kOverlayFormats, candidate->format))
+  candidate->color_space = resource_provider->GetColorSpace(resource_id);
+  if (!base::Contains(kOverlayFormats, candidate->format))
     return false;
 
   gfx::OverlayTransform overlay_transform = GetOverlayTransform(
@@ -236,9 +246,37 @@ bool OverlayCandidate::FromDrawQuadResource(
   candidate->clip_rect = quad->shared_quad_state->clip_rect;
   candidate->is_clipped = quad->shared_quad_state->is_clipped;
   candidate->is_opaque = !quad->ShouldDrawWithBlending();
+  if (quad->shared_quad_state->occluding_damage_rect.has_value()) {
+    candidate->no_occluding_damage =
+        quad->shared_quad_state->occluding_damage_rect->IsEmpty();
+  }
 
   candidate->resource_id = resource_id;
   candidate->transform = overlay_transform;
+
+  return true;
+}
+
+// static
+// For VideoHoleDrawQuad, only calculate geometry information
+// and put it in the |candidate|.
+bool OverlayCandidate::FromVideoHoleQuad(
+    DisplayResourceProvider* resource_provider,
+    const VideoHoleDrawQuad* quad,
+    OverlayCandidate* candidate) {
+  gfx::OverlayTransform overlay_transform = GetOverlayTransform(
+      quad->shared_quad_state->quad_to_target_transform, false);
+  if (overlay_transform == gfx::OVERLAY_TRANSFORM_INVALID)
+    return false;
+
+  auto& transform = quad->shared_quad_state->quad_to_target_transform;
+  candidate->display_rect = gfx::RectF(quad->rect);
+  transform.TransformRect(&candidate->display_rect);
+  candidate->transform = overlay_transform;
+  if (quad->shared_quad_state->occluding_damage_rect.has_value()) {
+    candidate->no_occluding_damage =
+        quad->shared_quad_state->occluding_damage_rect->IsEmpty();
+  }
 
   return true;
 }
@@ -248,7 +286,9 @@ bool OverlayCandidate::FromTextureQuad(
     DisplayResourceProvider* resource_provider,
     const TextureDrawQuad* quad,
     OverlayCandidate* candidate) {
-  if (quad->background_color != SK_ColorTRANSPARENT)
+  if (quad->background_color != SK_ColorTRANSPARENT &&
+      (quad->background_color != SK_ColorBLACK ||
+       quad->ShouldDrawWithBlending()))
     return false;
   if (!FromDrawQuadResource(resource_provider, quad, quad->resource_id(),
                             quad->y_flipped, candidate)) {
@@ -291,36 +331,4 @@ bool OverlayCandidate::FromStreamVideoQuad(
 #endif
   return true;
 }
-
-OverlayCandidateList::OverlayCandidateList() = default;
-
-OverlayCandidateList::OverlayCandidateList(const OverlayCandidateList& other) =
-    default;
-
-OverlayCandidateList::OverlayCandidateList(OverlayCandidateList&& other) =
-    default;
-
-OverlayCandidateList::~OverlayCandidateList() = default;
-
-OverlayCandidateList& OverlayCandidateList::operator=(
-    const OverlayCandidateList& other) = default;
-
-OverlayCandidateList& OverlayCandidateList::operator=(
-    OverlayCandidateList&& other) = default;
-
-void OverlayCandidateList::AddPromotionHint(const OverlayCandidate& candidate) {
-  promotion_hint_info_map_[candidate.resource_id] = candidate.display_rect;
-}
-
-void OverlayCandidateList::AddToPromotionHintRequestorSetIfNeeded(
-    const DisplayResourceProvider* resource_provider,
-    const DrawQuad* quad) {
-  if (quad->material != DrawQuad::STREAM_VIDEO_CONTENT)
-    return;
-  ResourceId id = StreamVideoDrawQuad::MaterialCast(quad)->resource_id();
-  if (!resource_provider->DoesResourceWantPromotionHint(id))
-    return;
-  promotion_hint_requestor_set_.insert(id);
-}
-
 }  // namespace viz

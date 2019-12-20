@@ -8,6 +8,7 @@
 
 #include "ash/public/cpp/shelf_types.h"
 #include "base/macros.h"
+#include "chrome/browser/ui/ash/launcher/app_service/app_service_app_window_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/browser_shortcut_launcher_item_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
@@ -18,6 +19,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/components/web_app_helpers.h"
+#include "chrome/common/chrome_features.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -25,7 +27,7 @@
 namespace {
 
 bool IsV1WindowedApp(Browser* browser) {
-  if (!browser->is_type_popup() || !browser->is_app())
+  if (!browser->deprecated_is_app())
     return false;
   // Crostini terminal windows do not have an app id and are handled by
   // CrostiniAppWindowShelfController. All other app windows should have a non
@@ -82,6 +84,13 @@ BrowserStatusMonitor::BrowserStatusMonitor(
     : launcher_controller_(launcher_controller),
       browser_tab_strip_tracker_(this, this, this) {
   DCHECK(launcher_controller_);
+
+  if (base::FeatureList::IsEnabled(features::kAppServiceInstanceRegistry)) {
+    app_service_instance_helper_ =
+        launcher_controller->app_service_app_window_controller()
+            ->app_service_instance_helper();
+    DCHECK(app_service_instance_helper_);
+  }
 }
 
 BrowserStatusMonitor::~BrowserStatusMonitor() {
@@ -134,6 +143,8 @@ void BrowserStatusMonitor::OnBrowserRemoved(Browser* browser) {
     RemoveV1AppFromShelf(browser);
 
   UpdateBrowserItemState();
+  if (app_service_instance_helper_)
+    app_service_instance_helper_->OnBrowserRemoved();
 }
 
 void BrowserStatusMonitor::OnTabStripModelChanged(
@@ -141,18 +152,18 @@ void BrowserStatusMonitor::OnTabStripModelChanged(
     const TabStripModelChange& change,
     const TabStripSelectionChange& selection) {
   if (change.type() == TabStripModelChange::kInserted) {
-    for (const auto& delta : change.deltas())
-      OnTabInserted(delta.insert.contents);
+    for (const auto& contents : change.GetInsert()->contents)
+      OnTabInserted(contents.contents);
   } else if (change.type() == TabStripModelChange::kRemoved) {
-    for (const auto& delta : change.deltas()) {
-      if (delta.remove.will_be_deleted)
-        OnTabClosing(delta.remove.contents);
+    auto* remove = change.GetRemove();
+    if (remove->will_be_deleted) {
+      for (const auto& contents : remove->contents)
+        OnTabClosing(contents.contents);
     }
   } else if (change.type() == TabStripModelChange::kReplaced) {
-    for (const auto& delta : change.deltas()) {
-      OnTabReplaced(tab_strip_model, delta.replace.old_contents,
-                    delta.replace.new_contents);
-    }
+    auto* replace = change.GetReplace();
+    OnTabReplaced(tab_strip_model, replace->old_contents,
+                  replace->new_contents);
   }
 
   if (tab_strip_model->empty())
@@ -225,6 +236,11 @@ void BrowserStatusMonitor::OnActiveTabChanged(
     UpdateBrowserItemState();
     SetShelfIDForBrowserWindowContents(browser, new_contents);
   }
+
+  if (app_service_instance_helper_) {
+    app_service_instance_helper_->OnActiveTabChanged(old_contents,
+                                                     new_contents);
+  }
 }
 
 void BrowserStatusMonitor::OnTabReplaced(TabStripModel* tab_strip_model,
@@ -243,16 +259,23 @@ void BrowserStatusMonitor::OnTabReplaced(TabStripModel* tab_strip_model,
     SetShelfIDForBrowserWindowContents(browser, new_contents);
 
   AddWebContentsObserver(new_contents);
+
+  if (app_service_instance_helper_)
+    app_service_instance_helper_->OnTabReplaced(old_contents, new_contents);
 }
 
 void BrowserStatusMonitor::OnTabInserted(content::WebContents* contents) {
   UpdateAppItemState(contents, false /*remove*/);
   AddWebContentsObserver(contents);
+  if (app_service_instance_helper_)
+    app_service_instance_helper_->OnTabInserted(contents);
 }
 
 void BrowserStatusMonitor::OnTabClosing(content::WebContents* contents) {
   UpdateAppItemState(contents, true /*remove*/);
   RemoveWebContentsObserver(contents);
+  if (app_service_instance_helper_)
+    app_service_instance_helper_->OnTabClosing(contents);
 }
 
 void BrowserStatusMonitor::AddWebContentsObserver(

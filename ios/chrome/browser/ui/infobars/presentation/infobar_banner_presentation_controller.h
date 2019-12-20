@@ -7,9 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
-// TODO(crbug.com/1372916): PLACEHOLDER Work in Progress class for the new
-// InfobarUI.
+@protocol InfobarBannerPositioner;
+
+// InfobarBanner Presentation Controller.
 @interface InfobarBannerPresentationController : UIPresentationController
+
+// Delegate used to position the InfobarBanner.
+@property(nonatomic, assign) id<InfobarBannerPositioner> bannerPositioner;
 
 @end
 

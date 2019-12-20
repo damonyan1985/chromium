@@ -4,6 +4,9 @@
 
 #include "chrome/browser/chromeos/arc/screen_capture/arc_screen_capture_bridge.h"
 
+#include <utility>
+#include <vector>
+
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -12,9 +15,10 @@
 #include "base/system/sys_info.h"
 #include "chrome/browser/chromeos/arc/screen_capture/arc_screen_capture_session.h"
 #include "chrome/browser/media/webrtc/desktop_media_list_ash.h"
-#include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "content/public/browser/browser_thread.h"
+#include "mojo/public/cpp/bindings/interface_ptr.h"
 
 namespace {
 constexpr char kChromeOSReleaseTrack[] = "CHROMEOS_RELEASE_TRACK";
@@ -73,7 +77,7 @@ ArcScreenCaptureBridge::GrantedCaptureParams::~GrantedCaptureParams() {}
 
 ArcScreenCaptureBridge::ArcScreenCaptureBridge(content::BrowserContext* context,
                                                ArcBridgeService* bridge_service)
-    : arc_bridge_service_(bridge_service), weak_factory_(this) {
+    : arc_bridge_service_(bridge_service) {
   arc_bridge_service_->screen_capture()->SetHost(this);
 }
 
@@ -162,7 +166,7 @@ void ArcScreenCaptureBridge::TestModeAcceptPermission(
   granted_permissions_map_.emplace(std::make_pair(
       package_name,
       GrantedCaptureParams(found->second.display_name,
-                           content::DesktopMediaID::RegisterAuraWindow(
+                           content::DesktopMediaID::RegisterNativeWindow(
                                content::DesktopMediaID::TYPE_SCREEN,
                                ash::Shell::GetPrimaryRootWindow()),
                            false /* enable notification */)));
@@ -190,9 +194,15 @@ void ArcScreenCaptureBridge::OpenSession(
     std::move(callback).Run(nullptr);
     return;
   }
-  std::move(callback).Run(ArcScreenCaptureSession::Create(
-      std::move(notifier), found->second.display_name, found->second.desktop_id,
-      size, found->second.enable_notification));
+
+  // TODO(crbug.com/955171): Remove this temporary conversion to InterfacePtr
+  // once OpenSession callback from //components/arc/mojom/screen_capture.mojom
+  // could take pending_remote directly. Refer to crrev.com/c/1868870.
+  mojo::InterfacePtr<mojom::ScreenCaptureSession> screen_capture_session_ptr(
+      ArcScreenCaptureSession::Create(
+          std::move(notifier), found->second.display_name,
+          found->second.desktop_id, size, found->second.enable_notification));
+  std::move(callback).Run(std::move(screen_capture_session_ptr));
 }
 
 }  // namespace arc

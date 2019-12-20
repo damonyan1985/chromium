@@ -99,7 +99,7 @@ void InitLogging() {
   // Set up log initialization settings.
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_ALL;
-  settings.log_file = log_path.value().c_str();
+  settings.log_file_path = log_path.value().c_str();
 
   // Replace the old log file if this is the first process.
   std::string process_type =
@@ -134,8 +134,6 @@ ShellMainDelegate::~ShellMainDelegate() {
 
 bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
   InitLogging();
-  content_client_.reset(new ShellContentClient);
-  SetContentClient(content_client_.get());
 
 #if defined(OS_CHROMEOS)
   chromeos::RegisterPathProvider();
@@ -161,6 +159,11 @@ void ShellMainDelegate::PreSandboxStartup() {
   if (ProcessNeedsResourceBundle(process_type))
     ui::ResourceBundle::InitSharedInstanceWithPakPath(
         GetResourcesPakFilePath());
+}
+
+content::ContentClient* ShellMainDelegate::CreateContentClient() {
+  content_client_ = std::make_unique<ShellContentClient>();
+  return content_client_.get();
 }
 
 content::ContentBrowserClient* ShellMainDelegate::CreateContentBrowserClient() {

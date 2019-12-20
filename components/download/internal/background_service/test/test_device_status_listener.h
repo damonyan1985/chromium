@@ -26,13 +26,13 @@ class TestDeviceStatusListener : public DeviceStatusListener {
   void SetDeviceStatus(const DeviceStatus& status);
 
   // DeviceStatusListener implementation.
-  void Start(DeviceStatusListener::Observer* observer) override;
+  void Start(const base::TimeDelta& start_delay) override;
   void Stop() override;
 
  private:
   void StartAfterDelay();
 
-  base::WeakPtrFactory<TestDeviceStatusListener> weak_ptr_factory_;
+  base::WeakPtrFactory<TestDeviceStatusListener> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestDeviceStatusListener);
 };

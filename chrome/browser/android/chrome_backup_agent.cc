@@ -8,38 +8,26 @@
 
 #include "base/android/jni_array.h"
 #include "base/stl_util.h"
+#include "chrome/android/chrome_jni_headers/ChromeBackupAgent_jni.h"
 #include "chrome/browser/android/chrome_backup_agent.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/common/pref_names.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/sync/base/pref_names.h"
-#include "jni/ChromeBackupAgent_jni.h"
 
 namespace {
 
 const char* backed_up_preferences_[] = {
-    prefs::kDataSaverEnabled,
+    data_reduction_proxy::prefs::kDataSaverEnabled,
     syncer::prefs::kSyncFirstSetupComplete,
     syncer::prefs::kSyncKeepEverythingSynced,
-    syncer::prefs::kSyncAutofillProfile,
-    syncer::prefs::kSyncAutofillWallet,
-    syncer::prefs::kSyncAutofillWalletMetadata,
     syncer::prefs::kSyncAutofill,
     syncer::prefs::kSyncBookmarks,
-    syncer::prefs::kSyncDeviceInfo,
-    syncer::prefs::kSyncFaviconImages,
-    syncer::prefs::kSyncFaviconTracking,
-    syncer::prefs::kSyncHistoryDeleteDirectives,
     syncer::prefs::kSyncPasswords,
     syncer::prefs::kSyncPreferences,
-    syncer::prefs::kSyncPriorityPreferences,
-    syncer::prefs::kSyncSessions,
-    syncer::prefs::kSyncSupervisedUserSettings,
-    syncer::prefs::kSyncSupervisedUserSharedSettings,
-    syncer::prefs::kSyncSupervisedUserWhitelists,
+    syncer::prefs::kSyncRequested,
     syncer::prefs::kSyncTabs,
     syncer::prefs::kSyncTypedUrls,
-    syncer::prefs::kSyncSuppressStart,
 };
 
 }  // namespace

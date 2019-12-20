@@ -13,7 +13,7 @@ cr.define('settings_sync_account_control', function() {
   }
 
   suite('SyncAccountControl', function() {
-    let peoplePage = null;
+    const peoplePage = null;
     let browserProxy = null;
     let testElement = null;
 
@@ -44,6 +44,12 @@ cr.define('settings_sync_account_control', function() {
       testElement.syncStatus = {
         signedIn: true,
         signedInUsername: 'foo@foo.com'
+      };
+      testElement.prefs = {
+        signin: {
+          allowed_on_next_startup:
+              {type: chrome.settingsPrivate.PrefType.BOOLEAN, value: true},
+        },
       };
       document.body.appendChild(testElement);
 
@@ -131,6 +137,7 @@ cr.define('settings_sync_account_control', function() {
 
     test('not signed in but has stored accounts', function() {
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: false,
         signedInUsername: '',
         statusAction: settings.StatusAction.NO_ACTION,
@@ -186,7 +193,7 @@ cr.define('settings_sync_account_control', function() {
             assertEquals(email, 'foo@foo.com');
             assertEquals(isDefaultPromoAccount, true);
 
-            assertVisible(testElement.$$('paper-icon-button-light'), true);
+            assertVisible(testElement.$$('cr-icon-button'), true);
             assertTrue(testElement.$$('#sync-icon-container').hidden);
 
             testElement.$$('#dropdown-arrow').click();
@@ -223,6 +230,7 @@ cr.define('settings_sync_account_control', function() {
 
     test('signed in, no error', function() {
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
@@ -233,7 +241,7 @@ cr.define('settings_sync_account_control', function() {
       Polymer.dom.flush();
 
       assertVisible(testElement.$$('#avatar-row'), true);
-      assertVisible(testElement.$$('paper-icon-button-light'), false);
+      assertVisible(testElement.$$('cr-icon-button'), false);
       assertVisible(testElement.$$('#promo-header'), false);
       assertFalse(testElement.$$('#sync-icon-container').hidden);
 
@@ -249,7 +257,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#turn-off'), true);
       assertVisible(testElement.$$('#sync-error-button'), false);
 
-      testElement.$$('#avatar-row .secondary-button').click();
+      testElement.$$('#avatar-row #turn-off').click();
       Polymer.dom.flush();
 
       assertEquals(settings.getCurrentRoute(), settings.routes.SIGN_OUT);
@@ -257,6 +265,7 @@ cr.define('settings_sync_account_control', function() {
 
     test('signed in, has error', function() {
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -269,7 +278,7 @@ cr.define('settings_sync_account_control', function() {
 
       assertTrue(testElement.$$('#sync-icon-container')
                      .classList.contains('sync-problem'));
-      assertTrue(!!testElement.$$('[icon=\'settings:sync-problem\']'));
+      assertTrue(!!testElement.$$('[icon="settings:sync-problem"]'));
       let displayedText =
           userInfo.querySelector('span:not([hidden])').textContent;
       assertFalse(displayedText.includes('barName'));
@@ -279,6 +288,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#sync-error-button'), true);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -297,6 +307,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#sync-error-button'), true);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
@@ -315,30 +326,52 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#sync-error-button'), false);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.REAUTHENTICATE,
-        hasError: false,
+        hasError: true,
         hasUnrecoverableError: true,
         disabled: false,
       };
       assertTrue(testElement.$$('#sync-icon-container')
                      .classList.contains('sync-problem'));
-      assertTrue(!!testElement.$$('[icon=\'settings:sync-problem\']'));
+      assertTrue(!!testElement.$$('[icon="settings:sync-problem"]'));
       displayedText = userInfo.querySelector('span:not([hidden])').textContent;
       assertFalse(displayedText.includes('barName'));
       assertFalse(displayedText.includes('fooName'));
       assertTrue(displayedText.includes('Sync isn\'t working'));
+
+      testElement.syncStatus = {
+        firstSetupInProgress: false,
+        signedIn: true,
+        signedInUsername: 'bar@bar.com',
+        statusAction: settings.StatusAction.RETRIEVE_TRUSTED_VAULT_KEYS,
+        hasError: true,
+        hasPasswordsOnlyError: true,
+        hasUnrecoverableError: false,
+        disabled: false,
+      };
+      assertTrue(testElement.$$('#sync-icon-container')
+                     .classList.contains('sync-problem'));
+      assertTrue(!!testElement.$$('[icon="settings:sync-problem"]'));
+      displayedText = userInfo.querySelector('span:not([hidden])').textContent;
+      assertFalse(displayedText.includes('barName'));
+      assertFalse(displayedText.includes('fooName'));
+      assertFalse(displayedText.includes('Sync isn\'t working'));
+      assertTrue(displayedText.includes('Error syncing passwords'));
+      // The sync error button is shown to resolve the error.
+      assertVisible(testElement.$$('#sync-error-button'), true);
+      assertVisible(testElement.$$('#turn-off'), true);
     });
 
     test('signed in, setup in progress', function() {
-      testElement.unifiedConsentEnabled = false;
       testElement.syncStatus = {
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
         statusText: 'Setup in progress...',
-        setupInProgress: true,
+        firstSetupInProgress: true,
         hasError: false,
         hasUnrecoverableError: false,
         disabled: false,
@@ -346,12 +379,6 @@ cr.define('settings_sync_account_control', function() {
       Polymer.dom.flush();
       const userInfo = testElement.$$('#user-info');
       const setupButtons = testElement.$$('#setup-buttons');
-
-      assertTrue(userInfo.textContent.includes('barName'));
-      assertFalse(userInfo.textContent.includes('Setup in progress...'));
-      assertVisible(setupButtons, false);
-
-      testElement.unifiedConsentEnabled = true;
 
       assertTrue(userInfo.textContent.includes('barName'));
       assertTrue(userInfo.textContent.includes('Setup in progress...'));
@@ -365,6 +392,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(banner, true);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
@@ -378,6 +406,7 @@ cr.define('settings_sync_account_control', function() {
 
       testElement.embeddedInSubpage = true;
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -390,6 +419,7 @@ cr.define('settings_sync_account_control', function() {
 
       testElement.embeddedInSubpage = true;
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -402,6 +432,7 @@ cr.define('settings_sync_account_control', function() {
 
       testElement.embeddedInSubpage = true;
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -415,6 +446,7 @@ cr.define('settings_sync_account_control', function() {
 
       testElement.embeddedInSubpage = true;
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -429,6 +461,7 @@ cr.define('settings_sync_account_control', function() {
     test('hide buttons', function() {
       testElement.hideButtons = true;
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         statusAction: settings.StatusAction.NO_ACTION,
@@ -441,6 +474,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#sync-error-button'), false);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -452,6 +486,7 @@ cr.define('settings_sync_account_control', function() {
       assertVisible(testElement.$$('#sync-error-button'), false);
 
       testElement.syncStatus = {
+        firstSetupInProgress: false,
         signedIn: true,
         signedInUsername: 'bar@bar.com',
         hasError: true,
@@ -461,6 +496,14 @@ cr.define('settings_sync_account_control', function() {
       };
       assertVisible(testElement.$$('#turn-off'), false);
       assertVisible(testElement.$$('#sync-error-button'), false);
+    });
+
+    test('signinButtonDisabled', function() {
+      // Ensure that the sync button is disabled when signin is disabled.
+      assertFalse(testElement.$$('#sign-in').disabled);
+      testElement.setPrefValue('signin.allowed_on_next_startup', false);
+      Polymer.dom.flush();
+      assertTrue(testElement.$$('#sign-in').disabled);
     });
   });
 });

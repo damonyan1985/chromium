@@ -8,8 +8,10 @@
 #include "ash/metrics/task_switch_source.h"
 #include "ash/metrics/user_metrics_recorder.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
+#include "ash/wm/desks/desks_controller.h"
+#include "ash/wm/desks/desks_util.h"
 #include "ash/wm/mru_window_tracker.h"
 #include "ash/wm/screen_pinning_controller.h"
 #include "ash/wm/window_cycle_event_filter.h"
@@ -26,6 +28,27 @@ namespace {
 // if the list is empty.
 aura::Window* GetActiveWindow(const WindowCycleList::WindowList& window_list) {
   return window_list.empty() ? nullptr : window_list[0];
+}
+
+void ReportPossibleDesksSwitchStats(int active_desk_container_id_before_cycle) {
+  // Report only for users who have 2 or more desks, since we're only interested
+  // in seeing how users of Virtual Desks use window cycling.
+  if (DesksController::Get()->desks().size() < 2)
+    return;
+
+  const int active_desk_container_id_after_cycle =
+      desks_util::GetActiveDeskContainerId();
+  DCHECK_NE(active_desk_container_id_before_cycle, kShellWindowId_Invalid);
+  DCHECK_NE(active_desk_container_id_after_cycle, kShellWindowId_Invalid);
+
+  // Note that the desks containers IDs are consecutive. See
+  // |ash::ShellWindowId|.
+  const int desks_switch_distance =
+      std::abs(active_desk_container_id_after_cycle -
+               active_desk_container_id_before_cycle);
+  UMA_HISTOGRAM_EXACT_LINEAR("Ash.WindowCycleController.DesksSwitchDistance",
+                             desks_switch_distance,
+                             desks_util::kMaxNumberOfDesks);
 }
 
 }  // namespace
@@ -57,18 +80,20 @@ void WindowCycleController::HandleCycleWindow(Direction direction) {
 
 void WindowCycleController::StartCycling() {
   WindowCycleList::WindowList window_list =
-      Shell::Get()->mru_window_tracker()->BuildWindowForCycleList();
+      Shell::Get()->mru_window_tracker()->BuildWindowForCycleWithPipList(
+          kAllDesks);
   // Window cycle list windows will handle showing their transient related
   // windows, so if a window in |window_list| has a transient root also in
-  // |window_list|, we can remove it as the tranisent root will handle showing
+  // |window_list|, we can remove it as the transient root will handle showing
   // the window.
-  wm::RemoveTransientDescendants(&window_list);
+  window_util::RemoveTransientDescendants(&window_list);
 
+  active_desk_container_id_before_cycle_ =
+      desks_util::GetActiveDeskContainerId();
   active_window_before_window_cycle_ = GetActiveWindow(window_list);
 
   window_cycle_list_ = std::make_unique<WindowCycleList>(window_list);
   event_filter_ = std::make_unique<WindowCycleEventFilter>();
-  cycle_start_time_ = base::Time::Now();
   base::RecordAction(base::UserMetricsAction("WindowCycleController_Cycle"));
   UMA_HISTOGRAM_COUNTS_100("Ash.WindowCycleController.Items",
                            window_list.size());
@@ -92,24 +117,24 @@ void WindowCycleController::Step(Direction direction) {
 }
 
 void WindowCycleController::StopCycling() {
-  UMA_HISTOGRAM_COUNTS_100("Ash.WindowCycleController.SelectionDepth",
-                           window_cycle_list_->current_index() + 1);
   window_cycle_list_.reset();
 
-  aura::Window* active_window_after_window_cycle =
-      GetActiveWindow(Shell::Get()->mru_window_tracker()->BuildMruWindowList());
+  aura::Window* active_window_after_window_cycle = GetActiveWindow(
+      Shell::Get()->mru_window_tracker()->BuildMruWindowList(kActiveDesk));
 
   // Remove our key event filter.
   event_filter_.reset();
-  UMA_HISTOGRAM_MEDIUM_TIMES("Ash.WindowCycleController.CycleTime",
-                             base::Time::Now() - cycle_start_time_);
 
   if (active_window_after_window_cycle != nullptr &&
       active_window_before_window_cycle_ != active_window_after_window_cycle) {
     Shell::Get()->metrics()->task_switch_metrics_recorder().OnTaskSwitch(
         TaskSwitchSource::WINDOW_CYCLE_CONTROLLER);
+
+    ReportPossibleDesksSwitchStats(active_desk_container_id_before_cycle_);
   }
+
   active_window_before_window_cycle_ = nullptr;
+  active_desk_container_id_before_cycle_ = kShellWindowId_Invalid;
 }
 
 }  // namespace ash

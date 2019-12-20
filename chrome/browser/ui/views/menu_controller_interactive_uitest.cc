@@ -21,8 +21,8 @@ class MenuControllerMnemonicTest : public MenuTestBase {
   // MenuTestBase overrides:
   void BuildMenu(views::MenuItemView* menu) override {
     ASSERT_NE(ui::VKEY_DIVIDE, '/');
-    menu->AppendMenuItemWithLabel(1, base::ASCIIToUTF16("One&/"));
-    menu->AppendMenuItemWithLabel(2, base::ASCIIToUTF16("Two"));
+    menu->AppendMenuItem(1, base::ASCIIToUTF16("One&/"));
+    menu->AppendMenuItem(2, base::ASCIIToUTF16("Two"));
   }
 
   void DoTestWithMenuOpen() override {
@@ -65,17 +65,17 @@ typedef MenuControllerMnemonicTest<ui::VKEY_DIVIDE,1>
 #define MAYBE_TitleMatch TitleMatch
 #endif
 
-VIEW_TEST(MenuControllerMnemonicTestMnemonicMatch, MAYBE_MnemonicMatch);
+VIEW_TEST(MenuControllerMnemonicTestMnemonicMatch, MAYBE_MnemonicMatch)
 
 // Pressing a key which matches the first letter of the menu item's title
 // should execute the command for that menu item.
 typedef MenuControllerMnemonicTest<ui::VKEY_T,2>
     MenuControllerMnemonicTestTitleMatch;
 
-VIEW_TEST(MenuControllerMnemonicTestTitleMatch, MAYBE_TitleMatch);
+VIEW_TEST(MenuControllerMnemonicTestTitleMatch, MAYBE_TitleMatch)
 
 // Pressing an arbitrary key should not execute any commands.
 typedef MenuControllerMnemonicTest<ui::VKEY_A,0>
     MenuControllerMnemonicTestNoMatch;
 
-VIEW_TEST(MenuControllerMnemonicTestNoMatch, NoMatch);
+VIEW_TEST(MenuControllerMnemonicTestNoMatch, NoMatch)

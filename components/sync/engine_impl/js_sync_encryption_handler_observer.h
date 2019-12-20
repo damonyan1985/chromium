@@ -36,16 +36,17 @@ class JsSyncEncryptionHandlerObserver : public SyncEncryptionHandler::Observer {
       const KeyDerivationParams& key_derivation_params,
       const sync_pb::EncryptedData& pending_keys) override;
   void OnPassphraseAccepted() override;
+  void OnTrustedVaultKeyRequired() override;
+  void OnTrustedVaultKeyAccepted() override;
   void OnBootstrapTokenUpdated(const std::string& bootstrap_token,
                                BootstrapTokenType type) override;
   void OnEncryptedTypesChanged(ModelTypeSet encrypted_types,
                                bool encrypt_everything) override;
   void OnEncryptionComplete() override;
-  void OnCryptographerStateChanged(Cryptographer* cryptographer) override;
+  void OnCryptographerStateChanged(Cryptographer* cryptographer,
+                                   bool has_pending_keys) override;
   void OnPassphraseTypeChanged(PassphraseType type,
                                base::Time explicit_passphrase_time) override;
-  void OnLocalSetPassphraseEncryption(
-      const SyncEncryptionHandler::NigoriState& nigori_state) override;
 
  private:
   void HandleJsEvent(const base::Location& from_here,

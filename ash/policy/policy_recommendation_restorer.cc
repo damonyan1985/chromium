@@ -4,7 +4,7 @@
 
 #include "ash/policy/policy_recommendation_restorer.h"
 
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/logging.h"
@@ -36,7 +36,7 @@ void PolicyRecommendationRestorer::ObservePref(const std::string& pref_name) {
   PrefService* prefs =
       Shell::Get()->session_controller()->GetSigninScreenPrefService();
   DCHECK(prefs);
-  DCHECK(!base::ContainsKey(pref_names_, pref_name));
+  DCHECK(!base::Contains(pref_names_, pref_name));
 
   if (!pref_change_registrar_) {
     pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
@@ -60,6 +60,10 @@ void PolicyRecommendationRestorer::OnActiveUserPrefServiceChanged(
 void PolicyRecommendationRestorer::OnUserActivity(const ui::Event* event) {
   if (restore_timer_.IsRunning())
     restore_timer_.Reset();
+}
+
+void PolicyRecommendationRestorer::DisableForTesting() {
+  disabled_for_testing_ = true;
 }
 
 void PolicyRecommendationRestorer::Restore(bool allow_delay,
@@ -89,7 +93,7 @@ void PolicyRecommendationRestorer::Restore(bool allow_delay,
 
   if (allow_delay)
     StartTimer();
-  else
+  else if (!disabled_for_testing_)
     pref_change_registrar_->prefs()->ClearPref(pref->name());
 }
 

@@ -60,14 +60,20 @@ class BrowserCommandController : public CommandUpdater,
 #endif
   void PrintingStateChanged();
   void LoadingStateChanged(bool is_loading, bool force);
+  void FindBarVisibilityChanged();
   void ExtensionStateChanged();
+  void TabKeyboardFocusChangedTo(base::Optional<int> index);
 
   // Overriden from CommandUpdater:
   bool SupportsCommand(int id) const override;
   bool IsCommandEnabled(int id) const override;
-  bool ExecuteCommand(int id) override;
-  bool ExecuteCommandWithDisposition(int id, WindowOpenDisposition disposition)
-      override;
+  bool ExecuteCommand(
+      int id,
+      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
+  bool ExecuteCommandWithDisposition(
+      int id,
+      WindowOpenDisposition disposition,
+      base::TimeTicks time_stamp = base::TimeTicks::Now()) override;
   void AddCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(int id, CommandObserver* observer) override;
   void RemoveCommandObserver(CommandObserver* observer) override;
@@ -178,8 +184,16 @@ class BrowserCommandController : public CommandUpdater,
   // Updates commands for find.
   void UpdateCommandsForFind();
 
+  // Updates the command to close find or stop loading.
+  void UpdateCloseFindOrStop();
+
   // Updates commands for Media Router.
   void UpdateCommandsForMediaRouter();
+
+  // Updates commands for tab keyboard focus state. If |target_index| is
+  // populated, it is the index of the tab with focus; if it is not populated,
+  // no tab has keyboard focus.
+  void UpdateCommandsForTabKeyboardFocus(base::Optional<int> target_index);
 
   // Add/remove observers for interstitial attachment/detachment from
   // |contents|.

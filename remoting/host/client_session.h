@@ -29,6 +29,7 @@
 #include "remoting/protocol/clipboard_stub.h"
 #include "remoting/protocol/connection_to_client.h"
 #include "remoting/protocol/data_channel_manager.h"
+#include "remoting/protocol/display_size.h"
 #include "remoting/protocol/host_stub.h"
 #include "remoting/protocol/input_event_tracker.h"
 #include "remoting/protocol/input_filter.h"
@@ -38,6 +39,7 @@
 #include "remoting/protocol/video_stream.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capture_types.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
+#include "ui/events/event.h"
 
 namespace remoting {
 
@@ -45,6 +47,7 @@ class AudioStream;
 class DesktopEnvironment;
 class DesktopEnvironmentFactory;
 class InputInjector;
+class KeyboardLayoutMonitor;
 class MouseShapePump;
 class ScreenControls;
 
@@ -133,7 +136,9 @@ class ClientSession : public protocol::HostStub,
   // ClientSessionControl interface.
   const std::string& client_jid() const override;
   void DisconnectSession(protocol::ErrorCode error) override;
-  void OnLocalMouseMoved(const webrtc::DesktopVector& position) override;
+  void OnLocalKeyPressed(uint32_t usb_keycode) override;
+  void OnLocalPointerMoved(const webrtc::DesktopVector& position,
+                           ui::EventType type) override;
   void SetDisableInputs(bool disable_inputs) override;
   void OnDesktopDisplayChanged(
       std::unique_ptr<protocol::VideoLayout> layout) override;
@@ -159,9 +164,14 @@ class ClientSession : public protocol::HostStub,
       scoped_refptr<protocol::InputEventTimestampsSource>
           event_timestamp_source);
 
+  // Public for tests.
+  void UpdateMouseClampingFilterOffset();
+
  private:
   // Creates a proxy for sending clipboard events to the client.
   std::unique_ptr<protocol::ClipboardStub> CreateClipboardProxy();
+
+  void SetMouseClampingFilter(const DisplaySize& size);
 
   // protocol::VideoStream::Observer implementation.
   void OnVideoSizeChanged(protocol::VideoStream* stream,
@@ -178,11 +188,6 @@ class ClientSession : public protocol::HostStub,
       std::unique_ptr<protocol::MessagePipe> pipe);
 
   EventHandler* event_handler_;
-
-  // The connection to the client.
-  std::unique_ptr<protocol::ConnectionToClient> connection_;
-
-  std::string client_jid_;
 
   // Used to create a DesktopEnvironment instance for this session.
   DesktopEnvironmentFactory* desktop_environment_factory_;
@@ -227,10 +232,9 @@ class ClientSession : public protocol::HostStub,
   // is reached.
   base::OneShotTimer max_duration_timer_;
 
-  // Objects responsible for sending video, audio and mouse shape.
+  // Objects responsible for sending video, audio.
   std::unique_ptr<protocol::VideoStream> video_stream_;
   std::unique_ptr<protocol::AudioStream> audio_stream_;
-  std::unique_ptr<MouseShapePump> mouse_shape_pump_;
 
   // The set of all capabilities supported by the client.
   std::unique_ptr<std::string> client_capabilities_;
@@ -250,15 +254,16 @@ class ClientSession : public protocol::HostStub,
   // Contains the most recently gathered info about the desktop displays;
   DesktopDisplayInfo desktop_display_info_;
 
+  // Default DPI values to use if a display reports 0 for DPI.
+  int default_x_dpi_;
+  int default_y_dpi_;
+
   // The id of the desktop display to show to the user.
   // Default is webrtc::kFullDesktopScreenId which shows all displays.
   webrtc::ScreenId show_display_id_ = webrtc::kFullDesktopScreenId;
 
   // The pairing registry for PIN-less authentication.
   scoped_refptr<protocol::PairingRegistry> pairing_registry_;
-
-  // Used to manage extension functionality.
-  std::unique_ptr<HostExtensionSessionManager> extension_manager_;
 
   // Used to dispatch new data channels to factory methods.
   protocol::DataChannelManager data_channel_manager_;
@@ -283,11 +288,23 @@ class ClientSession : public protocol::HostStub,
 
   HostExperimentSessionPlugin host_experiment_session_plugin_;
 
+  // The connection to the client.
+  std::unique_ptr<protocol::ConnectionToClient> connection_;
+
+  std::string client_jid_;
+
+  // Used to manage extension functionality.
+  std::unique_ptr<HostExtensionSessionManager> extension_manager_;
+
+  // Objects to monitor and send updates for mouse shape and keyboard layout.
+  std::unique_ptr<MouseShapePump> mouse_shape_pump_;
+  std::unique_ptr<KeyboardLayoutMonitor> keyboard_layout_monitor_;
+
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Used to disable callbacks to |this| once DisconnectSession() has been
   // called.
-  base::WeakPtrFactory<ClientSessionControl> weak_factory_;
+  base::WeakPtrFactory<ClientSessionControl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ClientSession);
 };

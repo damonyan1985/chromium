@@ -7,7 +7,6 @@
 #include "base/metrics/histogram_macros.h"
 #import "ios/chrome/browser/download/ar_quick_look_tab_helper.h"
 #import "ios/chrome/browser/download/download_manager_tab_helper.h"
-#import "ios/chrome/browser/download/features.h"
 #include "ios/chrome/browser/download/pass_kit_mime_type.h"
 #import "ios/chrome/browser/download/pass_kit_tab_helper.h"
 #include "ios/chrome/browser/download/usdz_mime_type.h"
@@ -42,8 +41,8 @@ DownloadMimeTypeResult GetUmaResult(const std::string& mime_type) {
   if (mime_type == "text/calendar")
     return DownloadMimeTypeResult::iCalendar;
 
-  if (mime_type == kUsdzMimeType)
-    return DownloadMimeTypeResult::UniversalSceneDescription;
+  if (mime_type == kLegacyUsdzMimeType)
+    return DownloadMimeTypeResult::LegacyUniversalSceneDescription;
 
   if (mime_type == "application/x-apple-diskimage")
     return DownloadMimeTypeResult::AppleDiskImage;
@@ -75,6 +74,12 @@ DownloadMimeTypeResult GetUmaResult(const std::string& mime_type) {
   if (mime_type == "application/java-archive")
     return DownloadMimeTypeResult::JavaArchive;
 
+  if (mime_type == kLegacyPixarUsdzMimeType)
+    return DownloadMimeTypeResult::LegacyPixarUniversalSceneDescription;
+
+  if (mime_type == kUsdzMimeType)
+    return DownloadMimeTypeResult::UniversalSceneDescription;
+
   return DownloadMimeTypeResult::Other;
 }
 }  // namespace
@@ -105,8 +110,8 @@ void BrowserDownloadService::OnDownloadCreated(
     if (tab_helper) {
       tab_helper->Download(std::move(task));
     }
-  } else if (task->GetMimeType() == kUsdzMimeType &&
-             download::IsUsdzPreviewEnabled()) {
+  } else if (IsUsdzFileFormat(task->GetMimeType(),
+                              task->GetSuggestedFilename())) {
     ARQuickLookTabHelper* tab_helper =
         ARQuickLookTabHelper::FromWebState(web_state);
     if (tab_helper) {

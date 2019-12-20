@@ -4,12 +4,15 @@
 
 """Creates an html report that allows you to view binary size by component."""
 
+from __future__ import print_function
+
 import codecs
 import collections
 import itertools
 import json
 import logging
 import os
+import uuid
 
 import archive
 import diff
@@ -135,10 +138,10 @@ def _MakeTreeViewList(symbols, include_all_symbols):
     file_node = _GetOrAddFileNode(
         path, symbol.component, file_nodes, components)
 
-    is_dex_method = symbol.section_name == models.SECTION_DEX_METHOD
+    name = symbol.full_name if symbol.IsDex() else symbol.template_name
     symbol_entry = {
       _COMPACT_SYMBOL_BYTE_SIZE_KEY: symbol_size,
-      _COMPACT_SYMBOL_NAME_KEY: symbol.template_name,
+      _COMPACT_SYMBOL_NAME_KEY: name,
       _COMPACT_SYMBOL_TYPE_KEY: symbol.section,
     }
     if symbol.num_aliases != 1:
@@ -149,6 +152,7 @@ def _MakeTreeViewList(symbols, include_all_symbols):
     # count as -1 rather than the default, 1.
     # We don't care about accurate counts for other symbol types currently,
     # so this data is only included for methods.
+    is_dex_method = symbol.section_name == models.SECTION_DEX_METHOD
     if is_dex_method and symbol_count != default_symbol_count:
       symbol_entry[_COMPACT_SYMBOL_COUNT_KEY] = symbol_count
     if symbol.flags:
@@ -280,13 +284,21 @@ def Run(args, parser):
   BuildReportFromSizeInfo(
       args.output_report_file, size_info, all_symbols=args.all_symbols)
 
+  logging.warning('Done!')
   msg = [
-      'Done!',
       'View using a local server via: ',
-      '    %s start_server %s',
-      'or upload to the hosted version here:',
+      '    {0} start_server {1}',
+      'or run:',
+      '    gsutil.py cp -a public-read {1} gs://chrome-supersize/oneoffs/'
+      '{2}.ndjson',
+      '  to view at:',
       '    https://storage.googleapis.com/chrome-supersize/viewer.html'
-      ]
+      '?load_url=oneoffs/{2}.ndjson',
+  ]
   supersize_path = os.path.relpath(os.path.join(
       path_util.SRC_ROOT, 'tools', 'binary_size', 'supersize'))
-  logging.warning('\n'.join(msg),  supersize_path, args.output_report_file)
+  # Use a random UUID as the filename so user can copy-and-paste command
+  # directly without a name collision.
+  upload_id = uuid.uuid4()
+  print('\n'.join(msg).format(supersize_path, args.output_report_file,
+                              upload_id))

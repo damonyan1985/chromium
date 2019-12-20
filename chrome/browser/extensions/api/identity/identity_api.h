@@ -29,10 +29,10 @@
 #include "chrome/browser/extensions/api/identity/identity_remove_cached_auth_token_function.h"
 #include "chrome/browser/extensions/api/identity/web_auth_flow.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
-#include "components/signin/core/browser/signin_buildflags.h"
+#include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 namespace content {
 class BrowserContext;
@@ -42,15 +42,12 @@ class Profile;
 
 namespace extensions {
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Enables all accounts in extensions.
-extern const base::Feature kExtensionsAllAccountsFeature;
-#endif
-
 class IdentityTokenCacheValue {
  public:
   IdentityTokenCacheValue();
   explicit IdentityTokenCacheValue(const IssueAdviceInfo& issue_advice);
+  explicit IdentityTokenCacheValue(
+      const RemoteConsentResolutionData& resolution_data);
   IdentityTokenCacheValue(const std::string& token,
                           base::TimeDelta time_to_live);
   IdentityTokenCacheValue(const IdentityTokenCacheValue& other);
@@ -61,11 +58,13 @@ class IdentityTokenCacheValue {
   enum CacheValueStatus {
     CACHE_STATUS_NOTFOUND,
     CACHE_STATUS_ADVICE,
+    CACHE_STATUS_REMOTE_CONSENT,
     CACHE_STATUS_TOKEN
   };
 
   CacheValueStatus status() const;
   const IssueAdviceInfo& issue_advice() const;
+  const RemoteConsentResolutionData& resolution_data() const;
   const std::string& token() const;
   const base::Time& expiration_time() const;
 
@@ -74,12 +73,13 @@ class IdentityTokenCacheValue {
 
   CacheValueStatus status_;
   IssueAdviceInfo issue_advice_;
+  RemoteConsentResolutionData resolution_data_;
   std::string token_;
   base::Time expiration_time_;
 };
 
 class IdentityAPI : public BrowserContextKeyedAPI,
-                    public identity::IdentityManager::Observer {
+                    public signin::IdentityManager::Observer {
  public:
   typedef std::map<ExtensionTokenKey, IdentityTokenCacheValue> CachedTokens;
 
@@ -128,13 +128,13 @@ class IdentityAPI : public BrowserContextKeyedAPI,
   static const char* service_name() { return "IdentityAPI"; }
   static const bool kServiceIsNULLWhileTesting = true;
 
-  // identity::IdentityManager::Observer:
+  // signin::IdentityManager::Observer:
   void OnRefreshTokenUpdatedForAccount(
-      const AccountInfo& account_info) override;
+      const CoreAccountInfo& account_info) override;
   // NOTE: This class must listen for this callback rather than
   // OnRefreshTokenRemovedForAccount() to obtain the Gaia ID of the removed
   // account.
-  void OnAccountRemovedWithInfo(const AccountInfo& info) override;
+  void OnExtendedAccountInfoRemoved(const AccountInfo& info) override;
 
   // Fires the chrome.identity.onSignInChanged event.
   void FireOnAccountSignInChanged(const std::string& gaia_id,

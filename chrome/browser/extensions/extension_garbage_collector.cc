@@ -15,6 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/one_shot_event.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
@@ -37,7 +38,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_handlers/app_isolation_info.h"
-#include "extensions/common/one_shot_event.h"
 
 namespace extensions {
 
@@ -60,7 +60,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
   // Clean up temporary files left if Chrome crashed or quit in the middle
   // of an extension install.
   if (basename.value() == file_util::kTempDirectoryName) {
-    base::DeleteFile(path, true);  // Recursive.
+    base::DeleteFileRecursively(path);
     return;
   }
 
@@ -74,7 +74,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
 
   // Delete directories that aren't valid IDs.
   if (extension_id.empty()) {
-    base::DeleteFile(path, true);  // Recursive.
+    base::DeleteFileRecursively(path);
     return;
   }
 
@@ -85,7 +85,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
   // move on. This can legitimately happen when an uninstall does not
   // complete, for example, when a plugin is in use at uninstall time.
   if (iter_pair.first == iter_pair.second) {
-    base::DeleteFile(path, true);  // Recursive.
+    base::DeleteFileRecursively(path);
     return;
   }
 
@@ -103,7 +103,7 @@ void CheckExtensionDirectory(const base::FilePath& path,
       }
     }
     if (!known_version)
-      base::DeleteFile(version_dir, true);  // Recursive.
+      base::DeleteFileRecursively(version_dir);
   }
 }
 
@@ -111,20 +111,19 @@ void CheckExtensionDirectory(const base::FilePath& path,
 
 ExtensionGarbageCollector::ExtensionGarbageCollector(
     content::BrowserContext* context)
-    : context_(context), crx_installs_in_progress_(0), weak_factory_(this) {
-
+    : context_(context), crx_installs_in_progress_(0) {
   ExtensionSystem* extension_system = ExtensionSystem::Get(context_);
   DCHECK(extension_system);
 
   extension_system->ready().PostDelayed(
       FROM_HERE,
-      base::Bind(&ExtensionGarbageCollector::GarbageCollectExtensions,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&ExtensionGarbageCollector::GarbageCollectExtensions,
+                     weak_factory_.GetWeakPtr()),
       kGarbageCollectStartupDelay);
 
   extension_system->ready().Post(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &ExtensionGarbageCollector::GarbageCollectIsolatedStorageIfNeeded,
           weak_factory_.GetWeakPtr()));
 
@@ -231,8 +230,7 @@ void ExtensionGarbageCollector::GarbageCollectIsolatedStorageIfNeeded() {
        ++iter) {
     if (AppIsolationInfo::HasIsolatedStorage(iter->get())) {
       active_paths->insert(
-          content::BrowserContext::GetStoragePartitionForSite(
-              context_, util::GetSiteForExtensionId((*iter)->id(), context_))
+          util::GetStoragePartitionForExtensionId((*iter)->id(), context_)
               ->GetPath());
     }
   }

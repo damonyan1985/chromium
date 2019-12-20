@@ -114,7 +114,8 @@ promise_test(() => {
   return writer.abort('a').then(value => {
     assert_equals(value, undefined, 'fulfillment value must be undefined');
   });
-}, 'Fulfillment value of ws.abort() call must be undefined even if the underlying sink returns a non-undefined value');
+}, 'Fulfillment value of writer.abort() call must be undefined even if the underlying sink returns a non-undefined ' +
+   'value');
 
 promise_test(t => {
   const ws = new WritableStream({
@@ -1368,3 +1369,10 @@ promise_test(t => {
                               e => assert_equals(e, 'string argument', 'e should be \'string argument\''));
   });
 }, 'abort with a string argument should set the stored error to that argument');
+
+promise_test(t => {
+  const ws = new WritableStream();
+  const writer = ws.getWriter();
+  return promise_rejects(t, new TypeError(), ws.abort(), 'abort should reject')
+    .then(() => writer.ready);
+}, 'abort on a locked stream should reject');

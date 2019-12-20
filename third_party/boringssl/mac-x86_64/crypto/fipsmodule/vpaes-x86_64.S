@@ -13,21 +13,21 @@
 #endif
 .text	
 
-##
-#
-##
-#
-##
-#
-#
-#
-#
-##
-#
-#
-#
-##
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_encrypt_core:
@@ -115,11 +115,186 @@ L$enc_entry:
 
 
 
-##
-#
-##
-#
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.p2align	4
+_vpaes_encrypt_core_2x:
+
+	movq	%rdx,%r9
+	movq	$16,%r11
+	movl	240(%rdx),%eax
+	movdqa	%xmm9,%xmm1
+	movdqa	%xmm9,%xmm7
+	movdqa	L$k_ipt(%rip),%xmm2
+	movdqa	%xmm2,%xmm8
+	pandn	%xmm0,%xmm1
+	pandn	%xmm6,%xmm7
+	movdqu	(%r9),%xmm5
+
+	psrld	$4,%xmm1
+	psrld	$4,%xmm7
+	pand	%xmm9,%xmm0
+	pand	%xmm9,%xmm6
+.byte	102,15,56,0,208
+.byte	102,68,15,56,0,198
+	movdqa	L$k_ipt+16(%rip),%xmm0
+	movdqa	%xmm0,%xmm6
+.byte	102,15,56,0,193
+.byte	102,15,56,0,247
+	pxor	%xmm5,%xmm2
+	pxor	%xmm5,%xmm8
+	addq	$16,%r9
+	pxor	%xmm2,%xmm0
+	pxor	%xmm8,%xmm6
+	leaq	L$k_mc_backward(%rip),%r10
+	jmp	L$enc2x_entry
+
+.p2align	4
+L$enc2x_loop:
+
+	movdqa	L$k_sb1(%rip),%xmm4
+	movdqa	L$k_sb1+16(%rip),%xmm0
+	movdqa	%xmm4,%xmm12
+	movdqa	%xmm0,%xmm6
+.byte	102,15,56,0,226
+.byte	102,69,15,56,0,224
+.byte	102,15,56,0,195
+.byte	102,65,15,56,0,243
+	pxor	%xmm5,%xmm4
+	pxor	%xmm5,%xmm12
+	movdqa	L$k_sb2(%rip),%xmm5
+	movdqa	%xmm5,%xmm13
+	pxor	%xmm4,%xmm0
+	pxor	%xmm12,%xmm6
+	movdqa	-64(%r11,%r10,1),%xmm1
+
+.byte	102,15,56,0,234
+.byte	102,69,15,56,0,232
+	movdqa	(%r11,%r10,1),%xmm4
+
+	movdqa	L$k_sb2+16(%rip),%xmm2
+	movdqa	%xmm2,%xmm8
+.byte	102,15,56,0,211
+.byte	102,69,15,56,0,195
+	movdqa	%xmm0,%xmm3
+	movdqa	%xmm6,%xmm11
+	pxor	%xmm5,%xmm2
+	pxor	%xmm13,%xmm8
+.byte	102,15,56,0,193
+.byte	102,15,56,0,241
+	addq	$16,%r9
+	pxor	%xmm2,%xmm0
+	pxor	%xmm8,%xmm6
+.byte	102,15,56,0,220
+.byte	102,68,15,56,0,220
+	addq	$16,%r11
+	pxor	%xmm0,%xmm3
+	pxor	%xmm6,%xmm11
+.byte	102,15,56,0,193
+.byte	102,15,56,0,241
+	andq	$0x30,%r11
+	subq	$1,%rax
+	pxor	%xmm3,%xmm0
+	pxor	%xmm11,%xmm6
+
+L$enc2x_entry:
+
+	movdqa	%xmm9,%xmm1
+	movdqa	%xmm9,%xmm7
+	movdqa	L$k_inv+16(%rip),%xmm5
+	movdqa	%xmm5,%xmm13
+	pandn	%xmm0,%xmm1
+	pandn	%xmm6,%xmm7
+	psrld	$4,%xmm1
+	psrld	$4,%xmm7
+	pand	%xmm9,%xmm0
+	pand	%xmm9,%xmm6
+.byte	102,15,56,0,232
+.byte	102,68,15,56,0,238
+	movdqa	%xmm10,%xmm3
+	movdqa	%xmm10,%xmm11
+	pxor	%xmm1,%xmm0
+	pxor	%xmm7,%xmm6
+.byte	102,15,56,0,217
+.byte	102,68,15,56,0,223
+	movdqa	%xmm10,%xmm4
+	movdqa	%xmm10,%xmm12
+	pxor	%xmm5,%xmm3
+	pxor	%xmm13,%xmm11
+.byte	102,15,56,0,224
+.byte	102,68,15,56,0,230
+	movdqa	%xmm10,%xmm2
+	movdqa	%xmm10,%xmm8
+	pxor	%xmm5,%xmm4
+	pxor	%xmm13,%xmm12
+.byte	102,15,56,0,211
+.byte	102,69,15,56,0,195
+	movdqa	%xmm10,%xmm3
+	movdqa	%xmm10,%xmm11
+	pxor	%xmm0,%xmm2
+	pxor	%xmm6,%xmm8
+.byte	102,15,56,0,220
+.byte	102,69,15,56,0,220
+	movdqu	(%r9),%xmm5
+
+	pxor	%xmm1,%xmm3
+	pxor	%xmm7,%xmm11
+	jnz	L$enc2x_loop
+
+
+	movdqa	-96(%r10),%xmm4
+	movdqa	-80(%r10),%xmm0
+	movdqa	%xmm4,%xmm12
+	movdqa	%xmm0,%xmm6
+.byte	102,15,56,0,226
+.byte	102,69,15,56,0,224
+	pxor	%xmm5,%xmm4
+	pxor	%xmm5,%xmm12
+.byte	102,15,56,0,195
+.byte	102,65,15,56,0,243
+	movdqa	64(%r11,%r10,1),%xmm1
+
+	pxor	%xmm4,%xmm0
+	pxor	%xmm12,%xmm6
+.byte	102,15,56,0,193
+.byte	102,15,56,0,241
+	.byte	0xf3,0xc3
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_decrypt_core:
@@ -149,9 +324,9 @@ _vpaes_decrypt_core:
 
 .p2align	4
 L$dec_loop:
-##
-#
-##
+
+
+
 	movdqa	-32(%r10),%xmm4
 	movdqa	-16(%r10),%xmm1
 .byte	102,15,56,0,226
@@ -223,11 +398,11 @@ L$dec_entry:
 
 
 
-########################################################
-#
-#
-#
-########################################################
+
+
+
+
+
 
 .p2align	4
 _vpaes_schedule_core:
@@ -268,14 +443,14 @@ L$schedule_go:
 	je	L$schedule_192
 
 
-##
-#
-##
-#
-##
-#
-#
-##
+
+
+
+
+
+
+
+
 L$schedule_128:
 	movl	$10,%esi
 
@@ -286,21 +461,21 @@ L$oop_schedule_128:
 	call	_vpaes_schedule_mangle
 	jmp	L$oop_schedule_128
 
-##
-#
-##
-#
-##
-#
-#
-#
-#
-##
-#
-#
-#
-#
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .p2align	4
 L$schedule_192:
 	movdqu	8(%rdi),%xmm0
@@ -323,16 +498,16 @@ L$oop_schedule_192:
 	call	_vpaes_schedule_192_smear
 	jmp	L$oop_schedule_192
 
-##
-#
-##
-#
-##
-#
-#
-#
-#
-##
+
+
+
+
+
+
+
+
+
+
 .p2align	4
 L$schedule_256:
 	movdqu	16(%rdi),%xmm0
@@ -359,16 +534,16 @@ L$oop_schedule_256:
 	jmp	L$oop_schedule_256
 
 
-##
-#
-##
-#
-#
-#
-#
-##
-#
-##
+
+
+
+
+
+
+
+
+
+
 .p2align	4
 L$schedule_mangle_last:
 
@@ -401,20 +576,20 @@ L$schedule_mangle_last_dec:
 
 
 
-##
-#
-##
-#
-##
-#
-#
-#
-#
-##
-#
-#
-#
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_schedule_192_smear:
@@ -430,24 +605,24 @@ _vpaes_schedule_192_smear:
 
 
 
-##
-#
-##
-#
-##
-#
-#
-#
-##
-#
-#
-##
-#
-#
-##
-#
-#
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_schedule_round:
@@ -508,15 +683,15 @@ _vpaes_schedule_low_round:
 
 
 
-##
-#
-##
-#
-##
-#
-#
-#
-##
+
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_schedule_transform:
@@ -534,29 +709,29 @@ _vpaes_schedule_transform:
 
 
 
-##
-#
-##
-#
-#
-##
-#
-#
-#
-#
-##
-#
-#
-#
-#
-#
-##
-##
-#
-#
-#
-#
-##
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_schedule_mangle:
@@ -628,14 +803,19 @@ L$schedule_mangle_both:
 
 
 
-#
 
-#
+
+
 .globl	_vpaes_set_encrypt_key
 .private_extern _vpaes_set_encrypt_key
 
 .p2align	4
 _vpaes_set_encrypt_key:
+
+#ifdef BORINGSSL_DISPATCH_TEST
+
+	movb	$1,_BORINGSSL_function_hit+5(%rip)
+#endif
 
 	movl	%esi,%eax
 	shrl	$5,%eax
@@ -680,6 +860,10 @@ _vpaes_set_decrypt_key:
 .p2align	4
 _vpaes_encrypt:
 
+#ifdef BORINGSSL_DISPATCH_TEST
+
+	movb	$1,_BORINGSSL_function_hit+4(%rip)
+#endif
 	movdqu	(%rdi),%xmm0
 	call	_vpaes_preheat
 	call	_vpaes_encrypt_core
@@ -744,12 +928,75 @@ L$cbc_abort:
 	.byte	0xf3,0xc3
 
 
-##
-#
-##
-#
-#
-##
+.globl	_vpaes_ctr32_encrypt_blocks
+.private_extern _vpaes_ctr32_encrypt_blocks
+
+.p2align	4
+_vpaes_ctr32_encrypt_blocks:
+
+
+	xchgq	%rcx,%rdx
+	testq	%rcx,%rcx
+	jz	L$ctr32_abort
+	movdqu	(%r8),%xmm0
+	movdqa	L$ctr_add_one(%rip),%xmm8
+	subq	%rdi,%rsi
+	call	_vpaes_preheat
+	movdqa	%xmm0,%xmm6
+	pshufb	L$rev_ctr(%rip),%xmm6
+
+	testq	$1,%rcx
+	jz	L$ctr32_prep_loop
+
+
+
+	movdqu	(%rdi),%xmm7
+	call	_vpaes_encrypt_core
+	pxor	%xmm7,%xmm0
+	paddd	%xmm8,%xmm6
+	movdqu	%xmm0,(%rsi,%rdi,1)
+	subq	$1,%rcx
+	leaq	16(%rdi),%rdi
+	jz	L$ctr32_done
+
+L$ctr32_prep_loop:
+
+
+	movdqa	%xmm6,%xmm14
+	movdqa	%xmm6,%xmm15
+	paddd	%xmm8,%xmm15
+
+L$ctr32_loop:
+	movdqa	L$rev_ctr(%rip),%xmm1
+	movdqa	%xmm14,%xmm0
+	movdqa	%xmm15,%xmm6
+.byte	102,15,56,0,193
+.byte	102,15,56,0,241
+	call	_vpaes_encrypt_core_2x
+	movdqu	(%rdi),%xmm1
+	movdqu	16(%rdi),%xmm2
+	movdqa	L$ctr_add_two(%rip),%xmm3
+	pxor	%xmm1,%xmm0
+	pxor	%xmm2,%xmm6
+	paddd	%xmm3,%xmm14
+	paddd	%xmm3,%xmm15
+	movdqu	%xmm0,(%rsi,%rdi,1)
+	movdqu	%xmm6,16(%rsi,%rdi,1)
+	subq	$2,%rcx
+	leaq	32(%rdi),%rdi
+	jnz	L$ctr32_loop
+
+L$ctr32_done:
+L$ctr32_abort:
+	.byte	0xf3,0xc3
+
+
+
+
+
+
+
+
 
 .p2align	4
 _vpaes_preheat:
@@ -765,11 +1012,11 @@ _vpaes_preheat:
 	.byte	0xf3,0xc3
 
 
-########################################################
-#
-#
-#
-########################################################
+
+
+
+
+
 
 .p2align	6
 _vpaes_consts:
@@ -826,10 +1073,10 @@ L$k_deskew:
 .quad	0x07E4A34047A4E300, 0x1DFEB95A5DBEF91A
 .quad	0x5F36B5DC83EA6900, 0x2841C2ABF49D1E77
 
-##
-#
-#
-##
+
+
+
+
 L$k_dksd:
 .quad	0xFEB91A5DA3E44700, 0x0740E3A45A1DBEF9
 .quad	0x41C277F4B5368300, 0x5FDC69EAAB289D1E
@@ -843,10 +1090,10 @@ L$k_dks9:
 .quad	0xB6116FC87ED9A700, 0x4AED933482255BFC
 .quad	0x4576516227143300, 0x8BB89FACE9DAFDCE
 
-##
-#
-#
-##
+
+
+
+
 L$k_dipt:
 .quad	0x0F505B040B545F00, 0x154A411E114E451A
 .quad	0x86E383E660056500, 0x12771772F491F194
@@ -866,6 +1113,17 @@ L$k_dsbe:
 L$k_dsbo:
 .quad	0x1387EA537EF94000, 0xC7AA6DB9D4943E2D
 .quad	0x12D7560F93441D00, 0xCA4B8159D8C58E9C
+
+
+L$rev_ctr:
+.quad	0x0706050403020100, 0x0c0d0e0f0b0a0908
+
+
+L$ctr_add_one:
+.quad	0x0000000000000000, 0x0000000100000000
+L$ctr_add_two:
+.quad	0x0000000000000000, 0x0000000200000000
+
 .byte	86,101,99,116,111,114,32,80,101,114,109,117,116,97,116,105,111,110,32,65,69,83,32,102,111,114,32,120,56,54,95,54,52,47,83,83,83,69,51,44,32,77,105,107,101,32,72,97,109,98,117,114,103,32,40,83,116,97,110,102,111,114,100,32,85,110,105,118,101,114,115,105,116,121,41,0
 .p2align	6
 

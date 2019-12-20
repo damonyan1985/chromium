@@ -13,7 +13,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_advertisement.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -154,7 +154,7 @@ class BluetoothTestBase : public testing::Test {
   // Then RunLoop().RunUntilIdle().
   void StartLowEnergyDiscoverySessionExpectedToFail();
 
-  // Check if Low Energy is available. On Mac, we require OS X >= 10.10.
+  // Check if Low Energy is available.
   virtual bool PlatformSupportsLowEnergy() = 0;
 
   // Initializes the BluetoothAdapter |adapter_| with the system adapter.
@@ -332,6 +332,9 @@ class BluetoothTestBase : public testing::Test {
   virtual void SimulateGattNameChange(BluetoothDevice* device,
                                       const std::string& new_name) {}
 
+  // Simulates a connection status change to disconnect.
+  virtual void SimulateStatusChangeToDisconnect(BluetoothDevice* device) {}
+
   // Simulates success of discovering services. |uuids| is used to create a
   // service for each UUID string. Multiple UUIDs with the same value produce
   // multiple service instances.
@@ -459,8 +462,8 @@ class BluetoothTestBase : public testing::Test {
   virtual void SimulateLocalGattCharacteristicValueReadRequest(
       BluetoothDevice* from_device,
       BluetoothLocalGattCharacteristic* characteristic,
-      const BluetoothLocalGattService::Delegate::ValueCallback& value_callback,
-      const base::Closure& error_callback) {}
+      BluetoothLocalGattService::Delegate::ValueCallback value_callback,
+      base::OnceClosure error_callback) {}
 
   // Simulates write a value to a locally hosted GATT characteristic by a
   // remote central device.
@@ -468,8 +471,8 @@ class BluetoothTestBase : public testing::Test {
       BluetoothDevice* from_device,
       BluetoothLocalGattCharacteristic* characteristic,
       const std::vector<uint8_t>& value_to_write,
-      const base::Closure& success_callback,
-      const base::Closure& error_callback) {}
+      base::OnceClosure success_callback,
+      base::OnceClosure error_callback) {}
 
   // Simulates prepare write a value to a locally hosted GATT characteristic by
   // a remote central device.
@@ -479,8 +482,8 @@ class BluetoothTestBase : public testing::Test {
       const std::vector<uint8_t>& value_to_write,
       int offset,
       bool has_subsequent_write,
-      const base::Closure& success_callback,
-      const base::Closure& error_callback) {}
+      base::OnceClosure success_callback,
+      base::OnceClosure error_callback) {}
 
   // Simulates reading a value from a locally hosted GATT descriptor by a
   // remote central device. Returns the value that was read from the local
@@ -488,8 +491,8 @@ class BluetoothTestBase : public testing::Test {
   virtual void SimulateLocalGattDescriptorValueReadRequest(
       BluetoothDevice* from_device,
       BluetoothLocalGattDescriptor* descriptor,
-      const BluetoothLocalGattService::Delegate::ValueCallback& value_callback,
-      const base::Closure& error_callback) {}
+      BluetoothLocalGattService::Delegate::ValueCallback value_callback,
+      base::OnceClosure error_callback) {}
 
   // Simulates write a value to a locally hosted GATT descriptor by a
   // remote central device.
@@ -497,8 +500,8 @@ class BluetoothTestBase : public testing::Test {
       BluetoothDevice* from_device,
       BluetoothLocalGattDescriptor* descriptor,
       const std::vector<uint8_t>& value_to_write,
-      const base::Closure& success_callback,
-      const base::Closure& error_callback) {}
+      base::OnceClosure success_callback,
+      base::OnceClosure error_callback) {}
 
   // Simulates starting or stopping a notification session for a locally
   // hosted GATT characteristic by a remote device. Returns false if we were
@@ -608,6 +611,7 @@ class BluetoothTestBase : public testing::Test {
 
   // Accessors to get callbacks bound to this fixture:
   base::Closure GetCallback(Call expected);
+  base::OnceClosure GetOnceCallback(Call expected);
   BluetoothAdapter::CreateAdvertisementCallback GetCreateAdvertisementCallback(
       Call expected);
   BluetoothAdapter::DiscoverySessionCallback GetDiscoverySessionCallback(
@@ -623,6 +627,7 @@ class BluetoothTestBase : public testing::Test {
   BluetoothRemoteGattCharacteristic::ValueCallback GetReadValueCallback(
       Call expected);
   BluetoothAdapter::ErrorCallback GetErrorCallback(Call expected);
+  BluetoothAdapter::ErrorOnceCallback GetErrorOnceCallback(Call expected);
   BluetoothAdapter::AdvertisementErrorCallback GetAdvertisementErrorCallback(
       Call expected);
   BluetoothDevice::ConnectErrorCallback GetConnectErrorCallback(Call expected);
@@ -648,9 +653,9 @@ class BluetoothTestBase : public testing::Test {
   // |device_ordinal|.
   LowEnergyDeviceData GetLowEnergyDeviceData(int device_ordinal) const;
 
-  // A ScopedTaskEnvironment is required by some implementations that will
+  // A TaskEnvironment is required by some implementations that will
   // PostTasks and by base::RunLoop().RunUntilIdle() use in this fixture.
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   scoped_refptr<BluetoothAdapter> adapter_;
   std::vector<scoped_refptr<BluetoothAdvertisement>> advertisements_;
@@ -685,7 +690,7 @@ class BluetoothTestBase : public testing::Test {
   bool unexpected_success_callback_ = false;
   bool unexpected_error_callback_ = false;
 
-  base::WeakPtrFactory<BluetoothTestBase> weak_factory_;
+  base::WeakPtrFactory<BluetoothTestBase> weak_factory_{this};
 };
 
 }  // namespace device

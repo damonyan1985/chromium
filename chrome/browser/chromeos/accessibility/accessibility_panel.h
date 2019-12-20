@@ -7,8 +7,6 @@
 
 #include <stdint.h>
 
-#include "ash/public/interfaces/accessibility_controller.mojom.h"
-#include "ash/public/interfaces/constants.mojom.h"
 #include "base/macros.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -48,13 +46,13 @@ class AccessibilityPanel : public views::WidgetDelegate,
  protected:
   // Returns the web contents, so subclasses can monitor for changes.
   content::WebContents* GetWebContents();
-  static ash::mojom::AccessibilityControllerPtr GetAccessibilityController();
 
  private:
   class AccessibilityPanelWebContentsObserver;
 
   // content::WebContentsDelegate:
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
+  bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                         const content::ContextMenuParams& params) override;
 
   // Indirectly invoked by the component extension.
   void DidFirstVisuallyNonEmptyPaint();

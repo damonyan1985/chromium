@@ -33,7 +33,8 @@ int ReadFile(base::File* file,
 
 // Seeks the file, returns 0 on success, or errno on an error.
 int SeekFile(base::File* file, size_t offset) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   // lseek() instead of |file|'s method for errno.
   off_t result = lseek(file->GetPlatformFile(), offset, SEEK_SET);
   return result < 0 ? errno : 0;
@@ -44,9 +45,10 @@ int SeekFile(base::File* file, size_t offset) {
 ArcContentFileSystemFileStreamReader::ArcContentFileSystemFileStreamReader(
     const GURL& arc_url,
     int64_t offset)
-    : arc_url_(arc_url), offset_(offset), weak_ptr_factory_(this) {
-  task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
+    : arc_url_(arc_url), offset_(offset) {
+  task_runner_ = base::CreateSequencedTaskRunner(
+      {base::ThreadPool(), base::MayBlock(),
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
 }
 
 ArcContentFileSystemFileStreamReader::~ArcContentFileSystemFileStreamReader() {

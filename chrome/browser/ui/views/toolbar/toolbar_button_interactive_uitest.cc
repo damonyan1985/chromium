@@ -4,7 +4,7 @@
 
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 
-#include "chrome/test/base/view_event_test_base.h"
+#include "chrome/browser/ui/views/test/view_event_test_base.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/views/controls/menu/menu_runner.h"
 
@@ -14,14 +14,14 @@ namespace test {
 class ToolbarButtonTestApi {
  public:
   explicit ToolbarButtonTestApi(ToolbarButton* button) : button_(button) {}
+  ToolbarButtonTestApi(const ToolbarButtonTestApi&) = delete;
+  ToolbarButtonTestApi& operator=(const ToolbarButtonTestApi&) = delete;
 
   views::MenuRunner* menu_runner() { return button_->menu_runner_.get(); }
   bool menu_showing() const { return button_->menu_showing_; }
 
  private:
   ToolbarButton* button_;
-
-  DISALLOW_COPY_AND_ASSIGN(ToolbarButtonTestApi);
 };
 
 }  // namespace test
@@ -29,6 +29,8 @@ class ToolbarButtonTestApi {
 class ToolbarButtonUITest : public ViewEventTestBase {
  public:
   ToolbarButtonUITest() {}
+  ToolbarButtonUITest(const ToolbarButtonUITest&) = delete;
+  ToolbarButtonUITest& operator=(const ToolbarButtonUITest&) = delete;
 
   // ViewEventTestBase:
   views::View* CreateContentsView() override {
@@ -44,9 +46,6 @@ class ToolbarButtonUITest : public ViewEventTestBase {
 
  protected:
   ToolbarButton* button_ = nullptr;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ToolbarButtonUITest);
 };
 
 // Test showing and dismissing a menu to verify menu delegate lifetime.

@@ -7,6 +7,14 @@ class FileListSelectionModel extends cr.ui.ListSelectionModel {
   constructor(opt_length) {
     super(opt_length);
 
+    /**
+     * Overwrite ListSelectionModel to allow lead item to be independent of the
+     * current selected item(s).
+     * @private {boolean}
+     * @override
+     */
+    this.independentLeadItem_ = true;
+
     /** @private {boolean} */
     this.isCheckSelectMode_ = false;
 
@@ -19,6 +27,17 @@ class FileListSelectionModel extends cr.ui.ListSelectionModel {
    */
   setCheckSelectMode(enabled) {
     this.isCheckSelectMode_ = enabled;
+  }
+
+  selectAll() {
+    super.selectAll();
+    // Force change event when selecting all but with only 1 item, to update the
+    // UI with select mode.
+    if (this.isCheckSelectMode_ && this.selectedIndexes.length == 1) {
+      const e = new Event('change');
+      e.changes = [];
+      this.dispatchEvent(e);
+    }
   }
 
   /**
@@ -35,15 +54,14 @@ class FileListSelectionModel extends cr.ui.ListSelectionModel {
    */
   adjustToReordering(permutation) {
     // Look at the old state.
-    var oldSelectedItemsCount = this.selectedIndexes.length;
-    var oldLeadIndex = this.leadIndex;
-    var newSelectedItemsCount =
+    const oldSelectedItemsCount = this.selectedIndexes.length;
+    const oldLeadIndex = this.leadIndex;
+    const newSelectedItemsCount =
         this.selectedIndexes.filter(i => permutation[i] != -1).length;
     // Call the superclass function.
     super.adjustToReordering(permutation);
     // Leave check-select mode if all items have been deleted.
-    if (oldSelectedItemsCount && !newSelectedItemsCount && this.length_ &&
-        oldLeadIndex != -1) {
+    if (oldSelectedItemsCount && !newSelectedItemsCount && this.length_) {
       this.isCheckSelectMode_ = false;
     }
   }
@@ -55,11 +73,11 @@ class FileListSelectionModel extends cr.ui.ListSelectionModel {
    * @private
    */
   onChangeEvent_(event) {
-    // When the number of selected item is not one, update che check-select
+    // When the number of selected item is not one, update the check-select
     // mode. When the number of selected item is one, the mode depends on the
     // last keyboard/mouse operation. In this case, the mode is controlled from
     // outside. See filelist.handlePointerDownUp and filelist.handleKeyDown.
-    var selectedIndexes = this.selectedIndexes;
+    const selectedIndexes = this.selectedIndexes;
     if (selectedIndexes.length === 0) {
       this.isCheckSelectMode_ = false;
     } else if (selectedIndexes.length >= 2) {

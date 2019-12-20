@@ -14,20 +14,23 @@
 #ifndef CONTENT_COMMON_CONTENT_PARAM_TRAITS_H_
 #define CONTENT_COMMON_CONTENT_PARAM_TRAITS_H_
 
+#include "base/memory/ref_counted.h"
+#include "cc/ipc/cc_param_traits_macros.h"
 #include "content/common/content_param_traits_macros.h"
 #include "content/common/cursors/webcursor.h"
 #include "ipc/ipc_mojo_param_traits.h"
-#include "storage/common/blob_storage/blob_handle.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "net/base/hash_value.h"
 #include "ui/accessibility/ax_mode.h"
 
 namespace blink {
+class PolicyValue;
 class MessagePortChannel;
 struct TransferableMessage;
 }
 
 namespace content {
 struct FrameMsg_ViewChanged_Params;
+struct RecordTabSwitchTimeRequest;
 }
 
 namespace viz {
@@ -41,25 +44,9 @@ class SurfaceInfo;
 namespace IPC {
 
 template <>
-struct ParamTraits<content::WebCursor> {
+struct CONTENT_EXPORT ParamTraits<content::WebCursor> {
   typedef content::WebCursor param_type;
-  static void Write(base::Pickle* m, const param_type& p) { p.Serialize(m); }
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* r) {
-    return r->Deserialize(iter);
-  }
-  static void Log(const param_type& p, std::string* l) {
-    l->append("<WebCursor>");
-  }
-};
-
-typedef const blink::WebInputEvent* WebInputEventPointer;
-template <>
-struct ParamTraits<WebInputEventPointer> {
-  typedef WebInputEventPointer param_type;
   static void Write(base::Pickle* m, const param_type& p);
-  // Note: upon read, the event has the lifetime of the message.
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
                    param_type* r);
@@ -70,14 +57,15 @@ template <>
 struct CONTENT_EXPORT ParamTraits<blink::MessagePortChannel> {
   typedef blink::MessagePortChannel param_type;
   static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m, base::PickleIterator* iter,
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
                    param_type* r);
   static void Log(const param_type& p, std::string* l);
 };
 
 template <>
-struct CONTENT_EXPORT ParamTraits<ui::AXMode> {
-  typedef ui::AXMode param_type;
+struct CONTENT_EXPORT ParamTraits<blink::PolicyValue> {
+  typedef blink::PolicyValue param_type;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -86,8 +74,8 @@ struct CONTENT_EXPORT ParamTraits<ui::AXMode> {
 };
 
 template <>
-struct CONTENT_EXPORT ParamTraits<scoped_refptr<storage::BlobHandle>> {
-  typedef scoped_refptr<storage::BlobHandle> param_type;
+struct CONTENT_EXPORT ParamTraits<ui::AXMode> {
+  typedef ui::AXMode param_type;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -160,6 +148,26 @@ struct CONTENT_EXPORT ParamTraits<viz::SurfaceId> {
 template <>
 struct CONTENT_EXPORT ParamTraits<viz::SurfaceInfo> {
   typedef viz::SurfaceInfo param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<net::SHA256HashValue> {
+  typedef net::SHA256HashValue param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<content::RecordTabSwitchTimeRequest> {
+  using param_type = content::RecordTabSwitchTimeRequest;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,

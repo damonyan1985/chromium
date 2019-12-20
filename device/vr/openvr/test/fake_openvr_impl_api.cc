@@ -4,19 +4,14 @@
 
 #include <D3D11_1.h>
 #include <DXGI1_4.h>
-#include <wrl.h>
 #include <memory>
 
-#include "base/stl_util.h"
-#include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_restrictions.h"
 #include "device/vr/openvr/test/test_helper.h"
-#include "device/vr/openvr/test/test_hook.h"
+#include "device/vr/test/test_hook.h"
+#include "device/vr/windows/d3d11_device_helpers.h"
 #include "third_party/openvr/src/headers/openvr.h"
 #include "third_party/openvr/src/src/ivrclientcore.h"
 
-// TODO(https://crbug.com/892717): Update argument names to be consistent with
-// Chromium style guidelines.
 namespace vr {
 
 class TestVRSystem : public IVRSystem {
@@ -28,7 +23,7 @@ class TestVRSystem : public IVRSystem {
                                     float far_z) override {
     NOTIMPLEMENTED();
     return {};
-  };
+  }
   void GetProjectionRaw(EVREye eye,
                         float* left,
                         float* right,
@@ -53,6 +48,11 @@ class TestVRSystem : public IVRSystem {
     return 0;
   }
   void GetDXGIOutputInfo(int32_t* adapter_index) override;
+  void GetOutputDevice(uint64_t* pnDevice,
+                       ETextureType textureType,
+                       VkInstance_T* pInstance = nullptr) override {
+    NOTIMPLEMENTED();
+  }
   bool IsDisplayOnDesktop() override {
     NOTIMPLEMENTED();
     return false;
@@ -132,6 +132,16 @@ class TestVRSystem : public IVRSystem {
     NOTIMPLEMENTED();
     return {};
   }
+  uint32_t GetArrayTrackedDeviceProperty(
+      vr::TrackedDeviceIndex_t unDeviceIndex,
+      ETrackedDeviceProperty prop,
+      PropertyTypeTag_t propType,
+      void* pBuffer,
+      uint32_t unBufferSize,
+      ETrackedPropertyError* pError = 0L) override {
+    NOTIMPLEMENTED();
+    return 0;
+  }
   uint32_t GetStringTrackedDeviceProperty(
       TrackedDeviceIndex_t device_index,
       ETrackedDeviceProperty prop,
@@ -178,27 +188,27 @@ class TestVRSystem : public IVRSystem {
   const char* GetButtonIdNameFromEnum(EVRButtonId button_id) override {
     NOTIMPLEMENTED();
     return nullptr;
-  };
+  }
   const char* GetControllerAxisTypeNameFromEnum(
       EVRControllerAxisType axis_type) override {
     NOTIMPLEMENTED();
     return nullptr;
   }
-  bool CaptureInputFocus() override {
+  bool IsInputAvailable() override {
     NOTIMPLEMENTED();
     return false;
   }
-  void ReleaseInputFocus() override { NOTIMPLEMENTED(); }
-  bool IsInputFocusCapturedByAnotherProcess() override {
+  bool IsSteamVRDrawingControllers() override {
     NOTIMPLEMENTED();
     return false;
   }
-  uint32_t DriverDebugRequest(TrackedDeviceIndex_t device_index,
-                              const char* request,
-                              char* response_buffer,
-                              uint32_t response_buffer_size) override {
+  bool ShouldApplicationPause() override {
     NOTIMPLEMENTED();
-    return 0;
+    return false;
+  }
+  bool ShouldApplicationReduceRenderingWork() override {
+    NOTIMPLEMENTED();
+    return false;
   }
   EVRFirmwareError PerformFirmwareUpdate(
       TrackedDeviceIndex_t device_index) override {
@@ -206,7 +216,15 @@ class TestVRSystem : public IVRSystem {
     return VRFirmwareError_None;
   }
   void AcknowledgeQuit_Exiting() override { NOTIMPLEMENTED(); }
-  void AcknowledgeQuit_UserPrompt() override { NOTIMPLEMENTED(); }
+  uint32_t GetAppContainerFilePaths(VR_OUT_STRING() char* pchBuffer,
+                                    uint32_t unBufferSize) override {
+    NOTIMPLEMENTED();
+    return 0;
+  }
+  const char* GetRuntimeVersion() override {
+    NOTIMPLEMENTED();
+    return "";
+  }
 };
 
 class TestVRCompositor : public IVRCompositor {
@@ -362,11 +380,31 @@ class TestVRCompositor : public IVRCompositor {
     NOTIMPLEMENTED();
     return 0;
   }
+  void SetExplicitTimingMode(EVRCompositorTimingMode eTimingMode) override {
+    NOTIMPLEMENTED();
+  }
+  EVRCompositorError SubmitExplicitTimingData() override {
+    NOTIMPLEMENTED();
+    return VRCompositorError_None;
+  }
+  bool IsMotionSmoothingEnabled() override {
+    NOTIMPLEMENTED();
+    return false;
+  }
+  bool IsMotionSmoothingSupported() override {
+    NOTIMPLEMENTED();
+    return false;
+  }
+  bool IsCurrentSceneFocusAppLoading() override {
+    NOTIMPLEMENTED();
+    return false;
+  }
 };
 
 class TestVRClientCore : public IVRClientCore {
  public:
-  EVRInitError Init(EVRApplicationType application_type) override;
+  EVRInitError Init(EVRApplicationType application_type,
+                    const char* pStartupInfo) override;
   void Cleanup() override;
   EVRInitError IsInterfaceVersionValid(const char* interface_version) override;
   void* GetGenericInterface(const char* name_and_version,
@@ -387,7 +425,8 @@ TestVRSystem g_system;
 TestVRCompositor g_compositor;
 TestVRClientCore g_loader;
 
-EVRInitError TestVRClientCore::Init(EVRApplicationType application_type) {
+EVRInitError TestVRClientCore::Init(EVRApplicationType application_type,
+                                    const char* pStartupInfo) {
   return VRInitError_None;
 }
 
@@ -407,7 +446,7 @@ void* TestVRClientCore::GetGenericInterface(const char* name_and_version,
   if (strcmp(name_and_version, IVRCompositor_Version) == 0)
     return static_cast<IVRCompositor*>(&g_compositor);
   if (strcmp(name_and_version, device::kChromeOpenVRTestHookAPI) == 0)
-    return static_cast<device::TestHookRegistration*>(&g_test_helper);
+    return static_cast<device::ServiceTestHook*>(&g_test_helper);
 
   *error = VRInitError_Init_InvalidInterface;
   return nullptr;
@@ -424,30 +463,7 @@ void TestVRSystem::GetRecommendedRenderTargetSize(uint32_t* width,
 }
 
 void TestVRSystem::GetDXGIOutputInfo(int32_t* adapter_index) {
-  // Enumerate devices until we find one that supports 11.1.
-  *adapter_index = -1;
-  Microsoft::WRL::ComPtr<IDXGIFactory1> dxgi_factory;
-  Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
-  DCHECK(
-      SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(dxgi_factory.GetAddressOf()))));
-  for (int i = 0; SUCCEEDED(
-           dxgi_factory->EnumAdapters(i, adapter.ReleaseAndGetAddressOf()));
-       ++i) {
-    D3D_FEATURE_LEVEL feature_levels[] = {D3D_FEATURE_LEVEL_11_1};
-    UINT flags = 0;
-    D3D_FEATURE_LEVEL feature_level_out = D3D_FEATURE_LEVEL_11_1;
-
-    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
-    Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d11_device_context;
-    if (SUCCEEDED(D3D11CreateDevice(
-            adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, feature_levels,
-            base::size(feature_levels), D3D11_SDK_VERSION,
-            d3d11_device.GetAddressOf(), &feature_level_out,
-            d3d11_device_context.GetAddressOf()))) {
-      *adapter_index = i;
-      return;
-    }
-  }
+  GetD3D11_1AdapterIndex(adapter_index);
 }
 
 void TestVRSystem::GetProjectionRaw(EVREye eye,
@@ -467,7 +483,8 @@ HmdMatrix34_t TestVRSystem::GetEyeToHeadTransform(EVREye eye) {
   ret.m[0][0] = 1;
   ret.m[1][1] = 1;
   ret.m[2][2] = 1;
-  ret.m[0][3] = (eye == Eye_Left) ? 0.1f : -0.1f;
+  float ipd = g_test_helper.GetInterpupillaryDistance();
+  ret.m[0][3] = ((eye == Eye_Left) ? 1 : -1) * ipd / 2;
   return ret;
 }
 
@@ -596,12 +613,30 @@ EVRCompositorError TestVRCompositor::WaitGetPoses(TrackedDevicePose_t* poses1,
                                                   unsigned int count1,
                                                   TrackedDevicePose_t* poses2,
                                                   unsigned int count2) {
-  TrackedDevicePose_t pose = g_test_helper.GetPose(true /* presenting pose */);
+  TrackedDevicePose_t pose;
   for (unsigned int i = 0; i < count1; ++i) {
+    if (i != vr::k_unTrackedDeviceIndex_Hmd) {
+      VRControllerState_t controller_state;
+      g_test_helper.GetControllerPose(i, &pose);
+      pose.bDeviceIsConnected =
+          g_test_helper.GetControllerState(i, &controller_state);
+    } else {
+      pose = g_test_helper.GetPose(true /* presenting pose */);
+      pose.bDeviceIsConnected = true;
+    }
     poses1[i] = pose;
   }
 
   for (unsigned int i = 0; i < count2; ++i) {
+    if (i != vr::k_unTrackedDeviceIndex_Hmd) {
+      VRControllerState_t controller_state;
+      g_test_helper.GetControllerPose(i, &pose);
+      pose.bDeviceIsConnected =
+          g_test_helper.GetControllerState(i, &controller_state);
+    } else {
+      pose = g_test_helper.GetPose(true /* presenting pose */);
+      pose.bDeviceIsConnected = true;
+    }
     poses2[i] = pose;
   }
 

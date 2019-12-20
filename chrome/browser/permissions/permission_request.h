@@ -42,9 +42,14 @@ enum class PermissionRequestType {
   PERMISSION_MEDIASTREAM_MIC = 13,
   PERMISSION_MEDIASTREAM_CAMERA = 14,
   PERMISSION_ACCESSIBILITY_EVENTS = 15,
-  PERMISSION_CLIPBOARD_READ = 16,
+  // PERMISSION_CLIPBOARD_READ = 16, // Replaced by
+  // PERMISSION_CLIPBOARD_READ_WRITE in M81.
   PERMISSION_SECURITY_KEY_ATTESTATION = 17,
   PERMISSION_PAYMENT_HANDLER = 18,
+  PERMISSION_NFC = 19,
+  PERMISSION_CLIPBOARD_READ_WRITE = 20,
+  PERMISSION_VR = 21,
+  PERMISSION_AR = 22,
   // NUM must be the last value in the enum.
   NUM
 };
@@ -85,15 +90,27 @@ class PermissionRequest {
   virtual IconId GetIconId() const = 0;
 
 #if defined(OS_ANDROID)
+  // Returns the title of this permission as text.
+  virtual base::string16 GetTitleText() const = 0;
+
   // Returns the full prompt text for this permission. This is currently only
   // used on Android.
   virtual base::string16 GetMessageText() const = 0;
+
+  // Returns the title of this permission as text when the permission request is
+  // displayed as a quiet prompt. Only used on Android. By default it returns
+  // the same value as |GetTitleText| unless overridden.
+  virtual base::string16 GetQuietTitleText() const;
+
+  // Returns the full prompt text for this permission as text when the
+  // permission request is displayed as a quiet prompt. Only used on Android. By
+  // default it returns the same value as |GetMessageText| unless overridden.
+  virtual base::string16 GetQuietMessageText() const;
 #endif
 
-  // Returns the shortened prompt text for this permission.  Must be phrased
-  // as a heading, e.g. "Location", or "Camera". The permission bubble may
-  // coalesce different requests, and if it does, this text will be displayed
-  // next to an image and indicate the user grants the permission.
+  // Returns the shortened prompt text for this permission. The permission
+  // bubble may coalesce different requests, and if it does, this text will
+  // be displayed next to an image and indicate the user grants the permission.
   virtual base::string16 GetMessageTextFragment() const = 0;
 
   // Get the origin on whose behalf this permission request is being made.

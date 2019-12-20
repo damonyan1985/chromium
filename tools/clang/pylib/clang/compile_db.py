@@ -3,6 +3,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import print_function
+
 import json
 import os
 import re
@@ -26,17 +28,33 @@ def _ProcessCommand(command):
   Instead, we just use a regex, with the simplifying assumption that the path to
   clang-cl.exe contains no spaces.
   """
+  # If the driver mode is not already set then define it. Driver mode is
+  # automatically included in the compile db by clang starting with release
+  # 9.0.0.
+  if "--driver_mode" in command:
+    driver_mode = ""
+  # Only specify for Windows. Other platforms do fine without it.
+  elif sys.platform == 'win32':
+    driver_mode = '--driver-mode=cl'
+
   match = _CMD_LINE_RE.search(command)
   if match:
     match_dict = match.groupdict()
     command = ' '.join(
-        [match_dict['clang'], '--driver-mode=cl', match_dict['args']])
+        [match_dict['clang'], driver_mode, match_dict['args']])
   elif _debugging:
-    print 'Compile command didn\'t match expected regex!'
-    print 'Command:', command
-    print 'Regex:', _CMD_LINE_RE.pattern
+    print('Compile command didn\'t match expected regex!')
+    print('Command:', command)
+    print('Regex:', _CMD_LINE_RE.pattern)
 
-  return command
+  # Remove some blocklisted arguments. These are VisualStudio specific arguments
+  # not recognized or used by clangd. They only suppress or activate graphical
+  # output anyway.
+  blocklisted_arguments = ['/nologo', '/showIncludes']
+  command_parts = filter(lambda arg: arg not in blocklisted_arguments,
+    command.split())
+
+  return " ".join(command_parts)
 
 
 def _ProcessEntry(entry):
@@ -56,7 +74,7 @@ def _ProcessEntry(entry):
           entry['command'][match.end(1):]])
   except IOError:
     if _debugging:
-      print 'Couldn\'t read response file for %s' % entry['file']
+      print('Couldn\'t read response file for %s' % entry['file'])
 
   return entry
 
@@ -77,7 +95,7 @@ def ProcessCompileDatabaseIfNeeded(compile_db):
     return compile_db
 
   if _debugging:
-    print 'Read in %d entries from the compile db' % len(compile_db)
+    print('Read in %d entries from the compile db' % len(compile_db))
   compile_db = [_ProcessEntry(e) for e in compile_db]
   original_length = len(compile_db)
 
@@ -86,7 +104,7 @@ def ProcessCompileDatabaseIfNeeded(compile_db):
   compile_db = [e for e in compile_db if '_nacl.cc.pdb' not in e['command']
       and '_nacl_win64.cc.pdb' not in e['command']]
   if _debugging:
-    print 'Filtered out %d entries...' % (original_length - len(compile_db))
+    print('Filtered out %d entries...' % (original_length - len(compile_db)))
 
   # TODO(dcheng): Also filter out multiple commands for the same file. Not sure
   # how that happens, but apparently it's an issue on Windows.

@@ -70,7 +70,6 @@ Polymer({
   },
 
   listeners: {
-    'auth-token-changed': 'onAuthTokenChanged_',
     'close': 'onDialogClose_',
     'feature-toggle-clicked': 'onFeatureToggleClicked_',
     'forget-device-requested': 'onForgetDeviceRequested_',
@@ -157,6 +156,21 @@ Polymer({
       default:
         return '';
     }
+  },
+
+  /**
+   * @return {string} "true" or "false" indicating whether the text box
+   *                  should be aria-hidden or not.
+   * @private
+   */
+  getTextAriaHidden_: function() {
+    // When host is set and verified, we only show subpage arrow button and
+    // toggle. In this case, we avoid the navigation stops on the text to make
+    // navigating easier. The arrow button is labeled and described by the text,
+    // so the text is still available to assistive tools.
+    return String(
+        this.pageContentData.mode ===
+        settings.MultiDeviceSettingsMode.HOST_SET_VERIFIED);
   },
 
   /**
@@ -270,14 +284,6 @@ Polymer({
 
     // Remove the password prompt dialog from the DOM.
     this.showPasswordPromptDialog_ = false;
-  },
-
-  /**
-   * @param {!CustomEvent<!{value: string}>} event
-   * @private
-   */
-  onAuthTokenChanged_: function(event) {
-    this.authToken_ = event.detail.value;
   },
 
   /**

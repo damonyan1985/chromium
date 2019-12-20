@@ -15,9 +15,9 @@
 #include "chrome/browser/chromeos/fileapi/recent_model_factory.h"
 #include "chrome/browser/chromeos/fileapi/test/fake_recent_source.h"
 #include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "storage/browser/fileapi/file_system_url.h"
-#include "storage/common/fileapi/file_system_types.h"
+#include "content/public/test/browser_task_environment.h"
+#include "storage/browser/file_system/file_system_url.h"
+#include "storage/common/file_system/file_system_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -27,7 +27,7 @@ namespace {
 RecentFile MakeRecentFile(const std::string& name,
                           const base::Time& last_modified) {
   storage::FileSystemURL url = storage::FileSystemURL::CreateForTest(
-      GURL(),  // origin
+      url::Origin(),  // origin
       storage::kFileSystemTypeNativeLocal, base::FilePath(name));
   return RecentFile(url, last_modified);
 }
@@ -94,7 +94,7 @@ class RecentModelTest : public testing::Test {
     return files;
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 };
 

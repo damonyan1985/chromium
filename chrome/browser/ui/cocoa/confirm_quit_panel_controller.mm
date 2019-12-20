@@ -34,7 +34,7 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
 // The content view of the window that draws a custom frame.
 @interface ConfirmQuitFrameView : NSView {
  @private
-  NSTextField* message_;  // Weak, owned by the view hierarchy.
+  NSTextField* _message;  // Weak, owned by the view hierarchy.
 }
 - (void)setMessageText:(NSString*)text;
 @end
@@ -46,14 +46,14 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
     base::scoped_nsobject<NSTextField> message(
         // The frame will be fixed up when |-setMessageText:| is called.
         [[NSTextField alloc] initWithFrame:NSZeroRect]);
-    message_ = message.get();
-    [message_ setEditable:NO];
-    [message_ setSelectable:NO];
-    [message_ setBezeled:NO];
-    [message_ setDrawsBackground:NO];
-    [message_ setFont:[NSFont boldSystemFontOfSize:24]];
-    [message_ setTextColor:[NSColor whiteColor]];
-    [self addSubview:message_];
+    _message = message.get();
+    [_message setEditable:NO];
+    [_message setSelectable:NO];
+    [_message setBezeled:NO];
+    [_message setDrawsBackground:NO];
+    [_message setFont:[NSFont boldSystemFontOfSize:24]];
+    [_message setTextColor:[NSColor whiteColor]];
+    [self addSubview:_message];
   }
   return self;
 }
@@ -83,13 +83,13 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
   [attrString addAttribute:NSShadowAttributeName
                      value:textShadow
                      range:NSMakeRange(0, [text length])];
-  [message_ setAttributedStringValue:attrString];
+  [_message setAttributedStringValue:attrString];
 
   // Fixup the frame of the string.
-  [message_ sizeToFit];
-  NSRect messageFrame = [message_ frame];
+  [_message sizeToFit];
+  NSRect messageFrame = [_message frame];
   NSRect frameInViewSpace =
-      [message_ convertRect:[[self window] frame] fromView:nil];
+      [_message convertRect:[[self window] frame] fromView:nil];
 
   if (NSWidth(messageFrame) > NSWidth(frameInViewSpace))
     frameInViewSpace.size.width = NSWidth(messageFrame) + kHorizontalPadding;
@@ -97,9 +97,9 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
   messageFrame.origin.x = NSWidth(frameInViewSpace) / 2 - NSMidX(messageFrame);
   messageFrame.origin.y = NSHeight(frameInViewSpace) / 2 - NSMidY(messageFrame);
 
-  [[self window] setFrame:[message_ convertRect:frameInViewSpace toView:nil]
+  [[self window] setFrame:[_message convertRect:frameInViewSpace toView:nil]
                   display:YES];
-  [message_ setFrame:messageFrame];
+  [_message setFrame:messageFrame];
 }
 
 @end
@@ -111,7 +111,7 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
 // complete, this will release itself.
 @interface FadeAllWindowsAnimation : NSAnimation<NSAnimationDelegate> {
  @private
-  NSApplication* application_;
+  NSApplication* _application;
 }
 - (id)initWithApplication:(NSApplication*)app
         animationDuration:(NSTimeInterval)duration;
@@ -124,14 +124,14 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
         animationDuration:(NSTimeInterval)duration {
   if ((self = [super initWithDuration:duration
                        animationCurve:NSAnimationLinear])) {
-    application_ = app;
+    _application = app;
     [self setDelegate:self];
   }
   return self;
 }
 
 - (void)setCurrentProgress:(NSAnimationProgress)progress {
-  for (NSWindow* window in [application_ windows]) {
+  for (NSWindow* window in [_application windows]) {
     if (chrome::FindBrowserWithWindow(window))
       [window setAlphaValue:1.0 - progress];
   }
@@ -154,6 +154,7 @@ const NSTimeInterval kTimeDeltaFuzzFactor = 1.0;
 // Returns the menu item for the Quit menu item, or a thrown-together default
 // one if no Quit menu item exists.
 + (NSMenuItem*)quitMenuItem;
+- (void)sendAccessibilityAnnouncement;
 @end
 
 ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
@@ -187,13 +188,13 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
     NSRect frame = [[window contentView] frame];
     base::scoped_nsobject<ConfirmQuitFrameView> frameView(
         [[ConfirmQuitFrameView alloc] initWithFrame:frame]);
-    contentView_ = frameView.get();
-    [window setContentView:contentView_];
+    _contentView = frameView.get();
+    [window setContentView:_contentView];
 
     // Set the proper string.
     NSString* message = l10n_util::GetNSStringF(IDS_CONFIRM_TO_QUIT_DESCRIPTION,
         base::SysNSStringToUTF16([[self class] keyCommandString]));
-    [contentView_ setMessageText:message];
+    [_contentView setMessageText:message];
   }
   return self;
 }
@@ -235,6 +236,13 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
 
   // Show the info panel that explains what the user must to do confirm quit.
   [self showWindow:self];
+
+  // Explicitly announce the hold-to-quit message. For an ordinary modal dialog
+  // VoiceOver would announce it and read its message, but VoiceOver does not do
+  // this for windows whose styleMask is NSBorderlessWindowMask, so do it
+  // manually here. Without this screenreader users have no way to know why
+  // their quit hotkey seems not to work.
+  [self sendAccessibilityAnnouncement];
 
   // Spin a nested run loop until the |targetDate| is reached or a KeyUp event
   // is sent.
@@ -394,6 +402,18 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
 
   [string appendString:[item.keyEquivalent uppercaseString]];
   return string;
+}
+
+- (void)sendAccessibilityAnnouncement {
+  NSString* message = l10n_util::GetNSStringF(
+      IDS_CONFIRM_TO_QUIT_DESCRIPTION,
+      base::SysNSStringToUTF16([[self class] keyCommandString]));
+
+  NSAccessibilityPostNotificationWithUserInfo(
+      [NSApp mainWindow], NSAccessibilityAnnouncementRequestedNotification, @{
+        NSAccessibilityAnnouncementKey : message,
+        NSAccessibilityPriorityKey : @(NSAccessibilityPriorityHigh),
+      });
 }
 
 @end

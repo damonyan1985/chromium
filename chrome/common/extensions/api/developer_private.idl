@@ -160,7 +160,6 @@ namespace developerPrivate {
 
   enum ControllerType {
     POLICY,
-    CHILD_CUSTODIAN,
     SUPERVISED_USER_CUSTODIAN
   };
 
@@ -258,7 +257,6 @@ namespace developerPrivate {
   };
 
   dictionary ProfileInfo {
-    boolean appInfoDialogEnabled;
     boolean canLoadUnpacked;
     boolean inDeveloperMode;
     boolean isDeveloperModeControlledByPolicy;

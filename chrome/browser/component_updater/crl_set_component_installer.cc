@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/memory/ref_counted.h"
@@ -38,7 +39,8 @@ const base::FilePath::CharType kCRLSetFile[] = FILE_PATH_LITERAL("crl-set");
 
 // Returns the contents of the file at |crl_path|.
 std::string LoadCRLSet(const base::FilePath& crl_path) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::WILL_BLOCK);
   std::string crl_set_bytes;
   base::ReadFileToString(crl_path, &crl_set_bytes);
   return crl_set_bytes;
@@ -78,8 +80,9 @@ void CRLSetData::ConfigureNetworkService() {
   if (crl_set_path_.empty())
     return;
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::ThreadPool(), base::TaskPriority::BEST_EFFORT, base::MayBlock()},
       base::BindOnce(&LoadCRLSet, crl_set_path_),
       base::BindOnce(&CRLSetData::UpdateCRLSetOnUI, base::Unretained(this)));
 }
@@ -89,7 +92,8 @@ void CRLSetData::UpdateCRLSetOnUI(const std::string& crl_set_bytes) {
 
   network::mojom::NetworkService* network_service =
       network_service_ ? network_service_ : content::GetNetworkService();
-  network_service->UpdateCRLSet(base::as_bytes(base::make_span(crl_set_bytes)));
+  network_service->UpdateCRLSet(base::as_bytes(base::make_span(crl_set_bytes)),
+                                base::DoNothing());
 }
 
 }  // namespace

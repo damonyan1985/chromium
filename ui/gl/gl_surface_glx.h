@@ -81,7 +81,6 @@ class GL_EXPORT NativeViewGLSurfaceGLX : public GLSurfaceGLX {
   gfx::SwapResult SwapBuffers(PresentationCallback callback) override;
   gfx::Size GetSize() override;
   void* GetHandle() override;
-  bool SupportsPresentationCallback() override;
   bool SupportsPostSubBuffer() override;
   void* GetConfig() override;
   GLSurfaceFormat GetFormat() override;
@@ -94,8 +93,6 @@ class GL_EXPORT NativeViewGLSurfaceGLX : public GLSurfaceGLX {
   bool OnMakeCurrent(GLContext* context) override;
   gfx::VSyncProvider* GetVSyncProvider() override;
   void SetVSyncEnabled(bool enabled) override;
-
-  VisualID GetVisualID() const { return visual_id_; }
 
  protected:
   ~NativeViewGLSurfaceGLX() override;
@@ -127,7 +124,6 @@ class GL_EXPORT NativeViewGLSurfaceGLX : public GLSurfaceGLX {
 
   GLXFBConfig config_;
   gfx::Size size_;
-  VisualID visual_id_;
 
   bool has_swapped_buffers_;
 

@@ -22,14 +22,14 @@ namespace {
 
 // TODO(estade): share this alpha with other things in ash (battery, etc.).
 // See https://crbug.com/623987 and https://crbug.com/632827
-// For now, this value should match the one used in kTrayIconBackgroundColor
+// For now, this value should match the one used in kTrayIconBackgroundAlpha
 // in ash/system/tray/tray_constants.cc
 constexpr int kSignalStrengthImageBgAlpha = 0x4D;
 
 SkPath CreateArcPath(gfx::RectF oval, float start_angle, float sweep_angle) {
   SkPath path;
   path.setIsVolatile(true);
-  path.setFillType(SkPath::kWinding_FillType);
+  path.setFillType(SkPathFillType::kWinding);
   path.moveTo(oval.CenterPoint().x(), oval.CenterPoint().y());
   path.arcTo(gfx::RectFToSkRect(oval), start_angle, sweep_angle, false);
   path.close();
@@ -44,7 +44,7 @@ SkPath CreateArcPath(gfx::RectF oval, float start_angle, float sweep_angle) {
 NetworkIconImageSource::NetworkIconImageSource(const gfx::Size& size,
                                                const gfx::ImageSkia& icon,
                                                const Badges& badges)
-    : CanvasImageSource(size, false), icon_(icon), badges_(badges) {}
+    : CanvasImageSource(size), icon_(icon), badges_(badges) {}
 
 NetworkIconImageSource::~NetworkIconImageSource() = default;
 
@@ -97,7 +97,7 @@ SignalStrengthImageSource::SignalStrengthImageSource(ImageType image_type,
                                                      const gfx::Size& size,
                                                      int signal_strength,
                                                      int padding)
-    : CanvasImageSource(size, false /* is_opaque */),
+    : CanvasImageSource(size),
       image_type_(image_type),
       color_(color),
       signal_strength_(signal_strength),

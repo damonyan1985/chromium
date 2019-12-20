@@ -30,7 +30,6 @@
 #include "chromeos/components/multidevice/software_feature_state.h"
 #include "chromeos/components/proximity_auth/proximity_auth_local_state_pref_manager.h"
 #include "chromeos/components/proximity_auth/smart_lock_metrics_recorder.h"
-#include "chromeos/components/proximity_auth/switches.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/login/auth/user_context.h"
 #include "chromeos/login/login_state/login_state.h"
@@ -177,8 +176,7 @@ EasyUnlockServiceSignin::EasyUnlockServiceSignin(
       account_id_(EmptyAccountId()),
       user_pod_last_focused_timestamp_(base::TimeTicks::Now()),
       remote_device_cache_(
-          multidevice::RemoteDeviceCache::Factory::Get()->BuildInstance()),
-      weak_ptr_factory_(this) {}
+          multidevice::RemoteDeviceCache::Factory::Get()->BuildInstance()) {}
 
 EasyUnlockServiceSignin::~EasyUnlockServiceSignin() {}
 
@@ -228,19 +226,11 @@ AccountId EasyUnlockServiceSignin::GetAccountId() const {
   return account_id_;
 }
 
-void EasyUnlockServiceSignin::ClearPermitAccess() {
-  NOTREACHED();
-}
-
 const base::ListValue* EasyUnlockServiceSignin::GetRemoteDevices() const {
   const UserData* data = FindLoadedDataForCurrentUser();
   if (!data)
     return nullptr;
   return &data->remote_devices_value;
-}
-
-void EasyUnlockServiceSignin::SetRemoteDevices(const base::ListValue& devices) {
-  NOTREACHED();
 }
 
 std::string EasyUnlockServiceSignin::GetChallenge() const {
@@ -325,6 +315,10 @@ void EasyUnlockServiceSignin::ShutdownInternal() {
     return;
   service_active_ = false;
 
+  remote_device_cache_.reset();
+  challenge_wrapper_.reset();
+  pref_manager_.reset();
+
   weak_ptr_factory_.InvalidateWeakPtrs();
   proximity_auth::ScreenlockBridge::Get()->RemoveObserver(this);
   user_data_.clear();
@@ -386,31 +380,14 @@ void EasyUnlockServiceSignin::OnScreenDidUnlock(
       SmartLockMetricsRecorder::RecordAuthResultSignInSuccess();
     }
 
-    EasyUnlockAuthEvent event = GetPasswordAuthEvent();
-    if (event == PASSWORD_ENTRY_PHONE_LOCKED ||
-        event == PASSWORD_ENTRY_PHONE_NOT_LOCKABLE ||
-        event == PASSWORD_ENTRY_RSSI_TOO_LOW ||
-        event == PASSWORD_ENTRY_PHONE_LOCKED_AND_RSSI_TOO_LOW ||
-        event == PASSWORD_ENTRY_WITH_AUTHENTICATED_PHONE) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInSuccess();
-    } else if (event == PASSWORD_ENTRY_BLUETOOTH_CONNECTING) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInFailure(
-          SmartLockMetricsRecorder::
-              SmartLockGetRemoteStatusResultFailureReason::
-                  kUserEnteredPasswordWhileConnecting);
-    } else if (event == PASSWORD_ENTRY_NO_BLUETOOTH) {
-      SmartLockMetricsRecorder::RecordGetRemoteStatusResultSignInFailure(
-          SmartLockMetricsRecorder::
-              SmartLockGetRemoteStatusResultFailureReason::
-                  kUserEnteredPasswordWhileBluetoothDisabled);
-    }
+    SmartLockMetricsRecorder::RecordSmartLockSignInAuthMethodChoice(
+        will_authenticate_using_easy_unlock()
+            ? SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kSmartLock
+            : SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kOther);
   }
 
-  SmartLockMetricsRecorder::RecordSmartLockSignInAuthMethodChoice(
-      will_authenticate_using_easy_unlock()
-          ? SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kSmartLock
-          : SmartLockMetricsRecorder::SmartLockAuthMethodChoice::kOther);
-
+  // TODO(crbug.com/972156): A KeyedService shutting itself seems dangerous;
+  // look into other ways to "reset state" besides this.
   Shutdown();
 }
 
@@ -541,14 +518,19 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
       PA_LOG(WARNING) << "No BeaconSeeds were loaded.";
     }
 
+    // Values such as the |instance_id| and |name| of the device are not
+    // provided in the device dictionary that is persisted to the TPM during the
+    // user session. However, in this particular scenario, we do not need these
+    // values to safely construct and use the RemoteDevice objects.
     multidevice::RemoteDevice remote_device(
-        account_id.GetUserEmail(), std::string() /* name */, decoded_public_key,
-        decoded_psk /* persistent_symmetric_key */,
+        account_id.GetUserEmail(), std::string() /* instance_id */,
+        std::string() /* name */, std::string() /* pii_free_name */,
+        decoded_public_key, decoded_psk /* persistent_symmetric_key */,
         0L /* last_update_time_millis */, software_features, beacon_seeds);
 
     remote_devices.push_back(remote_device);
     PA_LOG(VERBOSE) << "Loaded Remote Device:\n"
-                    << "  user id: " << remote_device.user_id << "\n"
+                    << "  user email: " << remote_device.user_email << "\n"
                     << "  device id: "
                     << multidevice::RemoteDeviceRef::TruncateDeviceIdForLogs(
                            remote_device.GetDeviceId());
@@ -580,8 +562,8 @@ void EasyUnlockServiceSignin::OnUserDataLoaded(
   std::string local_device_id;
 
   for (const auto& remote_device : remote_devices) {
-    if (base::ContainsKey(remote_device.software_features,
-                          multidevice::SoftwareFeature::kSmartLockHost) &&
+    if (base::Contains(remote_device.software_features,
+                       multidevice::SoftwareFeature::kSmartLockHost) &&
         remote_device.software_features.at(
             multidevice::SoftwareFeature::kSmartLockHost) ==
             multidevice::SoftwareFeatureState::kEnabled) {

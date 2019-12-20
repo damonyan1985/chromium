@@ -20,6 +20,7 @@ import static org.chromium.net.CronetTestRule.getContext;
 import android.os.ConditionVariable;
 import android.os.Process;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
@@ -27,7 +28,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.Log;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
@@ -53,8 +54,10 @@ import java.util.regex.Pattern;
 /**
  * Test functionality of BidirectionalStream interface.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class BidirectionalStreamTest {
+    private static final String TAG = BidirectionalStreamTest.class.getSimpleName();
+
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
 
@@ -299,6 +302,33 @@ public class BidirectionalStreamTest {
         assertEquals("", callback.mResponseInfo.getAllHeaders().get("echo-empty").get(0));
         assertEquals(
                 "zebra", callback.mResponseInfo.getAllHeaders().get("echo-content-type").get(0));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    public void testSimpleGetWithCombinedHeader() throws Exception {
+        String url = Http2TestServer.getCombinedHeadersUrl();
+        TestBidirectionalStreamCallback callback = new TestBidirectionalStreamCallback();
+        TestRequestFinishedListener requestFinishedListener = new TestRequestFinishedListener();
+        mCronetEngine.addRequestFinishedListener(requestFinishedListener);
+        // Create stream.
+        BidirectionalStream stream =
+                mCronetEngine.newBidirectionalStreamBuilder(url, callback, callback.getExecutor())
+                        .setHttpMethod("GET")
+                        .build();
+        stream.start();
+        callback.blockForDone();
+        assertTrue(stream.isDone());
+        requestFinishedListener.blockUntilDone();
+        assertEquals(200, callback.mResponseInfo.getHttpStatusCode());
+        // Default method is 'GET'.
+        assertEquals("GET", callback.mResponseAsString);
+        assertEquals("bar", callback.mResponseInfo.getAllHeaders().get("foo").get(0));
+        assertEquals("bar2", callback.mResponseInfo.getAllHeaders().get("foo").get(1));
+        RequestFinishedInfo finishedInfo = requestFinishedListener.getRequestInfo();
+        assertTrue(finishedInfo.getAnnotations().isEmpty());
     }
 
     @Test
@@ -1554,7 +1584,7 @@ public class BidirectionalStreamTest {
         checkSpecificErrorCode(NetError.ERR_ADDRESS_UNREACHABLE,
                 NetworkException.ERROR_ADDRESS_UNREACHABLE, false);
         // BidirectionalStream specific retryable error codes.
-        checkSpecificErrorCode(NetError.ERR_SPDY_PING_FAILED, NetworkException.ERROR_OTHER, true);
+        checkSpecificErrorCode(NetError.ERR_HTTP2_PING_FAILED, NetworkException.ERROR_OTHER, true);
         checkSpecificErrorCode(
                 NetError.ERR_QUIC_HANDSHAKE_FAILED, NetworkException.ERROR_OTHER, true);
     }
@@ -1586,6 +1616,10 @@ public class BidirectionalStreamTest {
     @OnlyRunNativeCronet
     @RequiresMinApi(10) // Tagging support added in API level 10: crrev.com/c/chromium/src/+/937583
     public void testTagging() throws Exception {
+        if (!CronetTestUtil.nativeCanGetTaggedBytes()) {
+            Log.i(TAG, "Skipping test - GetTaggedBytes unsupported.");
+            return;
+        }
         String url = Http2TestServer.getEchoStreamUrl();
 
         // Test untagged requests are given tag 0.

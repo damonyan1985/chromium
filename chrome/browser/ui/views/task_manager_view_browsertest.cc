@@ -31,15 +31,14 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_utils.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
-#include "ui/views/controls/table/table_view.h"
-
-#if defined(OS_CHROMEOS)
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
-#endif
+#include "ui/views/controls/table/table_view.h"
+#include "ui/views/test/widget_test.h"
 
 namespace task_manager {
 
@@ -115,6 +114,12 @@ class TaskManagerViewTest : public InProcessBrowserTest {
     return -1;
   }
 
+  void HideTaskManagerSync() {
+    views::test::WidgetDestroyedWaiter waiter(GetView()->GetWidget());
+    chrome::HideTaskManager();
+    waiter.Wait();
+  }
+
  private:
   base::test::ScopedFeatureList feature_list_;
 
@@ -138,7 +143,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, TableStartsWithDefaultColumns) {
   views::TableView* table = GetTable();
   ASSERT_TRUE(table);
 
-  EXPECT_FALSE(table->is_sorted());
+  EXPECT_FALSE(table->GetIsSorted());
   for (size_t i = 0; i < kColumnsSize; ++i) {
     EXPECT_EQ(kColumns[i].default_visibility,
               table->IsColumnVisible(kColumns[i].id));
@@ -157,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, ColumnsSettingsAreRestored) {
   ASSERT_TRUE(table);
 
   // Toggle the visibility of all columns.
-  EXPECT_FALSE(table->is_sorted());
+  EXPECT_FALSE(table->GetIsSorted());
   for (size_t i = 0; i < kColumnsSize; ++i) {
     EXPECT_EQ(kColumns[i].default_visibility,
               table->IsColumnVisible(kColumns[i].id));
@@ -180,7 +185,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, ColumnsSettingsAreRestored) {
   }
 
   if (is_sorted) {
-    EXPECT_TRUE(table->is_sorted());
+    EXPECT_TRUE(table->GetIsSorted());
     EXPECT_FALSE(table->sort_descriptors().front().ascending);
     EXPECT_EQ(table->sort_descriptors().front().column_id, sorted_col_id);
   }
@@ -197,7 +202,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, ColumnsSettingsAreRestored) {
   ASSERT_TRUE(table);
 
   if (is_sorted) {
-    EXPECT_TRUE(table->is_sorted());
+    EXPECT_TRUE(table->GetIsSorted());
     EXPECT_FALSE(table->sort_descriptors().front().ascending);
     EXPECT_EQ(table->sort_descriptors().front().column_id, sorted_col_id);
   }
@@ -222,13 +227,14 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, InitialSelection) {
   chrome::ShowTaskManager(browser());
 
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
-  EXPECT_EQ(GetTable()->FirstSelectedRow(),
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(),
             FindRowForTab(browser()->tab_strip_model()->GetWebContentsAt(1)));
 
   // Activate tab 0. The selection should not change.
-  browser()->tab_strip_model()->ActivateTabAt(0, true);
+  browser()->tab_strip_model()->ActivateTabAt(
+      0, {TabStripModel::GestureType::kOther});
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
-  EXPECT_EQ(GetTable()->FirstSelectedRow(),
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(),
             FindRowForTab(browser()->tab_strip_model()->GetWebContentsAt(1)));
 
   // If the user re-triggers chrome::ShowTaskManager (e.g. via shift-esc), this
@@ -236,11 +242,12 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, InitialSelection) {
   chrome::ShowTaskManager(browser());
 
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
-  EXPECT_EQ(GetTable()->FirstSelectedRow(),
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(),
             FindRowForTab(browser()->tab_strip_model()->GetWebContentsAt(0)));
 }
 
-IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, SelectionConsistency) {
+// Test is flaky. https://crbug.com/998403
+IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, DISABLED_SelectionConsistency) {
   ASSERT_NO_FATAL_FAILURE(ClearStoredColumnSettings());
 
   chrome::ShowTaskManager(browser());
@@ -280,46 +287,50 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, SelectionConsistency) {
 
   // Select the middle row, and store its tab id.
   GetTable()->Select(FindRowForTab(tabs[1]));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
 
   // Add 3 rows above the selection. The selected tab should not change.
   for (int i = 0; i < 3; ++i) {
     ASSERT_TRUE(content::ExecuteScript(tabs[0], "window.open('title3.html');"));
-    EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+    EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   }
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows += 3), pattern));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
 
   // Add 2 rows below the selection. The selected tab should not change.
   for (int i = 0; i < 2; ++i) {
     ASSERT_TRUE(content::ExecuteScript(tabs[2], "window.open('title3.html');"));
-    EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+    EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   }
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows += 2), pattern));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
 
   // Add a new row in the same process as the selection. The selected tab should
   // not change.
   ASSERT_TRUE(content::ExecuteScript(tabs[1], "window.open('title3.html');"));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows += 1), pattern));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[1]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[1]));
   EXPECT_EQ(1UL, GetTable()->selection_model().size());
 
-  // Press the button, which kills the process of the selected row.
-  PressKillButton();
+  {
+    content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
 
-  // Two rows should disappear.
-  ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+    // Press the button, which kills the process of the selected row.
+    PressKillButton();
+
+    // Two rows should disappear.
+    ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 2), pattern));
+  }
 
   // A later row should now be selected. The selection should be after the 4
   // rows sharing the tabs[0] process, and it should be at or before
   // the tabs[2] row.
-  ASSERT_LT(FindRowForTab(tabs[0]) + 3, GetTable()->FirstSelectedRow());
-  ASSERT_LE(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[2]));
+  ASSERT_LT(FindRowForTab(tabs[0]) + 3, GetTable()->GetFirstSelectedRow());
+  ASSERT_LE(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[2]));
 
   // Now select tabs[2].
   GetTable()->Select(FindRowForTab(tabs[2]));
@@ -331,16 +342,15 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, SelectionConsistency) {
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows += 1), pattern));
 
   // tabs[2] should still be selected.
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[2]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[2]));
 
   // Close tabs[0]. The selection should not change.
   chrome::CloseWebContents(browser(), tabs[0], false);
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows((rows -= 1), pattern));
-  EXPECT_EQ(GetTable()->FirstSelectedRow(), FindRowForTab(tabs[2]));
+  EXPECT_EQ(GetTable()->GetFirstSelectedRow(), FindRowForTab(tabs[2]));
 }
 
 // Make sure the task manager's bounds are saved across instances on Chrome OS.
-#if defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, RestoreBounds) {
   chrome::ShowTaskManager(browser());
 
@@ -349,7 +359,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, RestoreBounds) {
   const gfx::Rect non_default_bounds = default_bounds + gfx::Vector2d(0, 17);
 
   GetView()->GetWidget()->SetBounds(non_default_bounds);
-  GetView()->GetWidget()->CloseNow();
+  HideTaskManagerSync();
 
   chrome::ShowTaskManager(browser());
   EXPECT_EQ(non_default_bounds,
@@ -362,13 +372,12 @@ IN_PROC_BROWSER_TEST_F(TaskManagerViewTest, RestoreBounds) {
   const gfx::Rect offscreen_bounds =
       default_bounds + gfx::Vector2d(0, display.bounds().bottom());
   GetView()->GetWidget()->SetBounds(offscreen_bounds);
-  GetView()->GetWidget()->CloseNow();
+  HideTaskManagerSync();
 
   chrome::ShowTaskManager(browser());
   gfx::Rect restored_bounds = GetView()->GetWidget()->GetWindowBoundsInScreen();
   EXPECT_NE(offscreen_bounds, restored_bounds);
   EXPECT_TRUE(display.bounds().Contains(restored_bounds));
 }
-#endif
 
 }  // namespace task_manager

@@ -35,14 +35,17 @@ namespace chromeos {
 // must be destroyed. This is done in Close.
 class ProcessProxy : public base::RefCountedThreadSafe<ProcessProxy> {
  public:
-  using OutputCallback = base::Callback<void(ProcessOutputType output_type,
-                                             const std::string& output_data)>;
+  using OutputCallback =
+      base::RepeatingCallback<void(ProcessOutputType output_type,
+                                   const std::string& output_data)>;
 
   ProcessProxy();
 
   // Opens a process using command |command| for the user with hash
   // |user_id_hash|.  Returns process ID on success, -1 on failure.
-  int Open(const base::CommandLine& cmdline, const std::string& user_id_hash);
+  bool Open(const base::CommandLine& cmdline,
+            const std::string& user_id_hash,
+            std::string* id);
 
   bool StartWatchingOutput(
       const scoped_refptr<base::SingleThreadTaskRunner>& watcher_runner,
@@ -62,6 +65,9 @@ class ProcessProxy : public base::RefCountedThreadSafe<ProcessProxy> {
   // handled. It runs, and then resets |output_ack_callback_|.
   void AckOutput();
 
+  // Get the process handle for testing purposes.
+  base::ProcessHandle GetProcessHandleForTesting();
+
  private:
   friend class base::RefCountedThreadSafe<ProcessProxy>;
   // We want this be used as ref counted object only.
@@ -76,19 +82,20 @@ class ProcessProxy : public base::RefCountedThreadSafe<ProcessProxy> {
   // Launches command in a new terminal process, mapping its stdout and stdin to
   // |slave_fd|.
   // Returns launched process id, or -1 on failure.
-  int LaunchProcess(const base::CommandLine& cmdline,
-                    const std::string& user_id_hash,
-                    int slave_fd);
+  bool LaunchProcess(const base::CommandLine& cmdline,
+                     const std::string& user_id_hash,
+                     int slave_fd,
+                     std::string* id);
 
   // Gets called by output watcher when the process writes something to its
   // output streams. If set, |callback| should be called when the output is
   // handled.
   void OnProcessOutput(ProcessOutputType type,
                        const std::string& output,
-                       const base::Closure& callback);
+                       base::OnceClosure callback);
   void CallOnProcessOutputCallback(ProcessOutputType type,
                                    const std::string& output,
-                                   const base::Closure& callback);
+                                   base::OnceClosure callback);
 
   void StopWatching();
 
@@ -106,7 +113,7 @@ class ProcessProxy : public base::RefCountedThreadSafe<ProcessProxy> {
   OutputCallback callback_;
   // Callback received by process output watcher in |OnProcessOutput|.
   // Process output watcher will be paused until this is run.
-  base::Closure output_ack_callback_;
+  base::OnceClosure output_ack_callback_;
   scoped_refptr<base::TaskRunner> callback_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> watcher_runner_;
 

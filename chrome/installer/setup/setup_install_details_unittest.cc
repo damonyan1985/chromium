@@ -9,11 +9,11 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/test/test_reg_util_win.h"
+#include "build/branding_buildflags.h"
+#include "chrome/chrome_elf/nt_registry/nt_registry.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/installer/util/master_preferences.h"
-#include "chrome_elf/nt_registry/nt_registry.h"
-
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -32,7 +32,7 @@ struct TestData {
   const wchar_t* channel;
 };
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 constexpr TestData kTestData[] = {
     // User-level test cases.
     {
@@ -205,7 +205,7 @@ constexpr TestData kTestData[] = {
         L"dev",                                      // Expect dev channel.
     },
 };
-#else   // GOOGLE_CHROME_BUILD
+#else   // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 constexpr TestData kTestData[] = {
     // User-level test cases.
     {
@@ -247,7 +247,7 @@ constexpr TestData kTestData[] = {
         L"",                             // Expect empty channel.
     },
 };
-#endif  // !GOOGLE_CHROME_BUILD
+#endif  // !BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 class MakeInstallDetailsTest : public testing::TestWithParam<TestData> {
  protected:
@@ -360,6 +360,6 @@ TEST_P(MakeInstallDetailsTest, Test) {
   EXPECT_THAT(details->channel(), Eq(test_data().channel));
 }
 
-INSTANTIATE_TEST_CASE_P(All,
-                        MakeInstallDetailsTest,
-                        testing::ValuesIn(kTestData));
+INSTANTIATE_TEST_SUITE_P(All,
+                         MakeInstallDetailsTest,
+                         testing::ValuesIn(kTestData));

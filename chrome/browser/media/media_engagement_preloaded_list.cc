@@ -22,12 +22,6 @@ const char MediaEngagementPreloadedList::kHistogramCheckResultName[] =
 const char MediaEngagementPreloadedList::kHistogramLoadResultName[] =
     "Media.Engagement.PreloadedList.LoadResult";
 
-const char MediaEngagementPreloadedList::kHistogramLoadTimeName[] =
-    "Media.Engagement.PreloadedList.LoadTime";
-
-const char MediaEngagementPreloadedList::kHistogramLookupTimeName[] =
-    "Media.Engagement.PreloadedList.LookupTime";
-
 // static
 MediaEngagementPreloadedList* MediaEngagementPreloadedList::GetInstance() {
   static base::NoDestructor<MediaEngagementPreloadedList> instance;
@@ -54,7 +48,6 @@ bool MediaEngagementPreloadedList::empty() const {
 }
 
 bool MediaEngagementPreloadedList::LoadFromFile(const base::FilePath& path) {
-  SCOPED_UMA_HISTOGRAM_TIMER(kHistogramLoadTimeName);
   DETACH_FROM_SEQUENCE(sequence_checker_);
 
   // Check the file exists.
@@ -89,7 +82,6 @@ bool MediaEngagementPreloadedList::LoadFromFile(const base::FilePath& path) {
 
 bool MediaEngagementPreloadedList::CheckOriginIsPresent(
     const url::Origin& origin) const {
-  SCOPED_UMA_HISTOGRAM_TIMER(kHistogramLookupTimeName);
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Check if we have loaded the data.
@@ -111,7 +103,7 @@ bool MediaEngagementPreloadedList::CheckOriginIsPresent(
   if (origin.port() != url::DefaultPortForScheme(origin.scheme().data(),
                                                  origin.scheme().length())) {
     location.push_back(':');
-    std::string port(base::UintToString(origin.port()));
+    std::string port(base::NumberToString(origin.port()));
     location.append(std::move(port));
   }
 

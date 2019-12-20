@@ -20,6 +20,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/diagnostics/diagnostics_test.h"
 #include "chrome/common/channel_info.h"
@@ -65,7 +66,7 @@ class DiskSpaceTest : public DiagnosticsTest {
       RecordFailure(DIAG_RECON_UNABLE_TO_QUERY, "Unable to query free space");
       return true;
     }
-    std::string printable_size = base::Int64ToString(disk_space);
+    std::string printable_size = base::NumberToString(disk_space);
     if (disk_space < 80 * kOneMegabyte) {
       RecordFailure(DIAG_RECON_LOW_DISK_SPACE,
                     "Low disk space: " + printable_size);
@@ -161,7 +162,7 @@ class JSONTest : public DiagnosticsTest {
         json.Deserialize(&error_code, &error_message));
     if (base::JSONReader::JSON_NO_ERROR != error_code) {
       if (error_message.empty()) {
-        error_message = "Parse error " + base::IntToString(error_code);
+        error_message = "Parse error " + base::NumberToString(error_code);
       }
       RecordFailure(DIAG_RECON_PARSE_ERROR, error_message);
       return true;
@@ -253,7 +254,7 @@ class PathTest : public DiagnosticsTest {
                         base::UTF16ToUTF8(dir_or_file.LossyDisplayName()));
       return true;
     }
-    std::string printable_size = base::Int64ToString(dir_or_file_size);
+    std::string printable_size = base::NumberToString(dir_or_file_size);
 
     if (path_info_.max_size > 0) {
       if (dir_or_file_size > path_info_.max_size) {
@@ -296,9 +297,9 @@ class VersionTest : public DiagnosticsTest {
     std::string version_modifier = chrome::GetChannelName();
     if (!version_modifier.empty())
       current_version += " " + version_modifier;
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
     current_version += " GCB";
-#endif  // defined(GOOGLE_CHROME_BUILD)
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
     RecordSuccess(current_version);
     return true;
   }

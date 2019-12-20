@@ -14,17 +14,9 @@ namespace extensions {
 namespace cast {
 namespace api {
 
-class NotificationsApiFunction : public ExtensionFunction {
- public:
-  void Destruct() const override;
-
+class NotificationsCreateFunction : public ExtensionFunction {
  protected:
-  ~NotificationsApiFunction() override {};
-};
-
-class NotificationsCreateFunction : public NotificationsApiFunction {
- protected:
-  ~NotificationsCreateFunction() override {};
+  ~NotificationsCreateFunction() override {}
 
   ResponseAction Run() override;
 
@@ -32,9 +24,9 @@ class NotificationsCreateFunction : public NotificationsApiFunction {
   DECLARE_EXTENSION_FUNCTION("notifications.create", NOTIFICATIONS_CREATE)
 };
 
-class NotificationsUpdateFunction : public NotificationsApiFunction {
+class NotificationsUpdateFunction : public ExtensionFunction {
  protected:
-  ~NotificationsUpdateFunction() override {};
+  ~NotificationsUpdateFunction() override {}
 
   ResponseAction Run() override;
 
@@ -42,9 +34,9 @@ class NotificationsUpdateFunction : public NotificationsApiFunction {
   DECLARE_EXTENSION_FUNCTION("notifications.update", NOTIFICATIONS_UPDATE)
 };
 
-class NotificationsClearFunction : public NotificationsApiFunction {
+class NotificationsClearFunction : public ExtensionFunction {
  protected:
-  ~NotificationsClearFunction() override {};
+  ~NotificationsClearFunction() override {}
 
   ResponseAction Run() override;
 
@@ -52,9 +44,9 @@ class NotificationsClearFunction : public NotificationsApiFunction {
   DECLARE_EXTENSION_FUNCTION("notifications.clear", NOTIFICATIONS_CLEAR)
 };
 
-class NotificationsGetAllFunction : public NotificationsApiFunction {
+class NotificationsGetAllFunction : public ExtensionFunction {
  protected:
-  ~NotificationsGetAllFunction() override {};
+  ~NotificationsGetAllFunction() override {}
 
   ResponseAction Run() override;
 
@@ -62,10 +54,9 @@ class NotificationsGetAllFunction : public NotificationsApiFunction {
   DECLARE_EXTENSION_FUNCTION("notifications.getAll", NOTIFICATIONS_GET_ALL)
 };
 
-class NotificationsGetPermissionLevelFunction
-    : public NotificationsApiFunction {
+class NotificationsGetPermissionLevelFunction : public ExtensionFunction {
  protected:
-  ~NotificationsGetPermissionLevelFunction() override {};
+  ~NotificationsGetPermissionLevelFunction() override {}
 
   ResponseAction Run() override;
 

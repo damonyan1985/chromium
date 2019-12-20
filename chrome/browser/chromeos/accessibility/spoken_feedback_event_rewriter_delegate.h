@@ -7,30 +7,28 @@
 
 #include <memory>
 
-#include "ash/public/interfaces/event_rewriter_controller.mojom.h"
+#include "ash/public/cpp/spoken_feedback_event_rewriter_delegate.h"
 #include "base/macros.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "ui/wm/public/activation_change_observer.h"
 
 // Passes key events from Ash's EventRewriter to the ChromeVox extension code.
 // Reports ChromeVox's unhandled key events back to Ash for continued dispatch.
 // TODO(http://crbug.com/839541): Avoid reposting unhandled events.
 class SpokenFeedbackEventRewriterDelegate
-    : public ash::mojom::SpokenFeedbackEventRewriterDelegate,
-      public content::WebContentsDelegate {
+    : public ash::SpokenFeedbackEventRewriterDelegate,
+      public content::WebContentsDelegate,
+      public wm::ActivationChangeObserver {
  public:
   SpokenFeedbackEventRewriterDelegate();
   ~SpokenFeedbackEventRewriterDelegate() override;
 
-  // ui::mojom::SpokenFeedbackEventRewriterDelegate:
+  // ash::SpokenFeedbackEventRewriterDelegate:
   void DispatchKeyEventToChromeVox(std::unique_ptr<ui::Event> event,
                                    bool capture) override;
   void DispatchMouseEventToChromeVox(std::unique_ptr<ui::Event> event) override;
 
  private:
-  // Returns whether the event should be dispatched to the ChromeVox extension.
-  bool ShouldDispatchKeyEventToChromeVox(const ui::Event* event) const;
-
   // Reports unhandled key events to the EventRewriterController for dispatch.
   void OnUnhandledSpokenFeedbackEvent(std::unique_ptr<ui::Event> event) const;
 
@@ -39,9 +37,12 @@ class SpokenFeedbackEventRewriterDelegate
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
 
-  ash::mojom::EventRewriterControllerPtr event_rewriter_controller_ptr_;
+  // wm::ActivationChangeObserver overrides.
+  void OnWindowActivated(ActivationReason reason,
+                         aura::Window* gained_active,
+                         aura::Window* lost_active) override;
 
-  mojo::Binding<ash::mojom::SpokenFeedbackEventRewriterDelegate> binding_;
+  bool is_arc_window_active_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(SpokenFeedbackEventRewriterDelegate);
 };

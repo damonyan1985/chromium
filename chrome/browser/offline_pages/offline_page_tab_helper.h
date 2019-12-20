@@ -15,10 +15,11 @@
 #include "chrome/browser/offline_pages/offline_page_utils.h"
 #include "chrome/common/mhtml_page_notifier.mojom.h"
 #include "components/offline_pages/core/request_header/offline_page_header.h"
-#include "content/public/browser/web_contents_binding_set.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/web_contents_receiver_set.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
+#include "third_party/blink/public/mojom/loader/mhtml_load_result.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -53,16 +54,14 @@ enum class OfflinePageTrustedState {
 class OfflinePageTabHelper
     : public content::WebContentsObserver,
       public content::WebContentsUserData<OfflinePageTabHelper>,
-      public mojom::MhtmlPageNotifier {
+      public offline_pages::mojom::MhtmlPageNotifier {
  public:
   ~OfflinePageTabHelper() override;
 
-  // Creates the Mojo service that can listen to the renderer's archive events.
-  void CreateMhtmlPageNotifier(mojom::MhtmlPageNotifierRequest request);
-
   // MhtmlPageNotifier overrides.
-  void NotifyIsMhtmlPage(const GURL& main_frame_url,
-                         base::Time date_header_time) override;
+  void NotifyMhtmlPageLoadAttempted(blink::mojom::MHTMLLoadResult result,
+                                    const GURL& main_frame_url,
+                                    base::Time date) override;
 
   void SetOfflinePage(const OfflinePageItem& offline_page,
                       const OfflinePageHeader& offline_header,
@@ -71,9 +70,7 @@ class OfflinePageTabHelper
 
   void ClearOfflinePage();
 
-  const OfflinePageItem* offline_page() {
-    return offline_info_.offline_page.get();
-  }
+  OfflinePageItem* offline_page() { return offline_info_.offline_page.get(); }
 
   const OfflinePageHeader& offline_header() const {
     return offline_info_.offline_header;
@@ -93,6 +90,9 @@ class OfflinePageTabHelper
   // Returns provisional offline page since actual navigation does not happen
   // during unit tests.
   const OfflinePageItem* GetOfflinePageForTest() const;
+
+  // True if an offline page is loading, but has not committed.
+  bool IsLoadingOfflinePage() const;
 
   // Returns trusted state of provisional offline page.
   OfflinePageTrustedState GetTrustedStateForTest() const;
@@ -207,17 +207,12 @@ class OfflinePageTabHelper
   // Service, outlives this object.
   PrefetchService* prefetch_service_ = nullptr;
 
-  // Table of OfflinePages policies.
-  // TODO(dimich): When we only have one shared version of PolicyController,
-  // replace this instance with access to a shared one.
-  ClientPolicyController policy_controller_;
-
   // TODO(crbug.com/827215): We only really want interface messages for the main
   // frame but this is not easily done with the current helper classes.
-  content::WebContentsFrameBindingSet<mojom::MhtmlPageNotifier>
-      mhtml_page_notifier_bindings_;
+  content::WebContentsFrameReceiverSet<mojom::MhtmlPageNotifier>
+      mhtml_page_notifier_receivers_;
 
-  base::WeakPtrFactory<OfflinePageTabHelper> weak_ptr_factory_;
+  base::WeakPtrFactory<OfflinePageTabHelper> weak_ptr_factory_{this};
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

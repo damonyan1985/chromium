@@ -25,12 +25,11 @@
 
 // See https://webaudio.github.io/web-audio-api/#OfflineAudioContext
 [
-    Constructor(unsigned long numberOfChannels, unsigned long numberOfFrames, float sampleRate),
-    Constructor(OfflineAudioContextOptions options),
-    ConstructorCallWith=ExecutionContext,
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
 ] interface OfflineAudioContext : BaseAudioContext {
+    [CallWith=ExecutionContext, RaisesException] constructor(unsigned long numberOfChannels, unsigned long numberOfFrames, float sampleRate);
+    [CallWith=ExecutionContext, RaisesException] constructor(OfflineAudioContextOptions options);
     // Offline rendering
     attribute EventHandler oncomplete;
     readonly attribute unsigned long length;

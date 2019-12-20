@@ -7,8 +7,6 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/chrome/browser/ui/commands/browsing_data_commands.h"
-
 @class OpenNewTabCommand;
 @class ShowSigninCommand;
 @class StartVoiceSearchCommand;
@@ -18,17 +16,16 @@
 // may also be forwarded directly to a settings navigation controller.
 @protocol ApplicationSettingsCommands
 
-// Shows the accounts settings UI, presenting from |baseViewController|.
+// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+// Shows the accounts settings UI, presenting from |baseViewController|. If
+// |baseViewController| is nil BVC will be used as presenterViewController.
 - (void)showAccountsSettingsFromViewController:
     (UIViewController*)baseViewController;
 
-// Shows the Google services settings UI, presenting from |baseViewController|.
-- (void)showGoogleServicesSettingsFromViewController:
-    (UIViewController*)baseViewController;
-
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
-// Shows the sync settings UI, presenting from |baseViewController|.
-- (void)showSyncSettingsFromViewController:
+// Shows the Google services settings UI, presenting from |baseViewController|.
+// If |baseViewController| is nil BVC will be used as presenterViewController.
+- (void)showGoogleServicesSettingsFromViewController:
     (UIViewController*)baseViewController;
 
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
@@ -58,9 +55,7 @@
 // object that implements the methods in this protocol should be able to forward
 // ApplicationSettingsCommands to the settings view controller if necessary.
 
-@protocol ApplicationCommands<NSObject,
-                              ApplicationSettingsCommands,
-                              BrowsingDataCommands>
+@protocol ApplicationCommands <NSObject, ApplicationSettingsCommands>
 
 // Dismisses all modal dialogs.
 - (void)dismissModalDialogs;
@@ -68,6 +63,20 @@
 // TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
 // Shows the Settings UI, presenting from |baseViewController|.
 - (void)showSettingsFromViewController:(UIViewController*)baseViewController;
+
+// TODO(crbug.com/779791) : Do not pass baseViewController through dispatcher.
+//
+// Shows the advanced sign-in settings. Only used when unified consent feature
+// is enabled.
+//
+// TODO(crbug.com/965992): This is a temporary command that was added as the
+// First Run and the Sign-in promo are not managed by the
+// |SigninInteractionCoordinator| and they need to present the advanced sign-in
+// settings via a dispatched command. |SigninInteractionCoordinator| should be
+// changed to present the|FirstRunChromeSigninViewController| and
+//|SigninPromoViewController| and this command should be removed.
+- (void)showAdvancedSigninSettingsFromViewController:
+    (UIViewController*)baseViewController;
 
 // Starts a voice search on the current BVC.
 - (void)startVoiceSearch;

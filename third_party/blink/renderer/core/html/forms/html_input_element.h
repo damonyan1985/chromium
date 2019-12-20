@@ -46,6 +46,7 @@ class InputTypeView;
 class KURL;
 class ListAttributeTargetObserver;
 class RadioButtonGroupScope;
+class ScriptValue;
 struct DateTimeChooserParameters;
 
 class CORE_EXPORT HTMLInputElement
@@ -55,18 +56,13 @@ class CORE_EXPORT HTMLInputElement
   USING_GARBAGE_COLLECTED_MIXIN(HTMLInputElement);
 
  public:
-  static HTMLInputElement* Create(Document&, const CreateElementFlags);
-
   HTMLInputElement(Document&, const CreateElementFlags);
   ~HTMLInputElement() override;
   void Trace(Visitor*) override;
 
-  // Returns attributes that should be checked against Trusted Types
-  const AttrNameToTrustedType& GetCheckedAttributeTypes() const override;
-
   bool HasPendingActivity() const final;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(webkitspeechchange, kWebkitspeechchange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(webkitspeechchange, kWebkitspeechchange)
 
   bool ShouldAutocomplete() const final;
 
@@ -116,7 +112,9 @@ class CORE_EXPORT HTMLInputElement
   bool HasBeenPasswordField() const;
 
   bool checked() const;
-  void setChecked(bool, TextFieldEventBehavior = kDispatchNoEvent);
+  void setChecked(
+      bool,
+      TextFieldEventBehavior = TextFieldEventBehavior::kDispatchNoEvent);
   void DispatchChangeEventIfNeeded();
   void DispatchInputAndChangeEventIfNeeded();
 
@@ -135,13 +133,15 @@ class CORE_EXPORT HTMLInputElement
   void setType(const AtomicString&);
 
   String value() const override;
-  void setValue(const String&,
-                ExceptionState&,
-                TextFieldEventBehavior = kDispatchNoEvent);
-  void setValue(const String&,
-                TextFieldEventBehavior = kDispatchNoEvent,
-                TextControlSetValueSelection =
-                    TextControlSetValueSelection::kSetSelectionToEnd) override;
+  void setValue(
+      const String&,
+      ExceptionState&,
+      TextFieldEventBehavior = TextFieldEventBehavior::kDispatchNoEvent);
+  void setValue(
+      const String&,
+      TextFieldEventBehavior = TextFieldEventBehavior::kDispatchNoEvent,
+      TextControlSetValueSelection =
+          TextControlSetValueSelection::kSetSelectionToEnd) override;
   void SetValueForUser(const String&);
   // Update the value, and clear hasDirtyValue() flag.
   void SetNonDirtyValue(const String&);
@@ -159,13 +159,16 @@ class CORE_EXPORT HTMLInputElement
 
   void SetEditingValue(const String&);
 
-  double valueAsDate(bool& is_null) const;
-  void setValueAsDate(double, bool is_null, ExceptionState&);
+  ScriptValue valueAsDate(ScriptState* script_state) const;
+  void setValueAsDate(ScriptState* script_state,
+                      const ScriptValue& value,
+                      ExceptionState& exception_state);
 
   double valueAsNumber() const;
-  void setValueAsNumber(double,
-                        ExceptionState&,
-                        TextFieldEventBehavior = kDispatchNoEvent);
+  void setValueAsNumber(
+      double,
+      ExceptionState&,
+      TextFieldEventBehavior = TextFieldEventBehavior::kDispatchNoEvent);
 
   String ValueOrDefaultLabel() const;
 
@@ -189,8 +192,8 @@ class CORE_EXPORT HTMLInputElement
                                    ExceptionState&);
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) const final;
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
-  void DetachLayoutTree(const AttachContext& = AttachContext()) final;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
+  void DetachLayoutTree(bool performing_reattach) final;
   void UpdateFocusAppearanceWithOptions(SelectionBehaviorOnFocus,
                                         const FocusOptions*) final;
 
@@ -308,6 +311,10 @@ class CORE_EXPORT HTMLInputElement
 
   void ChildrenChanged(const ChildrenChange&) override;
 
+  PaintLayerScrollableArea* GetScrollableArea() const final;
+
+  void SetHasBeenPasswordField() { has_been_password_field_ = true; }
+
  protected:
   void DefaultEventHandler(Event&) override;
   void CreateShadowSubtree();
@@ -362,10 +369,14 @@ class CORE_EXPORT HTMLInputElement
   bool CanBeSuccessfulSubmitButton() const final;
 
   void ResetImpl() final;
-  bool SupportsAutofocus() const final;
 
   EventDispatchHandlingState* PreDispatchEventHandler(Event&) final;
   void PostDispatchEventHandler(Event&, EventDispatchHandlingState*) final;
+  // TODO(crbug.com/1013385): Remove DidPreventDefault and
+  //   DefaultEventHandlerInternal. They are here as a temporary fix for form
+  //   double-submit.
+  void DidPreventDefault(const Event&) final;
+  void DefaultEventHandlerInternal(Event& evt);
 
   bool IsURLAttribute(const Attribute&) const final;
   bool HasLegalLinkAttribute(const QualifiedName&) const final;
@@ -409,11 +420,11 @@ class CORE_EXPORT HTMLInputElement
   // The value string in |value| value mode.
   String non_attribute_value_;
   unsigned size_;
-  // https://html.spec.whatwg.org/multipage/forms.html#concept-input-value-dirty-flag
+  // https://html.spec.whatwg.org/C/#concept-input-value-dirty-flag
   unsigned has_dirty_value_ : 1;
-  // https://html.spec.whatwg.org/multipage/forms.html#concept-fe-checked
+  // https://html.spec.whatwg.org/C/#concept-fe-checked
   unsigned is_checked_ : 1;
-  // https://html.spec.whatwg.org/multipage/forms.html#concept-input-checked-dirty-flag
+  // https://html.spec.whatwg.org/C/#concept-input-checked-dirty-flag
   unsigned dirty_checkedness_ : 1;
   unsigned is_indeterminate_ : 1;
   unsigned is_activated_submit_ : 1;

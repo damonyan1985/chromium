@@ -11,9 +11,9 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/ssl/certificate_error_report.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/security_interstitials/content/certificate_error_report.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -99,8 +99,7 @@ CertificateReportingService::Reporter::Reporter(
       clock_(clock),
       report_ttl_(report_ttl),
       retries_enabled_(retries_enabled),
-      current_report_id_(0),
-      weak_factory_(this) {}
+      current_report_id_(0) {}
 
 CertificateReportingService::Reporter::~Reporter() {}
 

@@ -26,10 +26,14 @@ const char kNetworkSandbox[] = "network";
 const char kPpapiSandbox[] = "ppapi";
 const char kUtilitySandbox[] = "utility";
 const char kCdmSandbox[] = "cdm";
-const char kXrCompositingSandbox[] = "xr_compositing";
 const char kPdfCompositorSandbox[] = "pdf_compositor";
 const char kProfilingSandbox[] = "profiling";
 const char kAudioSandbox[] = "audio";
+
+#if defined(OS_WIN)
+const char kXrCompositingSandbox[] = "xr_compositing";
+#endif  // OS_WIN
+
 #if defined(OS_CHROMEOS)
 const char kImeSandbox[] = "ime";
 #endif  // OS_CHROMEOS
@@ -47,9 +51,6 @@ const char kAllowNoSandboxJob[] = "allow-no-sandbox-job";
 // Allows debugging of sandboxed processes (see zygote_main_linux.cc).
 const char kAllowSandboxDebugging[] = "allow-sandbox-debugging";
 
-// Disable appcontainer/lowbox for renderer on Win8+ platforms.
-const char kDisableAppContainer[] = "disable-appcontainer";
-
 // Disables the GPU process sandbox.
 const char kDisableGpuSandbox[] = "disable-gpu-sandbox";
 
@@ -65,8 +66,8 @@ const char kDisableSetuidSandbox[] = "disable-setuid-sandbox";
 // Disables the Win32K process mitigation policy for child processes.
 const char kDisableWin32kLockDown[] = "disable-win32k-lockdown";
 
-// Ensable appcontainer/lowbox for renderer on Win8+ platforms.
-const char kEnableAppContainer[] = "enable-appcontainer";
+// Command line flag to enable the audio service sandbox.
+const char kEnableAudioServiceSandbox[] = "enable-audio-service-sandbox";
 
 // Allows shmat() system call in the GPU sandbox.
 const char kGpuSandboxAllowSysVShm[] = "gpu-sandbox-allow-sysv-shm";
@@ -121,7 +122,7 @@ const char kUtilityProcess[] = "utility";
 #if defined(OS_WIN)
 
 bool IsWin32kLockdownEnabled() {
-  return base::win::GetVersion() >= base::win::VERSION_WIN8 &&
+  return base::win::GetVersion() >= base::win::Version::WIN8 &&
          !base::CommandLine::ForCurrentProcess()->HasSwitch(
              switches::kDisableWin32kLockDown);
 }

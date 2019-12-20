@@ -27,11 +27,15 @@
 
 #include <memory>
 
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_basic_processor_handler.h"
+#include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/biquad_filter_options.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 
 namespace blink {
 
@@ -50,6 +54,12 @@ BiquadFilterHandler::BiquadFilterHandler(AudioNode& node,
                                                                    q,
                                                                    gain,
                                                                    detune)) {
+  DCHECK(Context());
+  DCHECK(Context()->GetExecutionContext());
+
+  task_runner_ = Context()->GetExecutionContext()->GetTaskRunner(
+      TaskType::kMediaElementEvent);
+
   // Initialize the handler so that AudioParams can be processed.
   Initialize();
 }
@@ -65,30 +75,64 @@ scoped_refptr<BiquadFilterHandler> BiquadFilterHandler::Create(
       new BiquadFilterHandler(node, sample_rate, frequency, q, gain, detune));
 }
 
+void BiquadFilterHandler::Process(uint32_t frames_to_process) {
+  AudioBasicProcessorHandler::Process(frames_to_process);
+
+  if (!did_warn_bad_filter_state_) {
+    // Inform the user once if the output has a non-finite value.  This is a
+    // proxy for the filter state containing non-finite values since the output
+    // is also saved as part of the state of the filter.
+    if (HasNonFiniteOutput()) {
+      did_warn_bad_filter_state_ = true;
+
+      PostCrossThreadTask(
+          *task_runner_, FROM_HERE,
+          CrossThreadBindOnce(&BiquadFilterHandler::NotifyBadState,
+                              WrapRefCounted(this)));
+    }
+  }
+}
+
+void BiquadFilterHandler::NotifyBadState() const {
+  DCHECK(IsMainThread());
+  if (!Context() || !Context()->GetExecutionContext())
+    return;
+
+  Context()->GetExecutionContext()->AddConsoleMessage(ConsoleMessage::Create(
+      mojom::ConsoleMessageSource::kJavaScript,
+      mojom::ConsoleMessageLevel::kWarning,
+      NodeTypeName() + ": state is bad, probably due to unstable filter caused "
+                       "by fast parameter automation."));
+}
+
 BiquadFilterNode::BiquadFilterNode(BaseAudioContext& context)
     : AudioNode(context),
       frequency_(
           AudioParam::Create(context,
-                             kParamTypeBiquadFilterFrequency,
+                             Uuid(),
+                             AudioParamHandler::kParamTypeBiquadFilterFrequency,
                              350.0,
                              AudioParamHandler::AutomationRate::kAudio,
                              AudioParamHandler::AutomationRateMode::kVariable,
                              0,
                              context.sampleRate() / 2)),
       q_(AudioParam::Create(context,
-                            kParamTypeBiquadFilterQ,
+                            Uuid(),
+                            AudioParamHandler::kParamTypeBiquadFilterQ,
                             1.0,
                             AudioParamHandler::AutomationRate::kAudio,
                             AudioParamHandler::AutomationRateMode::kVariable)),
       gain_(
           AudioParam::Create(context,
-                             kParamTypeBiquadFilterGain,
+                             Uuid(),
+                             AudioParamHandler::kParamTypeBiquadFilterGain,
                              0.0,
                              AudioParamHandler::AutomationRate::kAudio,
                              AudioParamHandler::AutomationRateMode::kVariable)),
       detune_(AudioParam::Create(
           context,
-          kParamTypeBiquadFilterDetune,
+          Uuid(),
+          AudioParamHandler::kParamTypeBiquadFilterDetune,
           0.0,
           AudioParamHandler::AutomationRate::kAudio,
           AudioParamHandler::AutomationRateMode::kVariable)) {
@@ -102,11 +146,6 @@ BiquadFilterNode::BiquadFilterNode(BaseAudioContext& context)
 BiquadFilterNode* BiquadFilterNode::Create(BaseAudioContext& context,
                                            ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<BiquadFilterNode>(context);
 }
@@ -169,11 +208,6 @@ String BiquadFilterNode::type() const {
 }
 
 void BiquadFilterNode::setType(const String& type) {
-  // For the Q histogram, we need to change the name of the AudioParam for the
-  // lowpass and highpass filters so we know to count the Q value when it is
-  // set. And explicitly set the value to itself so the histograms know the
-  // initial value.
-
   if (type == "lowpass") {
     setType(BiquadProcessor::kLowPass);
   } else if (type == "highpass") {
@@ -211,31 +245,54 @@ void BiquadFilterNode::getFrequencyResponse(
     NotShared<DOMFloat32Array> mag_response,
     NotShared<DOMFloat32Array> phase_response,
     ExceptionState& exception_state) {
-  unsigned frequency_hz_length = frequency_hz.View()->length();
+  size_t frequency_hz_length = frequency_hz.View()->lengthAsSizeT();
 
-  if (mag_response.View()->length() != frequency_hz_length) {
+  if (mag_response.View()->lengthAsSizeT() != frequency_hz_length) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         ExceptionMessages::IndexOutsideRange(
-            "magResponse length", mag_response.View()->length(),
+            "magResponse length", mag_response.View()->lengthAsSizeT(),
             frequency_hz_length, ExceptionMessages::kInclusiveBound,
             frequency_hz_length, ExceptionMessages::kInclusiveBound));
     return;
   }
 
-  if (phase_response.View()->length() != frequency_hz_length) {
+  if (phase_response.View()->lengthAsSizeT() != frequency_hz_length) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidAccessError,
         ExceptionMessages::IndexOutsideRange(
-            "phaseResponse length", phase_response.View()->length(),
+            "phaseResponse length", phase_response.View()->lengthAsSizeT(),
             frequency_hz_length, ExceptionMessages::kInclusiveBound,
             frequency_hz_length, ExceptionMessages::kInclusiveBound));
     return;
   }
 
+  int frequency_hz_length_as_int;
+  if (!base::CheckedNumeric<int>(frequency_hz_length)
+           .AssignIfValid(&frequency_hz_length_as_int)) {
+    exception_state.ThrowRangeError(
+        "frequencyHz length exceeds the maximum supported length");
+    return;
+  }
   GetBiquadProcessor()->GetFrequencyResponse(
-      frequency_hz_length, frequency_hz.View()->Data(),
+      frequency_hz_length_as_int, frequency_hz.View()->Data(),
       mag_response.View()->Data(), phase_response.View()->Data());
+}
+
+void BiquadFilterNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(detune_);
+  GraphTracer().DidCreateAudioParam(frequency_);
+  GraphTracer().DidCreateAudioParam(gain_);
+  GraphTracer().DidCreateAudioParam(q_);
+}
+
+void BiquadFilterNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(detune_);
+  GraphTracer().WillDestroyAudioParam(frequency_);
+  GraphTracer().WillDestroyAudioParam(gain_);
+  GraphTracer().WillDestroyAudioParam(q_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

@@ -64,13 +64,13 @@ class TestTaskManager : public TaskManagerInterface {
   bool GetV8Memory(TaskId task_id,
                    int64_t* allocated,
                    int64_t* used) const override;
-  bool GetWebCacheStats(
-      TaskId task_id,
-      blink::WebCache::ResourceTypeStats* stats) const override;
+  bool GetWebCacheStats(TaskId task_id,
+                        blink::WebCacheResourceTypeStats* stats) const override;
   int GetKeepaliveCount(TaskId task_id) const override;
   const TaskIdList& GetTaskIdsList() const override;
   TaskIdList GetIdsOfTasksSharingSameProcess(TaskId task_id) const override;
   size_t GetNumberOfTasksOnSameProcess(TaskId task_id) const override;
+  bool IsRunningInVM(TaskId task_id) const override;
   TaskId GetTaskIdForWebContents(
       content::WebContents* web_contents) const override;
 

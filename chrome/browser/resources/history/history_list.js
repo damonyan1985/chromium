@@ -2,8 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import {Polymer, html} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import 'chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.m.js';
+import 'chrome://resources/cr_elements/shared_style_css.m.js';
+import {assert} from 'chrome://resources/js/assert.m.js';
+import {getDeepActiveElement} from 'chrome://resources/js/util.m.js';
+import {I18nBehavior} from 'chrome://resources/js/i18n_behavior.m.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.m.js';
+import {WebUIListenerBehavior} from 'chrome://resources/js/web_ui_listener_behavior.m.js';
+import {IronA11yAnnouncer} from 'chrome://resources/polymer/v3_0/iron-a11y-announcer/iron-a11y-announcer.js';
+import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
+import 'chrome://resources/polymer/v3_0/iron-scroll-threshold/iron-scroll-threshold.js';
+import {BrowserService} from './browser_service.js';
+import {HistoryEntry, HistoryQuery, QueryState} from './externs.js';
+import {BROWSING_GAP_TIME, UMA_MAX_BUCKET_VALUE, UMA_MAX_SUBSET_BUCKET_VALUE} from './constants.js';
+import {searchResultsTitle} from './history_item.js';
+import './shared_style.js';
+
 Polymer({
   is: 'history-list',
+
+  _template: html`{__html_template__}`,
+
+  behaviors: [I18nBehavior, WebUIListenerBehavior],
 
   properties: {
     // The search term for the current query. Set when the query returns.
@@ -46,6 +67,12 @@ Polymer({
 
     lastSelectedIndex: Number,
 
+    pendingDelete: {
+      notify: true,
+      type: Boolean,
+      value: false,
+    },
+
     /** @type {!QueryState} */
     queryState: Object,
 
@@ -58,6 +85,10 @@ Polymer({
      * }}
      */
     actionMenuModel_: Object,
+  },
+
+  hostAttributes: {
+    role: 'application',
   },
 
   listeners: {
@@ -74,6 +105,9 @@ Polymer({
     /** @type {IronListElement} */ (this.$['infinite-list']).notifyResize();
     this.$['infinite-list'].scrollTarget = this;
     this.$['scroll-threshold'].scrollTarget = this;
+    this.setAttribute('aria-roledescription', this.i18n('ariaRoleDescription'));
+
+    this.addWebUIListener('history-deleted', () => this.onHistoryDeleted_());
   },
 
   /////////////////////////////////////////////////////////////////////////////
@@ -89,10 +123,9 @@ Polymer({
     this.closeMenu_();
 
     if (info.term && !this.queryState.incremental) {
-      Polymer.IronA11yAnnouncer.requestAvailability();
+      IronA11yAnnouncer.requestAvailability();
       this.fire('iron-announce', {
-        text:
-            md_history.HistoryItem.searchResultsTitle(results.length, info.term)
+        text: searchResultsTitle(results.length, info.term)
       });
     }
 
@@ -136,7 +169,8 @@ Polymer({
     this.resultLoadingDisabled_ = finished;
   },
 
-  historyDeleted: function() {
+  /** @private */
+  onHistoryDeleted_: function() {
     // Do not reload the list when there are items checked.
     if (this.getSelectedItemCount() > 0) {
       return;
@@ -192,7 +226,7 @@ Polymer({
       return;
     }
 
-    const browserService = md_history.BrowserService.getInstance();
+    const browserService = BrowserService.getInstance();
     browserService.recordAction('RemoveSelected');
     if (this.queryState.searchTerm != '') {
       browserService.recordAction('SearchResultRemove');
@@ -229,19 +263,20 @@ Polymer({
    * @private
    */
   deleteSelected_: function() {
+    assert(!this.pendingDelete);
+
     const toBeRemoved = Array.from(this.selectedItems.values())
                             .map((index) => this.get(`historyData_.${index}`));
 
-    md_history.BrowserService.getInstance()
-        .deleteItems(toBeRemoved)
-        .then((items) => {
-          this.removeItemsByIndex_(Array.from(this.selectedItems));
-          this.fire('unselect-all');
-          if (this.historyData_.length == 0) {
-            // Try reloading if nothing is rendered.
-            this.fire('query-history', false);
-          }
-        });
+    this.deleteItems_(toBeRemoved).then(() => {
+      this.pendingDelete = false;
+      this.removeItemsByIndex_(Array.from(this.selectedItems));
+      this.fire('unselect-all');
+      if (this.historyData_.length == 0) {
+        // Try reloading if nothing is rendered.
+        this.fire('query-history', false);
+      }
+    });
   },
 
   /**
@@ -287,8 +322,7 @@ Polymer({
 
   /** @private */
   onDialogConfirmTap_: function() {
-    md_history.BrowserService.getInstance().recordAction(
-        'ConfirmRemoveSelected');
+    BrowserService.getInstance().recordAction('ConfirmRemoveSelected');
 
     this.deleteSelected_();
     const dialog = assert(this.$.dialog.getIfExists());
@@ -297,8 +331,7 @@ Polymer({
 
   /** @private */
   onDialogCancelTap_: function() {
-    md_history.BrowserService.getInstance().recordAction(
-        'CancelRemoveSelected');
+    BrowserService.getInstance().recordAction('CancelRemoveSelected');
 
     const dialog = assert(this.$.dialog.getIfExists());
     dialog.close();
@@ -360,8 +393,7 @@ Polymer({
 
   /** @private */
   onMoreFromSiteTap_: function() {
-    md_history.BrowserService.getInstance().recordAction(
-        'EntryMenuShowMoreFromSite');
+    BrowserService.getInstance().recordAction('EntryMenuShowMoreFromSite');
 
     const menu = assert(this.$.sharedMenu.getIfExists());
     this.fire('change-query', {search: this.actionMenuModel_.item.domain});
@@ -369,18 +401,37 @@ Polymer({
     this.closeMenu_();
   },
 
+  /**
+   * @param {!Array<!HistoryEntry>} items
+   * @return {!Promise}
+   * @private
+   */
+  deleteItems_: function(items) {
+    const removalList = items.map(item => ({
+                                    url: item.url,
+                                    timestamps: item.allTimestamps,
+                                  }));
+
+    this.pendingDelete = true;
+    return BrowserService.getInstance().removeVisits(removalList);
+  },
+
   /** @private */
   onRemoveFromHistoryTap_: function() {
-    const browserService = md_history.BrowserService.getInstance();
+    const browserService = BrowserService.getInstance();
     browserService.recordAction('EntryMenuRemoveFromHistory');
+
+    assert(!this.pendingDelete);
     const menu = assert(this.$.sharedMenu.getIfExists());
     const itemData = this.actionMenuModel_;
-    browserService.deleteItems([itemData.item]).then((items) => {
+
+    this.deleteItems_([itemData.item]).then(() => {
       // This unselect-all resets the toolbar when deleting a selected item
       // and clears selection state which can be invalid if items move
       // around during deletion.
       // TODO(tsergeant): Make this automatic based on observing list
       // modifications.
+      this.pendingDelete = false;
       this.fire('unselect-all');
       this.removeItemsByIndex_([itemData.index]);
 
@@ -388,8 +439,15 @@ Polymer({
       if (index == undefined) {
         return;
       }
+      setTimeout(() => {
+        this.$['infinite-list'].focusItem(index);
+        const item = getDeepActiveElement();
+        if (item) {
+          item.focusOnMenuButton();
+        }
+      }, 1);
 
-      const browserService = md_history.BrowserService.getInstance();
+      const browserService = BrowserService.getInstance();
       browserService.recordHistogram(
           'HistoryPage.RemoveEntryPosition',
           Math.min(index, UMA_MAX_BUCKET_VALUE), UMA_MAX_BUCKET_VALUE);

@@ -27,7 +27,8 @@ namespace {
 std::unique_ptr<FontLoader::ResultInternal> LoadFontOnFileThread(
     const base::string16& font_name,
     const float font_point_size) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   NSString* font_name_ns = base::SysUTF16ToNSString(font_name);
   NSFont* font_to_encode =
@@ -131,9 +132,9 @@ void FontLoader::LoadFont(const base::string16& font_name,
   // a user installing a third-party font manager. See crbug.com/72727. Web page
   // rendering can't continue until a font is returned.
   constexpr base::TaskTraits kTraits = {
-      base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+      base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN};
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE, kTraits,
       base::BindOnce(&LoadFontOnFileThread, font_name, font_point_size),
       base::BindOnce(&ReplyOnUIThread, std::move(callback)));

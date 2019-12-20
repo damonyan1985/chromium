@@ -17,16 +17,15 @@
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/open_from_clipboard/clipboard_recent_content.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#import "ios/chrome/browser/experimental_flags.h"
+#import "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_util.h"
 #import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_mediator.h"
 #include "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_suggestions_delegate.h"
 #include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "ui/gfx/geometry/rect.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -51,8 +50,26 @@ OmniboxPopupViewIOS::~OmniboxPopupViewIOS() {
 // option is highlighted.
 void OmniboxPopupViewIOS::UpdateEditViewIcon() {
   const AutocompleteResult& result = model_->result();
+
+  // Use default icon as a fallback
+  if (model_->selected_line() == OmniboxPopupModel::kNoMatch) {
+    delegate_->OnSelectedMatchImageChanged(/*has_match=*/false,
+                                           AutocompleteMatchType::NUM_TYPES,
+                                           base::nullopt, GURL());
+    return;
+  }
+
   const AutocompleteMatch& match = result.match_at(model_->selected_line());
-  delegate_->OnTopmostSuggestionImageChanged(match.type);
+
+  base::Optional<SuggestionAnswer::AnswerType> optAnswerType = base::nullopt;
+  if (match.answer && match.answer->type() > 0 &&
+      match.answer->type() <
+          SuggestionAnswer::AnswerType::ANSWER_TYPE_TOTAL_COUNT) {
+    optAnswerType =
+        static_cast<SuggestionAnswer::AnswerType>(match.answer->type());
+  }
+  delegate_->OnSelectedMatchImageChanged(/*has_match=*/true, match.type,
+                                         optAnswerType, match.destination_url);
 }
 
 void OmniboxPopupViewIOS::UpdatePopupAppearance() {
@@ -82,6 +99,11 @@ bool OmniboxPopupViewIOS::IsPopupOpen() {
 
 void OmniboxPopupViewIOS::SetTextAlignment(NSTextAlignment alignment) {
   [mediator_ setTextAlignment:alignment];
+}
+
+void OmniboxPopupViewIOS::SetSemanticContentAttribute(
+    UISemanticContentAttribute semanticContentAttribute) {
+  [mediator_ setSemanticContentAttribute:semanticContentAttribute];
 }
 
 #pragma mark - OmniboxPopupViewControllerDelegate

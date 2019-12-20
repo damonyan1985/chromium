@@ -10,15 +10,14 @@
 
 #include "base/command_line.h"
 #include "base/cpu.h"
+#include "base/files/file.h"
 #include "base/files/file_enumerator.h"
-#include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/no_destructor.h"
 #include "base/path_service.h"
 #include "base/posix/global_descriptors.h"
-#include "base/strings/string_tokenizer.h"
 #include "build/build_config.h"
 #include "chromecast/base/cast_paths.h"
 #include "chromecast/base/chromecast_switches.h"
@@ -27,6 +26,7 @@
 #include "chromecast/chromecast_buildflags.h"
 #include "chromecast/common/cast_resource_delegate.h"
 #include "chromecast/common/global_descriptors.h"
+#include "chromecast/gpu/cast_content_gpu_client.h"
 #include "chromecast/renderer/cast_content_renderer_client.h"
 #include "chromecast/utility/cast_content_utility_client.h"
 #include "components/crash/content/app/crash_reporter_client.h"
@@ -45,10 +45,6 @@
 #include "services/service_manager/sandbox/switches.h"
 #endif  // defined(OS_LINUX)
 
-#if defined(OS_FUCHSIA)
-#include "base/base_paths_fuchsia.h"
-#endif
-
 namespace {
 
 #if defined(OS_LINUX)
@@ -63,43 +59,12 @@ chromecast::CastCrashReporterClient* GetCastCrashReporter() {
 const int kMaxCrashFiles = 10;
 #endif  // defined(OS_ANDROID)
 
-base::FilePath GetDefaultCommandLineFile() {
-#if defined(OS_FUCHSIA)
-  base::FilePath command_line_dir;
-  base::PathService::Get(base::DIR_APP_DATA, &command_line_dir);
-  return command_line_dir.Append("cast/castagent-command-line");
-#else
-  return base::FilePath();
-#endif
-}
-
 }  // namespace
 
 namespace chromecast {
 namespace shell {
 
-CastMainDelegate::CastMainDelegate(int argc, const char** argv)
-    : CastMainDelegate(argc, argv, GetDefaultCommandLineFile()) {}
-
-CastMainDelegate::CastMainDelegate(int argc,
-                                   const char** argv,
-                                   base::FilePath command_line_path)
-    : argv_(argv, argv + argc) {
-#if defined(OS_FUCHSIA)
-  // Read the command-line from the filesystem.
-  std::string command_line_str;
-  if (base::ReadFileToString(command_line_path, &command_line_str)) {
-    LOG(INFO) << "Appending command-line args from " << command_line_path;
-    base::StringTokenizer tokenizer(command_line_str, "\n");
-    while (tokenizer.GetNext())
-      argv_strs_.push_back(tokenizer.token());
-    for (int i = 0; i < static_cast<int>(argv_strs_.size()); ++i)
-      argv_.push_back(argv_strs_[i].c_str());
-  } else {
-    LOG(INFO) << "Unable to read command-line args from " << command_line_path;
-  }
-#endif  // defined(OS_FUCHSIA)
-}
+CastMainDelegate::CastMainDelegate() {}
 
 CastMainDelegate::~CastMainDelegate() {}
 
@@ -107,7 +72,8 @@ bool CastMainDelegate::BasicStartupComplete(int* exit_code) {
   RegisterPathProvider();
 
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
 #if defined(OS_ANDROID)
   const base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
   std::string process_type =
@@ -116,8 +82,9 @@ bool CastMainDelegate::BasicStartupComplete(int* exit_code) {
   if (process_type.empty()) {
     base::FilePath log_file;
     base::PathService::Get(FILE_CAST_ANDROID_LOG, &log_file);
-    settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
-    settings.log_file = log_file.value().c_str();
+    settings.logging_dest =
+        logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
+    settings.log_file_path = log_file.value().c_str();
     settings.delete_old = logging::DELETE_OLD_LOG_FILE;
   }
 #endif  // defined(OS_ANDROID)
@@ -164,8 +131,6 @@ bool CastMainDelegate::BasicStartupComplete(int* exit_code) {
     }
   }
 #endif  // defined(OS_ANDROID)
-
-  content::SetContentClient(&content_client_);
   return false;
 }
 
@@ -214,7 +179,13 @@ int CastMainDelegate::RunProcess(
   // Note: Android must handle running its own browser process.
   // See ChromeMainDelegateAndroid::RunProcess.
   browser_runner_ = content::BrowserMainRunner::Create();
-  return browser_runner_->Initialize(main_function_params);
+  int exit_code = browser_runner_->Initialize(main_function_params);
+  // On Android we do not run BrowserMain(), so the above initialization of a
+  // BrowserMainRunner is all we want to occur. Return >= 0 to avoid running
+  // BrowserMain, while preserving any error codes > 0.
+  if (exit_code > 0)
+    return exit_code;
+  return 0;
 #else
   return -1;
 #endif  // defined(OS_ANDROID)
@@ -248,8 +219,13 @@ void CastMainDelegate::PostEarlyInitialization(bool is_running_tests) {
   CHECK(base::CreateDirectory(home_dir));
 #endif  // !defined(OS_ANDROID)
 
-  // The |FieldTrialList| is a dependency of the feature list.
-  field_trial_list_ = std::make_unique<base::FieldTrialList>(nullptr);
+  // The |FieldTrialList| is a dependency of the feature list. In tests, it
+  // gets constructed as part of the test suite.
+  if (is_running_tests) {
+    DCHECK(base::FieldTrialList::GetInstance());
+  } else {
+    field_trial_list_ = std::make_unique<base::FieldTrialList>(nullptr);
+  }
 
   // Initialize the base::FeatureList and the PrefService (which it depends on),
   // so objects initialized after this point can use features from
@@ -304,12 +280,21 @@ void CastMainDelegate::InitializeResourceBundle() {
 #endif  // defined(OS_ANDROID)
 }
 
+content::ContentClient* CastMainDelegate::CreateContentClient() {
+  return &content_client_;
+}
+
 content::ContentBrowserClient* CastMainDelegate::CreateContentBrowserClient() {
   DCHECK(!cast_feature_list_creator_);
   cast_feature_list_creator_ = std::make_unique<CastFeatureListCreator>();
   browser_client_ =
       CastContentBrowserClient::Create(cast_feature_list_creator_.get());
   return browser_client_.get();
+}
+
+content::ContentGpuClient* CastMainDelegate::CreateContentGpuClient() {
+  gpu_client_ = CastContentGpuClient::Create();
+  return gpu_client_.get();
 }
 
 content::ContentRendererClient*

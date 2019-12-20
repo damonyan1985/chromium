@@ -12,13 +12,14 @@
 
 #include "android_webview/browser/aw_browser_permission_request_delegate.h"
 #include "android_webview/browser/aw_render_process_gone_delegate.h"
-#include "android_webview/browser/aw_safe_browsing_ui_manager.h"
-#include "android_webview/browser/browser_view_renderer.h"
-#include "android_webview/browser/browser_view_renderer_client.h"
 #include "android_webview/browser/find_helper.h"
+#include "android_webview/browser/gfx/browser_view_renderer.h"
+#include "android_webview/browser/gfx/browser_view_renderer_client.h"
 #include "android_webview/browser/icon_helper.h"
+#include "android_webview/browser/js_java_interaction/js_java_configurator_host.h"
 #include "android_webview/browser/permission/permission_request_handler_client.h"
 #include "android_webview/browser/renderer_host/aw_render_view_host_ext.h"
+#include "android_webview/browser/safe_browsing/aw_safe_browsing_ui_manager.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/callback_forward.h"
@@ -65,10 +66,6 @@ class AwContents : public FindHelper::Listener,
   // Returns the AwContents instance associated with |web_contents|, or NULL.
   static AwContents* FromWebContents(content::WebContents* web_contents);
 
-  // Returns the AwContents instance associated with with the given
-  // render_process_id and render_view_id, or NULL.
-  static AwContents* FromID(int render_process_id, int render_view_id);
-
   static std::string GetLocale();
 
   static std::string GetLocaleList();
@@ -101,16 +98,18 @@ class AwContents : public FindHelper::Listener,
   base::android::ScopedJavaLocalRef<jobject> GetWebContents(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  base::android::ScopedJavaLocalRef<jobject> GetBrowserContext(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
   void SetCompositorFrameConsumer(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jlong compositor_frame_consumer);
-
   base::android::ScopedJavaLocalRef<jobject> GetRenderProcess(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
 
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
   void DocumentHasImages(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj,
                          const base::android::JavaParamRef<jobject>& message);
@@ -217,6 +216,22 @@ class AwContents : public FindHelper::Listener,
   jint GetEffectivePriority(JNIEnv* env,
                             const base::android::JavaParamRef<jobject>& obj);
 
+  JsJavaConfiguratorHost* GetJsJavaConfiguratorHost();
+
+  base::android::ScopedJavaLocalRef<jstring> AddWebMessageListener(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& listener,
+      const base::android::JavaParamRef<jstring>& js_object_name,
+      const base::android::JavaParamRef<jobjectArray>& allowed_origins);
+
+  void RemoveWebMessageListener(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jstring>& js_object_name);
+
+  bool GetViewTreeForceDarkState() { return view_tree_force_dark_state_; }
+
   // PermissionRequestHandlerClient implementation.
   void OnPermissionRequest(base::android::ScopedJavaLocalRef<jobject> j_request,
                            AwPermissionRequest* request) override;
@@ -279,6 +294,8 @@ class AwContents : public FindHelper::Listener,
   void PostInvalidate() override;
   void OnNewPicture() override;
   gfx::Point GetLocationOnScreen() override;
+  void OnViewTreeForceDarkStateChanged(
+      bool view_tree_force_dark_state) override;
 
   // |new_value| is in physical pixel scale.
   void ScrollContainerViewTo(const gfx::Vector2d& new_value) override;
@@ -319,6 +336,8 @@ class AwContents : public FindHelper::Listener,
   void SetDipScale(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& obj,
                    jfloat dip_scale);
+  void OnInputEvent(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj);
   void SetSaveFormData(bool enabled);
 
   // Sets the java client
@@ -365,8 +384,8 @@ class AwContents : public FindHelper::Listener,
       const base::android::JavaParamRef<jobject>& callback);
 
   // AwRenderProcessGoneDelegate overrides
-  void OnRenderProcessGone(int child_process_id) override;
-  bool OnRenderProcessGoneDetail(int child_process_id, bool crashed) override;
+  RenderProcessGoneResult OnRenderProcessGone(int child_process_id,
+                                              bool crashed) override;
 
  private:
   void InitAutofillIfNecessary(bool autocomplete_enabled);
@@ -390,6 +409,9 @@ class AwContents : public FindHelper::Listener,
   std::unique_ptr<AwPdfExporter> pdf_exporter_;
   std::unique_ptr<PermissionRequestHandler> permission_request_handler_;
   std::unique_ptr<autofill::AutofillProvider> autofill_provider_;
+  std::unique_ptr<JsJavaConfiguratorHost> js_java_configurator_host_;
+
+  bool view_tree_force_dark_state_ = false;
 
   // GURL is supplied by the content layer as requesting frame.
   // Callback is supplied by the content layer, and is invoked with the result

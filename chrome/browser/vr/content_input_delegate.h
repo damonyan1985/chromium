@@ -15,7 +15,7 @@
 #include "chrome/browser/vr/model/text_input_info.h"
 #include "chrome/browser/vr/platform_ui_input_delegate.h"
 #include "chrome/browser/vr/text_edit_action.h"
-#include "chrome/browser/vr/vr_ui_export.h"
+#include "chrome/browser/vr/vr_base_export.h"
 
 namespace vr {
 
@@ -23,8 +23,11 @@ class PlatformInputHandler;
 
 // This class is responsible for processing all events and gestures for
 // ContentElement.
-class VR_UI_EXPORT ContentInputDelegate : public PlatformUiInputDelegate {
+class VR_BASE_EXPORT ContentInputDelegate : public PlatformUiInputDelegate {
  public:
+  using TextInputUpdateCallback =
+      base::OnceCallback<void(const TextInputInfo&)>;
+
   ContentInputDelegate();
   explicit ContentInputDelegate(PlatformInputHandler* content);
   ~ContentInputDelegate() override;
@@ -43,12 +46,8 @@ class VR_UI_EXPORT ContentInputDelegate : public PlatformUiInputDelegate {
       int selection_start,
       int selection_end,
       int composition_start,
-      int compositon_end,
-      base::OnceCallback<void(const TextInputInfo&)> callback);
-
-  void OnWebInputTextChangedForTest(const base::string16& text) {
-    OnWebInputTextChanged(text);
-  }
+      int composition_end,
+      TextInputUpdateCallback callback);
 
   void ClearTextInputState();
 
@@ -59,19 +58,17 @@ class VR_UI_EXPORT ContentInputDelegate : public PlatformUiInputDelegate {
   enum TextRequestState {
     kNoPendingRequest,
     kRequested,
-    kResponseReceived,
   };
   bool ContentGestureIsLocked(InputEvent::Type type);
-  void OnWebInputTextChanged(const base::string16& text);
+  void OnWebInputTextChanged(TextInputInfo pending_input_info,
+                             const base::string16& text);
 
   int content_id_ = 0;
   int locked_content_id_ = 0;
 
   EditedText last_keyboard_edit_;
   TextRequestState pending_text_request_state_ = kNoPendingRequest;
-  TextInputInfo pending_text_input_info_;
-  std::queue<base::OnceCallback<void(const TextInputInfo&)>>
-      update_state_callbacks_;
+  std::queue<TextInputUpdateCallback> update_state_callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentInputDelegate);
 };

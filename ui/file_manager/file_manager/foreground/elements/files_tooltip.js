@@ -12,7 +12,7 @@
  * document.querySelector('files-tooltip').addTargets(
  *     document.querySelectorAll('[has-tooltip]'))
  */
-var FilesTooltip = Polymer({
+const FilesTooltip = Polymer({
   is: 'files-tooltip',
 
   properties: {
@@ -73,14 +73,14 @@ var FilesTooltip = Polymer({
    * @param {!NodeList} targets
    */
   addTargets: function(targets) {
-    for (var i = 0; i < targets.length; i++) {
+    for (let i = 0; i < targets.length; i++) {
       this.addTarget(targets[i]);
     }
   },
 
   /**
    * Adds a target to tooltip.
-   * @param {!HTMLElement} target
+   * @param {!EventTarget} target
    */
   addTarget: function(target) {
     target.addEventListener('mouseover', this.onMouseOver_.bind(this, target));
@@ -158,21 +158,21 @@ var FilesTooltip = Polymer({
 
     this.visibleTooltipTarget_ = target;
 
-    var label = target.getAttribute('aria-label');
+    const label = target.getAttribute('aria-label');
     if (!label) {
       return;
     }
 
     this.$.label.textContent = label;
-    var rect = target.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
 
-    var top = rect.top + rect.height;
+    let top = rect.top + rect.height;
     if (top + this.offsetHeight > document.body.offsetHeight) {
       top = rect.top - this.offsetHeight;
     }
     this.style.top = `${Math.round(top)}px`;
 
-    var left = rect.left + rect.width / 2 - this.offsetWidth / 2;
+    let left = rect.left + rect.width / 2 - this.offsetWidth / 2;
     if (left < 0) {
       left = 0;
     }
@@ -182,6 +182,7 @@ var FilesTooltip = Polymer({
     this.style.left = `${Math.round(left)}px`;
 
     this.setAttribute('visible', true);
+    this.setAttribute('aria-hidden', 'false');
   },
 
   /**
@@ -195,6 +196,7 @@ var FilesTooltip = Polymer({
 
     this.visibleTooltipTarget_ = null;
     this.removeAttribute('visible');
+    this.setAttribute('aria-hidden', 'true');
   },
 
   /**

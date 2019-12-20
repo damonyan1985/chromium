@@ -25,6 +25,7 @@
 #include "base/time/time.h"
 #include "base/time/time_to_iso8601.h"
 #include "base/values.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "crypto/sha2.h"
 #include "net/base/hash_value.h"
@@ -35,11 +36,15 @@
 #include "net/cert/x509_certificate.h"
 #include "net/dns/dns_util.h"
 #include "net/extras/preload_data/decoder.h"
+#include "net/http/hsts_info.h"
 #include "net/http/http_security_headers.h"
 #include "net/net_buildflags.h"
 #include "net/ssl/ssl_info.h"
 
 namespace net {
+
+const base::Feature kEnforceCTForNewCerts{"EnforceCTForNewCerts",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
 namespace {
 
@@ -66,10 +71,6 @@ const size_t kReportCacheKeyLength = 16;
 //   1: Unless a delegate says otherwise, require CT.
 int g_ct_required_for_testing = 0;
 
-// Controls whether or not Certificate Transparency should be enforced for
-// newly-issued certificates.
-const base::Feature kEnforceCTForNewCerts{"EnforceCTForNewCerts",
-                                          base::FEATURE_DISABLED_BY_DEFAULT};
 // The date (as the number of seconds since the Unix Epoch) to enforce CT for
 // new certificates.
 constexpr base::FeatureParam<int> kEnforceCTForNewCertsDate{
@@ -218,7 +219,7 @@ std::string HashHost(const std::string& canonicalized_host) {
 bool HashesIntersect(const HashValueVector& a,
                      const HashValueVector& b) {
   for (const auto& hash : a) {
-    if (base::ContainsValue(b, hash))
+    if (base::Contains(b, hash))
       return true;
   }
   return false;
@@ -392,6 +393,29 @@ bool DecodeHSTSPreload(const std::string& search_hostname, PreloadResult* out) {
   return found;
 }
 
+// Records a histogram for details on the HSTS status of a host. |enabled| is
+// true if the host had HSTS enabled when considering both the preload list and
+// the current dynamic implementation and false otherwise. |should_be_dynamic|
+// is true if the current dynamic implementation reported host did not have HSTS
+// enabled, but a spec-compliant implementation would have reported it enabled.
+// Note both parameters may be true, in which case the spec non-compliance was
+// masked by the HSTS preload list.
+//
+// See https://crbug.com/821811.
+void RecordHstsInfo(bool enabled, bool should_be_dynamic) {
+  HstsInfo info;
+  if (enabled) {
+    info = should_be_dynamic
+               ? HstsInfo::kDynamicIncorrectlyMaskedButMatchedStatic
+               : HstsInfo::kEnabled;
+  } else {
+    info = should_be_dynamic ? HstsInfo::kDynamicIncorrectlyMasked
+                             : HstsInfo::kDisabled;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("Net.HstsInfo", info);
+}
+
 }  // namespace
 
 // static
@@ -404,6 +428,10 @@ void SetTransportSecurityStateSourceForTesting(
 }
 
 TransportSecurityState::TransportSecurityState()
+    : TransportSecurityState(std::vector<std::string>()) {}
+
+TransportSecurityState::TransportSecurityState(
+    std::vector<std::string> hsts_host_bypass_list)
     : enable_static_pins_(true),
       enable_static_expect_ct_(true),
       enable_pkp_bypass_for_local_trust_anchors_(true),
@@ -411,10 +439,15 @@ TransportSecurityState::TransportSecurityState()
       sent_expect_ct_reports_cache_(kMaxReportCacheEntries) {
 // Static pinning is only enabled for official builds to make sure that
 // others don't end up with pins that cannot be easily updated.
-#if !defined(GOOGLE_CHROME_BUILD) || defined(OS_ANDROID) || defined(OS_IOS)
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING) || defined(OS_ANDROID) || defined(OS_IOS)
   enable_static_pins_ = false;
   enable_static_expect_ct_ = false;
 #endif
+  // Check that there no invalid entries in the static HSTS bypass list.
+  for (auto& host : hsts_host_bypass_list) {
+    DCHECK(host.find('.') == std::string::npos);
+    hsts_host_bypass_list_.insert(host);
+  }
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 }
 
@@ -423,9 +456,13 @@ TransportSecurityState::TransportSecurityState()
 bool TransportSecurityState::ShouldSSLErrorsBeFatal(const std::string& host) {
   STSState unused_sts;
   PKPState unused_pkp;
-  return GetStaticDomainState(host, &unused_sts, &unused_pkp) ||
-         GetDynamicSTSState(host, &unused_sts) ||
-         GetDynamicPKPState(host, &unused_pkp);
+  // Query GetDynamicSTSState() first to set |sts_should_be_dynamic|.
+  bool sts_should_be_dynamic = false;
+  bool ret = GetDynamicSTSState(host, &unused_sts, &sts_should_be_dynamic) ||
+             GetDynamicPKPState(host, &unused_pkp) ||
+             GetStaticDomainState(host, &unused_sts, &unused_pkp);
+  RecordHstsInfo(ret, sts_should_be_dynamic);
+  return ret;
 }
 
 bool TransportSecurityState::ShouldUpgradeToSSL(const std::string& host) {
@@ -1140,7 +1177,8 @@ bool TransportSecurityState::GetStaticDomainState(const std::string& host,
   if (!DecodeHSTSPreload(host, &result))
     return false;
 
-  if (result.force_https) {
+  if (hsts_host_bypass_list_.find(host) == hsts_host_bypass_list_.end() &&
+      result.force_https) {
     sts_result->domain = host.substr(result.hostname_offset);
     sts_result->include_subdomains = result.sts_include_subdomains;
     sts_result->last_observed = base::GetBuildTime();
@@ -1182,8 +1220,11 @@ bool TransportSecurityState::GetStaticDomainState(const std::string& host,
 bool TransportSecurityState::GetSTSState(const std::string& host,
                                          STSState* result) {
   PKPState unused;
-  return GetDynamicSTSState(host, result) ||
-         GetStaticDomainState(host, result, &unused);
+  bool should_be_dynamic = false;
+  bool ret = GetDynamicSTSState(host, result, &should_be_dynamic) ||
+             GetStaticDomainState(host, result, &unused);
+  RecordHstsInfo(ret, should_be_dynamic);
+  return ret;
 }
 
 bool TransportSecurityState::GetPKPState(const std::string& host,
@@ -1194,15 +1235,19 @@ bool TransportSecurityState::GetPKPState(const std::string& host,
 }
 
 bool TransportSecurityState::GetDynamicSTSState(const std::string& host,
-                                                STSState* result) {
+                                                STSState* result,
+                                                bool* should_be_dynamic) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
+  if (should_be_dynamic)
+    *should_be_dynamic = false;
   const std::string canonicalized_host = CanonicalizeHost(host);
   if (canonicalized_host.empty())
     return false;
 
   base::Time current_time(base::Time::Now());
 
+  bool first_match = true;
   for (size_t i = 0; canonicalized_host[i]; i += canonicalized_host[i] + 1) {
     std::string host_sub_chunk(&canonicalized_host[i],
                                canonicalized_host.size() - i);
@@ -1220,15 +1265,24 @@ bool TransportSecurityState::GetDynamicSTSState(const std::string& host,
     // If this is the most specific STS match, add it to the result. Note: a STS
     // entry at a more specific domain overrides a less specific domain whether
     // or not |include_subdomains| is set.
-    if (current_time <= j->second.expiry) {
-      if (i == 0 || j->second.include_subdomains) {
-        *result = j->second;
-        result->domain = DNSDomainToString(host_sub_chunk);
-        return true;
+    if (i == 0 || j->second.include_subdomains) {
+      // TransportSecurityState considers a more specific non-includeSubDomains
+      // entry to override a less specific includeSubDomain entry. This does not
+      // match the specification and results in confusing behavior, so evaluate
+      // both versions for histogramming purposes.
+      if (!first_match) {
+        if (should_be_dynamic)
+          *should_be_dynamic = true;
+        // No need to continue iterating.
+        break;
       }
 
-      break;
+      *result = j->second;
+      result->domain = DNSDomainToString(host_sub_chunk);
+      return true;
     }
+
+    first_match = false;
   }
 
   return false;
@@ -1261,15 +1315,13 @@ bool TransportSecurityState::GetDynamicPKPState(const std::string& host,
     // If this is the most specific PKP match, add it to the result. Note: a PKP
     // entry at a more specific domain overrides a less specific domain whether
     // or not |include_subdomains| is set.
-    if (current_time <= j->second.expiry) {
-      if (i == 0 || j->second.include_subdomains) {
-        *result = j->second;
-        result->domain = DNSDomainToString(host_sub_chunk);
-        return true;
-      }
-
-      break;
+    if (i == 0 || j->second.include_subdomains) {
+      *result = j->second;
+      result->domain = DNSDomainToString(host_sub_chunk);
+      return true;
     }
+
+    break;
   }
 
   return false;

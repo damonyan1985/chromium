@@ -10,6 +10,7 @@
 #include "base/observer_list.h"
 
 class FullscreenModel;
+@class FullscreenAnimator;
 
 // Test version of FullscreenController with limited functionality:
 // - Enables/disables a FullscreenModel.
@@ -30,6 +31,7 @@ class TestFullscreenController : public FullscreenController {
   bool IsEnabled() const override;
   void IncrementDisabledCounter() override;
   void DecrementDisabledCounter() override;
+  bool ResizesScrollView() const override;
   void BrowserTraitCollectionChangedBegin() override;
   void BrowserTraitCollectionChangedEnd() override;
   CGFloat GetProgress() const override;
@@ -42,9 +44,21 @@ class TestFullscreenController : public FullscreenController {
   // KeyedService:
   void Shutdown() override;
 
+  // Calls FullscreenViewportInsetRangeChanged() on observers.
+  void OnFullscreenViewportInsetRangeChanged(UIEdgeInsets min_viewport_insets,
+                                             UIEdgeInsets max_viewport_insets);
+  // Calls FullscreenProgressUpdated() on observers.
+  void OnFullscreenProgressUpdated(CGFloat progress);
+  // Calls FullscreenEnabledStateChanged() on observers.
+  void OnFullscreenEnabledStateChanged(bool enabled);
+  // Calls FullscreenWillAnimate() on observers.
+  void OnFullscreenWillAnimate(FullscreenAnimator* animator);
+
  private:
   // The model.
   FullscreenModel* model_ = nullptr;
+  // The WebStateList.
+  WebStateList* web_state_list_ = nullptr;
   // The broadcaster.
   ChromeBroadcaster* broadcaster_ = nil;
   // The observers.

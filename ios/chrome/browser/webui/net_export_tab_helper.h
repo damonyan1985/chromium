@@ -5,7 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_WEBUI_NET_EXPORT_TAB_HELPER_H_
 #define IOS_CHROME_BROWSER_WEBUI_NET_EXPORT_TAB_HELPER_H_
 
-#import "ios/web/public/web_state/web_state_user_data.h"
+#import "ios/web/public/web_state_user_data.h"
 
 @protocol NetExportTabHelperDelegate;
 @class ShowMailComposerContext;
@@ -25,8 +25,12 @@ class NetExportTabHelper : public web::WebStateUserData<NetExportTabHelper> {
   void ShowMailComposer(ShowMailComposerContext* context);
 
  private:
+  friend class web::WebStateUserData<NetExportTabHelper>;
+
   explicit NetExportTabHelper(id<NetExportTabHelperDelegate> delegate);
   __weak id<NetExportTabHelperDelegate> delegate_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(NetExportTabHelper);
 };

@@ -51,10 +51,13 @@ void AccessibilityLayer::CreateOrUpdateLayer(aura::Window* root_window,
     root_window_ = root_window;
     ui::Layer* root_layer = root_window->layer();
     layer_ = std::make_unique<ui::Layer>(ui::LAYER_TEXTURED);
-    layer_->set_name(layer_name);
-    layer_->set_delegate(this);
+    layer_->SetName(layer_name);
     layer_->SetFillsBoundsOpaquely(false);
     root_layer->Add(layer_.get());
+    // Adding |layer_| to |root_layer| will trigger a DeviceScaleFactorChanged.
+    // AccessibilityFocusRingControllerImpl doesn't need to react to this
+    // initial DSF change, so set the delegate after Add().
+    layer_->set_delegate(this);
   }
 
   // Keep moving it to the top in case new layers have been added

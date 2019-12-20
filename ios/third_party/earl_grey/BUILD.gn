@@ -253,6 +253,7 @@ ios_framework_bundle("earl_grey") {
     "src/EarlGrey/Assertion/GREYAssertionBlock.h",
     "src/EarlGrey/Assertion/GREYAssertionDefines.h",
     "src/EarlGrey/Assertion/GREYAssertions.h",
+    "src/EarlGrey/Common/GREYAppleInternals.h",
     "src/EarlGrey/Common/GREYConfiguration.h",
     "src/EarlGrey/Common/GREYConstants.h",
     "src/EarlGrey/Common/GREYDefines.h",
@@ -289,6 +290,7 @@ ios_framework_bundle("earl_grey") {
   deps = [
     "//build/config/ios:xctest",
     "//ios/third_party/fishhook",
+    "//ios/third_party/webkit",
   ]
   public_deps = [
     "//ios/third_party/ochamcrest:ochamcrest+link",
@@ -301,7 +303,6 @@ ios_framework_bundle("earl_grey") {
     "IOKit.framework",
     "QuartzCore.framework",
     "UIKit.framework",
-    "WebKit.framework",
     "XCTest.framework",
   ]
   public_configs = [ ":config" ]

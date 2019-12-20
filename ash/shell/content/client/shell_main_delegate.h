@@ -22,17 +22,15 @@ class ShellMainDelegate : public content::ContentMainDelegate {
   ShellMainDelegate();
   ~ShellMainDelegate() override;
 
-  bool BasicStartupComplete(int* exit_code) override;
   void PreSandboxStartup() override;
+  content::ContentClient* CreateContentClient() override;
   content::ContentBrowserClient* CreateContentBrowserClient() override;
-  content::ContentUtilityClient* CreateContentUtilityClient() override;
 
  private:
   void InitializeResourceBundle();
 
   std::unique_ptr<ShellContentBrowserClient> browser_client_;
   content::ShellContentClient content_client_;
-  std::unique_ptr<content::ContentUtilityClient> utility_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellMainDelegate);
 };

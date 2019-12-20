@@ -12,12 +12,11 @@
 
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/stl_util.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/arc/bluetooth/bluetooth_type_converters.h"
+#include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_gatt_service.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace {
 
@@ -31,16 +30,6 @@ constexpr uint16_t kBrowseGroupList = 0x0005;
 constexpr uint16_t kBluetoothProfileDescriptorList = 0x0009;
 constexpr uint16_t kServiceName = 0x0100;
 
-bool IsNonHex(char c) {
-  return !isxdigit(c);
-}
-
-std::string StripNonHex(const std::string& str) {
-  std::string result = str;
-  base::EraseIf(result, IsNonHex);
-  return result;
-}
-
 }  // namespace
 
 namespace mojo {
@@ -52,7 +41,10 @@ TypeConverter<arc::mojom::BluetoothAddressPtr, std::string>::Convert(
 
   arc::mojom::BluetoothAddressPtr mojo_addr =
       arc::mojom::BluetoothAddress::New();
-  base::HexStringToBytes(StripNonHex(address), &mojo_addr->address);
+
+  mojo_addr->address.resize(kAddressSize);
+  if (!device::BluetoothDevice::ParseAddress(address, mojo_addr->address))
+    mojo_addr->address.clear();
 
   return mojo_addr;
 }
@@ -77,6 +69,29 @@ std::string TypeConverter<std::string, arc::mojom::BluetoothAddress>::Convert(
 }
 
 // static
+arc::mojom::BluetoothAddressPtr
+TypeConverter<arc::mojom::BluetoothAddressPtr, bdaddr_t>::Convert(
+    const bdaddr_t& address) {
+  arc::mojom::BluetoothAddressPtr mojo_addr =
+      arc::mojom::BluetoothAddress::New();
+  mojo_addr->address.resize(kAddressSize);
+  std::reverse_copy(std::begin(address.b), std::end(address.b),
+                    std::begin(mojo_addr->address));
+
+  return mojo_addr;
+}
+
+// static
+bdaddr_t TypeConverter<bdaddr_t, arc::mojom::BluetoothAddress>::Convert(
+    const arc::mojom::BluetoothAddress& address) {
+  bdaddr_t ret;
+  std::reverse_copy(std::begin(address.address), std::end(address.address),
+                    std::begin(ret.b));
+
+  return ret;
+}
+
+// static
 arc::mojom::BluetoothSdpAttributePtr
 TypeConverter<arc::mojom::BluetoothSdpAttributePtr,
               bluez::BluetoothServiceAttributeValueBlueZ>::
@@ -85,14 +100,6 @@ TypeConverter<arc::mojom::BluetoothSdpAttributePtr,
   auto result = arc::mojom::BluetoothSdpAttribute::New();
   result->type = attr_bluez.type();
   result->type_size = attr_bluez.size();
-
-  // TODO(b/111367421): Remove after migration.
-  if (result->type != bluez::BluetoothServiceAttributeValueBlueZ::SEQUENCE) {
-    std::string json;
-    base::JSONWriter::Write(attr_bluez.value(), &json);
-    result->json_value = std::move(json);
-  }
-
   switch (result->type) {
     case bluez::BluetoothServiceAttributeValueBlueZ::NULLTYPE:
       result->value = base::Value();
@@ -127,15 +134,6 @@ TypeConverter<bluez::BluetoothServiceAttributeValueBlueZ,
               arc::mojom::BluetoothSdpAttributePtr>::
     Convert(const arc::mojom::BluetoothSdpAttributePtr& attr, size_t depth) {
   bluez::BluetoothServiceAttributeValueBlueZ::Type type = attr->type;
-
-  // TODO(b/111367421): Remove after migration.
-  if (type != bluez::BluetoothServiceAttributeValueBlueZ::SEQUENCE &&
-      attr->json_value.has_value()) {
-    return bluez::BluetoothServiceAttributeValueBlueZ(
-        type, static_cast<size_t>(attr->type_size),
-        base::JSONReader::Read(attr->json_value.value()));
-  }
-
   if (type != bluez::BluetoothServiceAttributeValueBlueZ::SEQUENCE &&
       !attr->value.has_value()) {
     return bluez::BluetoothServiceAttributeValueBlueZ();

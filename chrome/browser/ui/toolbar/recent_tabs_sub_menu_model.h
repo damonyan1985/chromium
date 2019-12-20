@@ -30,10 +30,6 @@ namespace favicon_base {
 struct FaviconImageResult;
 }
 
-namespace gfx {
-class Image;
-}
-
 namespace sessions {
 struct SessionTab;
 }
@@ -179,15 +175,14 @@ class RecentTabsSubMenuModel : public ui::SimpleMenuModel,
   // menumodel.
   int last_local_model_index_ = kHistorySeparatorIndex;
 
-  gfx::Image default_favicon_;
-
   base::CancelableTaskTracker local_tab_cancelable_task_tracker_;
   base::CancelableTaskTracker other_devices_tab_cancelable_task_tracker_;
 
   // Time the menu is open for until a recent tab is selected.
   base::ElapsedTimer menu_opened_timer_;
 
-  ScopedObserver<sessions::TabRestoreService, RecentTabsSubMenuModel>
+  ScopedObserver<sessions::TabRestoreService,
+                 sessions::TabRestoreServiceObserver>
       tab_restore_service_observer_{this};
 
   std::unique_ptr<base::CallbackList<void()>::Subscription>

@@ -36,7 +36,10 @@
 #include "base/macros.h"
 #include "components/safe_browsing/base_blocking_page.h"
 #include "components/safe_browsing/base_ui_manager.h"
-#include "components/signin/core/browser/signin_buildflags.h"
+
+namespace network {
+class SharedURLLoaderFactory;
+}
 
 namespace safe_browsing {
 
@@ -53,12 +56,15 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
   ~SafeBrowsingBlockingPage() override;
 
   // Creates a blocking page. Use ShowBlockingPage if you don't need to access
-  // the blocking page directly.
+  // the blocking page directly. |should_trigger_reporting| controls whether a
+  // safe browsing extended reporting report will be created for this blocking
+  // page.
   static SafeBrowsingBlockingPage* CreateBlockingPage(
       BaseUIManager* ui_manager,
       content::WebContents* web_contents,
       const GURL& main_frame_url,
-      const UnsafeResource& unsafe_resource);
+      const UnsafeResource& unsafe_resource,
+      bool should_trigger_reporting);
 
   // Shows a blocking page warning the user about phishing/malware for a
   // specific resource.
@@ -76,7 +82,7 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
 
   // InterstitialPageDelegate method:
   void OverrideRendererPrefs(blink::mojom::RendererPreferences* prefs) override;
-  content::InterstitialPageDelegate::TypeID GetTypeForTesting() const override;
+  content::InterstitialPageDelegate::TypeID GetTypeForTesting() override;
 
  protected:
   friend class SafeBrowsingBlockingPageFactoryImpl;
@@ -108,11 +114,17 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
       content::WebContents* web_contents,
       const GURL& main_frame_url,
       const UnsafeResourceList& unsafe_resources,
-      const BaseSafeBrowsingErrorUI::SBErrorDisplayOptions& display_options);
+      const BaseSafeBrowsingErrorUI::SBErrorDisplayOptions& display_options,
+      bool should_trigger_reporting,
+      network::SharedURLLoaderFactory* url_loader_for_testing = nullptr);
 
   // Called after the user clicks OnProceed(). If the page has malicious
   // subresources, then we show another interstitial.
   void HandleSubresourcesAfterProceed() override;
+
+  // Called when an interstitial is closed, either due to a click through or a
+  // navigation elsewhere.
+  void OnInterstitialClosing() override;
 
   // Called when the interstitial is going away. If there is a
   // pending threat details object, we look at the user's
@@ -149,7 +161,8 @@ class SafeBrowsingBlockingPageFactory {
       BaseUIManager* ui_manager,
       content::WebContents* web_contents,
       const GURL& main_frame_url,
-      const SafeBrowsingBlockingPage::UnsafeResourceList& unsafe_resources) = 0;
+      const SafeBrowsingBlockingPage::UnsafeResourceList& unsafe_resources,
+      bool should_trigger_reporting) = 0;
 };
 
 }  // namespace safe_browsing

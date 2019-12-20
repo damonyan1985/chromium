@@ -32,12 +32,12 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_prefs/user_prefs.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest_constants.h"
-#include "storage/browser/fileapi/external_mount_points.h"
+#include "storage/browser/file_system/external_mount_points.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -119,7 +119,7 @@ class FileSystemProviderServiceTest : public testing::Test {
     service_->Shutdown();
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* profile_;
   FakeChromeUserManager* user_manager_;
@@ -215,7 +215,7 @@ TEST_F(FileSystemProviderServiceTest, MountFileSystem_StressTest) {
   const size_t kMaxFileSystems = 16;
   for (size_t i = 0; i < kMaxFileSystems; ++i) {
     const std::string file_system_id =
-        std::string("test-") + base::IntToString(i);
+        std::string("test-") + base::NumberToString(i);
     EXPECT_EQ(base::File::FILE_OK,
               service_->MountFileSystem(
                   kProviderId, MountOptions(file_system_id, kDisplayName)));

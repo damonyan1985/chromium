@@ -14,9 +14,9 @@
 #include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/sequenced_task_runner.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
+#include "base/updateable_sequenced_task_runner.h"
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager_common.h"
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager_local.h"
 #include "chrome/browser/media/webrtc/webrtc_event_log_manager_remote.h"
@@ -30,7 +30,7 @@ class WebRTCInternalsIntegrationBrowserTest;
 namespace content {
 class BrowserContext;
 class NetworkConnectionTracker;
-};
+}  // namespace content
 
 namespace webrtc_event_logging {
 
@@ -96,7 +96,6 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
 
   void PeerConnectionAdded(int render_process_id,
                            int lid,  // Renderer-local PeerConnection ID.
-                           const std::string& peer_connection_id,
                            base::OnceCallback<void(bool)> reply) override;
 
   void PeerConnectionRemoved(int render_process_id,
@@ -109,6 +108,12 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
   void PeerConnectionStopped(int render_process_id,
                              int lid,  // Renderer-local PeerConnection ID.
                              base::OnceCallback<void(bool)> reply) override;
+
+  void PeerConnectionSessionIdSet(
+      int render_process_id,
+      int lid,
+      const std::string& session_id,
+      base::OnceCallback<void(bool)> reply) override;
 
   // The file's actual path is derived from |base_path| by adding a timestamp,
   // the render process ID and the PeerConnection's local ID.
@@ -134,7 +139,7 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
   // more details.
   void StartRemoteLogging(
       int render_process_id,
-      const std::string& peer_connection_id,
+      const std::string& session_id,
       size_t max_file_size_bytes,
       int output_period_ms,
       size_t web_app_id,
@@ -268,10 +273,13 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
       base::OnceClosure reply);
 
   void PeerConnectionAddedInternal(PeerConnectionKey key,
-                                   const std::string& peer_connection_id,
                                    base::OnceCallback<void(bool)> reply);
   void PeerConnectionRemovedInternal(PeerConnectionKey key,
                                      base::OnceCallback<void(bool)> reply);
+
+  void PeerConnectionSessionIdSetInternal(PeerConnectionKey key,
+                                          const std::string& session_id,
+                                          base::OnceCallback<void(bool)> reply);
 
   void EnableLocalLoggingInternal(const base::FilePath& base_path,
                                   size_t max_file_size_bytes,
@@ -286,7 +294,7 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
   void StartRemoteLoggingInternal(
       int render_process_id,
       BrowserContextId browser_context_id,
-      const std::string& peer_connection_id,
+      const std::string& session_id,
       const base::FilePath& browser_context_dir,
       size_t max_file_size_bytes,
       int output_period_ms,
@@ -297,6 +305,8 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
   void ClearCacheForBrowserContextInternal(BrowserContextId browser_context_id,
                                            const base::Time& delete_begin,
                                            const base::Time& delete_end);
+
+  void OnClearCacheForBrowserContextDoneInternal(base::OnceClosure reply);
 
   void GetHistoryInternal(
       BrowserContextId browser_context_id,
@@ -345,7 +355,7 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
   // This allows unit tests that do not wish to change the task runner to still
   // check when certain operations are finished.
   // TODO(crbug.com/775415): Remove this and use PostNullTaskForTesting instead.
-  scoped_refptr<base::SequencedTaskRunner>& GetTaskRunnerForTesting();
+  scoped_refptr<base::SequencedTaskRunner> GetTaskRunnerForTesting();
 
   void PostNullTaskForTesting(base::OnceClosure reply);
 
@@ -356,7 +366,13 @@ class WebRtcEventLogManager final : public content::RenderProcessHostObserver,
 
   // The main logic will run sequentially on this runner, on which blocking
   // tasks are allowed.
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  scoped_refptr<base::UpdateableSequencedTaskRunner> task_runner_;
+
+  // The number of user-blocking tasks.
+  // The priority of |task_runner_| is increased to USER_BLOCKING when this is
+  // non-zero, and reduced to BEST_EFFORT when zero.
+  // This object is only to be accessed on the UI thread.
+  size_t num_user_blocking_tasks_;
 
   // Indicates whether remote-bound logging is generally allowed, although
   // possibly not for all profiles. This makes it possible for remote-bound to

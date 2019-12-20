@@ -16,9 +16,10 @@ component("service") {
 
   deps = [
     "//base",
+    "//build:chromecast_buildflags",
     "//components/crash/core/common:crash_key",
     "//components/discardable_memory/common",
-    "//components/discardable_memory/public/interfaces",
+    "//components/discardable_memory/public/mojom",
   ]
 }
 

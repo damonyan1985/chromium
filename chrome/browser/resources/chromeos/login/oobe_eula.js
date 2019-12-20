@@ -18,7 +18,7 @@ Polymer({
      */
     eulaLoadingScreenShown: {
       type: Boolean,
-      value: false,
+      value: true,
     },
 
     /**
@@ -47,7 +47,10 @@ Polymer({
 
     /**
      * Reference to OOBE screen object.
-     * @type {!OobeTypes.Screen}
+     * @type {!{
+     *     loadEulaToWebview_: function(Element),
+     *     onUsageStatsClicked_: function(boolean),
+     * }}
      */
     screen: {
       type: Object,
@@ -55,10 +58,10 @@ Polymer({
   },
 
   /**
-   * Flag that ensures that OOBE configuration is applied only once.
+   * Flag that ensures that eula screen set up once.
    * @private {boolean}
    */
-  configuration_applied_: false,
+  initialized_: false,
 
   focus: function() {
     if (this.eulaLoadingScreenShown) {
@@ -74,7 +77,19 @@ Polymer({
       if (behavior.onBeforeShow)
         behavior.onBeforeShow.call(this);
     });
-    window.setTimeout(this.applyOobeConfiguration_.bind(this), 0);
+    window.setTimeout(this.initializeScreen_.bind(this), 0);
+  },
+
+  /**
+   * Set up dialog before shown it for the first time.
+   * @private
+   */
+  initializeScreen_: function() {
+    if (this.initialized_)
+      return;
+    this.$.eulaDialog.scrollToBottom();
+    this.applyOobeConfiguration_();
+    this.initialized_ = true;
   },
 
   /**
@@ -82,8 +97,6 @@ Polymer({
    * @private
    */
   applyOobeConfiguration_: function() {
-    if (this.configuration_applied_)
-      return;
     var configuration = Oobe.getInstance().getOobeConfiguration();
     if (!configuration)
       return;
@@ -93,7 +106,6 @@ Polymer({
     if (configuration.eulaAutoAccept) {
       this.eulaAccepted_();
     }
-    this.configuration_applied_ = true;
   },
 
   /**
@@ -101,6 +113,7 @@ Polymer({
    */
   onFrameLoad_: function() {
     this.acceptButtonDisabled = false;
+    this.eulaLoadingScreenShown = false;
   },
 
   /**
@@ -114,8 +127,10 @@ Polymer({
 
   /**
    * This is 'on-tap' event handler for 'Accept' button.
+   *
+   * @private
    */
-  eulaAccepted_: function(event) {
+  eulaAccepted_: function() {
     chrome.send('login.EulaScreen.userActed', ['accept-button']);
   },
 
@@ -137,7 +152,7 @@ Polymer({
     chrome.send('eulaOnInstallationSettingsPopupOpened');
     this.$.eulaDialog.hidden = true;
     this.$.installationSettingsDialog.hidden = false;
-    this.$['settings-close-button'].focus();
+    this.$.installationSettingsDialog.show();
   },
 
   /**
@@ -148,6 +163,7 @@ Polymer({
   onInstallationSettingsCloseClicked_: function() {
     this.$.installationSettingsDialog.hidden = true;
     this.$.eulaDialog.hidden = false;
+    this.$.eulaDialog.show();
   },
 
   /**
@@ -185,5 +201,14 @@ Polymer({
    */
   isPasswordEmpty_: function(password) {
     return password != null && password.length == 0;
+  },
+
+  /**
+   * Switches usage stats toggle state.
+   *
+   * @private
+   */
+  usageStatsLabelClicked_: function() {
+    this.usageStatsChecked = !this.usageStatsChecked;
   },
 });

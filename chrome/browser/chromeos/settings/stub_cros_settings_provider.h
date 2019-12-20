@@ -24,13 +24,16 @@ class StubCrosSettingsProvider : public CrosSettingsProvider {
 
   // CrosSettingsProvider implementation.
   const base::Value* Get(const std::string& path) const override;
-  TrustedStatus PrepareTrustedValues(const base::Closure& callback) override;
+  TrustedStatus PrepareTrustedValues(base::OnceClosure callback) override;
   bool HandlesSetting(const std::string& path) const override;
 
   void SetTrustedStatus(TrustedStatus status);
   void SetCurrentUserIsOwner(bool owner);
 
   bool current_user_is_owner() const { return current_user_is_owner_; }
+
+  // Sets in-memory setting at |path| to value |in_value|.
+  void Set(const std::string& path, const base::Value& in_value);
 
   // Convenience forms of Set(). These methods will replace any existing value
   // at that |path|, even if it has a different type.
@@ -40,9 +43,6 @@ class StubCrosSettingsProvider : public CrosSettingsProvider {
   void SetString(const std::string& path, const std::string& in_value);
 
  private:
-  // CrosSettingsProvider implementation:
-  void DoSet(const std::string& path, const base::Value& value) override;
-
   // Initializes settings to their defaults.
   void SetDefaults();
 
@@ -58,7 +58,7 @@ class StubCrosSettingsProvider : public CrosSettingsProvider {
   TrustedStatus trusted_status_ = CrosSettingsProvider::TRUSTED;
 
   // Pending callbacks to invoke when switching away from TEMPORARILY_UNTRUSTED.
-  std::vector<base::Closure> callbacks_;
+  std::vector<base::OnceClosure> callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(StubCrosSettingsProvider);
 };

@@ -29,6 +29,7 @@
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
+#include "ui/events/event.h"
 
 namespace IPC {
 class ChannelProxy;
@@ -44,6 +45,7 @@ class AutoThreadTaskRunner;
 class DesktopEnvironment;
 class DesktopEnvironmentFactory;
 class InputInjector;
+class KeyboardLayoutMonitor;
 class ProcessStatsSender;
 class RemoteInputFilter;
 class ScreenControls;
@@ -105,8 +107,11 @@ class DesktopSessionAgent
   void ProcessAudioPacket(std::unique_ptr<AudioPacket> packet);
 
   // IpcFileOperations::ResultHandler implementation.
-  void OnResult(std::uint64_t file_id,
-                protocol::FileTransferResult<Monostate> result) override;
+  void OnResult(std::uint64_t file_id, ResultHandler::Result result) override;
+  void OnInfoResult(std::uint64_t file_id,
+                    ResultHandler::InfoResult result) override;
+  void OnDataResult(std::uint64_t file_id,
+                    ResultHandler::DataResult result) override;
 
   // Creates desktop integration components and a connected IPC channel to be
   // used to access them. The client end of the channel is returned.
@@ -123,7 +128,9 @@ class DesktopSessionAgent
   // ClientSessionControl interface.
   const std::string& client_jid() const override;
   void DisconnectSession(protocol::ErrorCode error) override;
-  void OnLocalMouseMoved(const webrtc::DesktopVector& position) override;
+  void OnLocalKeyPressed(uint32_t usb_keycode) override;
+  void OnLocalPointerMoved(const webrtc::DesktopVector& position,
+                           ui::EventType type) override;
   void SetDisableInputs(bool disable_inputs) override;
   void OnDesktopDisplayChanged(
       std::unique_ptr<protocol::VideoLayout> layout) override;
@@ -150,6 +157,9 @@ class DesktopSessionAgent
   void OnInjectMouseEvent(const std::string& serialized_event);
   void OnInjectTouchEvent(const std::string& serialized_event);
   void OnExecuteActionRequestEvent(const protocol::ActionRequest& request);
+
+  // Handles keyboard layout changes.
+  void OnKeyboardLayoutChange(const protocol::KeyboardLayout& layout);
 
   // Handles ChromotingNetworkDesktopMsg_SetScreenResolution request from
   // the client.
@@ -210,9 +220,6 @@ class DesktopSessionAgent
   // Used to apply client-requested changes in screen resolution.
   std::unique_ptr<ScreenControls> screen_controls_;
 
-  // Contains the most recently gathered into about the desktop displays.
-  std::unique_ptr<DesktopDisplayInfo> desktop_display_info_;
-
   // IPC channel connecting the desktop process with the network process.
   std::unique_ptr<IPC::ChannelProxy> network_channel_;
 
@@ -224,6 +231,9 @@ class DesktopSessionAgent
 
   // Captures mouse shapes.
   std::unique_ptr<webrtc::MouseCursorMonitor> mouse_cursor_monitor_;
+
+  // Watches for keyboard layout changes.
+  std::unique_ptr<KeyboardLayoutMonitor> keyboard_layout_monitor_;
 
   // Keep reference to the last frame sent to make sure shared buffer is alive
   // before it's received.
@@ -239,7 +249,7 @@ class DesktopSessionAgent
   CurrentProcessStatsAgent current_process_stats_;
 
   // Used to disable callbacks to |this|.
-  base::WeakPtrFactory<DesktopSessionAgent> weak_factory_;
+  base::WeakPtrFactory<DesktopSessionAgent> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DesktopSessionAgent);
 };

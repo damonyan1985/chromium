@@ -25,6 +25,7 @@ class Profile;
 namespace base {
 class DictionaryValue;
 class ListValue;
+class Value;
 }  // namespace base
 
 namespace extensions {
@@ -45,9 +46,9 @@ typedef std::map<std::pair<ContentSettingsPattern, std::string>,
 // displaying the new chooser exception object format, remove the typedefs that
 // are currently used for organizing the chooser exceptions.
 // Maps from a primary URL pattern/source pair to a set of secondary URL
-// patterns.
+// patterns/incognito status pair.
 using ChooserExceptionDetails =
-    std::map<std::pair<GURL, std::string>, std::set<GURL>>;
+    std::map<std::pair<GURL, std::string>, std::set<std::pair<GURL, bool>>>;
 
 // Maps from a chooser exception name/object pair to a ChooserExceptionDetails.
 // This will group and sort the exceptions by the UI string and object for
@@ -149,6 +150,7 @@ void GetPolicyAllowedUrls(
 // by functions below.
 struct ChooserTypeNameEntry {
   ChooserContextBase* (*get_context)(Profile*);
+  std::string (*get_object_name)(const base::Value&);
   const char* name;
 };
 
@@ -167,17 +169,15 @@ const ChooserTypeNameEntry* ChooserTypeFromGroupName(const std::string& name);
 // * sites: Array<SiteException>
 // The structure of the SiteException objects is the same as the objects
 // returned by GetExceptionForPage().
-std::unique_ptr<base::DictionaryValue> CreateChooserExceptionObject(
+base::Value CreateChooserExceptionObject(
     const std::string& display_name,
     const base::Value& object,
     const std::string& chooser_type,
-    const ChooserExceptionDetails& chooser_exception_details,
-    bool incognito);
+    const ChooserExceptionDetails& chooser_exception_details);
 
 // Returns an array of chooser exception objects.
-std::unique_ptr<base::ListValue> GetChooserExceptionListFromProfile(
+base::Value GetChooserExceptionListFromProfile(
     Profile* profile,
-    bool incognito,
     const ChooserTypeNameEntry& chooser_type);
 
 }  // namespace site_settings

@@ -6,8 +6,8 @@
 #define IOS_CHROME_BROWSER_APP_LAUNCHER_APP_LAUNCHER_TAB_HELPER_H_
 
 #include "base/macros.h"
-#import "ios/web/public/web_state/web_state_policy_decider.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#import "ios/web/public/navigation/web_state_policy_decider.h"
+#import "ios/web/public/web_state_user_data.h"
 
 @protocol AppLauncherTabHelperDelegate;
 @class AppLauncherAbuseDetector;
@@ -51,6 +51,8 @@ class AppLauncherTabHelper
       const web::WebStatePolicyDecider::RequestInfo& request_info) override;
 
  private:
+  friend class web::WebStateUserData<AppLauncherTabHelper>;
+
   // Constructor for AppLauncherTabHelper. |abuse_detector| provides policy for
   // launching apps. |delegate| can launch applications and present UI and is
   // not retained by TabHelper.
@@ -72,6 +74,8 @@ class AppLauncherTabHelper
 
   // Must be last member to ensure it is destroyed last.
   base::WeakPtrFactory<AppLauncherTabHelper> weak_factory_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(AppLauncherTabHelper);
 };

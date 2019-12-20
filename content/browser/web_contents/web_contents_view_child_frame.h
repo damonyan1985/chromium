@@ -36,11 +36,9 @@ class WebContentsViewChildFrame : public WebContentsView,
   void FocusThroughTabTraversal(bool reverse) override;
   DropData* GetDropData() const override;
   gfx::Rect GetViewBounds() const override;
-  void CreateView(const gfx::Size& initial_size,
-                  gfx::NativeView context) override;
+  void CreateView(gfx::NativeView context) override;
   RenderWidgetHostViewBase* CreateViewForWidget(
-      RenderWidgetHost* render_widget_host,
-      bool is_guest_view_hack) override;
+      RenderWidgetHost* render_widget_host) override;
   RenderWidgetHostViewBase* CreateViewForChildWidget(
       RenderWidgetHost* render_widget_host) override;
   void SetPageTitle(const base::string16& title) override;
@@ -50,8 +48,7 @@ class WebContentsViewChildFrame : public WebContentsView,
                              RenderViewHost* new_host) override;
   void SetOverscrollControllerEnabled(bool enabled) override;
 #if defined(OS_MACOSX)
-  bool IsEventTracking() const override;
-  void CloseTabAfterEventTracking() override;
+  bool CloseTabAfterEventTrackingIfNeeded() override;
 #endif
 
   // Backend implementation of RenderViewHostDelegateView.

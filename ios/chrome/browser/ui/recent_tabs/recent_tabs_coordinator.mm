@@ -7,13 +7,19 @@
 #include "base/ios/block_types.h"
 #include "base/mac/foundation_util.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/main/browser.h"
 #include "ios/chrome/browser/ui/commands/application_commands.h"
+#include "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_mediator.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_presentation_delegate.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_table_view_controller.h"
 #import "ios/chrome/browser/ui/recent_tabs/recent_tabs_transitioning_delegate.h"
+#import "ios/chrome/browser/ui/table_view/feature_flags.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller.h"
 #import "ios/chrome/browser/ui/table_view/table_view_navigation_controller_constants.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
+#import "ios/chrome/browser/url_loading/url_loading_service.h"
+#import "ios/chrome/browser/url_loading/url_loading_service_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -33,8 +39,6 @@
 
 @implementation RecentTabsCoordinator
 @synthesize completion = _completion;
-@synthesize dispatcher = _dispatcher;
-@synthesize loader = _loader;
 @synthesize mediator = _mediator;
 @synthesize recentTabsNavigationController = _recentTabsNavigationController;
 @synthesize recentTabsTransitioningDelegate = _recentTabsTransitioningDelegate;
@@ -44,10 +48,13 @@
   RecentTabsTableViewController* recentTabsTableViewController =
       [[RecentTabsTableViewController alloc] init];
   recentTabsTableViewController.browserState = self.browserState;
-  recentTabsTableViewController.loader = self.loader;
-  recentTabsTableViewController.dispatcher = self.dispatcher;
+  recentTabsTableViewController.loadStrategy = self.loadStrategy;
+  CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
+  id<ApplicationCommands> handler =
+      HandlerForProtocol(dispatcher, ApplicationCommands);
+  recentTabsTableViewController.handler = handler;
   recentTabsTableViewController.presentationDelegate = self;
-  recentTabsTableViewController.webStateList = self.webStateList;
+  recentTabsTableViewController.webStateList = self.browser->GetWebStateList();
 
   // Adds the "Done" button and hooks it up to |stop|.
   UIBarButtonItem* dismissButton = [[UIBarButtonItem alloc]
@@ -81,12 +88,27 @@
   self.recentTabsNavigationController = [[TableViewNavigationController alloc]
       initWithTable:recentTabsTableViewController];
   self.recentTabsNavigationController.toolbarHidden = YES;
-  self.recentTabsTransitioningDelegate =
-      [[RecentTabsTransitioningDelegate alloc] init];
-  self.recentTabsNavigationController.transitioningDelegate =
-      self.recentTabsTransitioningDelegate;
-  [self.recentTabsNavigationController
-      setModalPresentationStyle:UIModalPresentationCustom];
+
+  BOOL useCustomPresentation = YES;
+  if (IsCollectionsCardPresentationStyleEnabled()) {
+    if (@available(iOS 13, *)) {
+      [self.recentTabsNavigationController
+          setModalPresentationStyle:UIModalPresentationFormSheet];
+      self.recentTabsNavigationController.presentationController.delegate =
+          recentTabsTableViewController;
+      useCustomPresentation = NO;
+    }
+  }
+
+  if (useCustomPresentation) {
+    self.recentTabsTransitioningDelegate =
+        [[RecentTabsTransitioningDelegate alloc] init];
+    self.recentTabsNavigationController.transitioningDelegate =
+        self.recentTabsTransitioningDelegate;
+    [self.recentTabsNavigationController
+        setModalPresentationStyle:UIModalPresentationCustom];
+  }
+
   [self.baseViewController
       presentViewController:self.recentTabsNavigationController
                    animated:YES
@@ -123,9 +145,12 @@
 
 - (void)showHistoryFromRecentTabs {
   // Dismiss recent tabs before presenting history.
+  CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
+  id<ApplicationCommands> handler =
+      HandlerForProtocol(dispatcher, ApplicationCommands);
   __weak RecentTabsCoordinator* weakSelf = self;
   self.completion = ^{
-    [weakSelf.dispatcher showHistory];
+    [handler showHistory];
     weakSelf.completion = nil;
   };
   [self stop];

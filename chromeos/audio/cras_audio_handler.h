@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <queue>
+#include <string>
 #include <vector>
 
 #include "base/component_export.h"
@@ -22,10 +23,13 @@
 #include "chromeos/audio/audio_device.h"
 #include "chromeos/audio/audio_devices_pref_handler.h"
 #include "chromeos/audio/audio_pref_observer.h"
-#include "chromeos/dbus/audio_node.h"
-#include "chromeos/dbus/cras_audio_client.h"
-#include "chromeos/dbus/volume_state.h"
+#include "chromeos/dbus/audio/audio_node.h"
+#include "chromeos/dbus/audio/cras_audio_client.h"
+#include "chromeos/dbus/audio/volume_state.h"
 #include "media/base/video_facing.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/media_session/public/mojom/media_controller.mojom.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -34,6 +38,11 @@ class SingleThreadTaskRunner;
 namespace chromeos {
 
 class AudioDevicesPrefHandler;
+
+// Callback to handle response of methods without result.
+// |result| is true if the method call is successfully completed, otherwise
+// false.
+using VoidCrasAudioHandlerCallback = base::OnceCallback<void(bool result)>;
 
 // This class is not thread safe. The public functions should be called on
 // browser main thread.
@@ -54,12 +63,7 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
     virtual void OnOutputNodeVolumeChanged(uint64_t node_id, int volume);
 
     // Called when output mute state changed.
-    // |mute_on|: True if output is muted.
-    // |system_adjust|: True if the mute state is adjusted by the system
-    // automatically(i.e. not by user). UI should reflect the system's mute
-    // state, but it should not be too loud, e.g., the volume pop up window
-    // should not be triggered.
-    virtual void OnOutputMuteChanged(bool mute_on, bool system_adjust);
+    virtual void OnOutputMuteChanged(bool mute_on);
 
     // Called when active input node's gain changed.
     virtual void OnInputNodeGainChanged(uint64_t node_id, int gain);
@@ -103,6 +107,8 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
 
   // Sets the global instance. Must be called before any calls to Get().
   static void Initialize(
+      mojo::PendingRemote<media_session::mojom::MediaControllerManager>
+          media_controller_manager,
       scoped_refptr<AudioDevicesPrefHandler> audio_pref_handler);
 
   // Sets the global instance for testing.
@@ -110,9 +116,6 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
 
   // Destroys the global instance.
   static void Shutdown();
-
-  // Returns true if the global instance is initialized.
-  static bool IsInitialized();
 
   // Gets the global instance. Initialize must be called first.
   static CrasAudioHandler* Get();
@@ -129,6 +132,9 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
 
   // Returns true if keyboard mic exists.
   bool HasKeyboardMic();
+
+  // Returns true if hotword input device exists.
+  bool HasHotwordDevice();
 
   // Returns true if audio output is muted for the system.
   bool IsOutputMuted();
@@ -248,6 +254,15 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   // Returns whether the acive nodes were successfully set.
   bool SetActiveOutputNodes(const NodeIdList& node_ids);
 
+  // Sets |hotword_model| to the given |node_id|.
+  // |hotword_model| is expected to be in format <language>_<region> with lower
+  // cases. E.g., "en_us".
+  // The callback will receive a boolean which indicates if the hotword model is
+  // successfully set.
+  void SetHotwordModel(uint64_t node_id,
+                       const std::string& hotword_model,
+                       VoidCrasAudioHandlerCallback callback);
+
   // Swaps the left and right channel of the internal speaker.
   // Swap the left and right channel if |swap| is true; otherwise, swap the left
   // and right channel back to the normal mode.
@@ -285,7 +300,9 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   int32_t system_aec_group_id() const;
 
  protected:
-  explicit CrasAudioHandler(
+  CrasAudioHandler(
+      mojo::PendingRemote<media_session::mojom::MediaControllerManager>
+          media_controller_manager,
       scoped_refptr<AudioDevicesPrefHandler> audio_pref_handler);
   ~CrasAudioHandler() override;
 
@@ -338,6 +355,8 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   const AudioDevice* GetDeviceFromStableDeviceId(
       uint64_t stable_device_id) const;
   const AudioDevice* GetKeyboardMic() const;
+
+  const AudioDevice* GetHotwordDevice() const;
 
   // Initializes audio state, which should only be called when CrasAudioHandler
   // is created or cras audio client is restarted.
@@ -436,6 +455,9 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   // among the current |audio_devices_|.
   bool GetActiveDeviceFromUserPref(bool is_input, AudioDevice* device);
 
+  // Pauses all active streams.
+  void PauseAllStreams();
+
   // Handles either input or output device changes, specified by |is_input|.
   void HandleAudioDeviceChange(bool is_input,
                                const AudioDevicePriorityQueue& devices_pq,
@@ -506,6 +528,9 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   void OnVideoCaptureStartedOnMainThread(media::VideoFacingMode facing);
   void OnVideoCaptureStoppedOnMainThread(media::VideoFacingMode facing);
 
+  mojo::Remote<media_session::mojom::MediaControllerManager>
+      media_controller_manager_;
+
   scoped_refptr<AudioDevicesPrefHandler> audio_pref_handler_;
   base::ObserverList<AudioObserver>::Unchecked observers_;
 
@@ -515,28 +540,27 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   AudioDevicePriorityQueue input_devices_pq_;
   AudioDevicePriorityQueue output_devices_pq_;
 
-  bool output_mute_on_;
-  bool input_mute_on_;
-  int output_volume_;
-  int input_gain_;
-  uint64_t active_output_node_id_;
-  uint64_t active_input_node_id_;
-  bool has_alternative_input_;
-  bool has_alternative_output_;
+  bool output_mute_on_ = false;
+  bool input_mute_on_ = false;
+  int output_volume_ = 0;
+  int input_gain_ = 0;
+  uint64_t active_output_node_id_ = 0;
+  uint64_t active_input_node_id_ = 0;
+  bool has_alternative_input_ = false;
+  bool has_alternative_output_ = false;
 
-  bool output_mute_locked_;
+  bool output_mute_locked_ = false;
 
   // Audio output channel counts.
-  int32_t output_channels_;
-  bool output_mono_enabled_;
+  int32_t output_channels_ = 2;
+  bool output_mono_enabled_ = false;
 
   // Timer for HDMI re-discovering grace period.
   base::OneShotTimer hdmi_rediscover_timer_;
-  int hdmi_rediscover_grace_period_duration_in_ms_;
-  bool hdmi_rediscovering_;
+  int hdmi_rediscover_grace_period_duration_in_ms_ = 2000;
+  bool hdmi_rediscovering_ = false;
 
   bool cras_service_available_ = false;
-
 
   bool initializing_audio_state_ = false;
   int init_volume_;
@@ -547,7 +571,7 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   bool rear_camera_on_ = false;
 
   // Default output buffer size in frames.
-  int32_t default_output_buffer_size_;
+  int32_t default_output_buffer_size_ = 512;
 
   bool system_aec_supported_ = false;
   int32_t system_aec_group_id_ = kSystemAecGroupIdNotAvailable;
@@ -558,7 +582,7 @@ class COMPONENT_EXPORT(CHROMEOS_AUDIO) CrasAudioHandler
   // on this thread.
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
 
-  base::WeakPtrFactory<CrasAudioHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<CrasAudioHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CrasAudioHandler);
 };

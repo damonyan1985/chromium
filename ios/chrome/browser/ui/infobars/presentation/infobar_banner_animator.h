@@ -7,14 +7,18 @@
 
 #import <UIKit/UIKit.h>
 
-// TODO(crbug.com/1372916): PLACEHOLDER Work in Progress class for the new
-// InfobarUI.
+// Animator used to present an InfobarBanner dropping from the top of the
+// screen.
 @interface InfobarBannerAnimator
-    : NSObject <UIViewControllerAnimatedTransitioning>
+    : NSObject <UIViewControllerAnimatedTransitioning,
+                UIViewControllerInteractiveTransitioning>
 
 // YES if this animator is presenting a view controller, NO if it is dismissing
 // one.
 @property(nonatomic, assign) BOOL presenting;
+
+// The UIViewPropertyAnimator animating the presentation/dismissal.
+@property(nonatomic, strong) UIViewPropertyAnimator* propertyAnimator;
 
 @end
 

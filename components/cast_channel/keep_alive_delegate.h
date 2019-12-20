@@ -11,12 +11,14 @@
 #include "base/timer/timer.h"
 #include "components/cast_channel/cast_message_util.h"
 #include "components/cast_channel/cast_transport.h"
-#include "components/cast_channel/proto/cast_channel.pb.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 
 class CastSocket;
 class Logger;
+
+using ::cast::channel::CastMessage;
 
 // Decorator delegate which provides keep-alive functionality.
 // Keep-alive messages are handled by this object; all other messages and
@@ -102,7 +104,7 @@ class KeepAliveDelegate : public CastTransport::Delegate {
 
   THREAD_CHECKER(thread_checker_);
 
-  base::WeakPtrFactory<KeepAliveDelegate> weak_factory_;
+  base::WeakPtrFactory<KeepAliveDelegate> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(KeepAliveDelegate);
 };

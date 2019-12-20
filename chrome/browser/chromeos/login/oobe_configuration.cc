@@ -23,8 +23,7 @@ bool OobeConfiguration::skip_check_for_testing_ = false;
 OobeConfiguration::OobeConfiguration()
     : check_completed_(false),
       configuration_(
-          std::make_unique<base::Value>(base::Value::Type::DICTIONARY)),
-      weak_factory_(this) {
+          std::make_unique<base::Value>(base::Value::Type::DICTIONARY)) {
   DCHECK(!OobeConfiguration::Get());
   OobeConfiguration::instance = this;
 }
@@ -85,7 +84,7 @@ void OobeConfiguration::OnConfigurationCheck(bool has_configuration,
 
   int error_code, row, col;
   std::string error_message;
-  auto value = base::JSONReader::ReadAndReturnError(
+  auto value = base::JSONReader::ReadAndReturnErrorDeprecated(
       configuration, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS,
       &error_code, &error_message, &row, &col);
   if (!value) {

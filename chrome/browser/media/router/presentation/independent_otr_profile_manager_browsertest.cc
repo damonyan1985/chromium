@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/run_loop.h"
+#include "base/scoped_observer.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/media/router/presentation/independent_otr_profile_manager.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_observer.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
@@ -21,52 +23,33 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/test_utils.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 
-namespace content {
-class NotificationDetails;
-}  // namespace content
-
 namespace {
 
-class ProfileDestructionWatcher final : public content::NotificationObserver {
+class ProfileDestructionWatcher : public ProfileObserver {
  public:
-  using DestructionCallback = base::OnceClosure;
-
   ProfileDestructionWatcher() = default;
   ~ProfileDestructionWatcher() override = default;
 
-  // Watches for the destruction of |profile| and sets |destroyed| to true when
-  // that happens.  |profile| can be any Profile object, but most tests below
-  // use it to watch for the cleanup of an OTR profile.
-  void Watch(Profile* profile, bool* destroyed) {
-    ASSERT_FALSE(*destroyed);
-    profile_ = profile;
-    destroyed_ = destroyed;
-    registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
-                   content::Source<Profile>(profile_));
+  void Watch(Profile* profile) { observed_profiles_.Add(profile); }
+
+  // ProfileObserver:
+  void OnProfileWillBeDestroyed(Profile* profile) override {
+    destroyed_ = true;
+    observed_profiles_.Remove(profile);
   }
 
-  // content::NotificationObserver overrides.
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override {
-    DCHECK_EQ(chrome::NOTIFICATION_PROFILE_DESTROYED, type);
-    DCHECK(content::Source<Profile>(profile_) == source);
-    *destroyed_ = true;
-    registrar_.Remove(this, chrome::NOTIFICATION_PROFILE_DESTROYED, source);
-  }
+  bool destroyed() const { return destroyed_; }
 
  private:
-  Profile* profile_;
-  bool* destroyed_;
-  content::NotificationRegistrar registrar_;
+  bool destroyed_ = false;
+  ScopedObserver<Profile, ProfileObserver> observed_profiles_{this};
+
+  DISALLOW_COPY_AND_ASSIGN(ProfileDestructionWatcher);
 };
 
 // Waits for |browser| to be removed from BrowserList and then calls |callback|.
@@ -133,13 +116,39 @@ class IndependentOTRProfileManagerTest : public InProcessBrowserTest {
     chromeos::ProfileHelper::Get()->SetAlwaysReturnPrimaryUserForTesting(true);
   }
 
+  void SafelyDestroyOriginalProfile() {
+    if (!original_profile_) {
+      return;
+    }
+
+    // We are about to destroy a profile. In production that will only happen
+    // as part of the destruction of BrowserProcess's ProfileManager. This
+    // happens in PostMainMessageLoopRun(). This means that to have this test
+    // represent production we have to make sure that no tasks are pending on
+    // the main thread before we destroy the profile. We also would need to
+    // prohibit the posting of new tasks on the main thread as in production the
+    // main thread's message loop will not be accepting them. We fallback on
+    // flushing as many runners as possible here to avoid the posts coming from
+    // any of them.
+    content::RunAllTasksUntilIdle();
+
+    original_profile_.reset();
+
+    // Pending tasks on the ThreadPool initiated by |profile_| could depend on
+    // |temp_dir_|. We need to let them complete before |temp_dir| goes out of
+    // scope.
+    content::RunAllTasksUntilIdle();
+  }
+
   IndependentOTRProfileManager* manager_ =
       IndependentOTRProfileManager::GetInstance();
+
+  base::ScopedTempDir temp_dir_;
+  std::unique_ptr<Profile> original_profile_;
 };
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest, CreateAndDestroy) {
   ProfileDestructionWatcher watcher;
-  bool destroyed = false;
   {
     auto profile_registration = manager_->CreateFromOriginalProfile(
         browser()->profile(), base::BindOnce(&OriginalProfileNeverDestroyed));
@@ -149,11 +158,11 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest, CreateAndDestroy) {
     EXPECT_NE(browser()->profile()->GetOffTheRecordProfile(), otr_profile);
     EXPECT_TRUE(otr_profile->IsOffTheRecord());
 
-    watcher.Watch(otr_profile, &destroyed);
+    watcher.Watch(otr_profile);
   }
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed);
+  EXPECT_TRUE(watcher.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
@@ -177,24 +186,22 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
                                        run_loop1.QuitWhenIdleClosure());
   otr_browser1->window()->Close();
   run_loop1.Run();
-  ASSERT_FALSE(base::ContainsValue(*BrowserList::GetInstance(), otr_browser1));
-  ASSERT_TRUE(base::ContainsValue(*BrowserList::GetInstance(), otr_browser2));
+  ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser1));
+  ASSERT_TRUE(base::Contains(*BrowserList::GetInstance(), otr_browser2));
 
-  bool destroyed = false;
-  watcher.Watch(otr_profile, &destroyed);
+  watcher.Watch(otr_profile);
   base::RunLoop run_loop2;
   BrowserRemovedWaiter removed_waiter2(otr_browser2,
                                        run_loop2.QuitWhenIdleClosure());
   otr_browser2->window()->Close();
   run_loop2.Run();
-  ASSERT_FALSE(base::ContainsValue(*BrowserList::GetInstance(), otr_browser2));
-  EXPECT_TRUE(destroyed);
+  ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser2));
+  EXPECT_TRUE(watcher.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
                        DeleteImmediatelyWhenBrowsersAlreadyClosed) {
   ProfileDestructionWatcher watcher;
-  bool destroyed = false;
   {
     auto profile_registration = manager_->CreateFromOriginalProfile(
         browser()->profile(), base::BindOnce(&OriginalProfileNeverDestroyed));
@@ -214,24 +221,20 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
     otr_browser2->window()->Close();
     run_loop1.Run();
     run_loop2.Run();
-    ASSERT_FALSE(
-        base::ContainsValue(*BrowserList::GetInstance(), otr_browser1));
-    ASSERT_FALSE(
-        base::ContainsValue(*BrowserList::GetInstance(), otr_browser2));
+    ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser1));
+    ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser2));
 
-    watcher.Watch(otr_profile, &destroyed);
+    watcher.Watch(otr_profile);
   }
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed);
+  EXPECT_TRUE(watcher.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
                        CreateTwoFromSameProfile) {
   ProfileDestructionWatcher watcher1;
   ProfileDestructionWatcher watcher2;
-  bool destroyed1 = false;
-  bool destroyed2 = false;
   {
     auto profile_registration1 = manager_->CreateFromOriginalProfile(
         browser()->profile(), base::BindOnce(&OriginalProfileNeverDestroyed));
@@ -243,13 +246,13 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
 
     ASSERT_NE(otr_profile1, otr_profile2);
 
-    watcher1.Watch(otr_profile1, &destroyed1);
-    watcher2.Watch(otr_profile2, &destroyed2);
+    watcher1.Watch(otr_profile1);
+    watcher2.Watch(otr_profile2);
   }
 
   base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed1);
-  EXPECT_TRUE(destroyed2);
+  EXPECT_TRUE(watcher1.destroyed());
+  EXPECT_TRUE(watcher2.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
@@ -257,30 +260,26 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
   ProfileDestructionWatcher watcher;
 
   base::ScopedAllowBlockingForTesting allow_blocking;
-  base::ScopedTempDir temp_dir;
-  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
-  ASSERT_TRUE(original_profile);
-  auto profile_owner = RegistrationOwner(manager_, original_profile.get());
+  original_profile_ = Profile::CreateProfile(temp_dir_.GetPath(), nullptr,
+                                             Profile::CREATE_MODE_SYNCHRONOUS);
+  ASSERT_TRUE(original_profile_);
+  auto profile_owner = RegistrationOwner(manager_, original_profile_.get());
   auto* otr_profile = profile_owner.profile();
 
-  ASSERT_NE(original_profile.get(), otr_profile);
-  EXPECT_NE(original_profile->GetOffTheRecordProfile(), otr_profile);
+  ASSERT_NE(original_profile_.get(), otr_profile);
+  EXPECT_NE(original_profile_->GetOffTheRecordProfile(), otr_profile);
 
-  bool destroyed = false;
-  watcher.Watch(otr_profile, &destroyed);
-  // Run tasks to ensure that Mojo connections are created before the profile is
-  // destroyed.
-  base::RunLoop().RunUntilIdle();
-  original_profile.reset();
-  // |original_profile| being destroyed should trigger the dependent OTR
+  watcher.Watch(otr_profile);
+
+  SafelyDestroyOriginalProfile();
+
+  // |original_profile_| being destroyed should trigger the dependent OTR
   // profile to be destroyed.
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed);
+  EXPECT_TRUE(watcher.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
@@ -289,73 +288,66 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
   ProfileDestructionWatcher watcher2;
 
   base::ScopedAllowBlockingForTesting allow_blocking;
-  base::ScopedTempDir temp_dir;
-  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
-  ASSERT_TRUE(original_profile);
-  auto profile_owner1 = RegistrationOwner(manager_, original_profile.get());
+  original_profile_ = Profile::CreateProfile(temp_dir_.GetPath(), nullptr,
+                                             Profile::CREATE_MODE_SYNCHRONOUS);
+  ASSERT_TRUE(original_profile_);
+  auto profile_owner1 = RegistrationOwner(manager_, original_profile_.get());
   auto* otr_profile1 = profile_owner1.profile();
 
-  auto profile_owner2 = RegistrationOwner(manager_, original_profile.get());
+  auto profile_owner2 = RegistrationOwner(manager_, original_profile_.get());
   auto* otr_profile2 = profile_owner2.profile();
 
-  bool destroyed1 = false;
-  bool destroyed2 = false;
-  watcher1.Watch(otr_profile1, &destroyed1);
-  watcher2.Watch(otr_profile2, &destroyed2);
-  // Run tasks to ensure that Mojo connections are created before the profile is
-  // destroyed.
-  base::RunLoop().RunUntilIdle();
-  original_profile.reset();
-  // |original_profile| being destroyed should trigger the dependent OTR
+  watcher1.Watch(otr_profile1);
+  watcher2.Watch(otr_profile2);
+
+  SafelyDestroyOriginalProfile();
+
+  // |original_profile_| being destroyed should trigger the dependent OTR
   // profiles to be destroyed.
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed1);
-  EXPECT_TRUE(destroyed2);
+  EXPECT_TRUE(watcher1.destroyed());
+  EXPECT_TRUE(watcher2.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
                        BrowserClosingDoesntRemoveProfileObserver) {
   ProfileDestructionWatcher watcher1;
   ProfileDestructionWatcher watcher2;
-  bool destroyed1 = false;
-  bool destroyed2 = false;
 
   base::ScopedAllowBlockingForTesting allow_blocking;
-  base::ScopedTempDir temp_dir;
-  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 #if defined(OS_CHROMEOS)
   EnableProfileHelperTestSettings();
 #endif
-  auto original_profile = base::WrapUnique(Profile::CreateProfile(
-      temp_dir.GetPath(), nullptr, Profile::CREATE_MODE_SYNCHRONOUS));
-  ASSERT_TRUE(original_profile);
-  auto profile_owner1 = RegistrationOwner(manager_, original_profile.get());
+  original_profile_ = Profile::CreateProfile(temp_dir_.GetPath(), nullptr,
+                                             Profile::CREATE_MODE_SYNCHRONOUS);
+  ASSERT_TRUE(original_profile_);
+  auto profile_owner1 = RegistrationOwner(manager_, original_profile_.get());
   auto* otr_profile1 = profile_owner1.profile();
   Browser* otr_browser = nullptr;
   {
-    auto profile_owner2 = RegistrationOwner(manager_, original_profile.get());
+    auto profile_owner2 = RegistrationOwner(manager_, original_profile_.get());
     auto* otr_profile2 = profile_owner2.profile();
 
     otr_browser = CreateBrowser(otr_profile2);
-    watcher2.Watch(otr_profile2, &destroyed2);
+    watcher2.Watch(otr_profile2);
   }
   base::RunLoop run_loop;
   BrowserRemovedWaiter removed_waiter(otr_browser,
                                       run_loop.QuitWhenIdleClosure());
   otr_browser->window()->Close();
   run_loop.Run();
-  ASSERT_FALSE(base::ContainsValue(*BrowserList::GetInstance(), otr_browser));
-  EXPECT_TRUE(destroyed2);
+  ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser));
+  EXPECT_TRUE(watcher2.destroyed());
 
-  watcher1.Watch(otr_profile1, &destroyed1);
-  original_profile.reset();
-  base::RunLoop().RunUntilIdle();
-  EXPECT_TRUE(destroyed1);
+  watcher1.Watch(otr_profile1);
+
+  SafelyDestroyOriginalProfile();
+
+  EXPECT_TRUE(watcher1.destroyed());
 }
 
 IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
@@ -370,13 +362,32 @@ IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest,
 
     otr_browser = CreateBrowser(otr_profile);
   }
-  bool destroyed = false;
-  watcher.Watch(otr_profile, &destroyed);
+  watcher.Watch(otr_profile);
   base::RunLoop run_loop;
   BrowserRemovedWaiter removed_waiter(otr_browser,
                                       run_loop.QuitWhenIdleClosure());
   otr_browser->window()->Close();
   run_loop.Run();
-  ASSERT_FALSE(base::ContainsValue(*BrowserList::GetInstance(), otr_browser));
-  EXPECT_TRUE(destroyed);
+  ASSERT_FALSE(base::Contains(*BrowserList::GetInstance(), otr_browser));
+  EXPECT_TRUE(watcher.destroyed());
+}
+
+IN_PROC_BROWSER_TEST_F(IndependentOTRProfileManagerTest, Notifications) {
+  // Create the OTR profile.
+  content::WindowedNotificationObserver profile_created_observer(
+      chrome::NOTIFICATION_PROFILE_CREATED,
+      content::NotificationService::AllSources());
+
+  auto* profile = browser()->profile();
+  auto profile_registration = manager_->CreateFromOriginalProfile(
+      profile, base::BindOnce(&OriginalProfileNeverDestroyed));
+  profile_created_observer.Wait();
+
+  // Verify the received notification.
+  auto* otr_profile = profile_registration->profile();
+  EXPECT_EQ(profile_created_observer.source(),
+            content::Source<Profile>(otr_profile));
+  EXPECT_FALSE(profile->HasOffTheRecordProfile());
+  EXPECT_TRUE(otr_profile->IsOffTheRecord());
+  EXPECT_TRUE(otr_profile->IsIndependentOffTheRecordProfile());
 }

@@ -21,6 +21,7 @@
 #include "chrome/browser/task_manager/providers/child_process_task_provider.h"
 #include "chrome/browser/task_manager/providers/fallback_task_provider.h"
 #include "chrome/browser/task_manager/providers/render_process_host_task_provider.h"
+#include "chrome/browser/task_manager/providers/service_worker_task_provider.h"
 #include "chrome/browser/task_manager/providers/web_contents/web_contents_task_provider.h"
 #include "chrome/browser/task_manager/sampling/shared_sampler.h"
 #include "chrome/common/chrome_switches.h"
@@ -39,7 +40,7 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/arc/process/arc_process_service.h"
 #include "chrome/browser/task_manager/providers/arc/arc_process_task_provider.h"
-#include "chrome/browser/task_manager/providers/crostini/crostini_process_task_provider.h"
+#include "chrome/browser/task_manager/providers/vm/vm_process_task_provider.h"
 #include "components/arc/arc_util.h"
 #endif  // defined(OS_CHROMEOS)
 
@@ -62,21 +63,31 @@ int64_t CalculateNewBytesTransferred(int64_t this_refresh_bytes,
 
 }  // namespace
 
+size_t BytesTransferredKey::Hasher::operator()(
+    const BytesTransferredKey& key) const {
+  return base::HashInts(key.child_id, key.route_id);
+}
+
+bool BytesTransferredKey::operator==(const BytesTransferredKey& other) const {
+  return child_id == other.child_id && route_id == other.route_id;
+}
+
 TaskManagerImpl::TaskManagerImpl()
     : on_background_data_ready_callback_(
           base::Bind(&TaskManagerImpl::OnTaskGroupBackgroundCalculationsDone,
                      base::Unretained(this))),
-      blocking_pool_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      blocking_pool_runner_(base::CreateSequencedTaskRunner(
+          {base::ThreadPool(), base::MayBlock(),
+           base::TaskPriority::BEST_EFFORT,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
       shared_sampler_(new SharedSampler(blocking_pool_runner_)),
       is_running_(false),
-      waiting_for_memory_dump_(false),
-      weak_ptr_factory_(this) {
+      waiting_for_memory_dump_(false) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   task_providers_.emplace_back(new BrowserProcessTaskProvider());
   task_providers_.emplace_back(new ChildProcessTaskProvider());
+  task_providers_.emplace_back(new ServiceWorkerTaskProvider());
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kTaskManagerShowExtraRenderers)) {
     task_providers_.emplace_back(new WebContentsTaskProvider());
@@ -92,7 +103,7 @@ TaskManagerImpl::TaskManagerImpl()
 #if defined(OS_CHROMEOS)
   if (arc::IsArcAvailable())
     task_providers_.emplace_back(new ArcProcessTaskProvider());
-  task_providers_.emplace_back(new CrostiniProcessTaskProvider());
+  task_providers_.emplace_back(new VmProcessTaskProvider());
   arc_shared_sampler_ = std::make_unique<ArcSharedSampler>();
 #endif  // defined(OS_CHROMEOS)
 }
@@ -298,7 +309,7 @@ bool TaskManagerImpl::GetV8Memory(TaskId task_id,
 
 bool TaskManagerImpl::GetWebCacheStats(
     TaskId task_id,
-    blink::WebCache::ResourceTypeStats* stats) const {
+    blink::WebCacheResourceTypeStats* stats) const {
   const Task* task = GetTaskByTaskId(task_id);
   if (!task->ReportsWebCacheStats())
     return false;
@@ -335,7 +346,10 @@ const TaskIdList& TaskManagerImpl::GetTaskIdsList() const {
                              b->task_id());
     };
 
-    const size_t num_groups = task_groups_by_proc_id_.size();
+    const size_t num_groups =
+        task_groups_by_proc_id_.size() + arc_vm_task_groups_by_proc_id_.size();
+
+    // |task_groups_by_task_id_| contains all tasks, both VM and non-VM.
     const size_t num_tasks = task_groups_by_task_id_.size();
 
     // Populate |tasks_to_visit| with one task from each group.
@@ -357,6 +371,13 @@ const TaskIdList& TaskManagerImpl::GetTaskIdsList() const {
         else
           DCHECK(!group_task->HasParentTask());
       }
+    }
+
+    for (const auto& groups_pair : arc_vm_task_groups_by_proc_id_) {
+      const std::vector<Task*>& tasks = groups_pair.second->tasks();
+      Task* group_task =
+          *std::min_element(tasks.begin(), tasks.end(), comparator);
+      tasks_to_visit.push_back(group_task);
     }
 
     // Now sort |tasks_to_visit| in reverse order (putting the browser process
@@ -429,6 +450,10 @@ size_t TaskManagerImpl::GetNumberOfTasksOnSameProcess(TaskId task_id) const {
   return GetTaskGroupByTaskId(task_id)->num_tasks();
 }
 
+bool TaskManagerImpl::IsRunningInVM(TaskId task_id) const {
+  return GetTaskByTaskId(task_id)->IsRunningInVM();
+}
+
 TaskId TaskManagerImpl::GetTaskIdForWebContents(
     content::WebContents* web_contents) const {
   if (!web_contents)
@@ -445,10 +470,16 @@ void TaskManagerImpl::TaskAdded(Task* task) {
 
   const base::ProcessId proc_id = task->process_id();
   const TaskId task_id = task->task_id();
+  const bool is_running_in_vm = task->IsRunningInVM();
 
-  std::unique_ptr<TaskGroup>& task_group = task_groups_by_proc_id_[proc_id];
+  TaskManagerImpl::PidToTaskGroupMap& task_group_map =
+      is_running_in_vm ? arc_vm_task_groups_by_proc_id_
+                       : task_groups_by_proc_id_;
+
+  std::unique_ptr<TaskGroup>& task_group = task_group_map[proc_id];
   if (!task_group) {
     task_group.reset(new TaskGroup(task->process_handle(), proc_id,
+                                   is_running_in_vm,
                                    on_background_data_ready_callback_,
                                    shared_sampler_, blocking_pool_runner_));
 #if defined(OS_CHROMEOS)
@@ -472,8 +503,13 @@ void TaskManagerImpl::TaskRemoved(Task* task) {
 
   const base::ProcessId proc_id = task->process_id();
   const TaskId task_id = task->task_id();
+  const bool is_running_in_vm = task->IsRunningInVM();
 
-  DCHECK(task_groups_by_proc_id_.count(proc_id));
+  TaskManagerImpl::PidToTaskGroupMap& task_group_map =
+      is_running_in_vm ? arc_vm_task_groups_by_proc_id_
+                       : task_groups_by_proc_id_;
+
+  DCHECK(task_group_map.count(proc_id));
 
   NotifyObserversOnTaskToBeRemoved(task_id);
 
@@ -482,7 +518,7 @@ void TaskManagerImpl::TaskRemoved(Task* task) {
   task_groups_by_task_id_.erase(task_id);
 
   if (task_group->empty())
-    task_groups_by_proc_id_.erase(proc_id);  // Deletes |task_group|.
+    task_group_map.erase(proc_id);  // Deletes |task_group|.
 
   // Invalidate the cached sorted IDs by clearing the list.
   sorted_task_ids_.clear();
@@ -493,33 +529,9 @@ void TaskManagerImpl::TaskUnresponsive(Task* task) {
   NotifyObserversOnTaskUnresponsive(task->task_id());
 }
 
-// static
-void TaskManagerImpl::OnMultipleBytesTransferredUI(BytesTransferredMap params) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(!base::FeatureList::IsEnabled(network::features::kNetworkService));
-  for (const auto& entry : params) {
-    const BytesTransferredKey& process_info = entry.first;
-    const BytesTransferredParam& bytes_transferred = entry.second;
-
-    if (!GetInstance()->UpdateTasksWithBytesTransferred(process_info,
-                                                        bytes_transferred)) {
-      // We can't match a task to the notification.  That might mean the
-      // tab that started a download was closed, or the request may have had
-      // no originating task associated with it in the first place.
-      //
-      // Orphaned/unaccounted activity is credited to the Browser process.
-      BytesTransferredKey browser_process_key = {
-          content::ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE};
-      GetInstance()->UpdateTasksWithBytesTransferred(browser_process_key,
-                                                     bytes_transferred);
-    }
-  }
-}
-
 void TaskManagerImpl::OnTotalNetworkUsages(
     std::vector<network::mojom::NetworkUsagePtr> total_network_usages) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  DCHECK(base::FeatureList::IsEnabled(network::features::kNetworkService));
   BytesTransferredMap new_total_network_usages_map;
   for (const auto& entry : total_network_usages) {
     BytesTransferredKey process_info = {entry->process_id, entry->routing_id};
@@ -598,8 +610,7 @@ void TaskManagerImpl::Refresh() {
                                         std::move(callback));
   }
 
-  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
-      TaskManagerObserver::IsResourceRefreshEnabled(
+  if (TaskManagerObserver::IsResourceRefreshEnabled(
           REFRESH_TYPE_NETWORK_USAGE, enabled_resources_flags())) {
     content::GetNetworkService()->GetTotalNetworkUsages(
         base::BindOnce(&TaskManagerImpl::OnTotalNetworkUsages,
@@ -609,6 +620,11 @@ void TaskManagerImpl::Refresh() {
   for (auto& groups_itr : task_groups_by_proc_id_) {
     groups_itr.second->Refresh(gpu_memory_stats_,
                                GetCurrentRefreshTime(),
+                               enabled_resources_flags());
+  }
+
+  for (auto& groups_itr : arc_vm_task_groups_by_proc_id_) {
+    groups_itr.second->Refresh(gpu_memory_stats_, GetCurrentRefreshTime(),
                                enabled_resources_flags());
   }
 
@@ -631,10 +647,9 @@ void TaskManagerImpl::StartUpdating() {
   for (const auto& provider : task_providers_)
     provider->SetObserver(this);
 
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService)) {
-    io_thread_helper_manager_.reset(new IoThreadHelperManager(
-        base::BindRepeating(&TaskManagerImpl::OnMultipleBytesTransferredUI)));
-  }
+  // Kick off fetch of asynchronous data, e.g., memory footprint, so that it
+  // will be displayed sooner after opening the task manager.
+  Refresh();
 }
 
 void TaskManagerImpl::StopUpdating() {
@@ -643,12 +658,11 @@ void TaskManagerImpl::StopUpdating() {
 
   is_running_ = false;
 
-  io_thread_helper_manager_.reset();
-
   for (const auto& provider : task_providers_)
     provider->ClearObserver();
 
   task_groups_by_proc_id_.clear();
+  arc_vm_task_groups_by_proc_id_.clear();
   task_groups_by_task_id_.clear();
   sorted_task_ids_.clear();
 }
@@ -689,17 +703,13 @@ Task* TaskManagerImpl::GetTaskByTaskId(TaskId task_id) const {
 }
 
 void TaskManagerImpl::OnTaskGroupBackgroundCalculationsDone() {
-  // TODO(afakhry): There should be a better way for doing this!
-  bool are_all_processes_data_ready = true;
   for (const auto& groups_itr : task_groups_by_proc_id_) {
-    are_all_processes_data_ready &=
-        groups_itr.second->AreBackgroundCalculationsDone();
+    if (!groups_itr.second->AreBackgroundCalculationsDone())
+      return;
   }
-  if (are_all_processes_data_ready) {
-    NotifyObserversOnRefreshWithBackgroundCalculations(GetTaskIdsList());
-    for (const auto& groups_itr : task_groups_by_proc_id_)
-      groups_itr.second->ClearCurrentBackgroundCalculationsFlags();
-  }
+  NotifyObserversOnRefreshWithBackgroundCalculations(GetTaskIdsList());
+  for (const auto& groups_itr : task_groups_by_proc_id_)
+    groups_itr.second->ClearCurrentBackgroundCalculationsFlags();
 }
 
 }  // namespace task_manager

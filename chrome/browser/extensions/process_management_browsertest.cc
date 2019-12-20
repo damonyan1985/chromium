@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -356,7 +357,7 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, MAYBE_ExtensionProcessBalancing) {
   if (first_renderer != second_renderer) {
     // Wait for the first renderer to be torn down before verifying the number
     // of processes, else we race with the teardown here (specifically the
-    // FrameMsg_SwapOut -> FrameHostMsg_SwapOut_ACK round trip).
+    // UnfreezableFrameMsg_SwapOut -> FrameHostMsg_SwapOut_ACK round trip).
     first_renderer_watcher.Wait();
   }
 

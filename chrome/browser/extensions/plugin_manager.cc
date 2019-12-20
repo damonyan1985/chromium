@@ -6,6 +6,7 @@
 
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
@@ -14,9 +15,9 @@
 #include "chrome/common/chrome_paths.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/pepper_plugin_info.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/mime_types_handler.h"
+#include "net/base/mime_util.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/gurl.h"
 
@@ -29,8 +30,7 @@ using content::PluginService;
 namespace extensions {
 
 PluginManager::PluginManager(content::BrowserContext* context)
-    : profile_(Profile::FromBrowserContext(context)),
-      extension_registry_observer_(this) {
+    : profile_(Profile::FromBrowserContext(context)) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
 }
 
@@ -125,14 +125,13 @@ void PluginManager::OnExtensionUnloaded(
 #if BUILDFLAG(ENABLE_NACL)
 
 void PluginManager::RegisterNaClModule(const NaClModuleInfo& info) {
-  DCHECK(FindNaClModule(info.url) == nacl_module_list_.end());
   nacl_module_list_.push_front(info);
 }
 
 void PluginManager::UnregisterNaClModule(const NaClModuleInfo& info) {
   auto iter = FindNaClModule(info.url);
-  DCHECK(iter != nacl_module_list_.end());
-  nacl_module_list_.erase(iter);
+  if (iter != nacl_module_list_.end())
+    nacl_module_list_.erase(iter);
 }
 
 void PluginManager::UpdatePluginListWithNaClModules() {
@@ -140,9 +139,10 @@ void PluginManager::UpdatePluginListWithNaClModules() {
   // there is a MIME type that module wants to handle, so we need to add that
   // MIME type to plugins which handle NaCl modules in order to allow the
   // individual modules to handle these types.
-  static const base::FilePath path(ChromeContentClient::kNaClPluginFileName);
+  static const base::NoDestructor<base::FilePath> path(
+      ChromeContentClient::kNaClPluginFileName);
   const content::PepperPluginInfo* pepper_info =
-      PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(path);
+      PluginService::GetInstance()->GetRegisteredPpapiPluginInfo(*path);
   if (!pepper_info)
     return;
 

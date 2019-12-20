@@ -2,9 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/apps/platform_apps/app_window_interactive_uitest.h"
-
 #include "build/build_config.h"
+#include "chrome/browser/apps/platform_apps/app_window_interactive_uitest_base.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -15,7 +14,6 @@
 #include "extensions/browser/app_window/native_app_window.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "ui/base/ui_base_features.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
@@ -32,44 +30,6 @@
 
 using extensions::AppWindow;
 using extensions::NativeAppWindow;
-
-FullscreenChangeWaiter::FullscreenChangeWaiter(NativeAppWindow* window)
-    : window_(window), initial_fullscreen_state_(window_->IsFullscreen()) {}
-
-void FullscreenChangeWaiter::Wait() {
-  while (initial_fullscreen_state_ == window_->IsFullscreen())
-    content::RunAllPendingInMessageLoop();
-}
-
-bool AppWindowInteractiveTest::RunAppWindowInteractiveTest(
-    const char* testName) {
-  ExtensionTestMessageListener launched_listener("Launched", true);
-  LoadAndLaunchPlatformApp("window_api_interactive", &launched_listener);
-
-  extensions::ResultCatcher catcher;
-  launched_listener.Reply(testName);
-
-  if (!catcher.GetNextResult()) {
-    message_ = catcher.message();
-    return false;
-  }
-
-  return true;
-}
-
-bool AppWindowInteractiveTest::SimulateKeyPress(ui::KeyboardCode key) {
-  return ui_test_utils::SendKeyPressToWindowSync(
-      GetFirstAppWindow()->GetNativeWindow(), key, false, false, false, false);
-}
-
-void AppWindowInteractiveTest::WaitUntilKeyFocus() {
-  ExtensionTestMessageListener key_listener("KeyReceived", false);
-
-  while (!key_listener.was_satisfied()) {
-    ASSERT_TRUE(SimulateKeyPress(ui::VKEY_Z));
-    content::RunAllPendingInMessageLoop();
-  }
-}
 
 IN_PROC_BROWSER_TEST_F(AppWindowInteractiveTest, ESCLeavesFullscreenWindow) {
   ExtensionTestMessageListener launched_listener("Launched", true);
@@ -458,9 +418,6 @@ IN_PROC_BROWSER_TEST_F(AppWindowInteractiveTest, TestCreateHidden) {
 #define MAYBE_TestFullscreen TestFullscreen
 #endif
 IN_PROC_BROWSER_TEST_F(AppWindowInteractiveTest, MAYBE_TestFullscreen) {
-  // Flaky on CrOS + IsUsingWindowService. https://crbug.com/926007
-  if (features::IsUsingWindowService())
-    return;
   ASSERT_TRUE(RunAppWindowInteractiveTest("testFullscreen")) << message_;
 }
 

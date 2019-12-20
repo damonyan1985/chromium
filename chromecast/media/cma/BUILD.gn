@@ -43,7 +43,7 @@ cast_source_set("test_support") {
     "//ui/gfx/geometry",
   ]
 
-  if (!enable_video_with_mixed_audio) {
+  if (is_cast_audio_only) {
     deps += [ "//chromecast/media/cma/backend:null_video" ]
   }
 }
@@ -77,7 +77,6 @@ cast_source_set("unittests") {
 
   if (enable_video_with_mixed_audio) {
     defines = [ "ENABLE_VIDEO_WITH_MIXED_AUDIO" ]
-    libs = ["videodecoderformixer"]
   }
 
   data = [

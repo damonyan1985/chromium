@@ -7,12 +7,13 @@
 
 #include <vector>
 
+#include "base/component_export.h"
 #include "base/time/time.h"
+#include "ui/events/devices/gamepad_device.h"
 #include "ui/events/devices/input_device.h"
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
-#include "ui/events/ozone/evdev/events_ozone_evdev_export.h"
 #include "ui/events/ozone/gamepad/gamepad_event.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -22,7 +23,7 @@ namespace ui {
 
 enum class StylusState;
 
-struct EVENTS_OZONE_EVDEV_EXPORT KeyEventParams {
+struct COMPONENT_EXPORT(EVDEV) KeyEventParams {
   KeyEventParams(int device_id,
                  unsigned int code,
                  bool down,
@@ -39,7 +40,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT KeyEventParams {
   base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT MouseMoveEventParams {
+struct COMPONENT_EXPORT(EVDEV) MouseMoveEventParams {
   MouseMoveEventParams(int device_id,
                        int flags,
                        const gfx::PointF& location,
@@ -56,7 +57,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT MouseMoveEventParams {
   base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT MouseButtonEventParams {
+struct COMPONENT_EXPORT(EVDEV) MouseButtonEventParams {
   MouseButtonEventParams(int device_id,
                          int flags,
                          const gfx::PointF& location,
@@ -79,7 +80,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT MouseButtonEventParams {
   base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT MouseWheelEventParams {
+struct COMPONENT_EXPORT(EVDEV) MouseWheelEventParams {
   MouseWheelEventParams(int device_id,
                         const gfx::PointF& location,
                         const gfx::Vector2d& delta,
@@ -94,7 +95,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT MouseWheelEventParams {
   base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT PinchEventParams {
+struct COMPONENT_EXPORT(EVDEV) PinchEventParams {
   PinchEventParams(int device_id,
                    EventType type,
                    const gfx::PointF location,
@@ -111,7 +112,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT PinchEventParams {
   const base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT ScrollEventParams {
+struct COMPONENT_EXPORT(EVDEV) ScrollEventParams {
   ScrollEventParams(int device_id,
                     EventType type,
                     const gfx::PointF location,
@@ -132,7 +133,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT ScrollEventParams {
   const base::TimeTicks timestamp;
 };
 
-struct EVENTS_OZONE_EVDEV_EXPORT TouchEventParams {
+struct COMPONENT_EXPORT(EVDEV) TouchEventParams {
   TouchEventParams(int device_id,
                    int slot,
                    EventType type,
@@ -154,7 +155,7 @@ struct EVENTS_OZONE_EVDEV_EXPORT TouchEventParams {
 };
 
 // Interface used by device objects for event dispatch.
-class EVENTS_OZONE_EVDEV_EXPORT DeviceEventDispatcherEvdev {
+class COMPONENT_EXPORT(EVDEV) DeviceEventDispatcherEvdev {
  public:
   DeviceEventDispatcherEvdev() {}
   virtual ~DeviceEventDispatcherEvdev() {}
@@ -182,6 +183,8 @@ class EVENTS_OZONE_EVDEV_EXPORT DeviceEventDispatcherEvdev {
   virtual void DispatchDeviceListsComplete() = 0;
   virtual void DispatchStylusStateChanged(StylusState stylus_state) = 0;
   virtual void DispatchGamepadDevicesUpdated(
+      const std::vector<GamepadDevice>& devices) = 0;
+  virtual void DispatchUncategorizedDevicesUpdated(
       const std::vector<InputDevice>& devices) = 0;
 };
 

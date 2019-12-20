@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/callback_interface_base.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
+#include "third_party/blink/renderer/platform/bindings/v8_value_or_script_wrappable_adapter.h"
 #include "third_party/blink/renderer/platform/bindings/wrapper_type_info.h"
 
 namespace blink {
@@ -47,36 +48,8 @@ class CORE_EXPORT V8TestLegacyCallbackInterface final : public CallbackInterface
 
   // Performs "call a user object's operation".
   // https://heycam.github.io/webidl/#call-a-user-objects-operation
-  v8::Maybe<uint16_t> acceptNode(ScriptWrappable* callback_this_value, Node* node) WARN_UNUSED_RESULT;
+  v8::Maybe<uint16_t> acceptNode(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, Node* node) WARN_UNUSED_RESULT;
 };
-
-template <>
-class V8PersistentCallbackInterface<V8TestLegacyCallbackInterface> final : public V8PersistentCallbackInterfaceBase {
-  using V8CallbackInterface = V8TestLegacyCallbackInterface;
-
- public:
-  explicit V8PersistentCallbackInterface(V8CallbackInterface* callback_interface)
-      : V8PersistentCallbackInterfaceBase(callback_interface) {}
-  ~V8PersistentCallbackInterface() override = default;
-
-  CORE_EXPORT v8::Maybe<uint16_t> acceptNode(ScriptWrappable* callback_this_value, Node* node) WARN_UNUSED_RESULT;
-
- private:
-  V8CallbackInterface* Proxy() {
-    return As<V8CallbackInterface>();
-  }
-
-  template <typename V8CallbackInterface>
-  friend V8PersistentCallbackInterface<V8CallbackInterface>*
-  ToV8PersistentCallbackInterface(V8CallbackInterface*);
-};
-
-// V8TestLegacyCallbackInterface is designed to be used with wrapper-tracing.
-// As blink::Persistent does not perform wrapper-tracing, use of
-// |WrapPersistent| for callback interfaces is likely (if not always) misuse.
-// Thus, this code prohibits such a use case. The call sites should explicitly
-// use WrapPersistent(V8PersistentCallbackInterface<T>*).
-Persistent<V8TestLegacyCallbackInterface> WrapPersistent(V8TestLegacyCallbackInterface*) = delete;
 
 }  // namespace blink
 

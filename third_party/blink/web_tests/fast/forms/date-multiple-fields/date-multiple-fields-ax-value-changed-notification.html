@@ -1,37 +1,34 @@
 <!DOCTYPE html>
 <html>
 <head>
-<script src="../../../resources/js-test.js"></script>
+  <script src="../../../resources/testharness.js"></script>
+  <script src="../../../resources/testharnessreport.js"></script>
+  <script src="../resources/multiple-fields-ax-value-changed-notification-helper.js"></script>
 </head>
 <body>
 <input id="test" type="date" value="2012-10-09">
 <script>
-description('This test checks value changed accessibility notifications.');
 
-var testInput = document.getElementById("test");
+async_test((t) => {
+    var testInput = document.getElementById("test");
 
-if (!window.accessibilityController || !window.eventSender)
-    debug("Please run inside DRT or WRT.");
-else {
-    accessibilityController.addNotificationListener(function (element, notification) {
-        if (notification == 'Focus' || notification == 'ValueChanged') {
-            debug(notification + ' ' + element.name.trim() + '=' + element.valueDescription.substr(20));
-        }
-    });
+    var listener = new TestAccessibilityControllerNotificationListener(t);
+    listener.queueExpectedNotification("Focus", "Month", "10", "\t");
+    listener.queueExpectedNotification("Focus", "Day", "09", "4");
+    listener.queueExpectedNotification("Focus", "Year", "2012", "ArrowUp");
+    listener.queueExpectedNotification("ValueChanged", "Day", "04");
+    listener.queueExpectedNotification("ValueChanged", "Day", "04");
+    listener.queueExpectedNotification("ValueChanged", "Year", "2013");
+    listener.queueExpectedNotification("ValueChanged", "Year", "2013");
 
     testInput.focus();
-    eventSender.keyDown('\t');
-    eventSender.keyDown('4');
-    eventSender.keyDown('ArrowUp');
-
-    window.jsTestIsAsync = true;
 
     window.setTimeout(function() {
-        debug('');
-        testInput.parentNode.removeChild(testInput);
-        finishJSTest();
-    }, 1);
-}
+        assert_unreached("Did not receive all accessibility notifications");
+        t.done();
+    }, 500);
+}, 'This test checks value changed accessibility notifications.');
+
 </script>
 </body>
 </html>

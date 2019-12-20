@@ -43,8 +43,7 @@ LocalExtensionCache::LocalExtensionCache(
       min_cache_age_(base::Time::Now() - max_cache_age),
       backend_task_runner_(backend_task_runner),
       state_(kUninitialized),
-      cache_status_polling_delay_(kCacheStatusPollingDelay),
-      weak_ptr_factory_(this) {}
+      cache_status_polling_delay_(kCacheStatusPollingDelay) {}
 
 LocalExtensionCache::~LocalExtensionCache() {
   if (state_ == kReady)
@@ -106,9 +105,9 @@ bool LocalExtensionCache::GetExtension(const std::string& id,
 
     // If caller is not interested in file_path, extension is not used.
     base::Time now = base::Time::Now();
-    backend_task_runner_->PostTask(FROM_HERE,
-        base::Bind(&LocalExtensionCache::BackendMarkFileUsed,
-        it->second.file_path, now));
+    backend_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&LocalExtensionCache::BackendMarkFileUsed,
+                                  it->second.file_path, now));
     it->second.last_used = now;
   }
 
@@ -178,9 +177,9 @@ void LocalExtensionCache::PutExtension(const std::string& id,
   }
 
   backend_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&LocalExtensionCache::BackendInstallCacheEntry,
-                            weak_ptr_factory_.GetWeakPtr(), cache_dir_, id,
-                            expected_hash, file_path, version, callback));
+      FROM_HERE, base::BindOnce(&LocalExtensionCache::BackendInstallCacheEntry,
+                                weak_ptr_factory_.GetWeakPtr(), cache_dir_, id,
+                                expected_hash, file_path, version, callback));
 }
 
 bool LocalExtensionCache::RemoveExtensionAt(const CacheMap::iterator& it,
@@ -189,8 +188,8 @@ bool LocalExtensionCache::RemoveExtensionAt(const CacheMap::iterator& it,
     return false;
   std::string hash = match_hash ? it->second.expected_hash : std::string();
   backend_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&LocalExtensionCache::BackendRemoveCacheEntry,
-                            cache_dir_, it->first, hash));
+      FROM_HERE, base::BindOnce(&LocalExtensionCache::BackendRemoveCacheEntry,
+                                cache_dir_, it->first, hash));
   cached_extensions_.erase(it);
   return true;
 }
@@ -244,10 +243,8 @@ void LocalExtensionCache::CheckCacheStatus(const base::Closure& callback) {
 
   backend_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&LocalExtensionCache::BackendCheckCacheStatus,
-                  weak_ptr_factory_.GetWeakPtr(),
-                  cache_dir_,
-                  callback));
+      base::BindOnce(&LocalExtensionCache::BackendCheckCacheStatus,
+                     weak_ptr_factory_.GetWeakPtr(), cache_dir_, callback));
 }
 
 // static
@@ -279,10 +276,9 @@ void LocalExtensionCache::BackendCheckCacheStatus(
     }
   }
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&LocalExtensionCache::OnCacheStatusChecked, local_cache,
-                 exists, callback));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&LocalExtensionCache::OnCacheStatusChecked,
+                                local_cache, exists, callback));
 }
 
 void LocalExtensionCache::OnCacheStatusChecked(bool ready,
@@ -295,10 +291,10 @@ void LocalExtensionCache::OnCacheStatusChecked(bool ready,
   if (ready) {
     CheckCacheContents(callback);
   } else {
-    base::PostDelayedTaskWithTraits(
+    base::PostDelayedTask(
         FROM_HERE, {content::BrowserThread::UI},
-        base::Bind(&LocalExtensionCache::CheckCacheStatus,
-                   weak_ptr_factory_.GetWeakPtr(), callback),
+        base::BindOnce(&LocalExtensionCache::CheckCacheStatus,
+                       weak_ptr_factory_.GetWeakPtr(), callback),
         cache_status_polling_delay_);
   }
 }
@@ -307,10 +303,8 @@ void LocalExtensionCache::CheckCacheContents(const base::Closure& callback) {
   DCHECK_EQ(state_, kWaitInitialization);
   backend_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&LocalExtensionCache::BackendCheckCacheContents,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 cache_dir_,
-                 callback));
+      base::BindOnce(&LocalExtensionCache::BackendCheckCacheContents,
+                     weak_ptr_factory_.GetWeakPtr(), cache_dir_, callback));
 }
 
 // static
@@ -320,10 +314,10 @@ void LocalExtensionCache::BackendCheckCacheContents(
     const base::Closure& callback) {
   std::unique_ptr<CacheMap> cache_content(new CacheMap);
   BackendCheckCacheContentsInternal(cache_dir, cache_content.get());
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&LocalExtensionCache::OnCacheContentsChecked, local_cache,
-                 base::Passed(&cache_content), callback));
+      base::BindOnce(&LocalExtensionCache::OnCacheContentsChecked, local_cache,
+                     std::move(cache_content), callback));
 }
 
 // static
@@ -378,7 +372,7 @@ LocalExtensionCache::CacheMap::iterator LocalExtensionCache::InsertCacheEntry(
     it = cache.insert(std::make_pair(id, info));
   } else {
     if (delete_files) {
-      base::DeleteFile(info.file_path, true /* recursive */);
+      base::DeleteFileRecursively(info.file_path);
       VLOG(1) << "Remove older version " << info.version << " for extension id "
               << id;
     }
@@ -415,7 +409,7 @@ void LocalExtensionCache::BackendCheckCacheContentsInternal(
 
     if (info.IsDirectory() || base::IsLink(info.GetName())) {
       LOG(ERROR) << "Erasing bad file in cache directory: " << basename;
-      base::DeleteFile(path, true /* recursive */);
+      base::DeleteFileRecursively(path);
       continue;
     }
 
@@ -458,7 +452,7 @@ void LocalExtensionCache::BackendCheckCacheContentsInternal(
 
     if (id.empty() || version.empty()) {
       LOG(ERROR) << "Invalid file in cache, erasing: " << basename;
-      base::DeleteFile(path, true /* recursive */);
+      base::DeleteFileRecursively(path);
       continue;
     }
 
@@ -532,12 +526,13 @@ void LocalExtensionCache::BackendInstallCacheEntry(
     }
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&LocalExtensionCache::OnCacheEntryInstalled, local_cache, id,
-                 CacheItemInfo(version, expected_hash, info.last_modified,
-                               info.size, cached_crx_path),
-                 was_error, callback));
+      base::BindOnce(&LocalExtensionCache::OnCacheEntryInstalled, local_cache,
+                     id,
+                     CacheItemInfo(version, expected_hash, info.last_modified,
+                                   info.size, cached_crx_path),
+                     was_error, callback));
 }
 
 void LocalExtensionCache::OnCacheEntryInstalled(

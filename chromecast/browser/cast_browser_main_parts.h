@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/util/memory_pressure/multi_source_memory_pressure_monitor.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chromecast/chromecast_buildflags.h"
@@ -27,16 +28,20 @@ class ExtensionsClient;
 class ExtensionsBrowserClient;
 }  // namespace extensions
 
-namespace net {
-class NetLog;
-}
+#if defined(USE_AURA)
+namespace views {
+class ViewsDelegate;
+}  // namespace views
+#endif  // defined(USE_AURA)
 
 namespace chromecast {
-class CastMemoryPressureMonitor;
+class CastSystemMemoryPressureEvaluatorAdjuster;
+class ServiceConnector;
 class WaylandServerController;
 
 #if defined(USE_AURA)
 class CastWindowManagerAura;
+class CastScreen;
 #else
 class CastWindowManager;
 #endif  // #if defined(USE_AURA)
@@ -67,9 +72,7 @@ class CastBrowserMainParts : public content::BrowserMainParts {
                        CastContentBrowserClient* cast_content_browser_client);
   ~CastBrowserMainParts() override;
 
-#if BUILDFLAG(IS_CAST_USING_CMA_BACKEND)
   media::MediaPipelineBackendManager* media_pipeline_backend_manager();
-#endif
   media::MediaCapsImpl* media_caps();
   content::BrowserContext* browser_context();
 
@@ -81,6 +84,7 @@ class CastBrowserMainParts : public content::BrowserMainParts {
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
   void PostMainMessageLoopRun() override;
+  void PostCreateThreads() override;
   void PostDestroyThreads() override;
 
  private:
@@ -89,11 +93,13 @@ class CastBrowserMainParts : public content::BrowserMainParts {
   // Caches a pointer of the CastContentBrowserClient.
   CastContentBrowserClient* const cast_content_browser_client_ = nullptr;
   URLRequestContextFactory* const url_request_context_factory_;
-  std::unique_ptr<net::NetLog> net_log_;
   std::unique_ptr<media::VideoPlaneController> video_plane_controller_;
   std::unique_ptr<media::MediaCapsImpl> media_caps_;
+  std::unique_ptr<ServiceConnector> service_connector_;
 
 #if defined(USE_AURA)
+  std::unique_ptr<views::ViewsDelegate> views_delegate_;
+  std::unique_ptr<CastScreen> cast_screen_;
   std::unique_ptr<CastWindowManagerAura> window_manager_;
 #else
   std::unique_ptr<CastWindowManager> window_manager_;
@@ -106,13 +112,15 @@ class CastBrowserMainParts : public content::BrowserMainParts {
   std::unique_ptr<base::RepeatingTimer> crash_reporter_timer_;
 #endif
 
-#if BUILDFLAG(IS_CAST_USING_CMA_BACKEND)
   // Tracks all media pipeline backends.
   std::unique_ptr<media::MediaPipelineBackendManager>
       media_pipeline_backend_manager_;
-
-  std::unique_ptr<CastMemoryPressureMonitor> memory_pressure_monitor_;
-#endif
+#if !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+  std::unique_ptr<util::MultiSourceMemoryPressureMonitor>
+      memory_pressure_monitor_;
+#endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+  CastSystemMemoryPressureEvaluatorAdjuster*
+      cast_system_memory_pressure_evaluator_adjuster_;
 
 #if BUILDFLAG(ENABLE_CHROMECAST_EXTENSIONS)
   std::unique_ptr<extensions::ExtensionsClient> extensions_client_;
@@ -125,6 +133,8 @@ class CastBrowserMainParts : public content::BrowserMainParts {
 #if BUILDFLAG(ENABLE_CAST_WAYLAND_SERVER)
   std::unique_ptr<WaylandServerController> wayland_server_controller_;
 #endif
+
+  bool run_message_loop_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(CastBrowserMainParts);
 };

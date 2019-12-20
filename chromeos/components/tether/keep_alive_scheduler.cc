@@ -5,6 +5,7 @@
 #include "chromeos/components/tether/keep_alive_scheduler.h"
 
 #include "base/bind.h"
+#include "base/metrics/histogram_functions.h"
 #include "chromeos/components/tether/device_id_tether_network_guid_map.h"
 #include "chromeos/components/tether/host_scan_cache.h"
 #include "chromeos/services/secure_channel/public/cpp/client/secure_channel_client.h"
@@ -41,8 +42,7 @@ KeepAliveScheduler::KeepAliveScheduler(
       active_host_(active_host),
       host_scan_cache_(host_scan_cache),
       device_id_tether_network_guid_map_(device_id_tether_network_guid_map),
-      timer_(std::move(timer)),
-      weak_ptr_factory_(this) {
+      timer_(std::move(timer)) {
   active_host_->AddObserver(this);
 }
 
@@ -82,11 +82,17 @@ void KeepAliveScheduler::OnOperationFinished(
   keep_alive_operation_->RemoveObserver(this);
   keep_alive_operation_.reset();
 
+  base::UmaHistogramBoolean("InstantTethering.KeepAliveTickle.Result",
+                            device_status.get());
+
   if (!device_status) {
     // If the operation did not complete successfully, there is no new
     // information with which to update the cache.
+    PA_LOG(WARNING) << "Failed to send KeepAliveTickle message.";
     return;
   }
+
+  PA_LOG(INFO) << "Successfully sent KeepAliveTickle message.";
 
   std::string carrier;
   int32_t battery_percentage;

@@ -8,15 +8,18 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/optional.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/sessions/core/session_types.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/sessions/session_util.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_opener.h"
-#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -70,6 +73,27 @@ bool TabRestoreServiceDelegateImplIOS::IsTabPinned(int index) const {
   return false;
 }
 
+base::Optional<tab_groups::TabGroupId>
+TabRestoreServiceDelegateImplIOS::GetTabGroupForTab(int index) const {
+  // Not supported by iOS.
+  return base::nullopt;
+}
+
+tab_groups::TabGroupVisualData*
+TabRestoreServiceDelegateImplIOS::GetVisualDataForGroup(
+    tab_groups::TabGroupId group) const {
+  // Since we never return a group from GetTabGroupForTab(), this should never
+  // be called.
+  NOTREACHED();
+  return nullptr;
+}
+
+void TabRestoreServiceDelegateImplIOS::SetVisualDataForGroup(
+    tab_groups::TabGroupId group,
+    tab_groups::TabGroupVisualData visual_data) {
+  // Not supported on iOS.
+}
+
 const gfx::Rect TabRestoreServiceDelegateImplIOS::GetRestoredBounds() const {
   // Not supported by iOS.
   return gfx::Rect();
@@ -90,6 +114,8 @@ sessions::LiveTab* TabRestoreServiceDelegateImplIOS::AddRestoredTab(
     int tab_index,
     int selected_navigation,
     const std::string& extension_app_id,
+    base::Optional<tab_groups::TabGroupId> group,
+    const tab_groups::TabGroupVisualData group_visual_data,
     bool select,
     bool pin,
     bool from_last_session,
@@ -108,6 +134,7 @@ sessions::LiveTab* TabRestoreServiceDelegateImplIOS::AddRestoredTab(
 
 sessions::LiveTab* TabRestoreServiceDelegateImplIOS::ReplaceRestoredTab(
     const std::vector<sessions::SerializedNavigationEntry>& navigations,
+    base::Optional<tab_groups::TabGroupId> group,
     int selected_navigation,
     bool from_last_session,
     const std::string& extension_app_id,

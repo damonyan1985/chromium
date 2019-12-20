@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NGBaseline_h
-#define NGBaseline_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_BASELINE_H_
+#define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_BASELINE_H_
 
+#include "base/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/fonts/font_baseline.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -24,6 +26,8 @@ enum class NGBaselineAlgorithmType {
 // Baselines are products of layout.
 // To compute baseline, add requests to NGConstraintSpace and run Layout().
 class CORE_EXPORT NGBaselineRequest {
+  DISALLOW_NEW();
+
  public:
   NGBaselineRequest(NGBaselineAlgorithmType algorithm_type,
                     FontBaseline baseline_type)
@@ -65,6 +69,8 @@ class CORE_EXPORT NGBaselineRequest {
 // A list of |NGBaselineRequest| in a packed format, with similar interface as
 // |Vector|.
 class CORE_EXPORT NGBaselineRequestList {
+  DISALLOW_NEW();
+
  public:
   NGBaselineRequestList() = default;
 
@@ -76,6 +82,8 @@ class CORE_EXPORT NGBaselineRequestList {
   void AppendVector(const NGBaselineRequestList& requests);
 
   class const_iterator {
+    DISALLOW_NEW();
+
    public:
     const_iterator() : type_id_(NGBaselineRequest::kTypeIdCount), mask_(0) {}
     explicit const_iterator(unsigned mask) : type_id_(0), mask_(mask) {
@@ -131,6 +139,8 @@ struct CORE_EXPORT NGBaseline {
 // A list of |NGBaseline| in a packed format, with similar interface as
 // |Vector|.
 class CORE_EXPORT NGBaselineList {
+  DISALLOW_NEW();
+
  public:
   NGBaselineList();
 
@@ -139,6 +149,17 @@ class CORE_EXPORT NGBaselineList {
   base::Optional<LayoutUnit> Offset(const NGBaselineRequest request) const;
 
   void emplace_back(NGBaselineRequest request, LayoutUnit offset);
+
+#if DCHECK_IS_ON()
+  bool operator==(const NGBaselineList& other) const {
+    for (wtf_size_t i = 0; i < NGBaselineRequest::kTypeIdCount; ++i) {
+      if (offsets_[i] != other.offsets_[i])
+        return false;
+    }
+
+    return true;
+  }
+#endif
 
   class const_iterator {
    public:
@@ -183,4 +204,4 @@ class CORE_EXPORT NGBaselineList {
 
 }  // namespace blink
 
-#endif  // NGBaseline_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_INLINE_NG_BASELINE_H_

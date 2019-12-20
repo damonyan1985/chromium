@@ -8,6 +8,7 @@ import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
@@ -33,10 +34,9 @@ import org.chromium.android_webview.AwAutofillProvider;
 import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwSettings;
-import org.chromium.android_webview.ResourcesContextWrapperFactory;
-import org.chromium.android_webview.ScopedSysTraceEvent;
+import org.chromium.android_webview.AwSwitches;
 import org.chromium.android_webview.WebViewChromiumRunQueue;
-import org.chromium.android_webview.command_line.CommandLineUtil;
+import org.chromium.android_webview.common.CommandLineUtil;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.BundleUtils;
 import org.chromium.base.CommandLine;
@@ -46,18 +46,19 @@ import org.chromium.base.PackageUtils;
 import org.chromium.base.PathUtils;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.annotations.DoNotInline;
+import org.chromium.base.annotations.VerifiesOnN;
+import org.chromium.base.annotations.VerifiesOnP;
 import org.chromium.base.library_loader.NativeLibraries;
 import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
-import org.chromium.base.process_launcher.ChildProcessService;
+import org.chromium.base.metrics.ScopedSysTraceEvent;
 import org.chromium.components.autofill.AutofillProvider;
+import org.chromium.components.embedder_support.application.ClassLoaderContextWrapperFactory;
 import org.chromium.content_public.browser.LGEmailActionModeWorkaround;
 
 import java.io.File;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Entry point to the WebView. The system framework talks to this class to get instances of the
@@ -78,7 +79,7 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
      * verification does not occur until it is actually used for N and above.
      */
     @TargetApi(Build.VERSION_CODES.N)
-    @DoNotInline
+    @VerifiesOnN
     private static class ObjectHolderForN {
         public ServiceWorkerController mServiceWorkerController;
     }
@@ -88,12 +89,12 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
      * verification does not occur until it is actually used for P and above.
      */
     @TargetApi(Build.VERSION_CODES.P)
-    @DoNotInline
+    @VerifiesOnP
     private static class ObjectHolderForP {
         public TracingController mTracingController;
     }
 
-    private final static Object sSingletonLock = new Object();
+    private static final Object sSingletonLock = new Object();
     private static WebViewChromiumFactoryProvider sSingleton;
 
     private final WebViewChromiumRunQueue mRunQueue = new WebViewChromiumRunQueue(
@@ -263,10 +264,19 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
             }
 
             // WebView needs to make sure to always use the wrapped application context.
-            ContextUtils.initApplicationContext(ResourcesContextWrapperFactory.get(ctx));
+            ctx = ClassLoaderContextWrapperFactory.get(ctx);
+            ContextUtils.initApplicationContext(ctx);
 
-            mAwInit.setUpResourcesOnBackgroundThread(
-                    packageInfo, ContextUtils.getApplicationContext());
+            // Find the package ID for the package that WebView's resources come from.
+            // This will be the donor package if there is one, not our main package.
+            String resourcePackage = packageInfo.packageName;
+            if (packageInfo.applicationInfo.metaData != null) {
+                resourcePackage = packageInfo.applicationInfo.metaData.getString(
+                        "com.android.webview.WebViewDonorPackage", resourcePackage);
+            }
+            int packageId = webViewDelegate.getPackageId(ctx.getResources(), resourcePackage);
+
+            mAwInit.setUpResourcesOnBackgroundThread(packageId, ctx);
 
             try (ScopedSysTraceEvent e2 = ScopedSysTraceEvent.scoped(
                          "WebViewChromiumFactoryProvider.initCommandLine")) {
@@ -280,20 +290,29 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
                 multiProcess = webViewDelegate.isMultiProcessEnabled();
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 // Check the multiprocess developer setting directly on N.
-                multiProcess = Settings.Global.getInt(
-                                       ContextUtils.getApplicationContext().getContentResolver(),
+                multiProcess = Settings.Global.getInt(ctx.getContentResolver(),
                                        Settings.Global.WEBVIEW_MULTIPROCESS, 0)
                         == 1;
             }
             if (multiProcess) {
                 CommandLine cl = CommandLine.getInstance();
-                cl.appendSwitch("webview-sandboxed-renderer");
+                cl.appendSwitch(AwSwitches.WEBVIEW_SANDBOXED_RENDERER);
             }
 
-            ThreadUtils.setWillOverrideUiThread();
+            int applicationFlags = ctx.getApplicationInfo().flags;
+            boolean isAppDebuggable = (applicationFlags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            boolean isOsDebuggable = BuildInfo.isDebugAndroid();
+            // Enable logging JS console messages in system logs only if the app is debuggable or
+            // it's a debugable android build.
+            if (isAppDebuggable || isOsDebuggable) {
+                CommandLine cl = CommandLine.getInstance();
+                cl.appendSwitch(AwSwitches.WEBVIEW_LOG_JS_CONSOLE_MESSAGES);
+            }
+
+            ThreadUtils.setWillOverrideUiThread(true);
             BuildInfo.setBrowserPackageInfo(packageInfo);
 
-            try (StrictModeContext smc = StrictModeContext.allowDiskWrites()) {
+            try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
                 try (ScopedSysTraceEvent e2 = ScopedSysTraceEvent.scoped(
                              "WebViewChromiumFactoryProvider.loadChromiumLibrary")) {
                     String dataDirectorySuffix = null;
@@ -315,14 +334,13 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
 
             mAwInit.startVariationsInit();
 
-            mShouldDisableThreadChecking =
-                    shouldDisableThreadChecking(ContextUtils.getApplicationContext());
+            mShouldDisableThreadChecking = shouldDisableThreadChecking(ctx);
 
             setSingleton(this);
         }
 
-        TimesHistogramSample histogram = new TimesHistogramSample(
-                "Android.WebView.Startup.CreationTime.Stage1.FactoryInit", TimeUnit.MILLISECONDS);
+        TimesHistogramSample histogram =
+                new TimesHistogramSample("Android.WebView.Startup.CreationTime.Stage1.FactoryInit");
         histogram.record(SystemClock.elapsedRealtime() - startTime);
     }
 
@@ -373,14 +391,9 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
 
     public static boolean preloadInZygote() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            // If we're on O, where the split APK handling bug exists, then go through the motions
-            // of applying the workaround - don't actually change anything if Chrome is an APK (as
-            // opposed to an app bundle), but do the reflection to check for compatibility issues.
-            // The result will be logged to UMA later, because we can't do very much in the
-            // restricted environment of the WebView zygote process.
-            ChildProcessService.setSplitApkWorkaroundResult(
-                    SplitApkWorkaround.apply(/* realRun */ BundleUtils.isBundle()));
+                && Build.VERSION.SDK_INT < Build.VERSION_CODES.P && BundleUtils.isBundle()) {
+            // Apply workaround if we're a bundle on O, where the split APK handling bug exists.
+            SplitApkWorkaround.apply();
         }
 
         for (String library : NativeLibraries.LIBRARIES) {
@@ -450,6 +463,10 @@ public class WebViewChromiumFactoryProvider implements WebViewFactoryProvider {
                     @Override
                     public Uri getSafeBrowsingPrivacyPolicyUrl() {
                         return sharedStatics.getSafeBrowsingPrivacyPolicyUrl();
+                    }
+
+                    public boolean isMultiProcessEnabled() {
+                        return sharedStatics.isMultiProcessEnabled();
                     }
                 };
             }

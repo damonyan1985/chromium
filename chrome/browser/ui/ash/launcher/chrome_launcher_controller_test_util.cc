@@ -21,7 +21,7 @@ namespace {
 void ItemSelectedCallback(ash::ShelfAction* action_taken,
                           base::RunLoop* run_loop,
                           ash::ShelfAction action,
-                          base::Optional<ash::MenuItemList>) {
+                          ash::ShelfItemDelegate::AppMenuItems items) {
   *action_taken = action;
   run_loop->Quit();
 }
@@ -30,7 +30,8 @@ void ItemSelectedCallback(ash::ShelfAction* action_taken,
 
 ash::ShelfAction SelectShelfItem(const ash::ShelfID& id,
                                  ui::EventType event_type,
-                                 int64_t display_id) {
+                                 int64_t display_id,
+                                 ash::ShelfLaunchSource source) {
   std::unique_ptr<ui::Event> event;
   if (event_type == ui::ET_MOUSE_PRESSED) {
     event =
@@ -46,7 +47,7 @@ ash::ShelfAction SelectShelfItem(const ash::ShelfID& id,
   ash::ShelfModel* model = ChromeLauncherController::instance()->shelf_model();
   ash::ShelfItemDelegate* delegate = model->GetShelfItemDelegate(id);
   delegate->ItemSelected(
-      std::move(event), display_id, ash::LAUNCH_FROM_UNKNOWN,
+      std::move(event), display_id, source,
       base::BindOnce(&ItemSelectedCallback, &action, &run_loop));
   run_loop.Run();
   return action;

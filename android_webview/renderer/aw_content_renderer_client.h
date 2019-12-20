@@ -12,16 +12,16 @@
 #include "base/compiler_specific.h"
 #include "base/memory/weak_ptr.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
-#include "components/web_restrictions/interfaces/web_restrictions.mojom.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "services/service_manager/public/cpp/local_interface_provider.h"
+#include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
 class SpellCheck;
 #endif
 
 namespace visitedlink {
-class VisitedLinkSlave;
+class VisitedLinkReader;
 }
 
 namespace android_webview {
@@ -34,6 +34,7 @@ class AwContentRendererClient : public content::ContentRendererClient,
 
   // ContentRendererClient implementation.
   void RenderThreadStarted() override;
+  void ExposeInterfacesToBrowser(mojo::BinderMap* binders) override;
   void RenderFrameCreated(content::RenderFrame* render_frame) override;
   void RenderViewCreated(content::RenderView* render_view) override;
   bool HasErrorPage(int http_status_code) override;
@@ -42,11 +43,9 @@ class AwContentRendererClient : public content::ContentRendererClient,
   void PrepareErrorPage(content::RenderFrame* render_frame,
                         const blink::WebURLError& error,
                         const std::string& http_method,
-                        bool ignoring_cache,
                         std::string* error_html) override;
-  unsigned long long VisitedLinkHash(const char* canonical_url,
-                                     size_t length) override;
-  bool IsLinkVisited(unsigned long long link_hash) override;
+  uint64_t VisitedLinkHash(const char* canonical_url, size_t length) override;
+  bool IsLinkVisited(uint64_t link_hash) override;
   void AddSupportedKeySystems(
       std::vector<std::unique_ptr<::media::KeySystemProperties>>* key_systems)
       override;
@@ -64,14 +63,20 @@ class AwContentRendererClient : public content::ContentRendererClient,
   CreateURLLoaderThrottleProvider(
       content::URLLoaderThrottleProviderType provider_type) override;
 
+  visitedlink::VisitedLinkReader* visited_link_reader() {
+    return visited_link_reader_.get();
+  }
+
  private:
   // service_manager::LocalInterfaceProvider:
   void GetInterface(const std::string& name,
                     mojo::ScopedMessagePipeHandle request_handle) override;
 
   std::unique_ptr<AwRenderThreadObserver> aw_render_thread_observer_;
-  std::unique_ptr<visitedlink::VisitedLinkSlave> visited_link_slave_;
-  web_restrictions::mojom::WebRestrictionsPtr web_restrictions_service_;
+  std::unique_ptr<visitedlink::VisitedLinkReader> visited_link_reader_;
+
+  scoped_refptr<blink::ThreadSafeBrowserInterfaceBrokerProxy>
+      browser_interface_broker_;
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
   std::unique_ptr<SpellCheck> spellcheck_;

@@ -31,14 +31,13 @@
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_cache.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_spacing.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 
 namespace blink {
 
 class PLATFORM_EXPORT CachingWordShapeIterator final {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(CachingWordShapeIterator);
 
  public:
   CachingWordShapeIterator(ShapeCache* cache,
@@ -78,17 +77,11 @@ class PLATFORM_EXPORT CachingWordShapeIterator final {
   }
 
  private:
-  scoped_refptr<const ShapeResult> ShapeWordWithoutSpacing(const TextRun&,
-                                                    const Font*);
+  scoped_refptr<const ShapeResult>
+  ShapeWordWithoutSpacing(const TextRun&, const Font*);
 
-  scoped_refptr<const ShapeResult> ShapeWord(const TextRun& word_run,
-                                      const Font* font) {
-    if (LIKELY(!spacing_.HasSpacing()))
-      return ShapeWordWithoutSpacing(word_run, font);
-
-    scoped_refptr<const ShapeResult> result = ShapeWordWithoutSpacing(word_run, font);
-    return result->ApplySpacingToCopy(spacing_, word_run);
-  }
+  scoped_refptr<const ShapeResult> ShapeWord(const TextRun&,
+                                             const Font*);
 
   bool NextWord(scoped_refptr<const ShapeResult>* word_result) {
     return ShapeToEndIndex(word_result, NextWordEndIndex());
@@ -152,7 +145,8 @@ class PLATFORM_EXPORT CachingWordShapeIterator final {
     return length;
   }
 
-  bool ShapeToEndIndex(scoped_refptr<const ShapeResult>* result, unsigned end_index) {
+  bool ShapeToEndIndex(scoped_refptr<const ShapeResult>* result,
+                       unsigned end_index) {
     if (!end_index || end_index <= start_index_)
       return false;
 
@@ -211,6 +205,8 @@ class PLATFORM_EXPORT CachingWordShapeIterator final {
   float width_so_far_;  // Used only when allowTabs()
   unsigned start_index_ : 31;
   unsigned shape_by_word_ : 1;
+
+  DISALLOW_COPY_AND_ASSIGN(CachingWordShapeIterator);
 };
 
 }  // namespace blink

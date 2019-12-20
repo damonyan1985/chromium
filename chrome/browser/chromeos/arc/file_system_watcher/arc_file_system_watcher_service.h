@@ -12,8 +12,8 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "components/arc/common/file_system.mojom.h"
-#include "components/arc/connection_observer.h"
+#include "components/arc/mojom/file_system.mojom-forward.h"
+#include "components/arc/session/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 namespace base {
@@ -28,13 +28,6 @@ class BrowserContext;
 namespace arc {
 
 class ArcBridgeService;
-
-// Returns true if the file path has a media extension supported by Android.
-bool HasAndroidSupportedMediaExtension(const base::FilePath& path);
-
-// Exposed only for testing.
-extern const char* kAndroidSupportedMediaExtensions[];
-extern const int kAndroidSupportedMediaExtensionsSize;
 
 // Watches file system directories and registers newly created media files to
 // Android MediaProvider.
@@ -62,19 +55,23 @@ class ArcFileSystemWatcherService
   void StartWatchingFileSystem();
   void StopWatchingFileSystem();
 
+  std::unique_ptr<FileSystemWatcher> CreateAndStartFileSystemWatcher(
+      const base::FilePath& cros_path,
+      const base::FilePath& android_path);
   void OnFileSystemChanged(const std::vector<std::string>& paths);
 
   content::BrowserContext* const context_;
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   std::unique_ptr<FileSystemWatcher> downloads_watcher_;
+  std::unique_ptr<FileSystemWatcher> myfiles_watcher_;
   std::unique_ptr<FileSystemWatcher> removable_media_watcher_;
 
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate the weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<ArcFileSystemWatcherService> weak_ptr_factory_;
+  base::WeakPtrFactory<ArcFileSystemWatcherService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ArcFileSystemWatcherService);
 };

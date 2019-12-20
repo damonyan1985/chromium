@@ -14,19 +14,13 @@
 #include "ui/gfx/native_widget_types.h"
 
 class Browser;
+class ExtensionsContainer;
 class ToolbarActionsBar;
 
 namespace gfx {
 class Image;
 class Size;
 }  // namespace gfx
-
-// A class that creates and owns the platform-specific views for the browser
-// actions container. Specific implementations are in the .cc/.mm files.
-class TestToolbarActionsBarHelper {
- public:
-  virtual ~TestToolbarActionsBarHelper() {}
-};
 
 class BrowserActionTestUtil {
  public:
@@ -94,12 +88,19 @@ class BrowserActionTestUtil {
   // Returns the ToolbarActionsBar.
   virtual ToolbarActionsBar* GetToolbarActionsBar() = 0;
 
+  // Returns the associated ExtensionsContainer.
+  virtual ExtensionsContainer* GetExtensionsContainer() = 0;
+
   // Creates and returns a BrowserActionTestUtil with an "overflow" container,
   // with this object's container as the main bar.
-  virtual std::unique_ptr<BrowserActionTestUtil> CreateOverflowBar() = 0;
+  virtual std::unique_ptr<BrowserActionTestUtil> CreateOverflowBar(
+      Browser* browser) = 0;
 
   // Returns the minimum allowed size of an extension popup.
   virtual gfx::Size GetMinPopupSize() = 0;
+
+  // Returns the size of the toolbar actions.
+  virtual gfx::Size GetToolbarActionSize() = 0;
 
   // Returns the maximum allowed size of an extension popup.
   virtual gfx::Size GetMaxPopupSize() = 0;

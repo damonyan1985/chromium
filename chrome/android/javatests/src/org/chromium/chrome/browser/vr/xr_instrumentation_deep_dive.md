@@ -27,8 +27,6 @@ self-explanatory) naming convention:
   are applicable to the `WebXR Devices API` in its AR usecase.
 * `WebXR for VR`/`WebXrVr` - A subset of `WebXR` and `VR`. Used for things that
   are applicable to the `WebXR Devices API` in its VR usecase.
-* `WebVR`/`WebVr` - A subset of `WebXrVr`. Used for things that are only
-  applicable to the older `WebVR` API.
 
 ## Test Framework Structure
 
@@ -42,18 +40,17 @@ structured in the following hierarchy:
   * `WebXrTestFramework`
     * `WebXrArTestFramework`
     * `WebXrVrTestFramework`
-      * `WebVrTestFramework`
 
 ### Static vs. Non-Static Methods
 
 Most methods in the `TestFramework` classes have both a static and non-static
 version, with the non-static version simply calling the static one with the
 framework's `mFirstTabWebContents` reference. This is because the vast majority
-of use cases are interacting with the web page that is in the tab automatically
-opened at the start of the test, but some rare cases require interacting with
-other tabs. Thus, we need to provide a way of using the frameworks with
-arbitrary tabs/`WebContents` (the static methods), but offering the non-static
-versions cuts down the clutter of calling `getFirstTabWebContents()` everywhere.
+of use cases are interacting with the web page that is in the current tab, but
+some rare cases require interacting with other tabs. Thus, we need to provide a
+way of using the frameworks with arbitrary tabs/`WebContents`
+(the static methods), but offering the non-static versions cuts down the clutter
+of calling `getCurrentWebContents()` everywhere.
 
 ## Parameterization
 
@@ -117,8 +114,7 @@ blank page and implement a method that allows it to work with
 `XrActivityRestrictionRule`.
 
 Rules that implement `VrTestRule` do the same, but also perform some additional
-VR-specific setup such as ensuring that the test is not started in VR and
-allowing the use of the experimental/broken VrCore head tracking service.
+VR-specific setup such as ensuring that the test is not started in VR.
 
 ## Dynamic VrCore Settings
 

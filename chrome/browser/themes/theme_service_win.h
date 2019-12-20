@@ -14,13 +14,17 @@
 // are relevant to earlier versions of Windows.
 class ThemeServiceWin : public ThemeService {
  public:
-  ThemeServiceWin();
+  explicit ThemeServiceWin(Profile* profile);
   ~ThemeServiceWin() override;
 
  private:
   // ThemeService:
   bool ShouldUseNativeFrame() const override;
+  bool ShouldUseIncreasedContrastThemeSupplier(
+      ui::NativeTheme* native_theme) const override;
   SkColor GetDefaultColor(int id, bool incognito) const override;
+
+  bool GetPlatformHighContrastColor(int id, SkColor* color) const;
 
   // Returns true if colors from DWM can be used, i.e. this is a native frame
   // on Windows 10.

@@ -13,9 +13,13 @@
 
 namespace extensions {
 
+namespace declarative_net_request {
+struct ReadJSONRulesResult;
+}  // namespace declarative_net_request
+
 // Helper base class to update the set of allowed pages.
 class DeclarativeNetRequestUpdateAllowedPagesFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  protected:
   enum class Action {
     ADD,     // Add allowed pages.
@@ -33,8 +37,6 @@ class DeclarativeNetRequestUpdateAllowedPagesFunction
   bool PreRunValidation(std::string* error) override;
 
  private:
-  void OnAllowedPagesUpdated();
-
   DISALLOW_COPY_AND_ASSIGN(DeclarativeNetRequestUpdateAllowedPagesFunction);
 };
 
@@ -45,7 +47,7 @@ class DeclarativeNetRequestAddAllowedPagesFunction
  public:
   DeclarativeNetRequestAddAllowedPagesFunction();
   DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.addAllowedPages",
-                             DECLARATIVENETREQUEST_ADDALLOWEDPAGES);
+                             DECLARATIVENETREQUEST_ADDALLOWEDPAGES)
 
  protected:
   ~DeclarativeNetRequestAddAllowedPagesFunction() override;
@@ -64,7 +66,7 @@ class DeclarativeNetRequestRemoveAllowedPagesFunction
  public:
   DeclarativeNetRequestRemoveAllowedPagesFunction();
   DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.removeAllowedPages",
-                             DECLARATIVENETREQUEST_REMOVEALLOWEDPAGES);
+                             DECLARATIVENETREQUEST_REMOVEALLOWEDPAGES)
 
  protected:
   ~DeclarativeNetRequestRemoveAllowedPagesFunction() override;
@@ -78,12 +80,11 @@ class DeclarativeNetRequestRemoveAllowedPagesFunction
 
 // Implements the "declarativeNetRequest.getAllowedPages" extension
 // function.
-class DeclarativeNetRequestGetAllowedPagesFunction
-    : public UIThreadExtensionFunction {
+class DeclarativeNetRequestGetAllowedPagesFunction : public ExtensionFunction {
  public:
   DeclarativeNetRequestGetAllowedPagesFunction();
   DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.getAllowedPages",
-                             DECLARATIVENETREQUEST_GETALLOWEDPAGES);
+                             DECLARATIVENETREQUEST_GETALLOWEDPAGES)
 
  protected:
   ~DeclarativeNetRequestGetAllowedPagesFunction() override;
@@ -94,6 +95,79 @@ class DeclarativeNetRequestGetAllowedPagesFunction
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DeclarativeNetRequestGetAllowedPagesFunction);
+};
+
+class DeclarativeNetRequestUpdateDynamicRulesFunction
+    : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestUpdateDynamicRulesFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.updateDynamicRules",
+                             DECLARATIVENETREQUEST_UPDATEDYNAMICRULES)
+
+ protected:
+  ~DeclarativeNetRequestUpdateDynamicRulesFunction() override;
+
+  // ExtensionFunction override:
+  bool PreRunValidation(std::string* error) override;
+  ExtensionFunction::ResponseAction Run() override;
+
+ private:
+  void OnDynamicRulesUpdated(base::Optional<std::string> error);
+
+  DISALLOW_COPY_AND_ASSIGN(DeclarativeNetRequestUpdateDynamicRulesFunction);
+};
+
+class DeclarativeNetRequestGetDynamicRulesFunction : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestGetDynamicRulesFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.getDynamicRules",
+                             DECLARATIVENETREQUEST_GETDYNAMICRULES)
+
+ protected:
+  ~DeclarativeNetRequestGetDynamicRulesFunction() override;
+
+  // ExtensionFunction override:
+  bool PreRunValidation(std::string* error) override;
+  ExtensionFunction::ResponseAction Run() override;
+
+ private:
+  void OnDynamicRulesFetched(
+      declarative_net_request::ReadJSONRulesResult read_json_result);
+
+  DISALLOW_COPY_AND_ASSIGN(DeclarativeNetRequestGetDynamicRulesFunction);
+};
+
+class DeclarativeNetRequestGetMatchedRulesFunction : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestGetMatchedRulesFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.getMatchedRules",
+                             DECLARATIVENETREQUEST_GETMATCHEDRULES)
+
+ protected:
+  ~DeclarativeNetRequestGetMatchedRulesFunction() override;
+
+  // ExtensionFunction override:
+  ExtensionFunction::ResponseAction Run() override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DeclarativeNetRequestGetMatchedRulesFunction);
+};
+
+class DeclarativeNetRequestSetActionCountAsBadgeTextFunction
+    : public ExtensionFunction {
+ public:
+  DeclarativeNetRequestSetActionCountAsBadgeTextFunction();
+  DECLARE_EXTENSION_FUNCTION("declarativeNetRequest.setActionCountAsBadgeText",
+                             DECLARATIVENETREQUEST_SETACTIONCOUNTASBADGETEXT)
+
+ protected:
+  ~DeclarativeNetRequestSetActionCountAsBadgeTextFunction() override;
+
+  ExtensionFunction::ResponseAction Run() override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(
+      DeclarativeNetRequestSetActionCountAsBadgeTextFunction);
 };
 
 }  // namespace extensions

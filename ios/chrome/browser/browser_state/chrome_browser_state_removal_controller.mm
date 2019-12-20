@@ -46,8 +46,8 @@ void NukeBrowserStates(const std::vector<base::FilePath>& browser_states_path) {
     // Delete both the browser state directory and its corresponding cache.
     base::FilePath cache_path;
     ios::GetUserCacheDirectory(browser_state_path, &cache_path);
-    base::DeleteFile(browser_state_path, true);
-    base::DeleteFile(cache_path, true);
+    base::DeleteFileRecursively(browser_state_path);
+    base::DeleteFileRecursively(cache_path);
   }
 }
 
@@ -143,8 +143,9 @@ void ChromeBrowserStateRemovalController::RemoveBrowserStatesIfNecessary() {
 
   if (is_removing_browser_states) {
     SetHasBrowserStateBeenRemoved(true);
-    base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+    base::PostTask(
+        FROM_HERE,
+        {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
         base::BindOnce(&NukeBrowserStates, browser_states_to_nuke));
   }
 }

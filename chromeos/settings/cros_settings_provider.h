@@ -20,7 +20,8 @@ class COMPONENT_EXPORT(CHROMEOS_SETTINGS) CrosSettingsProvider {
  public:
   // The callback type that is called to notify the CrosSettings observers
   // about a setting change.
-  typedef base::Callback<void(const std::string&)> NotifyObserversCallback;
+  using NotifyObserversCallback =
+      base::RepeatingCallback<void(const std::string&)>;
 
   // Possible results of a trusted check.
   enum TrustedStatus {
@@ -41,9 +42,6 @@ class COMPONENT_EXPORT(CHROMEOS_SETTINGS) CrosSettingsProvider {
   explicit CrosSettingsProvider(const NotifyObserversCallback& notify_cb);
   virtual ~CrosSettingsProvider();
 
-  // Sets |in_value| to given |path| in cros settings.
-  void Set(const std::string& path, const base::Value& in_value);
-
   // Gets settings value of given |path| to |out_value|.
   virtual const base::Value* Get(const std::string& path) const = 0;
 
@@ -53,8 +51,7 @@ class COMPONENT_EXPORT(CHROMEOS_SETTINGS) CrosSettingsProvider {
   // TEMPORARILY_UNTRUSTED, and |callback| will be invoked later when trusted
   // values become available, PrepareTrustedValues() should be tried again in
   // that case. Returns PERMANENTLY_UNTRUSTED if a permanent error has occurred.
-  virtual TrustedStatus PrepareTrustedValues(
-      const base::Closure& callback) = 0;
+  virtual TrustedStatus PrepareTrustedValues(base::OnceClosure callback) = 0;
 
   // Gets the namespace prefix provided by this provider.
   virtual bool HandlesSetting(const std::string& path) const = 0;
@@ -66,10 +63,6 @@ class COMPONENT_EXPORT(CHROMEOS_SETTINGS) CrosSettingsProvider {
   void NotifyObservers(const std::string& path);
 
  private:
-  // Does the real job for Set().
-  virtual void DoSet(const std::string& path,
-                     const base::Value& in_value) = 0;
-
   // Callback used to notify about setting changes.
   NotifyObserversCallback notify_cb_;
 };

@@ -11,8 +11,10 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/i18n/time_formatting.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/observer_list.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "components/gcm_driver/gcm_driver.h"
@@ -48,30 +50,74 @@ std::string GetValueFromMessage(const gcm::IncomingMessage& message,
   return value;
 }
 
-InvalidationParsingStatus ParseIncommingMessage(
+// Unpacks the private topic included in messages to the form returned for
+// subscription requests.
+//
+// Subscriptions for private topics generate a private topic from the public
+// topic of the form "/private/${public_topic}-${something}. Messages include
+// this as the sender in the form
+// "/topics/private/${public_topic}-${something}". For such messages, strip the
+// "/topics" prefix.
+//
+// Subscriptions for public topics pass-through the public topic unchanged:
+// "${public_topic}". Messages include the sender in the form
+// "/topics/${public_topic}". For these messages, strip the "/topics/" prefix.
+//
+// If the provided sender does not match either pattern, return it unchanged.
+std::string UnpackPrivateTopic(base::StringPiece private_topic) {
+  if (private_topic.starts_with("/topics/private/")) {
+    return private_topic.substr(strlen("/topics")).as_string();
+  } else if (private_topic.starts_with("/topics/")) {
+    return private_topic.substr(strlen("/topics/")).as_string();
+  } else {
+    return private_topic.as_string();
+  }
+}
+
+InvalidationParsingStatus ParseIncomingMessage(
     const gcm::IncomingMessage& message,
     std::string* payload,
     std::string* private_topic,
     std::string* public_topic,
-    std::string* version) {
+    int64_t* version) {
   *payload = GetValueFromMessage(message, kPayloadKey);
-  *version = GetValueFromMessage(message, kVersionKey);
+  std::string version_str = GetValueFromMessage(message, kVersionKey);
 
-  // Version must always be there.
-  if (version->empty())
+  // Version must always be there, and be an integer.
+  if (version_str.empty())
     return InvalidationParsingStatus::kVersionEmpty;
+  if (!base::StringToInt64(version_str, version))
+    return InvalidationParsingStatus::kVersionInvalid;
 
   *public_topic = GetValueFromMessage(message, kPublicTopic);
 
-  // Public topic must always be there.
-  if (public_topic->empty())
-    return InvalidationParsingStatus::kPublicTopicEmpty;
-
-  *private_topic = message.sender_id;
+  *private_topic = UnpackPrivateTopic(message.sender_id);
   if (private_topic->empty())
     return InvalidationParsingStatus::kPrivateTopicEmpty;
 
   return InvalidationParsingStatus::kSuccess;
+}
+
+void RecordFCMMessageStatus(InvalidationParsingStatus status,
+                            const std::string& sender_id) {
+  // These histograms are recorded quite frequently, so use the macros rather
+  // than the functions.
+  UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.FCMMessageStatus", status);
+  // Also split the histogram by a few well-known senders. The actual constants
+  // aren't accessible here (they're defined in higher layers), so we simply
+  // duplicate them here, strictly only for the purpose of metrics.
+  constexpr char kInvalidationGCMSenderId[] = "8181035976";
+  constexpr char kDriveFcmSenderId[] = "947318989803";
+  constexpr char kPolicyFCMInvalidationSenderID[] = "1013309121859";
+  if (sender_id == kInvalidationGCMSenderId) {
+    UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.FCMMessageStatus.Sync", status);
+  } else if (sender_id == kDriveFcmSenderId) {
+    UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.FCMMessageStatus.Drive",
+                              status);
+  } else if (sender_id == kPolicyFCMInvalidationSenderID) {
+    UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.FCMMessageStatus.Policy",
+                              status);
+  }
 }
 
 }  // namespace
@@ -85,14 +131,26 @@ FCMNetworkHandler::FCMNetworkHandler(
       instance_id_driver_(instance_id_driver),
       token_validation_timer_(std::make_unique<base::OneShotTimer>()),
       sender_id_(sender_id),
-      app_id_(app_id),
-      weak_ptr_factory_(this) {}
+      app_id_(app_id) {}
 
 FCMNetworkHandler::~FCMNetworkHandler() {
   StopListening();
 }
 
+// static
+std::unique_ptr<syncer::FCMNetworkHandler> FCMNetworkHandler::Create(
+    gcm::GCMDriver* gcm_driver,
+    instance_id::InstanceIDDriver* instance_id_driver,
+    const std::string& sender_id,
+    const std::string& app_id) {
+  return std::make_unique<syncer::FCMNetworkHandler>(
+      gcm_driver, instance_id_driver, sender_id, app_id);
+}
+
 void FCMNetworkHandler::StartListening() {
+  if (IsListening()) {
+    StopListening();
+  }
   // Adding ourselves as Handler means start listening.
   // Being the listener is pre-requirement for token operations.
   gcm_driver_->AddAppHandler(app_id_, this);
@@ -101,7 +159,7 @@ void FCMNetworkHandler::StartListening() {
   instance_id_driver_->GetInstanceID(app_id_)->GetToken(
       sender_id_, kGCMScope,
       /*options=*/std::map<std::string, std::string>(),
-      /*is_lazy=*/true,
+      /*flags=*/{InstanceID::Flags::kIsLazy},
       base::BindRepeating(&FCMNetworkHandler::DidRetrieveToken,
                           weak_ptr_factory_.GetWeakPtr()));
 }
@@ -117,8 +175,8 @@ bool FCMNetworkHandler::IsListening() const {
 
 void FCMNetworkHandler::DidRetrieveToken(const std::string& subscription_token,
                                          InstanceID::Result result) {
-  UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.InitialTokenRetrievalStatus",
-                            result, InstanceID::Result::LAST_RESULT + 1);
+  base::UmaHistogramEnumeration("FCMInvalidations.InitialTokenRetrievalStatus",
+                                result);
   diagnostic_info_.registration_result = result;
   diagnostic_info_.token = subscription_token;
   diagnostic_info_.instance_id_token_was_received = base::Time::Now();
@@ -128,7 +186,7 @@ void FCMNetworkHandler::DidRetrieveToken(const std::string& subscription_token,
       // validation.
       DeliverToken(subscription_token);
       token_ = subscription_token;
-      UpdateGcmChannelState(/* online */ true);
+      UpdateChannelState(FcmChannelState::ENABLED);
       break;
     case InstanceID::INVALID_PARAMETER:
     case InstanceID::DISABLED:
@@ -138,7 +196,7 @@ void FCMNetworkHandler::DidRetrieveToken(const std::string& subscription_token,
     case InstanceID::NETWORK_ERROR:
       DLOG(WARNING) << "Messaging subscription failed; InstanceID::Result = "
                     << result;
-      UpdateGcmChannelState(/* online */ false);
+      UpdateChannelState(FcmChannelState::NO_INSTANCE_ID_TOKEN);
       break;
   }
   ScheduleNextTokenValidation();
@@ -161,7 +219,7 @@ void FCMNetworkHandler::StartTokenValidation() {
   diagnostic_info_.token_validation_requested_num++;
   instance_id_driver_->GetInstanceID(app_id_)->GetToken(
       sender_id_, kGCMScope, std::map<std::string, std::string>(),
-      /*is_lazy=*/true,
+      /*flags=*/{InstanceID::Flags::kIsLazy},
       base::Bind(&FCMNetworkHandler::DidReceiveTokenForValidation,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -178,6 +236,7 @@ void FCMNetworkHandler::DidReceiveTokenForValidation(
   diagnostic_info_.instance_id_token_verified = base::Time::Now();
   diagnostic_info_.token_verification_result = result;
   if (result == InstanceID::SUCCESS) {
+    UpdateChannelState(FcmChannelState::ENABLED);
     if (token_ != new_token) {
       diagnostic_info_.token_changed = true;
       token_ = new_token;
@@ -188,12 +247,11 @@ void FCMNetworkHandler::DidReceiveTokenForValidation(
   ScheduleNextTokenValidation();
 }
 
-void FCMNetworkHandler::UpdateGcmChannelState(bool online) {
-  if (gcm_channel_online_ == online)
+void FCMNetworkHandler::UpdateChannelState(FcmChannelState state) {
+  if (channel_state_ == state)
     return;
-  gcm_channel_online_ = online;
-  NotifyChannelStateChange(gcm_channel_online_ ? INVALIDATIONS_ENABLED
-                                               : TRANSIENT_INVALIDATION_ERROR);
+  channel_state_ = state;
+  NotifyChannelStateChange(channel_state_);
 }
 
 void FCMNetworkHandler::ShutdownHandler() {}
@@ -203,23 +261,26 @@ void FCMNetworkHandler::OnStoreReset() {}
 void FCMNetworkHandler::OnMessage(const std::string& app_id,
                                   const gcm::IncomingMessage& message) {
   DCHECK_EQ(app_id, app_id_);
+
   std::string payload;
   std::string private_topic;
   std::string public_topic;
-  std::string version;
-
-  InvalidationParsingStatus status = ParseIncommingMessage(
+  int64_t version = 0;
+  InvalidationParsingStatus status = ParseIncomingMessage(
       message, &payload, &private_topic, &public_topic, &version);
-  UMA_HISTOGRAM_ENUMERATION("FCMInvalidations.FCMMessageStatus", status);
+
+  RecordFCMMessageStatus(status, sender_id_);
 
   if (status == InvalidationParsingStatus::kSuccess)
     DeliverIncomingMessage(payload, private_topic, public_topic, version);
 }
 
 void FCMNetworkHandler::OnMessagesDeleted(const std::string& app_id) {
-  // TODO(melandory): consider notifyint the client that messages were
-  // deleted. So the client can act on it, e.g. in case of sync request
-  // GetUpdates from the server.
+  DCHECK_EQ(app_id, app_id_);
+  base::UmaHistogramBoolean("FCMInvalidations.FCMMessagesDeleted", true);
+  // Note: If this actually happens in practice, consider notifying the client
+  // that messages were deleted so it can act on it, e.g. in case of sync by
+  // triggering a GetUpdates.
 }
 
 void FCMNetworkHandler::OnSendError(
@@ -243,38 +304,42 @@ void FCMNetworkHandler::SetTokenValidationTimerForTesting(
 }
 
 void FCMNetworkHandler::RequestDetailedStatus(
-    base::Callback<void(const base::DictionaryValue&)> callback) {
-  callback.Run(*diagnostic_info_.CollectDebugData());
+    const base::RepeatingCallback<void(const base::DictionaryValue&)>&
+        callback) {
+  callback.Run(diagnostic_info_.CollectDebugData());
 }
 
-FCMNetworkHandlerDiagnostic::FCMNetworkHandlerDiagnostic() {}
+FCMNetworkHandler::FCMNetworkHandlerDiagnostic::FCMNetworkHandlerDiagnostic() {}
 
-std::unique_ptr<base::DictionaryValue>
-FCMNetworkHandlerDiagnostic::CollectDebugData() const {
-  std::unique_ptr<base::DictionaryValue> status(new base::DictionaryValue);
-  status->SetString("Registration result code",
-                    RegistrationResultToString(registration_result));
-  status->SetString("Token", token);
-  status->SetString(
-      "When token was requested",
+base::DictionaryValue
+FCMNetworkHandler::FCMNetworkHandlerDiagnostic::CollectDebugData() const {
+  base::DictionaryValue status;
+  status.SetString("NetworkHandler.Registration-result-code",
+                   RegistrationResultToString(registration_result));
+  status.SetString("NetworkHandler.Token", token);
+  status.SetString(
+      "NetworkHandler.Token-was-requested",
       base::TimeFormatShortDateAndTime(instance_id_token_requested));
-  status->SetString(
-      "When Token was received",
+  status.SetString(
+      "NetworkHandler.Token-was-received",
       base::TimeFormatShortDateAndTime(instance_id_token_was_received));
-  status->SetString("When token verification started",
-                    base::TimeFormatShortDateAndTime(
-                        instance_id_token_verification_requested));
-  status->SetString("When token was verified", base::TimeFormatShortDateAndTime(
-                                                   instance_id_token_verified));
-  status->SetString("Verification result code",
-                    RegistrationResultToString(token_verification_result));
-  status->SetBoolean("Token change when verified", token_changed);
-  status->SetInteger("Token validation requests",
-                     token_validation_requested_num);
+  status.SetString("NetworkHandler.Token-verification-started",
+                   base::TimeFormatShortDateAndTime(
+                       instance_id_token_verification_requested));
+  status.SetString(
+      "NetworkHandler.Token-was-verified",
+      base::TimeFormatShortDateAndTime(instance_id_token_verified));
+  status.SetString("NetworkHandler.Verification-result-code",
+                   RegistrationResultToString(token_verification_result));
+  status.SetBoolean("NetworkHandler.Token-changed-when-verified",
+                    token_changed);
+  status.SetInteger("NetworkHandler.Token-validation-requests",
+                    token_validation_requested_num);
   return status;
 }
 
-std::string FCMNetworkHandlerDiagnostic::RegistrationResultToString(
+std::string
+FCMNetworkHandler::FCMNetworkHandlerDiagnostic::RegistrationResultToString(
     const instance_id::InstanceID::Result result) const {
   switch (registration_result) {
     case instance_id::InstanceID::SUCCESS:

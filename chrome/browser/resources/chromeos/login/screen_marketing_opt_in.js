@@ -15,12 +15,11 @@ login.createScreen('MarketingOptInScreen', 'marketing-opt-in', function() {
       return $('marketing-opt-in-impl');
     },
 
-    /**
-     * Event handler that is invoked just before the screen is shown.
-     * @param {object} data Screen init payload.
+    /*
+     * Executed on language change.
      */
-    onBeforeShow: function(data) {
-      Oobe.getInstance().headerHidden = true;
-    }
+    updateLocalizedContent: function() {
+      $('marketing-opt-in-impl').i18nUpdateLocale();
+    },
   };
 });

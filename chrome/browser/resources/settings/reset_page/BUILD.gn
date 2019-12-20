@@ -6,23 +6,16 @@ import("//third_party/closure_compiler/compile_js.gni")
 
 js_type_check("closure_compile") {
   deps = [
-    ":powerwash_dialog",
     ":reset_browser_proxy",
     ":reset_page",
     ":reset_profile_dialog",
   ]
 }
 
-js_library("powerwash_dialog") {
-  deps = [
-    ":reset_browser_proxy",
-    "..:lifetime_browser_proxy",
-  ]
-}
-
 js_library("reset_page") {
   deps = [
     ":reset_profile_dialog",
+    "..:page_visibility",
     "..:route",
     "//ui/webui/resources/cr_elements/cr_lazy_render:cr_lazy_render",
     "//ui/webui/resources/js:assert",

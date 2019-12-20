@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/single_thread_task_runner.h"
@@ -27,13 +26,20 @@
 #include "net/url_request/url_request_context_getter.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/name_value_map.h"
-#include "remoting/base/service_urls.h"
+#include "remoting/base/passthrough_oauth_token_getter.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/host_exit_codes.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/policy_watcher.h"
+#include "remoting/host/remoting_register_support_host_request.h"
+#include "remoting/host/xmpp_register_support_host_request.h"
 #include "remoting/protocol/ice_config.h"
 #include "remoting/signaling/delegating_signal_strategy.h"
+#include "remoting/signaling/ftl_client_uuid_device_id_provider.h"
+#include "remoting/signaling/ftl_signal_strategy.h"
+#include "remoting/signaling/remoting_log_to_server.h"
+#include "remoting/signaling/server_log_entry.h"
+#include "remoting/signaling/xmpp_log_to_server.h"
 
 #if defined(OS_WIN)
 #include "base/command_line.h"
@@ -67,6 +73,7 @@ const base::FilePath::CharType kElevatedHostBinaryName[] =
 #endif  // defined(OS_WIN)
 
 constexpr char kAnonymousUserName[] = "anonymous_user";
+const char kRemotingBotJid[] = "remoting@bot.talk.google.com";
 
 // Helper functions to run |callback| asynchronously on the correct thread
 // using |task_runner|.
@@ -76,7 +83,7 @@ void PolicyUpdateCallback(
     std::unique_ptr<base::DictionaryValue> policies) {
   DCHECK(callback);
   task_runner->PostTask(FROM_HERE,
-                        base::Bind(callback, base::Passed(&policies)));
+                        base::BindOnce(callback, std::move(policies)));
 }
 
 void PolicyErrorCallback(
@@ -96,8 +103,7 @@ It2MeNativeMessagingHost::It2MeNativeMessagingHost(
     : needs_elevation_(needs_elevation),
       host_context_(std::move(context)),
       factory_(std::move(factory)),
-      policy_watcher_(std::move(policy_watcher)),
-      weak_factory_(this) {
+      policy_watcher_(std::move(policy_watcher)) {
   weak_ptr_ = weak_factory_.GetWeakPtr();
 
   // The policy watcher runs on the |file_task_runner| but we want to run the
@@ -124,7 +130,8 @@ void It2MeNativeMessagingHost::OnMessage(const std::string& message) {
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   std::unique_ptr<base::DictionaryValue> response(new base::DictionaryValue());
-  std::unique_ptr<base::Value> message_value = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> message_value =
+      base::JSONReader::ReadDeprecated(message);
   if (!message_value->is_dict()) {
     LOG(ERROR) << "Received a message that's not a dictionary.";
     client_->CloseChannel(std::string());
@@ -235,34 +242,44 @@ void It2MeNativeMessagingHost::ProcessConnect(
   std::string username;
   message->GetString("userName", &username);
 
-  bool no_dialogs = false;
-  message->GetBoolean("noDialogs", &no_dialogs);
+  bool suppress_user_dialogs = false;
+  message->GetBoolean("suppressUserDialogs", &suppress_user_dialogs);
+
+  bool suppress_notifications = false;
+  message->GetBoolean("suppressNotifications", &suppress_notifications);
+
+  bool terminate_upon_input = false;
+  message->GetBoolean("terminateUponInput", &terminate_upon_input);
 
   std::unique_ptr<SignalStrategy> signal_strategy;
+  std::unique_ptr<RegisterSupportHostRequest> register_host_request;
+  std::unique_ptr<LogToServer> log_to_server;
   if (use_signaling_proxy) {
     if (username.empty()) {
       // Allow unauthenticated users for the delegated signal strategy case.
       username = kAnonymousUserName;
     }
     signal_strategy = CreateDelegatedSignalStrategy(message.get());
+    register_host_request =
+        std::make_unique<XmppRegisterSupportHostRequest>(kRemotingBotJid);
+    log_to_server = std::make_unique<XmppLogToServer>(
+        ServerLogEntry::IT2ME, signal_strategy.get(), kRemotingBotJid,
+        host_context_->network_task_runner());
   } else {
-    signal_strategy = CreateXmppSignalStrategy(username, message.get());
+    std::string access_token = ExtractAccessToken(message.get());
+    signal_strategy = CreateFtlSignalStrategy(username, access_token);
+    register_host_request =
+        std::make_unique<RemotingRegisterSupportHostRequest>(
+            std::make_unique<PassthroughOAuthTokenGetter>(username,
+                                                          access_token));
+    log_to_server = std::make_unique<RemotingLogToServer>(
+        ServerLogEntry::IT2ME,
+        std::make_unique<PassthroughOAuthTokenGetter>(username, access_token));
   }
   if (!signal_strategy) {
     SendErrorAndExit(std::move(response), ErrorCode::INCOMPATIBLE_PROTOCOL);
     return;
   }
-
-  std::string directory_bot_jid =
-      ServiceUrls::GetInstance()->directory_bot_jid();
-
-#if !defined(NDEBUG)
-  if (!message->GetString("directoryBotJid", &directory_bot_jid)) {
-    LOG(ERROR) << "'directoryBotJid' not found in request.";
-    SendErrorAndExit(std::move(response), ErrorCode::INCOMPATIBLE_PROTOCOL);
-    return;
-  }
-#endif  // !defined(NDEBUG)
 
   base::DictionaryValue* ice_config_dict;
   protocol::IceConfig ice_config;
@@ -284,13 +301,16 @@ void It2MeNativeMessagingHost::ProcessConnect(
   // Create the It2Me host and start connecting. Note that disabling dialogs is
   // only supported on ChromeOS.
   it2me_host_ = factory_->CreateIt2MeHost();
-#if defined(OS_CHROMEOS)
-  it2me_host_->set_enable_dialogs(!no_dialogs);
+#if defined(OS_CHROMEOS) || !defined(NDEBUG)
+  it2me_host_->set_enable_dialogs(!suppress_user_dialogs);
+  it2me_host_->set_enable_notifications(!suppress_notifications);
+  it2me_host_->set_terminate_upon_input(terminate_upon_input);
 #endif
   it2me_host_->Connect(host_context_->Copy(), std::move(policies),
                        std::make_unique<It2MeConfirmationDialogFactory>(),
-                       weak_ptr_, std::move(signal_strategy), username,
-                       directory_bot_jid, ice_config);
+                       std::move(register_host_request),
+                       std::move(log_to_server), weak_ptr_,
+                       std::move(signal_strategy), username, ice_config);
 
   SendMessageToClient(std::move(response));
 }
@@ -345,7 +365,7 @@ void It2MeNativeMessagingHost::ProcessIncomingIq(
 
   incoming_message_callback_.Run(iq);
   SendMessageToClient(std::move(response));
-};
+}
 
 void It2MeNativeMessagingHost::SendOutgoingIq(const std::string& iq) {
   std::unique_ptr<base::DictionaryValue> message(new base::DictionaryValue());
@@ -487,7 +507,7 @@ void It2MeNativeMessagingHost::OnPolicyUpdate(
     // may not be ideal, but is still functional.
     needs_elevation_ = needs_elevation_ && allow_elevated_host;
     if (pending_connect_) {
-      base::ResetAndReturn(&pending_connect_).Run();
+      std::move(pending_connect_).Run();
     }
   }
 
@@ -514,7 +534,7 @@ void It2MeNativeMessagingHost::OnPolicyError() {
     // is one, but otherwise do nothing. The policy error will be sent when a
     // connection is made; doing so beforehand would break assumptions made by
     // the Chrome app.
-    base::ResetAndReturn(&pending_connect_).Run();
+    std::move(pending_connect_).Run();
   }
 }
 
@@ -537,28 +557,25 @@ It2MeNativeMessagingHost::CreateDelegatedSignalStrategy(
 }
 
 std::unique_ptr<SignalStrategy>
-It2MeNativeMessagingHost::CreateXmppSignalStrategy(
+It2MeNativeMessagingHost::CreateFtlSignalStrategy(
     const std::string& username,
-    const base::DictionaryValue* message) {
+    const std::string& access_token) {
   if (username.empty()) {
     LOG(ERROR) << "'userName' not found in request.";
     return nullptr;
   }
 
-  XmppSignalStrategy::XmppServerConfig xmpp_config;
-  xmpp_config.username = username;
+  return std::make_unique<FtlSignalStrategy>(
+      std::make_unique<PassthroughOAuthTokenGetter>(username, access_token),
+      std::make_unique<FtlClientUuidDeviceIdProvider>());
+}
 
-  const ServiceUrls* service_urls = ServiceUrls::GetInstance();
-  const bool xmpp_server_valid =
-      net::ParseHostAndPort(service_urls->xmpp_server_address(),
-                            &xmpp_config.host, &xmpp_config.port);
-  DCHECK(xmpp_server_valid);
-  xmpp_config.use_tls = service_urls->xmpp_server_use_tls();
-
+std::string It2MeNativeMessagingHost::ExtractAccessToken(
+    const base::DictionaryValue* message) {
   std::string auth_service_with_token;
   if (!message->GetString("authServiceWithToken", &auth_service_with_token)) {
     LOG(ERROR) << "'authServiceWithToken' not found in request.";
-    return nullptr;
+    return {};
   }
 
   // For backward compatibility the webapp still passes OAuth service as part
@@ -568,33 +585,10 @@ It2MeNativeMessagingHost::CreateXmppSignalStrategy(
   if (!base::StartsWith(auth_service_with_token, kOAuth2ServicePrefix,
                         base::CompareCase::SENSITIVE)) {
     LOG(ERROR) << "Invalid 'authServiceWithToken': " << auth_service_with_token;
-    return nullptr;
+    return {};
   }
 
-  xmpp_config.auth_token =
-      auth_service_with_token.substr(strlen(kOAuth2ServicePrefix));
-
-#if !defined(NDEBUG)
-  std::string address;
-  if (!message->GetString("xmppServerAddress", &address)) {
-    LOG(ERROR) << "'xmppServerAddress' not found in request.";
-    return nullptr;
-  }
-
-  if (!net::ParseHostAndPort(address, &xmpp_config.host, &xmpp_config.port)) {
-    LOG(ERROR) << "Invalid 'xmppServerAddress': " << address;
-    return nullptr;
-  }
-
-  if (!message->GetBoolean("xmppServerUseTls", &xmpp_config.use_tls)) {
-    LOG(ERROR) << "'xmppServerUseTls' not found in request.";
-    return nullptr;
-  }
-#endif  // !defined(NDEBUG)
-
-  return std::make_unique<XmppSignalStrategy>(
-      net::ClientSocketFactory::GetDefaultFactory(),
-      host_context_->url_request_context_getter(), xmpp_config);
+  return auth_service_with_token.substr(strlen(kOAuth2ServicePrefix));
 }
 
 #if defined(OS_WIN)

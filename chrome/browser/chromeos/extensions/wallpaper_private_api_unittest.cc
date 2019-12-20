@@ -12,10 +12,12 @@
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/ui/ash/test_wallpaper_controller.h"
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/api_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -28,7 +30,7 @@ constexpr char kTestAccount[] = "user@test.com";
 class WallpaperPrivateApiUnittest : public testing::Test {
  public:
   WallpaperPrivateApiUnittest()
-      : thread_bundle_(std::make_unique<content::TestBrowserThreadBundle>()),
+      : task_environment_(std::make_unique<content::BrowserTaskEnvironment>()),
         fake_user_manager_(new chromeos::FakeChromeUserManager()),
         scoped_user_manager_(base::WrapUnique(fake_user_manager_)) {}
 
@@ -49,7 +51,7 @@ class WallpaperPrivateApiUnittest : public testing::Test {
   }
 
  private:
-  std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
+  std::unique_ptr<content::BrowserTaskEnvironment> task_environment_;
 
   chromeos::ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 
@@ -66,9 +68,10 @@ TEST_F(WallpaperPrivateApiUnittest, ResetWallpaper) {
   chromeos::SystemSaltGetter::Get()->SetRawSaltForTesting(
       chromeos::SystemSaltGetter::RawSalt({1, 2, 3, 4, 5, 6, 7, 8}));
 
-  WallpaperControllerClient client;
+  ScopedTestingLocalState local_state(TestingBrowserProcess::GetGlobal());
   TestWallpaperController test_controller;
-  client.InitForTesting(test_controller.CreateInterfacePtr());
+  WallpaperControllerClient client;
+  client.InitForTesting(&test_controller);
   fake_user_manager()->AddUser(AccountId::FromUserEmail(kTestAccount));
 
   {
@@ -78,7 +81,6 @@ TEST_F(WallpaperPrivateApiUnittest, ResetWallpaper) {
         extensions::api_test_utils::RunFunction(function.get(), "[]", nullptr));
   }
 
-  client.FlushForTesting();
   // Expect SetDefaultWallpaper() to be called exactly once.
   EXPECT_EQ(1, test_controller.set_default_wallpaper_count());
 }

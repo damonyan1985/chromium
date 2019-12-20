@@ -145,11 +145,11 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
   // DevToolsAgentHostClient interface.
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) override;
-  bool MayAttachToRenderer(content::RenderFrameHost* render_frame_host,
-                           bool is_webui) override;
+                               base::span<const uint8_t> message) override;
+  bool MayAttachToURL(const GURL& url, bool is_webui) override;
   bool MayAttachToBrowser() override;
-  bool MayAffectLocalFiles() override;
+  bool MayReadLocalFiles() override;
+  bool MayWriteLocalFiles() override;
 
  private:
   using PendingRequests =
@@ -179,7 +179,7 @@ class ExtensionDevToolsClientHost : public content::DevToolsAgentHostClient,
 
   // Listen to extension unloaded notification.
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDevToolsClientHost);
 };
@@ -194,8 +194,7 @@ ExtensionDevToolsClientHost::ExtensionDevToolsClientHost(
       extension_(std::move(extension)),
       last_request_id_(0),
       infobar_(nullptr),
-      detach_reason_(api::debugger::DETACH_REASON_TARGET_CLOSED),
-      extension_registry_observer_(this) {
+      detach_reason_(api::debugger::DETACH_REASON_TARGET_CLOSED) {
   CopyDebuggee(&debuggee_, debuggee);
 
   g_attached_client_hosts.Get().insert(this);
@@ -267,9 +266,11 @@ void ExtensionDevToolsClientHost::SendMessageToBackend(
         "params", command_params->additional_properties.CreateDeepCopy());
   }
 
-  std::string json_args;
-  base::JSONWriter::Write(protocol_request, &json_args);
-  agent_host_->DispatchProtocolMessage(this, json_args);
+  std::string json;
+  base::JSONWriter::Write(protocol_request, &json);
+
+  agent_host_->DispatchProtocolMessage(this,
+                                       base::as_bytes(base::make_span(json)));
 }
 
 void ExtensionDevToolsClientHost::InfoBarDismissed() {
@@ -315,15 +316,18 @@ void ExtensionDevToolsClientHost::Observe(
 }
 
 void ExtensionDevToolsClientHost::DispatchProtocolMessage(
-    DevToolsAgentHost* agent_host, const std::string& message) {
+    DevToolsAgentHost* agent_host,
+    base::span<const uint8_t> message) {
   DCHECK(agent_host == agent_host_.get());
   if (!EventRouter::Get(profile_))
     return;
 
-  std::unique_ptr<base::Value> result =
-      base::JSONReader::Read(message, base::JSON_REPLACE_INVALID_CHARACTERS);
+  base::StringPiece message_str(reinterpret_cast<const char*>(message.data()),
+                                message.size());
+  std::unique_ptr<base::Value> result = base::JSONReader::ReadDeprecated(
+      message_str, base::JSON_REPLACE_INVALID_CHARACTERS);
   if (!result || !result->is_dict()) {
-    LOG(ERROR) << "Tried to send invalid message to extension: " << message;
+    LOG(ERROR) << "Tried to send invalid message to extension: " << message_str;
     return;
   }
   base::DictionaryValue* dictionary =
@@ -357,36 +361,26 @@ void ExtensionDevToolsClientHost::DispatchProtocolMessage(
   }
 }
 
-bool ExtensionDevToolsClientHost::MayAttachToRenderer(
-    content::RenderFrameHost* render_frame_host,
-    bool is_webui) {
+bool ExtensionDevToolsClientHost::MayAttachToURL(const GURL& url,
+                                                 bool is_webui) {
   if (is_webui)
     return false;
-
-  if (!render_frame_host)
+  // Allow the extension to attach to about:blank.
+  if (url.is_empty() || url == "about:")
     return true;
-
   std::string error;
-  // We check the site instance URL here (instead of
-  // RenderFrameHost::GetLastCommittedURL()) because it's too early in the
-  // navigation for anything else.
-  const GURL& site_instance_url =
-      render_frame_host->GetSiteInstance()->GetSiteURL();
-
-  if (site_instance_url.is_empty() || site_instance_url == "about:") {
-    // Allow the extension to attach to about:blank.
-    return true;
-  }
-
-  return ExtensionCanAttachToURL(*extension_, site_instance_url, profile_,
-                                 &error);
+  return ExtensionCanAttachToURL(*extension_, url, profile_, &error);
 }
 
 bool ExtensionDevToolsClientHost::MayAttachToBrowser() {
   return false;
 }
 
-bool ExtensionDevToolsClientHost::MayAffectLocalFiles() {
+bool ExtensionDevToolsClientHost::MayReadLocalFiles() {
+  return util::AllowFileAccess(extension_->id(), profile_);
+}
+
+bool ExtensionDevToolsClientHost::MayWriteLocalFiles() {
   return false;
 }
 
@@ -403,7 +397,7 @@ void DebuggerFunction::FormatErrorMessage(const std::string& format) {
   if (debuggee_.tab_id)
     error_ = ErrorUtils::FormatErrorMessage(
         format, debugger_api_constants::kTabTargetType,
-        base::IntToString(*debuggee_.tab_id));
+        base::NumberToString(*debuggee_.tab_id));
   else if (debuggee_.extension_id)
     error_ = ErrorUtils::FormatErrorMessage(
         format, debugger_api_constants::kBackgroundPageTargetType,
@@ -416,10 +410,10 @@ void DebuggerFunction::FormatErrorMessage(const std::string& format) {
 
 bool DebuggerFunction::InitAgentHost() {
   if (debuggee_.tab_id) {
-    WebContents* web_contents = NULL;
+    WebContents* web_contents = nullptr;
     bool result = ExtensionTabUtil::GetTabById(*debuggee_.tab_id, GetProfile(),
                                                include_incognito_information(),
-                                               NULL, NULL, &web_contents, NULL);
+                                               &web_contents);
     if (result && web_contents) {
       // TODO(rdevlin.cronin) This should definitely be GetLastCommittedURL().
       GURL url = web_contents->GetVisibleURL();
@@ -525,7 +519,7 @@ bool DebuggerAttachFunction::RunAsync() {
       GetProfile(), agent_host_.get(), extension(), debuggee_);
 
   if (!host->Attach()) {
-    FormatErrorMessage(debugger_api_constants::kRestrictedError);
+    error_ = debugger_api_constants::kRestrictedError;
     return false;
   }
 
@@ -663,7 +657,7 @@ DebuggerGetTargetsFunction::~DebuggerGetTargetsFunction() {
 
 bool DebuggerGetTargetsFunction::RunAsync() {
   content::DevToolsAgentHost::List list = DevToolsAgentHost::GetOrCreateAll();
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&DebuggerGetTargetsFunction::SendTargetList, this, list));
   return true;

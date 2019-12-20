@@ -15,12 +15,12 @@ class Rect;
 }
 
 namespace views {
+class BoundsAnimator;
 class View;
 }
 
 namespace ash {
 class OverflowBubble;
-class OverflowButton;
 class ShelfAppButton;
 class ShelfButtonPressedMetricTracker;
 class ShelfTooltipManager;
@@ -35,25 +35,19 @@ class ShelfViewTestAPI {
   // Number of icons displayed.
   int GetButtonCount();
 
-  // Retrieve the button at |index|, doesn't support the app list button,
-  // because the app list button is not a ShelfAppButton.
+  // Retrieve the button at |index|, doesn't support the home button,
+  // because the home button is not a ShelfAppButton.
   ShelfAppButton* GetButton(int index);
+
+  // Adds a new item of the given type to the view.
+  ShelfID AddItem(ShelfItemType type);
 
   // Retrieve the view at |index|.
   views::View* GetViewAt(int index);
 
-  // First visible button index.
-  int GetFirstVisibleIndex();
-
-  // Last visible button index.
-  int GetLastVisibleIndex();
-
   // Gets current/ideal bounds for button at |index|.
   const gfx::Rect& GetBoundsByIndex(int index);
   const gfx::Rect& GetIdealBoundsByIndex(int index);
-
-  // Returns true if overflow button is visible.
-  bool IsOverflowButtonVisible();
 
   // Makes shelf view show its overflow bubble.
   void ShowOverflowBubble();
@@ -61,16 +55,19 @@ class ShelfViewTestAPI {
   // Makes shelf view hide its overflow bubble.
   void HideOverflowBubble();
 
-  // Returns true if the overflow bubble is visible.
-  bool IsShowingOverflowBubble() const;
-
   // An accessor for the |bounds_animator_| duration.
-  int GetAnimationDuration() const;
+  base::TimeDelta GetAnimationDuration() const;
 
-  // Sets animation duration in milliseconds for test.
-  void SetAnimationDuration(int duration_ms);
+  // Sets animation duration for test.
+  void SetAnimationDuration(base::TimeDelta duration);
 
-  // Runs message loop and waits until all add/remove animations are done.
+  // Runs message loop and waits until all add/remove animations are done for
+  // the given bounds animator.
+  void RunMessageLoopUntilAnimationsDone(
+      views::BoundsAnimator* bounds_animator);
+
+  // Runs message loop and waits until all add/remove animations are done on
+  // the shelf view.
   void RunMessageLoopUntilAnimationsDone();
 
   // Gets the anchor point that would be used for a context menu with these
@@ -90,9 +87,6 @@ class ShelfViewTestAPI {
 
   // An accessor for overflow bubble.
   OverflowBubble* overflow_bubble();
-
-  // An accessor for overflow button.
-  OverflowButton* overflow_button() const;
 
   // Returns minimum distance before drag starts.
   int GetMinimumDragDistance() const;
@@ -115,6 +109,7 @@ class ShelfViewTestAPI {
 
  private:
   ShelfView* shelf_view_;
+  int id_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfViewTestAPI);
 };

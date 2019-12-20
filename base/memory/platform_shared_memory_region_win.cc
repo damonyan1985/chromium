@@ -14,7 +14,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/process/process_handle.h"
 #include "base/rand_util.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/win/windows_version.h"
 
 namespace base {
@@ -144,19 +146,6 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
   return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
 }
 
-// static
-PlatformSharedMemoryRegion
-PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
-    const SharedMemoryHandle& handle,
-    Mode mode) {
-  CHECK(mode == Mode::kReadOnly || mode == Mode::kUnsafe);
-  if (!handle.IsValid())
-    return {};
-
-  return Take(base::win::ScopedHandle(handle.GetHandle()), mode,
-              handle.GetSize(), handle.GetGUID());
-}
-
 HANDLE PlatformSharedMemoryRegion::GetPlatformHandle() const {
   return handle_.Get();
 }
@@ -252,8 +241,10 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
     return {};
   }
 
+  // Aligning may overflow so check that the result doesn't decrease.
   size_t rounded_size = bits::Align(size, kSectionSize);
-  if (rounded_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
+  if (rounded_size < size ||
+      rounded_size > static_cast<size_t>(std::numeric_limits<int>::max())) {
     LogError(CreateError::SIZE_TOO_LARGE, 0);
     return {};
   }
@@ -278,15 +269,15 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
   }
 
   string16 name;
-  if (base::win::GetVersion() < base::win::VERSION_WIN8_1) {
+  if (win::GetVersion() < win::Version::WIN8_1) {
     // Windows < 8.1 ignores DACLs on certain unnamed objects (like shared
     // sections). So, we generate a random name when we need to enforce
     // read-only.
     uint64_t rand_values[4];
     RandBytes(&rand_values, sizeof(rand_values));
-    name = StringPrintf(L"CrSharedMem_%016llx%016llx%016llx%016llx",
-                        rand_values[0], rand_values[1], rand_values[2],
-                        rand_values[3]);
+    name = ASCIIToUTF16(StringPrintf("CrSharedMem_%016llx%016llx%016llx%016llx",
+                                     rand_values[0], rand_values[1],
+                                     rand_values[2], rand_values[3]));
     DCHECK(!name.empty());
   }
 
@@ -294,7 +285,7 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
   // Ask for the file mapping with reduced permisions to avoid passing the
   // access control permissions granted by default into unpriviledged process.
   HANDLE h = CreateFileMappingWithReducedPermissions(
-      &sa, rounded_size, name.empty() ? nullptr : name.c_str());
+      &sa, rounded_size, name.empty() ? nullptr : as_wcstr(name));
   if (h == nullptr) {
     // The error is logged within CreateFileMappingWithReducedPermissions().
     return {};

@@ -8,10 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility/test_accessibility_controller_client.h"
 #include "ash/public/cpp/ash_switches.h"
-#include "ash/public/interfaces/tray_action.mojom.h"
+#include "ash/public/mojom/tray_action.mojom.h"
 #include "ash/shell.h"
 #include "ash/system/power/power_button_controller.h"
 #include "ash/test/ash_test_base.h"
@@ -22,10 +21,9 @@
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_tick_clock.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
-#include "services/ws/public/cpp/input_devices/input_device_client_test_api.h"
+#include "ui/events/devices/device_data_manager_test_api.h"
 #include "ui/events/devices/stylus_state.h"
 
 namespace ash {
@@ -36,9 +34,8 @@ constexpr double kVisibleBrightnessPercent = 10;
 
 class TestPowerManagerObserver : public chromeos::PowerManagerClient::Observer {
  public:
-  explicit TestPowerManagerObserver(
-      chromeos::FakePowerManagerClient* power_manager)
-      : power_manager_(power_manager), scoped_observer_(this) {
+  TestPowerManagerObserver()
+      : power_manager_(chromeos::FakePowerManagerClient::Get()) {
     scoped_observer_.Add(power_manager_);
     power_manager_->set_user_activity_callback(base::BindRepeating(
         &TestPowerManagerObserver::OnUserActivity, base::Unretained(this)));
@@ -72,7 +69,7 @@ class TestPowerManagerObserver : public chromeos::PowerManagerClient::Observer {
 
   ScopedObserver<chromeos::PowerManagerClient,
                  chromeos::PowerManagerClient::Observer>
-      scoped_observer_;
+      scoped_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestPowerManagerObserver);
 };
@@ -89,26 +86,19 @@ class LockScreenNoteDisplayStateHandlerTest : public AshTestBase {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kAshEnableTabletMode);
 
-    auto power_manager_client =
-        std::make_unique<chromeos::FakePowerManagerClient>();
-    power_manager_client_ = power_manager_client.get();
+    AshTestBase::SetUp();
 
     power_manager::SetBacklightBrightnessRequest request;
     request.set_percent(kVisibleBrightnessPercent);
-    power_manager_client_->SetScreenBrightness(request);
+    power_manager_client()->SetScreenBrightness(request);
 
-    power_manager_observer_ =
-        std::make_unique<TestPowerManagerObserver>(power_manager_client_);
-    chromeos::DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        std::move(power_manager_client));
-
-    AshTestBase::SetUp();
+    power_manager_observer_ = std::make_unique<TestPowerManagerObserver>();
 
     BlockUserSession(BLOCKED_BY_LOCK_SCREEN);
     InitializeTabletPowerButtonState();
 
     Shell::Get()->tray_action()->SetClient(
-        tray_action_client_.CreateInterfacePtrAndBind(),
+        tray_action_client_.CreateRemoteAndBind(),
         mojom::TrayActionState::kAvailable);
     Shell::Get()->tray_action()->FlushMojoForTesting();
     // Run the loop so the lock screen note display state handler picks up
@@ -122,7 +112,6 @@ class LockScreenNoteDisplayStateHandlerTest : public AshTestBase {
   void TearDown() override {
     power_manager_observer_.reset();
     AshTestBase::TearDown();
-    chromeos::DBusThreadManager::Shutdown();
   }
 
   bool LaunchTimeoutRunning() {
@@ -147,18 +136,18 @@ class LockScreenNoteDisplayStateHandlerTest : public AshTestBase {
   }
 
   void TurnScreenOffForUserInactivity() {
-    power_manager_client_->set_screen_brightness_percent(0);
+    power_manager_client()->set_screen_brightness_percent(0);
     power_manager::BacklightBrightnessChange change;
     change.set_percent(0.0);
     change.set_cause(power_manager::BacklightBrightnessChange_Cause_OTHER);
-    power_manager_client_->SendScreenBrightnessChanged(change);
+    power_manager_client()->SendScreenBrightnessChanged(change);
     power_manager_observer_->ClearBrightnessChanges();
   }
 
   void SimulatePowerButtonPress() {
-    power_manager_client_->SendPowerButtonEvent(true, tick_clock_.NowTicks());
+    power_manager_client()->SendPowerButtonEvent(true, tick_clock_.NowTicks());
     tick_clock_.Advance(base::TimeDelta::FromMilliseconds(10));
-    power_manager_client_->SendPowerButtonEvent(false, tick_clock_.NowTicks());
+    power_manager_client()->SendPowerButtonEvent(false, tick_clock_.NowTicks());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -185,7 +174,6 @@ class LockScreenNoteDisplayStateHandlerTest : public AshTestBase {
   }
 
  protected:
-  chromeos::FakePowerManagerClient* power_manager_client_ = nullptr;
   std::unique_ptr<TestPowerManagerObserver> power_manager_observer_;
   TestTrayActionClient tray_action_client_;
 
@@ -206,11 +194,11 @@ class LockScreenNoteDisplayStateHandlerTest : public AshTestBase {
 };
 
 TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhenScreenOn) {
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
   ASSERT_TRUE(SimulateNoteLaunchStartedIfNoteActionRequested(
@@ -220,7 +208,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhenScreenOn) {
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
   ASSERT_FALSE(LaunchTimeoutRunning());
@@ -229,11 +217,11 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhenScreenOn) {
 TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhenScreenOff) {
   TurnScreenOffForUserInactivity();
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({0.0}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -245,29 +233,30 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhenScreenOff) {
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
 
   ASSERT_FALSE(LaunchTimeoutRunning());
 }
 
+// TODO(crbug.com/1002488): Test is flaky.
 TEST_F(LockScreenNoteDisplayStateHandlerTest,
-       EjectWhenScreenOffAndNoteNotAvailable) {
+       DISABLED_EjectWhenScreenOffAndNoteNotAvailable) {
   TurnScreenOffForUserInactivity();
 
   Shell::Get()->tray_action()->UpdateLockScreenNoteState(
       mojom::TrayActionState::kNotAvailable);
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
   // Styluls eject is expected to turn the screen on due to user activity.
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -282,7 +271,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest,
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
   ASSERT_FALSE(LaunchTimeoutRunning());
@@ -291,11 +280,11 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest,
 TEST_F(LockScreenNoteDisplayStateHandlerTest, TurnScreenOnWhenAppLaunchFails) {
   TurnScreenOffForUserInactivity();
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({0.0}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -307,7 +296,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, TurnScreenOnWhenAppLaunchFails) {
       mojom::TrayActionState::kAvailable);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
 
@@ -322,16 +311,16 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, TurnScreenOnWhenAppLaunchFails) {
 TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhileScreenForcedOff) {
   SimulatePowerButtonPress();
 
-  ASSERT_TRUE(power_manager_client_->backlights_forced_off());
+  ASSERT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({0.0}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
   ASSERT_TRUE(SimulateNoteLaunchStartedIfNoteActionRequested(
@@ -341,7 +330,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhileScreenForcedOff) {
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
 
@@ -351,14 +340,14 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, EjectWhileScreenForcedOff) {
 TEST_F(LockScreenNoteDisplayStateHandlerTest, DisplayNotTurnedOffIndefinitely) {
   TurnScreenOffForUserInactivity();
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
   ASSERT_TRUE(SimulateNoteLaunchStartedIfNoteActionRequested(
       mojom::LockScreenNoteOrigin::kStylusEject));
 
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({0.0}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -366,7 +355,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, DisplayNotTurnedOffIndefinitely) {
   ASSERT_TRUE(TriggerNoteLaunchTimeout());
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -374,7 +363,7 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, DisplayNotTurnedOffIndefinitely) {
   Shell::Get()->tray_action()->UpdateLockScreenNoteState(
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
 
   ASSERT_FALSE(LaunchTimeoutRunning());
@@ -385,16 +374,16 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest, DisplayNotTurnedOffIndefinitely) {
 // display configuration to off is still in progress.
 TEST_F(LockScreenNoteDisplayStateHandlerTest,
        StylusEjectWhileForcingDisplayOff) {
-  power_manager_client_
+  power_manager_client()
       ->set_enqueue_brightness_changes_on_backlights_forced_off(true);
 
   SimulatePowerButtonPress();
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(power_manager_observer_->brightness_changes().empty());
   EXPECT_EQ(1u,
-            power_manager_client_->pending_screen_brightness_changes().size());
+            power_manager_client()->pending_screen_brightness_changes().size());
 
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
@@ -405,12 +394,12 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest,
 
   // Apply screen brightness set by forcing backlights off,
   EXPECT_EQ(1u,
-            power_manager_client_->pending_screen_brightness_changes().size());
-  ASSERT_TRUE(power_manager_client_->ApplyPendingScreenBrightnessChange());
+            power_manager_client()->pending_screen_brightness_changes().size());
+  ASSERT_TRUE(power_manager_client()->ApplyPendingScreenBrightnessChange());
 
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
   EXPECT_TRUE(
-      power_manager_client_->pending_screen_brightness_changes().empty());
+      power_manager_client()->pending_screen_brightness_changes().empty());
   EXPECT_EQ(std::vector<double>({0.0}),
             power_manager_observer_->brightness_changes());
   power_manager_observer_->ClearBrightnessChanges();
@@ -421,8 +410,8 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest,
   Shell::Get()->tray_action()->UpdateLockScreenNoteState(
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(power_manager_client_->backlights_forced_off());
-  ASSERT_TRUE(power_manager_client_->ApplyPendingScreenBrightnessChange());
+  EXPECT_FALSE(power_manager_client()->backlights_forced_off());
+  ASSERT_TRUE(power_manager_client()->ApplyPendingScreenBrightnessChange());
   EXPECT_EQ(std::vector<double>({kVisibleBrightnessPercent}),
             power_manager_observer_->brightness_changes());
 
@@ -431,39 +420,28 @@ TEST_F(LockScreenNoteDisplayStateHandlerTest,
 
 TEST_F(LockScreenNoteDisplayStateHandlerTest, ScreenA11yAlerts) {
   TestAccessibilityControllerClient a11y_client;
-  AccessibilityController* a11y_controller =
-      Shell::Get()->accessibility_controller();
-  a11y_controller->SetClient(a11y_client.CreateInterfacePtrAndBind());
-
   SimulatePowerButtonPress();
-  ASSERT_TRUE(power_manager_client_->backlights_forced_off());
+  ASSERT_TRUE(power_manager_client()->backlights_forced_off());
+  EXPECT_EQ(AccessibilityAlert::SCREEN_OFF, a11y_client.last_a11y_alert());
 
-  a11y_controller->FlushMojoForTest();
-  EXPECT_EQ(mojom::AccessibilityAlert::SCREEN_OFF,
-            a11y_client.last_a11y_alert());
-
-  ws::InputDeviceClientTestApi devices_test_api;
+  ui::DeviceDataManagerTestApi devices_test_api;
   devices_test_api.NotifyObserversStylusStateChanged(ui::StylusState::REMOVED);
   base::RunLoop().RunUntilIdle();
 
   ASSERT_TRUE(SimulateNoteLaunchStartedIfNoteActionRequested(
       mojom::LockScreenNoteOrigin::kStylusEject));
-  EXPECT_TRUE(power_manager_client_->backlights_forced_off());
+  EXPECT_TRUE(power_manager_client()->backlights_forced_off());
 
   // Screen ON alert is delayed until the screen is turned on after lock screen
   // note launch.
-  a11y_controller->FlushMojoForTest();
-  EXPECT_EQ(mojom::AccessibilityAlert::SCREEN_OFF,
-            a11y_client.last_a11y_alert());
+  EXPECT_EQ(AccessibilityAlert::SCREEN_OFF, a11y_client.last_a11y_alert());
 
   Shell::Get()->tray_action()->UpdateLockScreenNoteState(
       mojom::TrayActionState::kActive);
   base::RunLoop().RunUntilIdle();
 
   // Verify that screen on a11y alert has been sent.
-  a11y_controller->FlushMojoForTest();
-  EXPECT_EQ(mojom::AccessibilityAlert::SCREEN_ON,
-            a11y_client.last_a11y_alert());
+  EXPECT_EQ(AccessibilityAlert::SCREEN_ON, a11y_client.last_a11y_alert());
 }
 
 TEST_F(LockScreenNoteDisplayStateHandlerTest,

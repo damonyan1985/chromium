@@ -26,7 +26,7 @@ const gfx::Point CenterRight(const gfx::Rect& rect) {
 
 class TestSelectionControllerDelegate : public SelectionControllerDelegate {
  public:
-  TestSelectionControllerDelegate(gfx::RenderText* render_text)
+  explicit TestSelectionControllerDelegate(gfx::RenderText* render_text)
       : render_text_(render_text) {}
   ~TestSelectionControllerDelegate() override = default;
 
@@ -60,7 +60,7 @@ class TestSelectionControllerDelegate : public SelectionControllerDelegate {
 class SelectionControllerTest : public ::testing::Test {
  public:
   void SetUp() override {
-    render_text_ = gfx::RenderText::CreateHarfBuzzInstance();
+    render_text_ = gfx::RenderText::CreateRenderText();
     delegate_ =
         std::make_unique<TestSelectionControllerDelegate>(render_text_.get());
     controller_ = std::make_unique<SelectionController>(delegate_.get());

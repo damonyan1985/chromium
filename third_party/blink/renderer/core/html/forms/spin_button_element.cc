@@ -42,10 +42,8 @@
 
 namespace blink {
 
-using namespace html_names;
-
-inline SpinButtonElement::SpinButtonElement(Document& document,
-                                            SpinButtonOwner& spin_button_owner)
+SpinButtonElement::SpinButtonElement(Document& document,
+                                     SpinButtonOwner& spin_button_owner)
     : HTMLDivElement(document),
       spin_button_owner_(&spin_button_owner),
       capturing_(false),
@@ -53,21 +51,14 @@ inline SpinButtonElement::SpinButtonElement(Document& document,
       press_starting_state_(kIndeterminate),
       repeating_timer_(document.GetTaskRunner(TaskType::kInternalDefault),
                        this,
-                       &SpinButtonElement::RepeatingTimerFired) {}
-
-SpinButtonElement* SpinButtonElement::Create(
-    Document& document,
-    SpinButtonOwner& spin_button_owner) {
-  SpinButtonElement* element =
-      MakeGarbageCollected<SpinButtonElement>(document, spin_button_owner);
-  element->SetShadowPseudoId(AtomicString("-webkit-inner-spin-button"));
-  element->setAttribute(kIdAttr, shadow_element_names::SpinButton());
-  return element;
+                       &SpinButtonElement::RepeatingTimerFired) {
+  SetShadowPseudoId(AtomicString("-webkit-inner-spin-button"));
+  setAttribute(html_names::kIdAttr, shadow_element_names::SpinButton());
 }
 
-void SpinButtonElement::DetachLayoutTree(const AttachContext& context) {
+void SpinButtonElement::DetachLayoutTree(bool performing_reattach) {
   ReleaseCapture(kEventDispatchDisallowed);
-  HTMLDivElement::DetachLayoutTree(context);
+  HTMLDivElement::DetachLayoutTree(performing_reattach);
 }
 
 void SpinButtonElement::DefaultEventHandler(Event& event) {
@@ -91,11 +82,11 @@ void SpinButtonElement::DefaultEventHandler(Event& event) {
   }
 
   auto& mouse_event = ToMouseEvent(event);
-  IntPoint local = RoundedIntPoint(box->AbsoluteToLocal(
-      FloatPoint(mouse_event.AbsoluteLocation()), kUseTransforms));
+  IntPoint local = RoundedIntPoint(box->AbsoluteToLocalFloatPoint(
+      FloatPoint(mouse_event.AbsoluteLocation())));
   if (mouse_event.type() == event_type_names::kMousedown &&
       mouse_event.button() ==
-          static_cast<short>(WebPointerProperties::Button::kLeft)) {
+          static_cast<int16_t>(WebPointerProperties::Button::kLeft)) {
     if (box->PixelSnappedBorderBoxRect().Contains(local)) {
       if (spin_button_owner_)
         spin_button_owner_->FocusAndSelectSpinButtonOwner();
@@ -125,7 +116,7 @@ void SpinButtonElement::DefaultEventHandler(Event& event) {
     }
   } else if (mouse_event.type() == event_type_names::kMouseup &&
              mouse_event.button() ==
-                 static_cast<short>(WebPointerProperties::Button::kLeft)) {
+                 static_cast<int16_t>(WebPointerProperties::Button::kLeft)) {
     ReleaseCapture();
   } else if (event.type() == event_type_names::kMousemove) {
     if (box->PixelSnappedBorderBoxRect().Contains(local)) {
@@ -243,10 +234,10 @@ void SpinButtonElement::RepeatingTimerFired(TimerBase*) {
     Step(up_down_state_ == kUp ? 1 : -1);
 }
 
-void SpinButtonElement::SetHovered(bool flag) {
-  if (!flag)
+void SpinButtonElement::SetHovered(bool hovered) {
+  if (!hovered)
     up_down_state_ = kIndeterminate;
-  HTMLDivElement::SetHovered(flag);
+  HTMLDivElement::SetHovered(hovered);
 }
 
 bool SpinButtonElement::ShouldRespondToMouseEvents() {

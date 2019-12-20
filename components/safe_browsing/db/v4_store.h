@@ -23,7 +23,7 @@ namespace safe_browsing {
 class V4Store;
 
 using UpdatedStoreReadyCallback =
-    base::Callback<void(std::unique_ptr<V4Store> new_store)>;
+    base::OnceCallback<void(std::unique_ptr<V4Store> new_store)>;
 
 // The sorted list of hash prefixes.
 using HashPrefixes = std::string;
@@ -296,6 +296,7 @@ class V4Store {
   FRIEND_TEST_ALL_PREFIXES(V4StorePerftest, StressTest);
 
   friend class V4StoreTest;
+  friend class V4StoreFuzzer;
 
   // If |prefix_size| is within expected range, and |raw_hashes_length| is a
   // multiple of prefix_size, then it sets the string of length

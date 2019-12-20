@@ -114,11 +114,15 @@ class AudioWorkletNode final : public AudioNode,
   // IDL
   AudioParamMap* parameters() const;
   MessagePort* port() const;
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(processorerror, kProcessorerror);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(processorerror, kProcessorerror)
 
   void FireProcessorError();
 
   void Trace(blink::Visitor*) override;
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
 
  private:
   scoped_refptr<AudioWorkletHandler> GetWorkletHandler() const;

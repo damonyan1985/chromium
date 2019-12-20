@@ -1,0 +1,8 @@
+[
+    Exposed=(Window,Worker),
+    MeasureAs=CompressionStreamConstructor
+] interface CompressionStream {
+    [CallWith=ScriptState, RaisesException] constructor(DOMString format);
+    readonly attribute ReadableStream readable;
+    readonly attribute WritableStream writable;
+};

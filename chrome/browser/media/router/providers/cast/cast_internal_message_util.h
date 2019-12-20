@@ -9,18 +9,18 @@
 #include "base/macros.h"
 #include "base/values.h"
 #include "third_party/blink/public/mojom/presentation/presentation.mojom.h"
-
-namespace cast_channel {
-class CastMessage;
-}
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace media_router {
+
+using cast::channel::CastMessage;
 
 class MediaSinkInternal;
 
 // Represents a message sent or received by the Cast SDK via a
 // PresentationConnection.
-struct CastInternalMessage {
+class CastInternalMessage {
+ public:
   // TODO(crbug.com/809249): Add other types of messages.
   enum class Type {
     kClientConnect,   // Initial message sent by SDK client to connect to MRP.
@@ -28,13 +28,33 @@ struct CastInternalMessage {
                       // receiver.
     kV2Message,       // Cast protocol messages between SDK client and the
                       // receiver.
+    kLeaveSession,    // Message sent by SDK client to leave current session.
     kReceiverAction,  // Message sent by MRP to inform SDK client of action.
     kNewSession,      // Message sent by MRP to inform SDK client of new
                       // session.
     kUpdateSession,   // Message sent by MRP to inform SDK client of updated
                       // session.
-    kOther            // All other types of messages which are not considered
-                      // part of communication with Cast SDK.
+    kError,
+    kOther,  // All other types of messages which are not considered
+             // part of communication with Cast SDK.
+    kMaxValue = kOther,
+  };
+
+  // Errors that may be returned by the SDK.
+  enum class ErrorCode {
+    kInternalError,           // Internal error.  (Not specified by Cast API.)
+    kCancel,                  // The operation was canceled by the user.
+    kTimeout,                 // The operation timed out.
+    kApiNotInitialized,       // The API is not initialized.
+    kInvalidParameter,        // The parameters to the operation were not valid.
+    kExtensionNotCompatible,  // The API script is not compatible with
+                              // this Cast implementation.
+    kReceiverUnavailable,     // No receiver was compatible with the session
+                              // request.
+    kSessionError,  // A session could not be created, or a session was invalid.
+    kChannelError,  // A channel to the receiver is not available.
+    kLoadMediaFailed,  // Load media failed.
+    kMaxValue = kLoadMediaFailed,
   };
 
   // Returns a CastInternalMessage for |message|, or nullptr is |message| is not
@@ -43,32 +63,36 @@ struct CastInternalMessage {
 
   ~CastInternalMessage();
 
-  const Type type;
-  const std::string client_id;
-  const base::Optional<int> sequence_number;
+  Type type() const { return type_; }
+  const std::string& client_id() const { return client_id_; }
+  base::Optional<int> sequence_number() const { return sequence_number_; }
+
+  bool has_session_id() const {
+    return type_ == Type::kAppMessage || type_ == Type::kV2Message;
+  }
 
   const std::string& session_id() const {
-    DCHECK(type == Type::kAppMessage || type == Type::kV2Message);
+    DCHECK(has_session_id());
     return session_id_;
   }
 
   const std::string& app_message_namespace() const {
-    DCHECK(type == Type::kAppMessage);
+    DCHECK(type_ == Type::kAppMessage);
     return namespace_or_v2_type_;
   }
 
   const std::string& v2_message_type() const {
-    DCHECK(type == Type::kV2Message);
+    DCHECK(type_ == Type::kV2Message);
     return namespace_or_v2_type_;
   }
 
   const base::Value& app_message_body() const {
-    DCHECK(type == Type::kAppMessage);
+    DCHECK(type_ == Type::kAppMessage);
     return message_body_;
   }
 
   const base::Value& v2_message_body() const {
-    DCHECK(type == Type::kV2Message);
+    DCHECK(type_ == Type::kV2Message);
     return message_body_;
   }
 
@@ -79,6 +103,10 @@ struct CastInternalMessage {
                       const std::string& session_id,
                       const std::string& namespace_or_v2_type_,
                       base::Value message_body);
+
+  const Type type_;
+  const std::string client_id_;
+  const base::Optional<int> sequence_number_;
 
   // Set if |type| is |kAppMessage| or |kV2Message|.
   const std::string session_id_;
@@ -174,10 +202,20 @@ blink::mojom::PresentationConnectionMessagePtr CreateAppMessageAck(
 blink::mojom::PresentationConnectionMessagePtr CreateAppMessage(
     const std::string& session_id,
     const std::string& client_id,
-    const cast_channel::CastMessage& cast_message);
+    const CastMessage& cast_message);
 blink::mojom::PresentationConnectionMessagePtr CreateV2Message(
     const std::string& client_id,
     const base::Value& payload,
+    base::Optional<int> sequence_number);
+blink::mojom::PresentationConnectionMessagePtr CreateErrorMessage(
+    const std::string& client_id,
+    base::Value error,
+    base::Optional<int> sequence_number);
+blink::mojom::PresentationConnectionMessagePtr CreateLeaveSessionAckMessage(
+    const std::string& client_id,
+    base::Optional<int> sequence_number);
+blink::mojom::PresentationConnectionMessagePtr CreateLeaveSessionAckMessage(
+    const std::string& client_id,
     base::Optional<int> sequence_number);
 
 base::Value SupportedMediaRequestsToListValue(int media_requests);

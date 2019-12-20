@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 
+#include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
@@ -21,6 +22,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/autofill/autofill_uitest.h"
 #include "chrome/browser/autofill/autofill_uitest_util.h"
+#include "chrome/browser/autofill/automated_tests/cache_replayer.h"
 #include "chrome/browser/autofill/captured_sites_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/autofill/chrome_autofill_client.h"
@@ -35,63 +37,42 @@
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_manager_test_delegate.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/state_names.h"
+#include "components/autofill/core/browser/geo/state_names.h"
+#include "components/autofill/core/browser/proto/server.pb.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
+#include "net/dns/mock_host_resolver.h"
+#include "services/network/public/cpp/data_element.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using captured_sites_test_utils::CapturedSiteParams;
+using captured_sites_test_utils::GetCapturedSites;
 
 namespace {
 
 const base::TimeDelta autofill_wait_for_action_interval =
     base::TimeDelta::FromSeconds(5);
 
-struct GetParamAsString {
-  template <class ParamType>
-  std::string operator()(const testing::TestParamInfo<ParamType>& info) const {
-    return info.param;
-  }
-};
-
-base::FilePath GetReplayFilesDirectory() {
+base::FilePath GetReplayFilesRootDirectory() {
   base::FilePath src_dir;
   if (base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir)) {
-    return src_dir.Append(
-        FILE_PATH_LITERAL("chrome/test/data/autofill/captured_sites"));
+    return src_dir.AppendASCII("chrome")
+        .AppendASCII("test")
+        .AppendASCII("data")
+        .AppendASCII("autofill")
+        .AppendASCII("captured_sites");
   } else {
     src_dir.clear();
     return src_dir;
   }
-}
-
-// Iterate through Autofill's Web Page Replay capture file directory to look
-// for captures sites and automation recipe files. Return a list of sites for
-// which recipe-based testing is available.
-std::vector<std::string> GetCapturedSites() {
-  std::vector<std::string> sites;
-  base::FileEnumerator capture_files(GetReplayFilesDirectory(), false,
-                                     base::FileEnumerator::FILES);
-  for (base::FilePath file = capture_files.Next(); !file.empty();
-       file = capture_files.Next()) {
-    // If a site capture file is found, also look to see if the directory has
-    // a corresponding recorded action recipe log file.
-    // A site capture file has no extension. A recorded action recipe log file
-    // has the '.test' extension.
-    if (file.Extension().empty() &&
-        base::PathExists(file.AddExtension(FILE_PATH_LITERAL(".test")))) {
-      sites.push_back(
-          captured_sites_test_utils::FilePathToUTF8(file.BaseName().value()));
-    }
-  }
-  std::sort(sites.begin(), sites.end());
-  return sites;
 }
 
 }  // namespace
@@ -102,13 +83,13 @@ class AutofillCapturedSitesInteractiveTest
     : public AutofillUiTest,
       public captured_sites_test_utils::
           TestRecipeReplayChromeFeatureActionExecutor,
-      public ::testing::WithParamInterface<std::string> {
+      public ::testing::WithParamInterface<CapturedSiteParams> {
  public:
   // TestRecipeReplayChromeFeatureActionExecutor
-  bool AutofillForm(content::RenderFrameHost* frame,
-                    const std::string& focus_element_css_selector,
+  bool AutofillForm(const std::string& focus_element_css_selector,
                     const std::vector<std::string> iframe_path,
-                    const int attempts = 1) override {
+                    const int attempts,
+                    content::RenderFrameHost* frame) override {
     content::WebContents* web_contents =
         content::WebContents::FromRenderFrameHost(frame);
     AutofillManager* autofill_manager =
@@ -122,28 +103,28 @@ class AutofillCapturedSitesInteractiveTest
       tries++;
       autofill_manager->client()->HideAutofillPopup();
 
-      if (!ShowAutofillSuggestion(frame, focus_element_css_selector,
-                                  iframe_path)) {
+      if (!ShowAutofillSuggestion(focus_element_css_selector, iframe_path,
+                                  frame)) {
         LOG(WARNING) << "Failed to bring up the autofill suggestion drop down.";
         continue;
       }
 
       // Press the down key to highlight the first choice in the autofill
       // suggestion drop down.
-      test_delegate()->Reset();
+      test_delegate()->SetExpectations({ObservedUiEvents::kPreviewFormData},
+                                       autofill_wait_for_action_interval);
       SendKeyToPopup(frame, ui::DomKey::ARROW_DOWN);
-      if (!test_delegate()->Wait({ObservedUiEvents::kPreviewFormData},
-                                 autofill_wait_for_action_interval)) {
+      if (!test_delegate()->Wait()) {
         LOG(WARNING) << "Failed to select an option from the "
                      << "autofill suggestion drop down.";
         continue;
       }
 
       // Press the enter key to invoke autofill using the first suggestion.
-      test_delegate()->Reset();
+      test_delegate()->SetExpectations({ObservedUiEvents::kFormDataFilled},
+                                       autofill_wait_for_action_interval);
       SendKeyToPopup(frame, ui::DomKey::ENTER);
-      if (!test_delegate()->Wait({ObservedUiEvents::kFormDataFilled},
-                                 autofill_wait_for_action_interval)) {
+      if (!test_delegate()->Wait()) {
         LOG(WARNING) << "Failed to fill the form.";
         continue;
       }
@@ -218,11 +199,30 @@ class AutofillCapturedSitesInteractiveTest
         std::make_unique<captured_sites_test_utils::TestRecipeReplayer>(
             browser(), this);
     recipe_replayer()->Setup();
+
+    SetServerUrlLoader(std::make_unique<test::ServerUrlLoader>(
+        std::make_unique<test::ServerCacheReplayer>(
+            GetParam().capture_file_path,
+            test::ServerCacheReplayer::kOptionFailOnInvalidJsonRecord |
+                test::ServerCacheReplayer::kOptionSplitRequestsByForm)));
   }
 
   void TearDownOnMainThread() override {
     recipe_replayer()->Cleanup();
+    // Need to delete the URL loader and its underlying interceptor on the main
+    // thread. Will result in a fatal crash otherwise. The pointer has its
+    // memory cleaned up twice: first time in that single thread, a second time
+    // when the fixture's destructor is called, which will have no effect since
+    // the raw pointer will be nullptr.
+    server_url_loader_.reset(nullptr);
     AutofillUiTest::TearDownOnMainThread();
+  }
+
+  void SetUpInProcessBrowserTestFixture() override {
+    // Allow access exception to live Autofill Server for
+    // overriding cache replay behavior.
+    host_resolver()->AllowDirectLookup("clients1.google.com");
+    AutofillUiTest::SetUpInProcessBrowserTestFixture();
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -230,11 +230,21 @@ class AutofillCapturedSitesInteractiveTest
     // feature forces input elements on a form to display their autofill type
     // prediction. Test will check this attribute on all the relevant input
     // elements in a form to determine if the form is ready for interaction.
-    feature_list_.InitWithFeatures({features::kAutofillShowTypePredictions},
-                                   {features::kAutofillCacheQueryResponses});
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kAutofillShowTypePredictions},
+        /*disabled_features=*/{features::kAutofillCacheQueryResponses,
+                               features::kAutofillUseApi});
     command_line->AppendSwitch(switches::kShowAutofillTypePredictions);
+    command_line->AppendSwitchASCII(::switches::kForceFieldTrials,
+                                    "AutofillFieldMetadata/Enabled/");
+
     captured_sites_test_utils::TestRecipeReplayer::SetUpCommandLine(
         command_line);
+  }
+
+  void SetServerUrlLoader(
+      std::unique_ptr<test::ServerUrlLoader> server_url_loader) {
+    server_url_loader_ = std::move(server_url_loader);
   }
 
   captured_sites_test_utils::TestRecipeReplayer* recipe_replayer() {
@@ -246,29 +256,29 @@ class AutofillCapturedSitesInteractiveTest
   const AutofillProfile profile() { return profile_; }
 
  private:
-  bool ShowAutofillSuggestion(content::RenderFrameHost* frame,
-                              const std::string& target_element_xpath,
-                              const std::vector<std::string> iframe_path) {
+  bool ShowAutofillSuggestion(const std::string& target_element_xpath,
+                              const std::vector<std::string> iframe_path,
+                              content::RenderFrameHost* frame) {
     // First, automation should focus on the frame containg the autofill form.
     // Doing so ensures that Chrome scrolls the element into view if the
     // element is off the page.
     if (!captured_sites_test_utils::TestRecipeReplayer::PlaceFocusOnElement(
-            frame, target_element_xpath, iframe_path))
+            target_element_xpath, iframe_path, frame))
       return false;
 
     gfx::Rect rect;
     if (!captured_sites_test_utils::TestRecipeReplayer::
-            GetBoundingRectOfTargetElement(frame, target_element_xpath,
-                                           iframe_path, &rect))
+            GetBoundingRectOfTargetElement(target_element_xpath, iframe_path,
+                                           frame, &rect))
       return false;
 
-    test_delegate()->Reset();
+    test_delegate()->SetExpectations({ObservedUiEvents::kSuggestionShown},
+                                     autofill_wait_for_action_interval);
     if (!captured_sites_test_utils::TestRecipeReplayer::
-            SimulateLeftMouseClickAt(frame, rect.CenterPoint()))
+            SimulateLeftMouseClickAt(rect.CenterPoint(), frame))
       return false;
 
-    return test_delegate()->Wait({ObservedUiEvents::kSuggestionShown},
-                                 autofill_wait_for_action_interval);
+    return test_delegate()->Wait();
   }
 
   bool StringToFieldType(const std::string& str, ServerFieldType* type) {
@@ -285,28 +295,48 @@ class AutofillCapturedSitesInteractiveTest
   std::map<const std::string, ServerFieldType> string_to_field_type_map_;
 
   base::test::ScopedFeatureList feature_list_;
+
+  std::unique_ptr<test::ServerUrlLoader> server_url_loader_;
 };
 
 IN_PROC_BROWSER_TEST_P(AutofillCapturedSitesInteractiveTest, Recipe) {
   // Prints the path of the test to be executed.
-  VLOG(1) << GetParam();
+  VLOG(1) << GetParam().site_name;
 
-  // Craft the capture file path.
   base::FilePath src_dir;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
-  base::FilePath capture_file_path =
-      GetReplayFilesDirectory().AppendASCII(GetParam().c_str());
 
-  // Craft the recipe file path.
-  base::FilePath recipe_file_path = GetReplayFilesDirectory().AppendASCII(
-      base::StringPrintf("%s.test", GetParam().c_str()));
+  bool test_completed = recipe_replayer()->ReplayTest(
+      GetParam().capture_file_path, GetParam().recipe_file_path);
+  if (!test_completed)
+    ADD_FAILURE() << "Full execution was unable to complete.";
 
-  ASSERT_TRUE(
-      recipe_replayer()->ReplayTest(capture_file_path, recipe_file_path));
+  std::vector<testing::AssertionResult> validation_failures =
+      recipe_replayer()->GetValidationFailures();
+  if (GetParam().expectation == captured_sites_test_utils::kPass) {
+    if (validation_failures.empty()) {
+      VLOG(1) << "No Validation Failures";
+    } else {
+      LOG(INFO) << "There were " << validation_failures.size()
+              << " Validation Failure(s)";
+      for (auto& validation_failure : validation_failures)
+        ADD_FAILURE() << validation_failure.message();
+    }
+  } else {
+    if (validation_failures.empty()) {
+      VLOG(1) << "Expected Validation Failures but still succeeded. "
+              << "Time to update testcases.json file?";
+    } else {
+      VLOG(1) << "Validation Failures expected and received so skipping";
+      for (auto& validation_failure : validation_failures)
+        VLOG(1) << validation_failure.message();
+      GTEST_SKIP();
+    }
+  }
 }
-
-INSTANTIATE_TEST_CASE_P(,
-                        AutofillCapturedSitesInteractiveTest,
-                        testing::ValuesIn(GetCapturedSites()),
-                        GetParamAsString());
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    AutofillCapturedSitesInteractiveTest,
+    testing::ValuesIn(GetCapturedSites(GetReplayFilesRootDirectory())),
+    captured_sites_test_utils::GetParamAsString());
 }  // namespace autofill

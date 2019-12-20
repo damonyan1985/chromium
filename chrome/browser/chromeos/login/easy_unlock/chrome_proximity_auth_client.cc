@@ -16,13 +16,11 @@
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service_signin_chromeos.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_window.h"
-#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/services/device_sync/public/cpp/device_sync_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 using proximity_auth::ScreenlockState;
 
@@ -32,15 +30,6 @@ ChromeProximityAuthClient::ChromeProximityAuthClient(Profile* profile)
     : profile_(profile) {}
 
 ChromeProximityAuthClient::~ChromeProximityAuthClient() {}
-
-std::string ChromeProximityAuthClient::GetAuthenticatedUsername() const {
-  const identity::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfileIfExists(profile_);
-  // |profile_| has to be a signed-in profile with IdentityManager already
-  // created. Otherwise, just crash to collect stack.
-  DCHECK(identity_manager);
-  return identity_manager->GetPrimaryAccountInfo().email;
-}
 
 void ChromeProximityAuthClient::UpdateScreenlockState(ScreenlockState state) {
   EasyUnlockService* service = EasyUnlockService::Get(profile_);
@@ -61,7 +50,7 @@ void ChromeProximityAuthClient::FinalizeSignin(const std::string& secret) {
 }
 
 void ChromeProximityAuthClient::GetChallengeForUserAndDevice(
-    const std::string& user_id,
+    const std::string& user_email,
     const std::string& remote_public_key,
     const std::string& channel_binding_data,
     base::Callback<void(const std::string& challenge)> callback) {
@@ -73,7 +62,7 @@ void ChromeProximityAuthClient::GetChallengeForUserAndDevice(
   }
 
   static_cast<EasyUnlockServiceSignin*>(easy_unlock_service)
-      ->WrapChallengeForUserAndDevice(AccountId::FromUserEmail(user_id),
+      ->WrapChallengeForUserAndDevice(AccountId::FromUserEmail(user_email),
                                       remote_public_key, channel_binding_data,
                                       callback);
 }

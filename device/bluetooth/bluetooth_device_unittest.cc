@@ -68,31 +68,41 @@ TEST(BluetoothDeviceTest, CanonicalizeAddressFormat_AcceptsAllValidFormats) {
     SCOPED_TRACE(std::string("Input format: '") + kValidFormats[i] + "'");
     EXPECT_EQ("1A:2B:3C:4D:5E:6F",
               BluetoothDevice::CanonicalizeAddress(kValidFormats[i]));
+
+    std::array<uint8_t, 6> parsed;
+    EXPECT_TRUE(BluetoothDevice::ParseAddress(kValidFormats[i], parsed));
+    EXPECT_EQ("\x1a\x2b\x3c\x4d\x5e\x6f",
+              std::string(parsed.begin(), parsed.end()));
   }
 }
 
 TEST(BluetoothDeviceTest, CanonicalizeAddressFormat_RejectsInvalidFormats) {
-  const char* const kValidFormats[] = {
-    // Empty string.
-    "",
-    // Too short.
-    "1A:2B:3C:4D:5E",
-    // Too long.
-    "1A:2B:3C:4D:5E:6F:70",
-    // Missing a separator.
-    "1A:2B:3C:4D:5E6F",
-    // Mixed separators.
-    "1A:2B-3C:4D-5E:6F",
-    // Invalid characters.
-    "1A:2B-3C:4D-5E:6X",
-    // Separators in the wrong place.
-    "1:A2:B3:C4:D5:E6F",
+  const char* const kInvalidFormats[] = {
+      // Empty string.
+      "",
+      // Too short.
+      "1A:2B:3C:4D:5E",
+      // Too long.
+      "1A:2B:3C:4D:5E:6F:70",
+      // Missing a separator.
+      "1A:2B:3C:4D:5E6F",
+      // Mixed separators.
+      "1A:2B-3C:4D-5E:6F",
+      // Invalid hex (6X)
+      "1A:2B:3C:4D:5E:6X",
+      // Separators in the wrong place.
+      "1:A2:B3:C4:D5:E6F",
+      // Wrong separator
+      "1A|2B|3C|4D|5E|6F",
   };
 
-  for (size_t i = 0; i < base::size(kValidFormats); ++i) {
-    SCOPED_TRACE(std::string("Input format: '") + kValidFormats[i] + "'");
+  for (size_t i = 0; i < base::size(kInvalidFormats); ++i) {
+    SCOPED_TRACE(std::string("Input format: '") + kInvalidFormats[i] + "'");
     EXPECT_EQ(std::string(),
-              BluetoothDevice::CanonicalizeAddress(kValidFormats[i]));
+              BluetoothDevice::CanonicalizeAddress(kInvalidFormats[i]));
+
+    std::array<uint8_t, 6> parsed;
+    EXPECT_FALSE(BluetoothDevice::ParseAddress(kInvalidFormats[i], parsed));
   }
 }
 
@@ -140,7 +150,7 @@ TEST_P(BluetoothTestWinrtOnly, DevicePairRequestPinCodeCorrect) {
 
   SimulatePairingPinCode(device, "123456");
   TestPairingDelegate pairing_delegate;
-  device->Pair(&pairing_delegate, GetCallback(Call::EXPECTED),
+  device->Pair(&pairing_delegate, GetOnceCallback(Call::EXPECTED),
                GetConnectErrorCallback(Call::NOT_EXPECTED));
   base::RunLoop().RunUntilIdle();
 
@@ -174,7 +184,7 @@ TEST_P(BluetoothTestWinrtOnly, DevicePairRequestPinCodeWrong) {
 
   SimulatePairingPinCode(device, "123456");
   TestPairingDelegate pairing_delegate;
-  device->Pair(&pairing_delegate, GetCallback(Call::NOT_EXPECTED),
+  device->Pair(&pairing_delegate, GetOnceCallback(Call::NOT_EXPECTED),
                GetConnectErrorCallback(Call::EXPECTED));
   base::RunLoop().RunUntilIdle();
 
@@ -209,7 +219,7 @@ TEST_P(BluetoothTestWinrtOnly, DevicePairRequestPinCodeRejectPairing) {
 
   SimulatePairingPinCode(device, "123456");
   TestPairingDelegate pairing_delegate;
-  device->Pair(&pairing_delegate, GetCallback(Call::NOT_EXPECTED),
+  device->Pair(&pairing_delegate, GetOnceCallback(Call::NOT_EXPECTED),
                GetConnectErrorCallback(Call::EXPECTED));
   base::RunLoop().RunUntilIdle();
 
@@ -244,7 +254,7 @@ TEST_P(BluetoothTestWinrtOnly, DevicePairRequestPinCodeCancelPairing) {
 
   SimulatePairingPinCode(device, "123456");
   TestPairingDelegate pairing_delegate;
-  device->Pair(&pairing_delegate, GetCallback(Call::NOT_EXPECTED),
+  device->Pair(&pairing_delegate, GetOnceCallback(Call::NOT_EXPECTED),
                GetConnectErrorCallback(Call::EXPECTED));
   base::RunLoop().RunUntilIdle();
 
@@ -287,9 +297,8 @@ TEST_F(BluetoothTest, LowEnergyDeviceProperties) {
   EXPECT_EQ(base::UTF8ToUTF16(kTestDeviceName), device->GetNameForDisplay());
   EXPECT_FALSE(device->IsPaired());
   UUIDSet uuids = device->GetUUIDs();
-  EXPECT_TRUE(base::ContainsKey(uuids, BluetoothUUID(kTestUUIDGenericAccess)));
-  EXPECT_TRUE(
-      base::ContainsKey(uuids, BluetoothUUID(kTestUUIDGenericAttribute)));
+  EXPECT_TRUE(base::Contains(uuids, BluetoothUUID(kTestUUIDGenericAccess)));
+  EXPECT_TRUE(base::Contains(uuids, BluetoothUUID(kTestUUIDGenericAttribute)));
 }
 
 // Verifies that the device name can be populated by later advertisement
@@ -1154,14 +1163,17 @@ TEST_F(BluetoothTest, MAYBE_GetName_NullName) {
 
   BluetoothDevice* device = SimulateLowEnergyDevice(5);
   EXPECT_FALSE(device->GetName());
-}
 
-// TODO(506415): Test GetNameForDisplay with a device with no name.
-// BluetoothDevice::GetAddressWithLocalizedDeviceTypeName() will run, which
-// requires string resources to be loaded. For that, something like
-// InitSharedInstance must be run. See unittest files that call that. It will
-// also require build configuration to generate string resources into a .pak
-// file.
+  // The check below is not currently working on Android and Mac because the
+  // GetAppearance() method is not implemented on those platforms.
+  // TODO(https://crbug.com/588083): Enable the check below when GetAppearance()
+  // is implemented for Android and Mac.
+#if !defined(OS_ANDROID) && !defined(OS_MACOSX)
+  EXPECT_EQ(
+      device->GetNameForDisplay(),
+      base::UTF8ToUTF16("Unknown or Unsupported Device (01:00:00:90:1E:BE)"));
+#endif
+}
 
 #if defined(OS_ANDROID) || defined(OS_MACOSX)
 #define MAYBE_CreateGattConnection CreateGattConnection
@@ -2220,5 +2232,25 @@ TEST_F(BluetoothTest, DISABLED_GattConnectedNameChange) {
   EXPECT_EQ(1, observer.device_changed_count());
   EXPECT_EQ(base::UTF8ToUTF16(kTestDeviceName), device->GetNameForDisplay());
 }
+
+#if defined(OS_WIN)
+// WinRT sometimes calls OnConnectionStatusChanged when the status is
+// initialized and not when changed.
+TEST_P(BluetoothTestWinrtOnly, FalseStatusChangedTest) {
+  if (!PlatformSupportsLowEnergy()) {
+    LOG(WARNING) << "Low Energy Bluetooth unavailable, skipping unit test.";
+    return;
+  }
+  InitWithFakeAdapter();
+  StartLowEnergyDiscoverySession();
+  BluetoothDevice* device = SimulateLowEnergyDevice(3);
+  EXPECT_FALSE(device->IsConnected());
+  device->CreateGattConnection(GetGattConnectionCallback(Call::NOT_EXPECTED),
+                               GetConnectErrorCallback(Call::NOT_EXPECTED));
+  SimulateStatusChangeToDisconnect(device);
+
+  base::RunLoop().RunUntilIdle();
+}
+#endif
 
 }  // namespace device

@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
 #include "components/spellcheck/common/spellcheck.mojom.h"
@@ -14,36 +13,55 @@
 #include "components/spellcheck/renderer/spellcheck.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 
-FakeTextCheckingCompletion::FakeTextCheckingCompletion()
-    : completion_count_(0), cancellation_count_(0) {}
+FakeTextCheckingCompletion::FakeTextCheckingCompletion(
+    FakeTextCheckingResult* result)
+    : result_(result) {}
 
 FakeTextCheckingCompletion::~FakeTextCheckingCompletion() {}
 
 void FakeTextCheckingCompletion::DidFinishCheckingText(
     const blink::WebVector<blink::WebTextCheckingResult>& results) {
-  ++completion_count_;
+  ++result_->completion_count_;
 }
 
 void FakeTextCheckingCompletion::DidCancelCheckingText() {
-  ++completion_count_;
-  ++cancellation_count_;
+  ++result_->completion_count_;
+  ++result_->cancellation_count_;
+}
+
+FakeSpellCheck::FakeSpellCheck(
+    service_manager::LocalInterfaceProvider* embedder_provider)
+    : SpellCheck(embedder_provider) {}
+
+void FakeSpellCheck::SetFakeLanguageCounts(size_t language_count,
+                                           size_t enabled_count) {
+  use_fake_counts_ = true;
+  language_count_ = language_count;
+  enabled_language_count_ = enabled_count;
+}
+
+size_t FakeSpellCheck::LanguageCount() {
+  return use_fake_counts_ ? language_count_ : SpellCheck::LanguageCount();
+}
+
+size_t FakeSpellCheck::EnabledLanguageCount() {
+  return use_fake_counts_ ? enabled_language_count_
+                          : SpellCheck::EnabledLanguageCount();
 }
 
 TestingSpellCheckProvider::TestingSpellCheckProvider(
     service_manager::LocalInterfaceProvider* embedder_provider)
     : SpellCheckProvider(nullptr,
-                         new SpellCheck(nullptr, embedder_provider),
-                         embedder_provider),
-      binding_(this) {}
+                         new FakeSpellCheck(embedder_provider),
+                         embedder_provider) {}
 
 TestingSpellCheckProvider::TestingSpellCheckProvider(
     SpellCheck* spellcheck,
     service_manager::LocalInterfaceProvider* embedder_provider)
-    : SpellCheckProvider(nullptr, spellcheck, embedder_provider),
-      binding_(this) {}
+    : SpellCheckProvider(nullptr, spellcheck, embedder_provider) {}
 
 TestingSpellCheckProvider::~TestingSpellCheckProvider() {
-  binding_.Close();
+  receiver_.reset();
   // dictionary_update_observer_ must be released before deleting spellcheck_.
   ResetDictionaryUpdateObserverForTesting();
   delete spellcheck_;
@@ -51,15 +69,10 @@ TestingSpellCheckProvider::~TestingSpellCheckProvider() {
 
 void TestingSpellCheckProvider::RequestTextChecking(
     const base::string16& text,
-    blink::WebTextCheckingCompletion* completion) {
-  if (!loop_ && !base::MessageLoopCurrent::Get())
-    loop_ = std::make_unique<base::MessageLoop>();
-  if (!binding_.is_bound()) {
-    spellcheck::mojom::SpellCheckHostPtr host_proxy;
-    binding_.Bind(mojo::MakeRequest(&host_proxy));
-    SetSpellCheckHostForTesting(std::move(host_proxy));
-  }
-  SpellCheckProvider::RequestTextChecking(text, completion);
+    std::unique_ptr<blink::WebTextCheckingCompletion> completion) {
+  if (!receiver_.is_bound())
+    SetSpellCheckHostForTesting(receiver_.BindNewPipeAndPassRemote());
+  SpellCheckProvider::RequestTextChecking(text, std::move(completion));
   base::RunLoop().RunUntilIdle();
 }
 
@@ -68,7 +81,7 @@ void TestingSpellCheckProvider::RequestDictionary() {}
 void TestingSpellCheckProvider::NotifyChecked(const base::string16& word,
                                               bool misspelled) {}
 
-#if !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#if BUILDFLAG(USE_RENDERER_SPELLCHECKER)
 void TestingSpellCheckProvider::CallSpellingService(
     const base::string16& text,
     CallSpellingServiceCallback callback) {
@@ -79,13 +92,13 @@ void TestingSpellCheckProvider::CallSpellingService(
 void TestingSpellCheckProvider::OnCallSpellingService(
     const base::string16& text) {
   ++spelling_service_call_count_;
-  blink::WebTextCheckingCompletion* completion =
-      text_check_completions_.Lookup(last_identifier_);
-  if (!completion) {
+  if (!text_check_completions_.Lookup(last_identifier_)) {
     ResetResult();
     return;
   }
   text_.assign(text);
+  std::unique_ptr<blink::WebTextCheckingCompletion> completion(
+      text_check_completions_.Replace(last_identifier_, nullptr));
   text_check_completions_.Remove(last_identifier_);
   std::vector<blink::WebTextCheckingResult> results;
   results.push_back(
@@ -99,7 +112,7 @@ void TestingSpellCheckProvider::OnCallSpellingService(
 void TestingSpellCheckProvider::ResetResult() {
   text_.clear();
 }
-#endif  // !BUILDFLAG(USE_BROWSER_SPELLCHECKER)
+#endif  // BUILDFLAG(USE_RENDERER_SPELLCHECKER)
 
 #if BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 void TestingSpellCheckProvider::RequestTextCheck(
@@ -107,10 +120,6 @@ void TestingSpellCheckProvider::RequestTextCheck(
     int,
     RequestTextCheckCallback callback) {
   text_check_requests_.push_back(std::make_pair(text, std::move(callback)));
-}
-
-void TestingSpellCheckProvider::ToggleSpellCheck(bool, bool) {
-  NOTREACHED();
 }
 
 void TestingSpellCheckProvider::CheckSpelling(const base::string16&,
@@ -125,6 +134,30 @@ void TestingSpellCheckProvider::FillSuggestionList(const base::string16&,
 }
 #endif  // BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 
+#if BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+void TestingSpellCheckProvider::GetPerLanguageSuggestions(
+    const base::string16& word,
+    GetPerLanguageSuggestionsCallback callback) {
+  NOTREACHED();
+}
+
+void TestingSpellCheckProvider::RequestPartialTextCheck(
+    const base::string16& text,
+    int route_id,
+    const std::vector<SpellCheckResult>& partial_results,
+    bool fill_suggestions,
+    RequestPartialTextCheckCallback callback) {
+  partial_text_check_requests_.push_back(
+      std::make_pair(text, std::move(callback)));
+}
+#endif  // BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+
+#if defined(OS_ANDROID)
+void TestingSpellCheckProvider::DisconnectSessionBridge() {
+  NOTREACHED();
+}
+#endif
+
 void TestingSpellCheckProvider::SetLastResults(
     const base::string16 last_request,
     blink::WebVector<blink::WebTextCheckingResult>& last_results) {
@@ -137,6 +170,24 @@ bool TestingSpellCheckProvider::SatisfyRequestFromCache(
     blink::WebTextCheckingCompletion* completion) {
   return SpellCheckProvider::SatisfyRequestFromCache(text, completion);
 }
+
+#if BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
+int TestingSpellCheckProvider::AddCompletionForTest(
+    std::unique_ptr<FakeTextCheckingCompletion> completion) {
+  return SpellCheckProvider::text_check_completions_.Add(std::move(completion));
+}
+
+void TestingSpellCheckProvider::HybridSpellCheckParagraphComplete(
+    const base::string16& text,
+    int request_id,
+    std::vector<SpellCheckResult> renderer_results) {
+  if (!receiver_.is_bound())
+    SetSpellCheckHostForTesting(receiver_.BindNewPipeAndPassRemote());
+  SpellCheckProvider::HybridSpellCheckParagraphComplete(
+      text, request_id, std::move(renderer_results));
+  base::RunLoop().RunUntilIdle();
+}
+#endif  // BUILDFLAG(USE_WIN_HYBRID_SPELLCHECKER)
 
 SpellCheckProviderTest::SpellCheckProviderTest()
     : provider_(&embedder_provider_) {}

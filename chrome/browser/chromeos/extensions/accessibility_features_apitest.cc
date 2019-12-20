@@ -163,9 +163,9 @@ class AccessibilityFeaturesApiTest : public ExtensionApiTest,
   }
 };
 
-INSTANTIATE_TEST_CASE_P(AccessibilityFeatureaApiTestInstantiatePermission,
-                        AccessibilityFeaturesApiTest,
-                        testing::Bool());
+INSTANTIATE_TEST_SUITE_P(AccessibilityFeatureaApiTestInstantiatePermission,
+                         AccessibilityFeaturesApiTest,
+                         testing::Bool());
 
 // Tests that an extension with read permission can read accessibility features
 // state, while an extension that doesn't have the permission cannot.
@@ -236,7 +236,6 @@ IN_PROC_BROWSER_TEST_P(AccessibilityFeaturesApiTest, Set) {
   // break this assumption as it would induce loading of ChromeVox extension.
   std::vector<std::string> enabled_features;
   enabled_features.push_back("stickyKeys");
-  enabled_features.push_back("autoclick");
   enabled_features.push_back("virtualKeyboard");
 
   std::vector<std::string> disabled_features;
@@ -244,6 +243,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityFeaturesApiTest, Set) {
   disabled_features.push_back("largeCursor");
   disabled_features.push_back("highContrast");
   disabled_features.push_back("screenMagnifier");
+  disabled_features.push_back("autoclick");
 
   ASSERT_TRUE(
       InitPrefServiceForTest(GetPrefs(), enabled_features, disabled_features));

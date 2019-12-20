@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,7 +20,7 @@
 #ifdef _MSC_VER
 #include <stdlib.h>  // NOLINT(build/include)
 #elif defined(__APPLE__)
-// Mac OS X / Darwin features
+// macOS / Darwin features
 #include <libkern/OSByteOrder.h>
 #elif defined(__FreeBSD__)
 #include <sys/endian.h>
@@ -75,7 +75,7 @@ inline uint64_t gbswap_64(uint64_t host_int) {
   if (__builtin_constant_p(host_int)) {
     return __bswap_constant_64(host_int);
   } else {
-    register uint64_t result;
+    uint64_t result;
     __asm__("bswap %0" : "=r"(result) : "0"(host_int));
     return result;
   }

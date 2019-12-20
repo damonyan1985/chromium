@@ -42,12 +42,6 @@ ScrollState* ScrollState::Create(ScrollStateInit* init) {
   return scroll_state;
 }
 
-ScrollState* ScrollState::Create(std::unique_ptr<ScrollStateData> data) {
-  ScrollState* scroll_state =
-      MakeGarbageCollected<ScrollState>(std::move(data));
-  return scroll_state;
-}
-
 ScrollState::ScrollState(std::unique_ptr<ScrollStateData> data)
     : data_(std::move(data)) {}
 
@@ -71,9 +65,8 @@ void ScrollState::consumeDelta(double x,
 }
 
 void ScrollState::distributeToScrollChainDescendant() {
-  if (!scroll_chain_.empty()) {
-    DOMNodeId descendant_id = scroll_chain_.front();
-    scroll_chain_.pop_front();
+  if (!scroll_chain_.IsEmpty()) {
+    DOMNodeId descendant_id = scroll_chain_.TakeFirst();
     NodeForId(descendant_id)->CallDistributeScroll(*this);
   }
 }

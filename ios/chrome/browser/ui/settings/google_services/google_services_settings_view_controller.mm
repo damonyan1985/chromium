@@ -16,40 +16,23 @@
 #error "This file requires ARC support."
 #endif
 
-namespace {
-
-// Constants used to convert NSIndexPath into a tag. Used as:
-// item + section * kSectionOffset
-constexpr NSInteger kSectionOffset = 1000;
-
-}  // namespace
-
 @implementation GoogleServicesSettingsViewController
 
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.tableView.accessibilityIdentifier =
-      @"google_services_settings_view_controller";
+      kGoogleServicesSettingsViewIdentifier;
   self.title = l10n_util::GetNSString(IDS_IOS_GOOGLE_SERVICES_SETTINGS_TITLE);
 }
 
 #pragma mark - Private
 
-- (NSInteger)tagForIndexPath:(NSIndexPath*)indexPath {
-  return indexPath.item + indexPath.section * kSectionOffset;
-}
-
-- (NSIndexPath*)indexPathForTag:(NSInteger)tag {
-  NSInteger section = tag / kSectionOffset;
-  NSInteger item = tag - (section * kSectionOffset);
-  return [NSIndexPath indexPathForItem:item inSection:section];
-}
-
 - (void)switchAction:(UISwitch*)sender {
-  NSIndexPath* indexPath = [self indexPathForTag:sender.tag];
-  SyncSwitchItem* syncSwitchItem = base::mac::ObjCCastStrict<SyncSwitchItem>(
-      [self.tableViewModel itemAtIndexPath:indexPath]);
-  [self.serviceDelegate toggleSwitchItem:syncSwitchItem withValue:sender.isOn];
+  NSIndexPath* indexPath =
+      [self.tableViewModel indexPathForItemType:sender.tag];
+  DCHECK(indexPath);
+  TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
+  [self.serviceDelegate toggleSwitchItem:item withValue:sender.isOn];
 }
 
 #pragma mark - UITableViewDataSource
@@ -64,7 +47,8 @@ constexpr NSInteger kSectionOffset = 1000;
     [switchCell.switchView addTarget:self
                               action:@selector(switchAction:)
                     forControlEvents:UIControlEventValueChanged];
-    switchCell.switchView.tag = [self tagForIndexPath:indexPath];
+    TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
+    switchCell.switchView.tag = item.type;
   }
   return cell;
 }
@@ -137,6 +121,7 @@ constexpr NSInteger kSectionOffset = 1000;
   [super tableView:tableView didSelectRowAtIndexPath:indexPath];
   TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
   [self.serviceDelegate didSelectItem:item];
+  [tableView deselectRowAtIndexPath:indexPath animated:YES];
 }
 
 @end

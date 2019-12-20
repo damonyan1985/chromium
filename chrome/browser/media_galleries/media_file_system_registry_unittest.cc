@@ -9,6 +9,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <set>
 #include <vector>
@@ -135,7 +136,7 @@ bool TestMediaFileSystemContext::RegisterFileSystem(
 }
 
 void TestMediaFileSystemContext::RevokeFileSystem(const std::string& fs_name) {
-  if (!base::ContainsKey(file_systems_by_name_, fs_name))
+  if (!base::Contains(file_systems_by_name_, fs_name))
     return;
   EXPECT_EQ(1U, file_systems_by_name_.erase(fs_name));
 }
@@ -167,7 +168,7 @@ void GetGalleryInfoCallback(
     FSInfoMap* results,
     const std::vector<MediaFileSystemInfo>& file_systems) {
   for (size_t i = 0; i < file_systems.size(); ++i) {
-    ASSERT_FALSE(base::ContainsKey(*results, file_systems[i].pref_id));
+    ASSERT_FALSE(base::Contains(*results, file_systems[i].pref_id));
     (*results)[file_systems[i].pref_id] = file_systems[i];
   }
 }
@@ -204,7 +205,7 @@ class MockProfileSharedRenderProcessHostFactory
 
   content::RenderProcessHost* CreateRenderProcessHost(
       content::BrowserContext* browser_context,
-      content::SiteInstance* site_instance) const override;
+      content::SiteInstance* site_instance) override;
 
  private:
   class SharedMockRenderProcessHost : public content::MockRenderProcessHost {
@@ -423,7 +424,7 @@ MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
     content::BrowserContext* browser_context) {
   auto existing = rph_map_.find(browser_context);
   if (existing == rph_map_.end())
-    return NULL;
+    return nullptr;
   std::unique_ptr<content::MockRenderProcessHost> result =
       std::move(existing->second);
   rph_map_.erase(existing);
@@ -433,7 +434,7 @@ MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
 content::RenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
     content::BrowserContext* browser_context,
-    content::SiteInstance* site_instance) const {
+    content::SiteInstance* site_instance) {
   auto existing = rph_map_.find(browser_context);
   if (existing != rph_map_.end())
     return existing->second.get();
@@ -468,14 +469,14 @@ ProfileState::ProfileState(
   no_permissions_extension_ =
       AddMediaGalleriesApp("no", read_permissions, profile_.get());
 
-  single_web_contents_ =
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
+  single_web_contents_ = content::WebContentsTester::CreateTestWebContents(
+      profile_.get(), nullptr);
   single_rph_ = rph_factory->ReleaseRPH(profile_.get());
 
-  shared_web_contents1_ =
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
-  shared_web_contents2_ =
-      content::WebContentsTester::CreateTestWebContents(profile_.get(), NULL);
+  shared_web_contents1_ = content::WebContentsTester::CreateTestWebContents(
+      profile_.get(), nullptr);
+  shared_web_contents2_ = content::WebContentsTester::CreateTestWebContents(
+      profile_.get(), nullptr);
   shared_rph_ = rph_factory->ReleaseRPH(profile_.get());
 }
 
@@ -514,8 +515,7 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), no_permissions_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (no permission)", test.c_str()),
-                 base::ConstRef(empty_names),
-                 base::ConstRef(empty_expectation)));
+                 std::cref(empty_names), std::cref(empty_expectation)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
@@ -524,8 +524,8 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), regular_permission_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (regular permission)", test.c_str()),
-                 base::ConstRef(compare_names_read_),
-                 base::ConstRef(regular_extension_galleries)));
+                 std::cref(compare_names_read_),
+                 std::cref(regular_extension_galleries)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 
@@ -534,8 +534,8 @@ void ProfileState::CheckGalleries(
       single_web_contents_.get(), all_permission_extension_.get(),
       base::Bind(&ProfileState::CompareResults, base::Unretained(this),
                  base::StringPrintf("%s (all permission)", test.c_str()),
-                 base::ConstRef(compare_names_all_),
-                 base::ConstRef(all_extension_galleries)));
+                 std::cref(compare_names_all_),
+                 std::cref(all_extension_galleries)));
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(1, GetAndClearComparisonCount());
 }
@@ -733,7 +733,7 @@ void MediaFileSystemRegistryTest::CheckNewGalleryInfo(
   for (FSInfoMap::const_iterator it = new_galleries_info.begin();
        it != new_galleries_info.end();
        ++it) {
-    if (base::ContainsKey(galleries_info, it->first))
+    if (base::Contains(galleries_info, it->first))
       continue;
 
     ASSERT_FALSE(found_new);

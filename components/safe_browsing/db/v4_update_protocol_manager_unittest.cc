@@ -14,6 +14,7 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/db/safebrowsing.pb.h"
 #include "components/safe_browsing/db/util.h"
 #include "components/safe_browsing/db/v4_test_util.h"
@@ -26,6 +27,10 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+#if !BUILDFLAG(FULL_SAFE_BROWSING)
+#include "base/system/sys_info.h"
+#endif
 
 using base::Time;
 using base::TimeDelta;
@@ -76,10 +81,12 @@ class V4UpdateProtocolManagerTest : public PlatformTest {
     return V4UpdateProtocolManager::Create(
         test_shared_loader_factory_,
         GetTestV4ProtocolConfig(disable_auto_update),
-        base::Bind(&V4UpdateProtocolManagerTest::ValidateGetUpdatesResults,
-                   base::Unretained(this), expected_lurs),
-        base::Bind(&V4UpdateProtocolManagerTest::GetExtendedReportingLevel,
-                   base::Unretained(this), erl));
+        base::BindRepeating(
+            &V4UpdateProtocolManagerTest::ValidateGetUpdatesResults,
+            base::Unretained(this), expected_lurs),
+        base::BindRepeating(
+            &V4UpdateProtocolManagerTest::GetExtendedReportingLevel,
+            base::Unretained(this), erl));
   }
 
   void SetupStoreStates() {
@@ -282,8 +289,17 @@ TEST_F(V4UpdateProtocolManagerTest, TestBase64EncodingUsesUrlEncoding) {
 
   std::string encoded_request_with_minus =
       pm->GetBase64SerializedUpdateRequestProto();
-  EXPECT_EQ("Cg8KCHVuaXR0ZXN0EgMxLjAaGAgBEAIaCmg4eGZZcVk-OlIiBCABIAIoASICCAE=",
-            encoded_request_with_minus);
+
+  std::string expected =
+      "Cg8KCHVuaXR0ZXN0EgMxLjAaGAgBEAIaCmg4eGZZcVk-OlIiBCABIAIoASICCAE=";
+#if !BUILDFLAG(FULL_SAFE_BROWSING)
+  if (base::SysInfo::IsLowEndDevice()) {
+    expected =
+        "Cg8KCHVuaXR0ZXN0EgMxLjAaGwgBEAIaCmg4eGZZcVk-OlIiBxCAICABIAIoASICCAE=";
+  }
+#endif
+
+  EXPECT_EQ(expected, encoded_request_with_minus);
 
   // TODO(vakh): Add a similar test for underscore for completeness, although
   // the '-' case is sufficient to prove that we are using URL encoding.
@@ -347,6 +363,11 @@ TEST_F(V4UpdateProtocolManagerTest, TestExtendedReportingLevelIncluded) {
   (*store_state_map_)[ListIdentifier(LINUX_PLATFORM, URL, MALWARE_THREAT)] =
       "state";
   std::string base = "Cg8KCHVuaXR0ZXN0EgMxLjAaEwgBEAIaBXN0YXRlIgQgASACKAEiAgg";
+#if !BUILDFLAG(FULL_SAFE_BROWSING)
+  if (base::SysInfo::IsLowEndDevice()) {
+    base = "Cg8KCHVuaXR0ZXN0EgMxLjAaFggBEAIaBXN0YXRlIgcQgCAgASACKAEiAgg";
+  }
+#endif
 
   std::unique_ptr<V4UpdateProtocolManager> pm_with_off(CreateProtocolManager(
       std::vector<ListUpdateResponse>({}), false, SBER_LEVEL_OFF));

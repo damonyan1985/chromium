@@ -7,9 +7,8 @@
 #include <memory>
 #include <utility>
 
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/usb/web_usb_service_impl.h"
+#include "components/performance_manager/public/decorators/page_live_state_decorator.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/content_features.h"
@@ -19,6 +18,8 @@
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/usb/web_usb_chooser_android.h"
 #else
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/usb/web_usb_chooser_desktop.h"
 #endif  // defined(OS_ANDROID)
 
@@ -55,7 +56,7 @@ UsbTabHelper::~UsbTabHelper() {}
 
 void UsbTabHelper::CreateWebUsbService(
     RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<blink::mojom::WebUsbService> request) {
+    mojo::PendingReceiver<blink::mojom::WebUsbService> receiver) {
   if (!AllowedByFeaturePolicy(render_frame_host)) {
     mojo::ReportBadMessage(kFeaturePolicyViolation);
     return;
@@ -66,24 +67,28 @@ void UsbTabHelper::CreateWebUsbService(
     frame_usb_services->web_usb_service.reset(new WebUsbServiceImpl(
         render_frame_host, GetUsbChooser(render_frame_host)));
   }
-  frame_usb_services->web_usb_service->BindRequest(std::move(request));
+  frame_usb_services->web_usb_service->BindReceiver(std::move(receiver));
 }
 
 void UsbTabHelper::IncrementConnectionCount(
     RenderFrameHost* render_frame_host) {
+  const bool was_device_connected = IsDeviceConnected();
   auto it = frame_usb_services_.find(render_frame_host);
   DCHECK(it != frame_usb_services_.end());
   it->second->device_connection_count_++;
-  NotifyTabStateChanged();
+  if (!was_device_connected)
+    NotifyIsDeviceConnectedChanged(/*is_device_connected=*/true);
 }
 
 void UsbTabHelper::DecrementConnectionCount(
     RenderFrameHost* render_frame_host) {
+  DCHECK(IsDeviceConnected());
   auto it = frame_usb_services_.find(render_frame_host);
   DCHECK(it != frame_usb_services_.end());
   DCHECK_GT(it->second->device_connection_count_, 0);
   it->second->device_connection_count_--;
-  NotifyTabStateChanged();
+  if (!IsDeviceConnected())
+    NotifyIsDeviceConnectedChanged(/*is_device_connected=*/false);
 }
 
 bool UsbTabHelper::IsDeviceConnected() const {
@@ -131,8 +136,10 @@ FrameUsbServices* UsbTabHelper::GetFrameUsbService(
 }
 
 void UsbTabHelper::DeleteFrameServices(RenderFrameHost* render_frame_host) {
+  const bool was_device_connected = IsDeviceConnected();
   frame_usb_services_.erase(render_frame_host);
-  NotifyTabStateChanged();
+  if (was_device_connected && !IsDeviceConnected())
+    NotifyIsDeviceConnectedChanged(/*is_device_connected=*/false);
 }
 
 base::WeakPtr<WebUsbChooser> UsbTabHelper::GetUsbChooser(
@@ -149,7 +156,11 @@ base::WeakPtr<WebUsbChooser> UsbTabHelper::GetUsbChooser(
   return frame_usb_services->usb_chooser->GetWeakPtr();
 }
 
-void UsbTabHelper::NotifyTabStateChanged() const {
+void UsbTabHelper::NotifyIsDeviceConnectedChanged(
+    bool is_device_connected) const {
+  performance_manager::PageLiveStateDecorator::OnIsConnectedToUSBDeviceChanged(
+      web_contents(), is_device_connected);
+
   // TODO(https://crbug.com/601627): Implement tab indicator for Android.
 #if !defined(OS_ANDROID)
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());

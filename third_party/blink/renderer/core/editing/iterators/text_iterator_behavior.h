@@ -7,16 +7,18 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 class CORE_EXPORT TextIteratorBehavior final {
+  DISALLOW_NEW();
+
  public:
   class CORE_EXPORT Builder;
 
   TextIteratorBehavior(const TextIteratorBehavior& other);
   TextIteratorBehavior();
-  ~TextIteratorBehavior();
 
   bool operator==(const TextIteratorBehavior& other) const;
   bool operator!=(const TextIteratorBehavior& other) const;
@@ -103,6 +105,8 @@ class CORE_EXPORT TextIteratorBehavior final {
 };
 
 class CORE_EXPORT TextIteratorBehavior::Builder final {
+  STACK_ALLOCATED();
+
  public:
   explicit Builder(const TextIteratorBehavior&);
   Builder();

@@ -153,15 +153,15 @@ verify_channel() {
   case $CHANNEL in
     stable )
       CHANNEL=stable
-      RELEASENOTES="http://googlechromereleases.blogspot.com/search/label/Stable%20updates"
+      RELEASENOTES="https://chromereleases.googleblog.com/search/label/Stable%20updates"
       ;;
-    unstable|dev|alpha )
-      CHANNEL=unstable
-      RELEASENOTES="http://googlechromereleases.blogspot.com/search/label/Dev%20updates"
-      ;;
-    testing|beta )
+    beta|testing )
       CHANNEL=beta
-      RELEASENOTES="http://googlechromereleases.blogspot.com/search/label/Beta%20updates"
+      RELEASENOTES="https://chromereleases.googleblog.com/search/label/Beta%20updates"
+      ;;
+    dev|unstable|alpha )
+      CHANNEL=unstable
+      RELEASENOTES="https://chromereleases.googleblog.com/search/label/Dev%20updates"
       ;;
     * )
       echo
@@ -268,8 +268,9 @@ export DEBEMAIL="${MAINTMAIL}"
 DEB_COMMON_DEPS="${BUILDDIR}/deb_common.deps"
 COMMON_DEPS=$(sed ':a;N;$!ba;s/\n/, /g' "${DEB_COMMON_DEPS}")
 COMMON_PREDEPS="dpkg (>= 1.14.0)"
-COMMON_RECOMMENDS="libu2f-udev"
-
+MANUAL_RECOMMENDS="${SCRIPTDIR}/manual_recommends"
+COMMON_RECOMMENDS=$(grep -v ^$ "${MANUAL_RECOMMENDS}" | grep -v ^# |
+                        sed ':a;N;$!ba;s/\n/, /g')
 
 # Make everything happen in the OUTPUTDIR.
 cd "${OUTPUTDIR}"

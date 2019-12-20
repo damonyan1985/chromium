@@ -2,6 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://resources/cr_elements/cr_button/cr_button.m.js';
+import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.m.js';
+import 'chrome://resources/cr_elements/cr_input/cr_input.m.js';
+import './strings.m.js';
+
+import {SmbBrowserProxy, SmbBrowserProxyImpl} from 'chrome://resources/cr_components/chromeos/smb_shares/smb_browser_proxy.m.js';
+import {assert} from 'chrome://resources/js/assert.m.js';
+import {I18nBehavior} from 'chrome://resources/js/i18n_behavior.m.js';
+import {html, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+
 /**
  * @fileoverview
  * 'smb-credentials-dialog' is used to update the credentials for a mounted
@@ -9,6 +19,8 @@
  */
 Polymer({
   is: 'smb-credentials-dialog',
+
+  _template: html`{__html_template__}`,
 
   behaviors: [I18nBehavior],
 
@@ -29,12 +41,12 @@ Polymer({
     },
   },
 
-  /** @private {?smb_shares.SmbBrowserProxy} */
+  /** @private {?SmbBrowserProxy} */
   browserProxy_: null,
 
   /** @override */
   created: function() {
-    this.browserProxy_ = smb_shares.SmbBrowserProxyImpl.getInstance();
+    this.browserProxy_ = SmbBrowserProxyImpl.getInstance();
   },
 
   /** @override */
@@ -44,7 +56,7 @@ Polymer({
     var args = JSON.parse(dialogArgs);
     assert(args);
     assert(args.path);
-    assert(args.mid);
+    assert(typeof args.mid === 'number');
     this.sharePath_ = args.path;
     this.mountId_ = args.mid;
 
@@ -52,12 +64,12 @@ Polymer({
   },
 
   /** @private */
-  onCancelButtonTap_: function() {
+  onCancelButtonClick_: function() {
     chrome.send('dialogClose');
   },
 
   /** @private */
-  onSaveButtonTap_: function() {
+  onSaveButtonClick_: function() {
     this.browserProxy_.updateCredentials(
         this.mountId_, this.username_, this.password_);
     chrome.send('dialogClose');

@@ -5,7 +5,7 @@
 #include "content/renderer/mouse_lock_dispatcher.h"
 
 #include "base/logging.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 
 namespace content {
 
@@ -18,14 +18,16 @@ MouseLockDispatcher::MouseLockDispatcher()
 MouseLockDispatcher::~MouseLockDispatcher() {
 }
 
-bool MouseLockDispatcher::LockMouse(LockTarget* target) {
+bool MouseLockDispatcher::LockMouse(LockTarget* target,
+                                    blink::WebLocalFrame* requester_frame,
+                                    bool request_unadjusted_movement) {
   if (MouseLockedOrPendingAction())
     return false;
 
   pending_lock_request_ = true;
   target_ = target;
 
-  SendLockMouseRequest();
+  SendLockMouseRequest(requester_frame, request_unadjusted_movement);
   return true;
 }
 

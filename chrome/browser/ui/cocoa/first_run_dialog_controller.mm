@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/cocoa/first_run_dialog_controller.h"
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/mac/sdk_forward_declarations.h"
 #include "chrome/browser/ui/cocoa/key_equivalent_constants.h"
 #include "chrome/browser/ui/cocoa/l10n_util.h"
 #include "chrome/grit/chromium_strings.h"
@@ -45,29 +46,44 @@ void CenterVertically(NSView* view) {
 
 @implementation FirstRunDialogViewController {
   // These are owned by the NSView hierarchy:
-  NSButton* defaultBrowserCheckbox_;
-  NSButton* statsCheckbox_;
+  NSButton* _defaultBrowserCheckbox;
+  NSButton* _statsCheckbox;
 
   // This is owned by NSViewController:
-  NSView* view_;
+  NSView* _view;
 
-  BOOL statsCheckboxInitiallyChecked_;
-  BOOL defaultBrowserCheckboxVisible_;
+  BOOL _statsCheckboxInitiallyChecked;
+  BOOL _defaultBrowserCheckboxVisible;
 }
 
 - (instancetype)initWithStatsCheckboxInitiallyChecked:(BOOL)checked
                         defaultBrowserCheckboxVisible:(BOOL)visible {
   if ((self = [super init])) {
-    statsCheckboxInitiallyChecked_ = checked;
-    defaultBrowserCheckboxVisible_ = visible;
+    _statsCheckboxInitiallyChecked = checked;
+    _defaultBrowserCheckboxVisible = visible;
   }
   return self;
 }
 
 - (void)loadView {
+  BOOL isDarkMode = NO;
+  if (@available(macOS 10.14, *)) {
+    NSAppearanceName appearance =
+        [[NSApp effectiveAppearance] bestMatchFromAppearancesWithNames:@[
+          NSAppearanceNameAqua, NSAppearanceNameDarkAqua
+        ]];
+    isDarkMode = [appearance isEqual:NSAppearanceNameDarkAqua];
+  }
+  NSColor* topBoxColor = isDarkMode
+                             ? [NSColor colorWithCalibratedRed:0x32 / 255.0
+                                                         green:0x36 / 255.0
+                                                          blue:0x39 / 255.0
+                                                         alpha:1.0]
+                             : [NSColor whiteColor];
+
   NSBox* topBox =
       [[[NSBox alloc] initWithFrame:NSMakeRect(0, 137, 480, 52)] autorelease];
-  [topBox setFillColor:[NSColor whiteColor]];
+  [topBox setFillColor:topBoxColor];
   [topBox setBoxType:NSBoxCustom];
   [topBox setBorderType:NSNoBorder];
   [topBox setContentViewMargins:NSZeroSize];
@@ -77,21 +93,21 @@ void CenterVertically(NSView* view) {
                           IDS_FIRSTRUN_DLG_MAC_COMPLETE_INSTALLATION_LABEL)];
   [completionLabel setFrame:NSMakeRect(13, 25, 390, 17)];
 
-  defaultBrowserCheckbox_ = [ButtonUtils
+  _defaultBrowserCheckbox = [ButtonUtils
       checkboxWithTitle:l10n_util::GetNSString(
                             IDS_FIRSTRUN_DLG_MAC_SET_DEFAULT_BROWSER_LABEL)];
-  [defaultBrowserCheckbox_ setFrame:NSMakeRect(45, 107, 389, 18)];
-  [defaultBrowserCheckbox_ setState:NSOnState];
-  if (!defaultBrowserCheckboxVisible_)
-    [defaultBrowserCheckbox_ setHidden:YES];
+  [_defaultBrowserCheckbox setFrame:NSMakeRect(45, 107, 389, 18)];
+  [_defaultBrowserCheckbox setState:NSOnState];
+  if (!_defaultBrowserCheckboxVisible)
+    [_defaultBrowserCheckbox setHidden:YES];
 
-  statsCheckbox_ = [ButtonUtils
+  _statsCheckbox = [ButtonUtils
       checkboxWithTitle:
           NSStringWithProductName(
               IDS_FIRSTRUN_DLG_MAC_OPTIONS_SEND_USAGE_STATS_LABEL)];
-  [statsCheckbox_ setFrame:NSMakeRect(45, 82, 389, 19)];
-  if (statsCheckboxInitiallyChecked_)
-    [statsCheckbox_ setState:NSOnState];
+  [_statsCheckbox setFrame:NSMakeRect(45, 82, 389, 19)];
+  if (_statsCheckboxInitiallyChecked)
+    [_statsCheckbox setState:NSOnState];
 
   NSButton* startChromeButton =
       [ButtonUtils buttonWithTitle:NSStringWithProductName(
@@ -117,8 +133,8 @@ void CenterVertically(NSView* view) {
   self.view = content_view.get();
   [self.view addSubview:topBox];
   [self.view addSubview:topSeparator];
-  [self.view addSubview:defaultBrowserCheckbox_];
-  [self.view addSubview:statsCheckbox_];
+  [self.view addSubview:_defaultBrowserCheckbox];
+  [self.view addSubview:_statsCheckbox];
   [self.view addSubview:bottomSeparator];
   [self.view addSubview:startChromeButton];
 
@@ -128,7 +144,7 @@ void CenterVertically(NSView* view) {
   // the rest of the dialog to need to be rearranged.
   {
     CGFloat delta = cocoa_l10n_util::VerticallyReflowGroup(
-        @[ defaultBrowserCheckbox_, statsCheckbox_ ]);
+        @[ _defaultBrowserCheckbox, _statsCheckbox ]);
     if (delta) {
       // If reflowing the checkboxes produced a height delta, move the
       // checkboxes and the items above them in the content view upward, then
@@ -136,7 +152,7 @@ void CenterVertically(NSView* view) {
       // everything visually-below the checkboxes downwards and expanding the
       // window, leaving the vertical space the checkboxes need for their text.
       MoveViewsVertically(
-          @[ defaultBrowserCheckbox_, statsCheckbox_, topSeparator, topBox ],
+          @[ _defaultBrowserCheckbox, _statsCheckbox, topSeparator, topBox ],
           delta);
       NSRect frame = [self.view frame];
       frame.size.height += delta;
@@ -159,8 +175,8 @@ void CenterVertically(NSView* view) {
   // Lastly, if the default browser checkbox is actually invisible, move the
   // views above it downward so that there's not a big open space in the content
   // view, and resize the content view itself so there isn't extra space.
-  if (!defaultBrowserCheckboxVisible_) {
-    CGFloat delta = NSHeight([defaultBrowserCheckbox_ frame]);
+  if (!_defaultBrowserCheckboxVisible) {
+    CGFloat delta = NSHeight([_defaultBrowserCheckbox frame]);
     MoveViewsVertically(@[ topBox, topSeparator ], -delta);
     NSRect frame = [self.view frame];
     frame.size.height -= delta;
@@ -175,11 +191,11 @@ void CenterVertically(NSView* view) {
 }
 
 - (BOOL)isStatsReportingEnabled {
-  return [statsCheckbox_ state] == NSOnState;
+  return [_statsCheckbox state] == NSOnState;
 }
 
 - (BOOL)isMakeDefaultBrowserEnabled {
-  return [defaultBrowserCheckbox_ state] == NSOnState;
+  return [_defaultBrowserCheckbox state] == NSOnState;
 }
 
 - (void)ok:(id)sender {

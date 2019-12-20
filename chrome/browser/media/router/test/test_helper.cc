@@ -55,8 +55,8 @@ MockCastAppDiscoveryService::StartObservingMediaSinks(
   return callbacks_.Add(callback);
 }
 
-MockDialAppDiscoveryService::MockDialAppDiscoveryService()
-    : DialAppDiscoveryService(/*connector=*/nullptr) {}
+MockDialAppDiscoveryService::MockDialAppDiscoveryService() = default;
+
 MockDialAppDiscoveryService::~MockDialAppDiscoveryService() = default;
 
 void MockDialAppDiscoveryService::FetchDialAppInfo(
@@ -177,7 +177,7 @@ std::unique_ptr<ParsedDialAppInfo> CreateParsedDialAppInfoPtr(
 
 std::unique_ptr<DialInternalMessage> ParseDialInternalMessage(
     const std::string& message) {
-  auto message_value = base::JSONReader::Read(message);
+  auto message_value = base::JSONReader::ReadDeprecated(message);
   std::string error_unused;
   return message_value ? DialInternalMessage::From(std::move(*message_value),
                                                    &error_unused)

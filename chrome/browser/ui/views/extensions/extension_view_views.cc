@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
 
+#include <memory>
 #include <utility>
 
 #include "build/build_config.h"
@@ -26,11 +27,8 @@
 #endif
 
 ExtensionViewViews::ExtensionViewViews(extensions::ExtensionHost* host,
-                                       Browser* browser)
-    : views::WebView(browser ? browser->profile() : nullptr),
-      host_(host),
-      browser_(browser),
-      container_(nullptr) {
+                                       Profile* profile)
+    : views::WebView(profile), host_(host), container_(nullptr) {
   SetWebContents(host_->web_contents());
   if (host->extension_host_type() == extensions::VIEW_TYPE_EXTENSION_POPUP) {
     EnableSizingFromWebContents(
@@ -42,10 +40,6 @@ ExtensionViewViews::ExtensionViewViews(extensions::ExtensionHost* host,
 ExtensionViewViews::~ExtensionViewViews() {
   if (parent())
     parent()->RemoveChildView(this);
-}
-
-Browser* ExtensionViewViews::GetBrowser() {
-  return browser_;
 }
 
 void ExtensionViewViews::VisibilityChanged(View* starting_from,
@@ -76,7 +70,7 @@ void ExtensionViewViews::ResizeDueToAutoResize(
     const gfx::Size& new_size) {
   // Don't actually do anything with this information until we have been shown.
   // Size changes will not be honored by lower layers while we are hidden.
-  if (!visible()) {
+  if (!GetVisible()) {
     pending_preferred_size_ = new_size;
     return;
   }
@@ -101,7 +95,7 @@ void ExtensionViewViews::OnLoaded() {
 
   // ExtensionPopup delegates showing the view to OnLoaded(). ExtensionDialog
   // handles visibility directly.
-  if (visible())
+  if (GetVisible())
     return;
 
   SetVisible(true);
@@ -134,9 +128,8 @@ namespace extensions {
 // static
 std::unique_ptr<ExtensionView> ExtensionViewHost::CreateExtensionView(
     ExtensionViewHost* host,
-    Browser* browser) {
-  std::unique_ptr<ExtensionViewViews> view(
-      new ExtensionViewViews(host, browser));
+    Profile* profile) {
+  auto view = std::make_unique<ExtensionViewViews>(host, profile);
   // We own |view_|, so don't auto delete when it's removed from the view
   // hierarchy.
   view->set_owned_by_client();

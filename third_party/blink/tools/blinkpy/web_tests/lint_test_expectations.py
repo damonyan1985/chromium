@@ -34,9 +34,11 @@ import traceback
 from blinkpy.common import exit_codes
 from blinkpy.common.host import Host
 from blinkpy.common.system.log_utils import configure_logging
-from blinkpy.web_tests.models import test_expectations
+from blinkpy.web_tests.models.test_expectations import (
+    TestExpectations, TestExpectationLine, ParseError)
+
 from blinkpy.web_tests.port.factory import platform_options
-from blinkpy.w3c.wpt_manifest import WPTManifest
+from blinkpy.web_tests.models.test_expectations import TestExpectationLine
 
 _log = logging.getLogger(__name__)
 
@@ -52,30 +54,99 @@ def lint(host, options):
     # (the default Port for this host) and it would work the same.
 
     failures = []
-    for port_to_lint in ports_to_lint:
-        expectations_dict = port_to_lint.all_expectations_dict()
+    wpt_overrides_exps_path = host.filesystem.join(
+        ports_to_lint[0].web_tests_dir(), 'WPTOverrideExpectations')
+    web_gpu_exps_path = host.filesystem.join(
+        ports_to_lint[0].web_tests_dir(), 'WebGPUExpectations')
+    paths = [wpt_overrides_exps_path, web_gpu_exps_path]
+    expectations_dict = {}
+    all_system_specifiers = set()
+    all_build_specifiers = set(ports_to_lint[0].ALL_BUILD_TYPES)
 
-        for path in port_to_lint.extra_expectations_files():
+    # TODO(crbug.com/986447) Remove the checks below after migrating the expectations
+    # parsing to Typ. All the checks below can be handled by Typ.
+    for path in paths:
+        if host.filesystem.exists(path):
+            expectations_dict[path] = host.filesystem.read_text_file(path)
+
+    for port in ports_to_lint:
+        expectations_dict.update(port.all_expectations_dict())
+        config_macro_dict = port.configuration_specifier_macros()
+        if config_macro_dict:
+            all_system_specifiers.update({s.lower() for s in config_macro_dict.keys()})
+            all_system_specifiers.update(
+                {s.lower() for s in reduce(lambda x, y: x + y, config_macro_dict.values())})
+        for path in port.extra_expectations_files():
             if host.filesystem.exists(path):
                 expectations_dict[path] = host.filesystem.read_text_file(path)
+    for path, content in expectations_dict.items():
+        try:
+            TestExpectations(
+                ports_to_lint[0],
+                expectations_dict={path: content},
+                is_lint_mode=True)
+        except ParseError as error:
+            _log.error('')
+            for warning in error.warnings:
+                _log.error(warning)
+                failures.append('%s: %s' % (path, warning))
+                _log.error('')
 
-        for expectations_file in expectations_dict:
-
-            if expectations_file in files_linted:
+        # check for expectations which start with the Bug(...) token
+        exp_lines = content.split('\n')
+        for lineno, line in enumerate(exp_lines, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
                 continue
+            if line.startswith('Bug('):
+                error = (("%s:%d Expectation '%s' has the Bug(...) token, "
+                          "The token has been removed in the new expectations format") %
+                          (host.filesystem.basename(path), lineno, line))
+                _log.error(error)
+                failures.append(error)
+                _log.error('')
 
-            try:
-                test_expectations.TestExpectations(
-                    port_to_lint,
-                    expectations_dict={expectations_file: expectations_dict[expectations_file]},
-                    is_lint_mode=True)
-            except test_expectations.ParseError as error:
+        # check for expectations which have more than one mutually exclusive specifier
+        for lineno, line in enumerate(exp_lines, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            exp_line = TestExpectationLine.tokenize_line(
+                host.filesystem.basename(path), line, lineno, ports_to_lint[0])
+            specifiers = set(s.lower() for s in exp_line.specifiers)
+            system_intersection = specifiers & all_system_specifiers
+            build_intersection = specifiers & all_build_specifiers
+            for intersection in [system_intersection, build_intersection]:
+                if len(intersection) < 2:
+                    continue
+                error = (("%s:%d Expectation '%s' has multiple specifiers that are mutually exclusive.\n"
+                          "The mutually exclusive specifiers are %s") %
+                         (host.filesystem.basename(path), lineno, line, ', '.join(intersection)))
+                _log.error(error)
                 _log.error('')
-                for warning in error.warnings:
-                    _log.error(warning)
-                    failures.append('%s: %s' % (expectations_file, warning))
+                failures.append(error)
+
+        # check for directories in test expectations which do not have a glob at the end
+        for lineno, line in enumerate(exp_lines, 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            test_exp_line = TestExpectationLine.tokenize_line(
+                host.filesystem.basename(path), line, lineno, ports_to_lint[0])
+            if not test_exp_line.name or test_exp_line.name.endswith('*'):
+                continue
+            testname, _ = ports_to_lint[0].split_webdriver_test_name(test_exp_line.name)
+            index = testname.find('?')
+            if index != -1:
+                testname = testname[:index]
+            if ports_to_lint[0].test_isdir(testname):
+                error = (("%s:%d Expectation '%s' is for a directory, however "
+                          "the name in the expectation does not have a glob in the end") %
+                          (host.filesystem.basename(path), lineno, line))
+                _log.error(error)
+                failures.append(error)
                 _log.error('')
-            files_linted.add(expectations_file)
+
     return failures
 
 
@@ -84,22 +155,52 @@ def check_virtual_test_suites(host, options):
     fs = host.filesystem
     web_tests_dir = port.web_tests_dir()
     virtual_suites = port.virtual_test_suites()
+    virtual_suites.sort(key=lambda s: s.full_prefix)
 
     failures = []
     for suite in virtual_suites:
+        suite_comps = suite.full_prefix.split(port.TEST_PATH_SEPARATOR)
+        prefix = suite_comps[1]
+        normalized_bases = [port.normalize_test_name(b) for b in suite.bases]
+        normalized_bases.sort();
+        for i in range(1, len(normalized_bases)):
+            for j in range(0, i):
+                if normalized_bases[i].startswith(normalized_bases[j]):
+                    failure = 'Base "{}" starts with "{}" in the same virtual suite "{}", so is redundant.'.format(
+                        normalized_bases[i], normalized_bases[j], prefix)
+                    _log.error(failure)
+                    failures.append(failure)
+
         # A virtual test suite needs either
         # - a top-level README.md (e.g. virtual/foo/README.md)
-        # - a README.txt for each covered dir/file (e.g.
+        # - a README.txt for each covered directory (e.g.
         #   virtual/foo/http/tests/README.txt, virtual/foo/fast/README.txt, ...)
-        comps = [web_tests_dir] + suite.name.split('/') + ['README.txt']
-        path_to_readme_txt = fs.join(*comps)
-        comps = [web_tests_dir] + suite.name.split('/')[:2] + ['README.md']
+        comps = [web_tests_dir] + suite_comps + ['README.md']
         path_to_readme_md = fs.join(*comps)
-        if not fs.exists(path_to_readme_txt) and not fs.exists(path_to_readme_md):
-            failure = '{} and {} are both missing (each virtual suite must have one).'.format(
-                path_to_readme_txt, path_to_readme_md)
-            _log.error(failure)
-            failures.append(failure)
+        for base in suite.bases:
+            if not base:
+                failure = 'Base value in virtual suite "{}" should not be an empty string'.format(prefix)
+                _log.error(failure)
+                failures.append(failure)
+                continue
+            base_comps = base.split(port.TEST_PATH_SEPARATOR)
+            absolute_base = port.abspath_for_test(base)
+            if fs.isfile(absolute_base):
+                del base_comps[-1]
+            elif not fs.isdir(absolute_base):
+                failure = 'Base "{}" in virtual suite "{}" must refer to a real file or directory'.format(
+                    base, prefix)
+                _log.error(failure)
+                failures.append(failure)
+                continue
+            comps = [web_tests_dir] + suite_comps + base_comps + ['README.txt']
+            path_to_readme_txt = fs.join(*comps)
+            if not fs.exists(path_to_readme_md) and not fs.exists(path_to_readme_txt):
+                failure = '"{}" and "{}" are both missing (each virtual suite must have one).'.format(
+                    path_to_readme_txt, path_to_readme_md)
+                _log.error(failure)
+                failures.append(failure)
+
     if failures:
         _log.error('')
     return failures
@@ -178,10 +279,6 @@ def main(argv, stderr, host=None):
         configure_logging(logging_level=logging.INFO, stream=stderr, include_time=False)
 
     try:
-        # Need to generate MANIFEST.json since some expectations correspond to WPT
-        # tests that aren't files and only exist in the manifest.
-        _log.debug('Generating MANIFEST.json for web-platform-tests ...')
-        WPTManifest.ensure_manifest(host)
         exit_status = run_checks(host, options)
     except KeyboardInterrupt:
         exit_status = exit_codes.INTERRUPTED_EXIT_STATUS

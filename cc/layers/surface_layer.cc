@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/layers/surface_layer_impl.h"
 #include "cc/trees/layer_tree_host.h"
@@ -40,13 +39,14 @@ void SurfaceLayer::SetSurfaceId(const viz::SurfaceId& surface_id,
       deadline_policy.use_existing_deadline()) {
     return;
   }
-
-  TRACE_EVENT_WITH_FLOW2(
-      TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
-      "LocalSurfaceId.Embed.Flow",
-      TRACE_ID_GLOBAL(surface_id.local_surface_id().embed_trace_id()),
-      TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "step",
-      "SetSurfaceId", "surface_id", surface_id.ToString());
+  if (surface_id.local_surface_id().is_valid()) {
+    TRACE_EVENT_WITH_FLOW2(
+        TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
+        "LocalSurfaceId.Embed.Flow",
+        TRACE_ID_GLOBAL(surface_id.local_surface_id().embed_trace_id()),
+        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "step",
+        "SetSurfaceId", "surface_id", surface_id.ToString());
+  }
 
   if (layer_tree_host() && surface_range_.IsValid())
     layer_tree_host()->RemoveSurfaceRange(surface_range_);
@@ -74,12 +74,6 @@ void SurfaceLayer::SetOldestAcceptableFallback(
          !surface_range_.start()->IsNewerThan(surface_id));
   if (surface_range_.start() == surface_id)
     return;
-  TRACE_EVENT_WITH_FLOW2(
-      TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
-      "LocalSurfaceId.Submission.Flow",
-      TRACE_ID_GLOBAL(surface_id.local_surface_id().submission_trace_id()),
-      TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "step",
-      "SetOldestAcceptableFallback", "surface_id", surface_id.ToString());
 
   if (layer_tree_host() && surface_range_.IsValid())
     layer_tree_host()->RemoveSurfaceRange(surface_range_);
@@ -103,6 +97,10 @@ void SurfaceLayer::SetStretchContentToFillBounds(
   SetNeedsPushProperties();
 }
 
+void SurfaceLayer::SetUnoccludedForHitTesting(bool unoccluded) {
+  unoccluded_for_hit_testing_ = unoccluded;
+}
+
 void SurfaceLayer::SetSurfaceHitTestable(bool surface_hit_testable) {
   if (surface_hit_testable_ == surface_hit_testable)
     return;
@@ -117,6 +115,10 @@ void SurfaceLayer::SetHasPointerEventsNone(bool has_pointer_events_none) {
   // Change of pointer-events property triggers an update of viz hit test data,
   // we need to commit in order to submit the new data with compositor frame.
   SetNeedsCommit();
+}
+
+void SurfaceLayer::SetIsReflection(bool is_reflection) {
+  is_reflection_ = true;
 }
 
 void SurfaceLayer::SetMayContainVideo(bool may_contain_video) {
@@ -156,9 +158,11 @@ void SurfaceLayer::PushPropertiesTo(LayerImpl* layer) {
   // Unless the client explicitly calls SetSurfaceId again after this
   // commit, don't block on |surface_range_| again.
   deadline_in_frames_ = 0u;
+  layer_impl->SetIsReflection(is_reflection_);
   layer_impl->SetStretchContentToFillBounds(stretch_content_to_fill_bounds_);
   layer_impl->SetSurfaceHitTestable(surface_hit_testable_);
   layer_impl->SetHasPointerEventsNone(has_pointer_events_none_);
+  layer_impl->SetUnoccludedForHitTesting(unoccluded_for_hit_testing_);
 }
 
 }  // namespace cc

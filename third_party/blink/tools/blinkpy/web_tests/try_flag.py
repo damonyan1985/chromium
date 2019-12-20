@@ -22,14 +22,14 @@ from blinkpy.web_tests.models.test_expectations import TestExpectationsModel
 
 # TODO(skobes): use blinkpy/config/builders.json instead of hardcoding these.
 BUILDER_CONFIGS = {
-    'linux_chromium_rel_ng': TestConfiguration('Linux', '', 'release'),
-    'mac_chromium_rel_ng': TestConfiguration('Mac', '', 'release'),
-    'win7_chromium_rel_ng': TestConfiguration('Win', '', 'release')
+    'linux-rel': TestConfiguration('Linux', '', 'release'),
+    'mac-rel': TestConfiguration('Mac', '', 'release'),
+    'win7-rel': TestConfiguration('Win', '', 'release')
 }
 BUILDER_BUCKETS = {
-    'linux_chromium_rel_ng': 'luci.chromium.try',
-    'mac_chromium_rel_ng': 'master.tryserver.chromium.mac',
-    'win7_chromium_rel_ng': 'master.tryserver.chromium.win'
+    'linux-rel': 'luci.chromium.try',
+    'mac-rel': 'luci.chromium.try',
+    'win7-rel': 'luci.chromium.try',
 }
 FLAG_FILE = 'additional-driver-flag.setting'
 
@@ -42,7 +42,8 @@ class TryFlag(object):
         self._git_cl = git_cl
         self._expectations_model = TestExpectationsModel()
         self._test_configuration_converter = TestConfigurationConverter(
-            set(BUILDER_CONFIGS.values()))
+            set(BUILDER_CONFIGS.values()),
+            self._host.port_factory.get().configuration_specifier_macros())
         self._filesystem = self._host.filesystem
         self._path_finder = PathFinder(self._filesystem)
         self._git = self._host.git()
@@ -70,7 +71,8 @@ class TryFlag(object):
         result = set()
         path = self._flag_expectations_path()
         for line in self._filesystem.read_text_file(path).split('\n'):
-            expectation_line = TestExpectationLine.tokenize_line(path, line, 0)
+            expectation_line = TestExpectationLine.tokenize_line(
+                path, line, 0, self._host.port_factory.get())
             test_name = expectation_line.name
             if test_name:
                 result.add(test_name)
@@ -116,13 +118,13 @@ class TryFlag(object):
     def update(self):
         self._host.print_('Fetching results...')
         # TODO: Get jobs from the _tryflag branch. Current branch for now.
-        jobs = self._git_cl.latest_try_jobs(BUILDER_CONFIGS.keys())
-        buildbot = self._host.buildbot
+        jobs = self._git_cl.latest_try_jobs(builder_names=BUILDER_CONFIGS.keys())
+        results_fetcher = self._host.results_fetcher
         for build in sorted(jobs):
             self._host.print_('-- %s: %s/results.html' % (
                 BUILDER_CONFIGS[build.builder_name].version,
-                buildbot.results_url(build.builder_name, build.build_number)))
-            results = buildbot.fetch_results(build, True)
+                results_fetcher.results_url(build.builder_name, build.build_number)))
+            results = results_fetcher.fetch_results(build, True)
             results.for_each_test(
                 lambda result, b=build: self._process_result(b, result))
 

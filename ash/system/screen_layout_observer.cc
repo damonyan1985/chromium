@@ -11,9 +11,11 @@
 #include "ash/display/screen_orientation_controller.h"
 #include "ash/metrics/user_metrics_action.h"
 #include "ash/metrics/user_metrics_recorder.h"
+#include "ash/public/cpp/ash_features.h"
 #include "ash/public/cpp/notification_utils.h"
+#include "ash/public/cpp/system_tray_client.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/model/system_tray_model.h"
@@ -56,8 +58,8 @@ base::string16 GetDisplaySize(int64_t display_id) {
   // to empty string if this happens on release build.
   const display::DisplayIdList id_list =
       display_manager->GetMirroringDestinationDisplayIdList();
-  const bool mirroring = display_manager->IsInMirrorMode() &&
-                         base::ContainsValue(id_list, display_id);
+  const bool mirroring =
+      display_manager->IsInMirrorMode() && base::Contains(id_list, display_id);
   DCHECK(!mirroring);
   if (mirroring)
     return base::string16();
@@ -76,8 +78,8 @@ void OnNotificationClicked(base::Optional<int> button_index) {
       UMA_STATUS_AREA_DISPLAY_NOTIFICATION_SELECTED);
   // Settings may be blocked, e.g. at the lock screen.
   if (Shell::Get()->session_controller()->ShouldEnableSettings() &&
-      Shell::Get()->system_tray_model()->client_ptr()) {
-    Shell::Get()->system_tray_model()->client_ptr()->ShowDisplaySettings();
+      Shell::Get()->system_tray_model()->client()) {
+    Shell::Get()->system_tray_model()->client()->ShowDisplaySettings();
     Shell::Get()->metrics()->RecordUserMetricsAction(
         UMA_STATUS_AREA_DISPLAY_NOTIFICATION_SHOW_SETTINGS);
   }
@@ -219,9 +221,20 @@ void ScreenLayoutObserver::UpdateDisplayInfo(
 
 bool ScreenLayoutObserver::GetDisplayMessageForNotification(
     const ScreenLayoutObserver::DisplayInfoMap& old_info,
+    bool should_notify_has_unassociated_display,
     base::string16* out_message,
     base::string16* out_additional_message) {
   if (old_display_mode_ != current_display_mode_) {
+    // Ensure that user still gets notified of connecting with excessive
+    // displays when display mode changes. For example, for the device which is
+    // in tablet mode and screen layout is in extending mode, user connects one
+    // additional external display to make the number of displays exceed the
+    // maximum that device can support. Display mode changes from extending mode
+    // to mirror mode.
+    if (should_notify_has_unassociated_display)
+      *out_additional_message = l10n_util::GetStringUTF16(
+          IDS_ASH_STATUS_TRAY_DISPLAY_REMOVED_EXCEEDED_MAXIMUM);
+
     // Detect changes in the mirror mode status.
     if (current_display_mode_ == DisplayMode::MIRRORING) {
       *out_message = GetEnterMirrorModeMessage();
@@ -261,7 +274,9 @@ bool ScreenLayoutObserver::GetDisplayMessageForNotification(
           GetDisplayRemovedMessage(iter.second, out_additional_message);
       return true;
     }
-  } else if (display_info_.size() > old_info.size()) {
+  }
+
+  if (display_info_.size() > old_info.size()) {
     // A display has been added.
     for (const auto& iter : display_info_) {
       if (old_info.count(iter.first))
@@ -270,6 +285,18 @@ bool ScreenLayoutObserver::GetDisplayMessageForNotification(
       *out_message = GetDisplayAddedMessage(iter.first, out_additional_message);
       return true;
     }
+  }
+
+  DCHECK_EQ(display_info_.size(), old_info.size());
+
+  if (should_notify_has_unassociated_display) {
+    // When user connects more external display than the maximum that device
+    // can support, |display_info_|'s size should be same with |old_info_|
+    // because the displays which have unassociated crtc are not included in
+    // |display_info_|.
+    *out_additional_message = l10n_util::GetStringUTF16(
+        IDS_ASH_STATUS_TRAY_DISPLAY_REMOVED_EXCEEDED_MAXIMUM);
+    return true;
   }
 
   for (const auto& iter : display_info_) {
@@ -309,9 +336,7 @@ bool ScreenLayoutObserver::GetDisplayMessageForNotification(
       continue;
     }
     // c) if the device is in tablet mode, and source is not user.
-    if (Shell::Get()
-            ->tablet_mode_controller()
-            ->IsTabletModeWindowManagerEnabled() &&
+    if (Shell::Get()->tablet_mode_controller()->InTabletMode() &&
         iter.second.active_rotation_source() !=
             display::Display::RotationSource::USER) {
       continue;
@@ -385,6 +410,20 @@ void ScreenLayoutObserver::OnDisplayConfigurationChanged() {
   DisplayInfoMap old_info;
   UpdateDisplayInfo(&old_info);
 
+  const bool current_has_unassociated_display =
+      ash::Shell::Get()->display_manager()->HasUnassociatedDisplay();
+
+  // Take |has_unassociated_display_| into consideration in order to avoid
+  // showing the notification too frequently. For example, user connects three
+  // displays with device which supports at most two displays. Without checking
+  // |has_unassociated_display_|, if user keeps three displays connected,
+  // any event changing the display configuration would trigger the notification
+  // of the unassociated display.
+  const bool should_notify_has_unassociated_display =
+      !has_unassociated_display_ && current_has_unassociated_display;
+
+  has_unassociated_display_ = current_has_unassociated_display;
+
   old_display_mode_ = current_display_mode_;
   if (GetDisplayManager()->IsInMirrorMode())
     current_display_mode_ = DisplayMode::MIRRORING;
@@ -404,8 +443,19 @@ void ScreenLayoutObserver::OnDisplayConfigurationChanged() {
 
   base::string16 message;
   base::string16 additional_message;
-  if (GetDisplayMessageForNotification(old_info, &message, &additional_message))
-    CreateOrUpdateNotification(message, additional_message);
+  if (!GetDisplayMessageForNotification(old_info,
+                                        should_notify_has_unassociated_display,
+                                        &message, &additional_message))
+    return;
+
+  if (features::IsReduceDisplayNotificationsEnabled() &&
+      !should_notify_has_unassociated_display) {
+    // If display notifications should be suppressed and the notification is not
+    // to alert the user of an unassociated display, do not show a notification.
+    return;
+  }
+
+  CreateOrUpdateNotification(message, additional_message);
 }
 
 bool ScreenLayoutObserver::GetExitMirrorModeMessage(

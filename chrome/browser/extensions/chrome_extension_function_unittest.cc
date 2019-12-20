@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "extensions/browser/extension_function.h"
@@ -17,8 +18,7 @@ namespace {
 void SuccessCallback(bool* did_respond,
                      ExtensionFunction::ResponseType type,
                      const base::ListValue& results,
-                     const std::string& error,
-                     functions::HistogramValue histogram_value) {
+                     const std::string& error) {
   EXPECT_EQ(ExtensionFunction::ResponseType::SUCCEEDED, type);
   *did_respond = true;
 }
@@ -26,13 +26,12 @@ void SuccessCallback(bool* did_respond,
 void FailCallback(bool* did_respond,
                   ExtensionFunction::ResponseType type,
                   const base::ListValue& results,
-                  const std::string& error,
-                  functions::HistogramValue histogram_value) {
+                  const std::string& error) {
   EXPECT_EQ(ExtensionFunction::ResponseType::FAILED, type);
   *did_respond = true;
 }
 
-class ValidationFunction : public UIThreadExtensionFunction {
+class ValidationFunction : public ExtensionFunction {
  public:
   explicit ValidationFunction(bool should_succeed)
       : should_succeed_(should_succeed), did_respond_(false) {
@@ -56,7 +55,12 @@ class ValidationFunction : public UIThreadExtensionFunction {
 
 using ChromeExtensionFunctionUnitTest = ExtensionServiceTestBase;
 
-TEST_F(ChromeExtensionFunctionUnitTest, SimpleFunctionTest) {
+#if defined(OS_WIN) || defined(CHROMEOS)
+#define MAYBE_SimpleFunctionTest DISABLED_SimpleFunctionTest
+#else
+#define MAYBE_SimpleFunctionTest SimpleFunctionTest
+#endif
+TEST_F(ChromeExtensionFunctionUnitTest, MAYBE_SimpleFunctionTest) {
   scoped_refptr<ValidationFunction> function(new ValidationFunction(true));
   function->RunWithValidation()->Execute();
   EXPECT_TRUE(function->did_respond());

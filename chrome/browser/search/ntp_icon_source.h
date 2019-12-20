@@ -35,40 +35,39 @@ class NtpIconSource : public content::URLDataSource {
   ~NtpIconSource() override;
 
   // content::URLDataSource implementation.
-  std::string GetSource() const override;
+  std::string GetSource() override;
   void StartDataRequest(
-      const std::string& path,
-      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-      const content::URLDataSource::GotDataCallback& callback) override;
-  std::string GetMimeType(const std::string& path) const override;
+      const GURL& url,
+      const content::WebContents::Getter& wc_getter,
+      content::URLDataSource::GotDataCallback callback) override;
+  std::string GetMimeType(const std::string& path) override;
   bool ShouldServiceRequest(const GURL& url,
                             content::ResourceContext* resource_context,
-                            int render_process_id) const override;
+                            int render_process_id) override;
 
  private:
   struct NtpIconRequest;
   void OnLocalFaviconAvailable(
-      const NtpIconRequest& request,
+      NtpIconRequest request,
       const favicon_base::FaviconRawBitmapResult& bitmap_result);
   // Returns whether |url| is in the set of server suggestions.
   bool IsRequestedUrlInServerSuggestions(const GURL& url);
-  void RequestServerFavicon(const NtpIconRequest& request);
-  void OnServerFaviconAvailable(const NtpIconRequest& request,
-                                const std::string& id,
+  void RequestServerFavicon(NtpIconRequest request);
+  void OnServerFaviconAvailable(NtpIconRequest request,
                                 const gfx::Image& fetched_image,
                                 const image_fetcher::RequestMetadata& metadata);
 
   // Will call |request.callback| with the rendered icon. |bitmap| can be empty,
   // in which case the returned icon is a fallback circle with a letter drawn
   // into it.
-  void ReturnRenderedIconForRequest(const NtpIconRequest& request,
+  void ReturnRenderedIconForRequest(NtpIconRequest request,
                                     const SkBitmap& bitmap);
 
   base::CancelableTaskTracker cancelable_task_tracker_;
   Profile* profile_;
   std::unique_ptr<image_fetcher::ImageFetcher> const image_fetcher_;
 
-  base::WeakPtrFactory<NtpIconSource> weak_ptr_factory_;
+  base::WeakPtrFactory<NtpIconSource> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NtpIconSource);
 };

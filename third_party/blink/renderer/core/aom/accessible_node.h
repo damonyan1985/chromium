@@ -27,6 +27,7 @@ enum class AOMStringProperty {
   kAutocomplete,
   kChecked,
   kCurrent,
+  kDescription,
   kHasPopUp,
   kInvalid,
   kKeyShortcuts,
@@ -230,6 +231,9 @@ class CORE_EXPORT AccessibleNode : public EventTargetWithInlineData {
   AccessibleNodeList* describedBy();
   void setDescribedBy(AccessibleNodeList*);
 
+  AtomicString description() const;
+  void setDescription(const AtomicString&);
+
   AccessibleNode* details() const;
   void setDetails(AccessibleNode*);
 
@@ -347,14 +351,13 @@ class CORE_EXPORT AccessibleNode : public EventTargetWithInlineData {
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibleclick, kAccessibleclick);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessiblecontextmenu,
-                                  kAccessiblecontextmenu);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibledecrement, kAccessibledecrement);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessiblefocus, kAccessiblefocus);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibleincrement, kAccessibleincrement);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibleclick, kAccessibleclick)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessiblecontextmenu, kAccessiblecontextmenu)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibledecrement, kAccessibledecrement)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessiblefocus, kAccessiblefocus)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(accessibleincrement, kAccessibleincrement)
   DEFINE_ATTRIBUTE_EVENT_LISTENER(accessiblescrollintoview,
-                                  kAccessiblescrollintoview);
+                                  kAccessiblescrollintoview)
 
   void Trace(blink::Visitor*) override;
 
@@ -364,6 +367,10 @@ class CORE_EXPORT AccessibleNode : public EventTargetWithInlineData {
 
  private:
   static bool IsStringTokenProperty(AOMStringProperty);
+  static const AtomicString& GetElementOrInternalsARIAAttribute(
+      Element& element,
+      const QualifiedName& attribute,
+      bool is_token_attr = false);
   void SetStringProperty(AOMStringProperty, const AtomicString&);
   void SetRelationProperty(AOMRelationProperty, AccessibleNode*);
   void SetRelationListProperty(AOMRelationListProperty, AccessibleNodeList*);

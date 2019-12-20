@@ -18,6 +18,7 @@
 #include "base/scoped_observer.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor_table.h"
+#include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -40,7 +41,6 @@ class Size;
 }
 
 namespace history {
-class HistoryService;
 class URLDatabase;
 }
 
@@ -211,6 +211,12 @@ class AutocompleteActionPredictor
       history::URLDatabase* url_db,
       std::vector<AutocompleteActionPredictorTable::Row::Id>* id_list);
 
+  // Deletes up to |count| rows having lowest confidence scores from the local
+  // caches. Deleted row ids will be added to |id_list|.
+  void DeleteLowestConfidenceRowsFromCaches(
+      size_t count,
+      std::vector<AutocompleteActionPredictorTable::Row::Id>* id_list);
+
   // Called on an incognito-owned predictor to copy the current caches from the
   // main profile.
   void CopyFromMainProfile();
@@ -274,7 +280,7 @@ class AutocompleteActionPredictor
   bool initialized_;
 
   ScopedObserver<history::HistoryService, history::HistoryServiceObserver>
-      history_service_observer_;
+      history_service_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AutocompleteActionPredictor);
 };

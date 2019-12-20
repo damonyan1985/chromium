@@ -54,7 +54,7 @@ Task* FallbackTaskProvider::GetTaskOfUrlRequest(int child_id, int route_id) {
   for (const auto& source : sources_) {
     task_of_url_request =
         source->subprovider()->GetTaskOfUrlRequest(child_id, route_id);
-    if (base::ContainsValue(shown_tasks_, task_of_url_request))
+    if (base::Contains(shown_tasks_, task_of_url_request))
       return task_of_url_request;
   }
   return nullptr;
@@ -94,8 +94,8 @@ void FallbackTaskProvider::ShowTaskLater(Task* task) {
 
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FallbackTaskProvider::ShowPendingTask,
-                 it->second.GetWeakPtr(), task),
+      base::BindOnce(&FallbackTaskProvider::ShowPendingTask,
+                     it->second.GetWeakPtr(), task),
       kTimeDelayForPendingTask);
 }
 
@@ -164,7 +164,7 @@ void FallbackTaskProvider::OnTaskRemovedBySource(Task* task,
 
 void FallbackTaskProvider::OnTaskUnresponsive(Task* task) {
   DCHECK(task);
-  if (base::ContainsValue(shown_tasks_, task))
+  if (base::Contains(shown_tasks_, task))
     NotifyObserverTaskUnresponsive(task);
 }
 

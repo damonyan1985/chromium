@@ -6,7 +6,7 @@ include_rules = [
   "+jni",
   "+media",
   "+net",
-  "+services/catalog",
+  "+services/network/public/cpp",
   "+ui",
 ]
 

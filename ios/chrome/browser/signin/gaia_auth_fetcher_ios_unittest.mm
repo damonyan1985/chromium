@@ -14,9 +14,7 @@
 #include "google_apis/gaia/gaia_urls.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/signin/gaia_auth_fetcher_ios_wk_webview_bridge.h"
-#include "ios/web/public/test/test_web_thread_bundle.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "ios/web/public/test/web_task_environment.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -66,22 +64,18 @@ class MockGaiaConsumer : public GaiaAuthConsumer {
 // Tests fixture for GaiaAuthFetcherIOS
 class GaiaAuthFetcherIOSTest : public PlatformTest {
  protected:
-  GaiaAuthFetcherIOSTest()
-      : test_shared_loader_factory_(
-            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-                &test_url_loader_factory_)) {
+  GaiaAuthFetcherIOSTest() {
     browser_state_ = TestChromeBrowserState::Builder().Build();
 
     ActiveStateManager::FromBrowserState(browser_state())->SetActive(true);
-    gaia_auth_fetcher_.reset(
-        new GaiaAuthFetcherIOS(&consumer_, gaia::GaiaSource::kChrome,
-                               test_shared_loader_factory_, browser_state()));
+    gaia_auth_fetcher_.reset(new GaiaAuthFetcherIOS(
+        &consumer_, gaia::GaiaSource::kChrome,
+        test_url_loader_factory_.GetSafeWeakWrapper(), browser_state()));
     gaia_auth_fetcher_->bridge_.reset(new FakeGaiaAuthFetcherIOSWKWebViewBridge(
         gaia_auth_fetcher_.get(), browser_state()));
   }
 
   ~GaiaAuthFetcherIOSTest() override {
-    test_shared_loader_factory_->Detach();
     gaia_auth_fetcher_.reset();
     ActiveStateManager::FromBrowserState(browser_state())->SetActive(false);
   }
@@ -99,13 +93,11 @@ class GaiaAuthFetcherIOSTest : public PlatformTest {
     return wkWebviewBridge->GetWKWebView();
   }
 
-  web::TestWebThreadBundle thread_bundle_;
+  web::WebTaskEnvironment task_environment_;
   // BrowserState, required for WKWebView creation.
   std::unique_ptr<ios::ChromeBrowserState> browser_state_;
   MockGaiaConsumer consumer_;
   network::TestURLLoaderFactory test_url_loader_factory_;
-  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
-      test_shared_loader_factory_;
   std::unique_ptr<GaiaAuthFetcherIOS> gaia_auth_fetcher_;
 };
 

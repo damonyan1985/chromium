@@ -189,8 +189,8 @@ void AudioPump::Core::EncodeAudioPacket(std::unique_ptr<AudioPacket> packet) {
   bytes_pending_ += packet_size;
 
   pump_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&AudioPump::SendAudioPacket, pump_,
-                            base::Passed(&encoded_packet), packet_size));
+      FROM_HERE, base::BindOnce(&AudioPump::SendAudioPacket, pump_,
+                                std::move(encoded_packet), packet_size));
 }
 
 std::unique_ptr<AudioPacket> AudioPump::Core::Downmix(
@@ -227,16 +227,14 @@ AudioPump::AudioPump(
     std::unique_ptr<AudioSource> audio_source,
     std::unique_ptr<AudioEncoder> audio_encoder,
     AudioStub* audio_stub)
-    : audio_task_runner_(audio_task_runner),
-      audio_stub_(audio_stub),
-      weak_factory_(this) {
+    : audio_task_runner_(audio_task_runner), audio_stub_(audio_stub) {
   DCHECK(audio_stub_);
 
   core_.reset(new Core(weak_factory_.GetWeakPtr(), std::move(audio_source),
                        std::move(audio_encoder)));
 
   audio_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&Core::Start, base::Unretained(core_.get())));
+      FROM_HERE, base::BindOnce(&Core::Start, base::Unretained(core_.get())));
 }
 
 AudioPump::~AudioPump() {
@@ -250,7 +248,7 @@ void AudioPump::Pause(bool pause) {
 
   audio_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Core::Pause, base::Unretained(core_.get()), pause));
+      base::BindOnce(&Core::Pause, base::Unretained(core_.get()), pause));
 }
 
 void AudioPump::SendAudioPacket(std::unique_ptr<AudioPacket> packet, int size) {
@@ -265,7 +263,7 @@ void AudioPump::SendAudioPacket(std::unique_ptr<AudioPacket> packet, int size) {
 void AudioPump::OnPacketSent(int size) {
   audio_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&Core::OnPacketSent, base::Unretained(core_.get()), size));
+      base::BindOnce(&Core::OnPacketSent, base::Unretained(core_.get()), size));
 }
 
 }  // namespace protocol

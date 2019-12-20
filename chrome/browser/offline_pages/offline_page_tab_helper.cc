@@ -10,6 +10,7 @@
 #include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
@@ -17,13 +18,20 @@
 #include "chrome/browser/offline_pages/offline_page_utils.h"
 #include "chrome/browser/offline_pages/prefetch/prefetch_service_factory.h"
 #include "chrome/browser/offline_pages/request_coordinator_factory.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
+#include "components/offline_pages/core/model/offline_page_model_utils.h"
+#include "components/offline_pages/core/offline_page_client_policy.h"
 #include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_item_utils.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/offline_store_utils.h"
+#include "components/offline_pages/core/page_criteria.h"
 #include "components/offline_pages/core/prefetch/offline_metrics_collector.h"
 #include "components/offline_pages/core/prefetch/prefetch_service.h"
 #include "components/offline_pages/core/request_header/offline_page_header.h"
+#include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -35,6 +43,8 @@
 
 namespace offline_pages {
 
+using blink::mojom::MHTMLLoadResult;
+
 namespace {
 bool SchemeIsForUntrustedOfflinePages(const GURL& url) {
 #if defined(OS_ANDROID)
@@ -42,6 +52,16 @@ bool SchemeIsForUntrustedOfflinePages(const GURL& url) {
     return true;
 #endif
   return url.SchemeIsFile();
+}
+
+void ReportMhtmlLoadResult(const std::string& name_space,
+                           MHTMLLoadResult load_result) {
+  if (name_space.empty())
+    return;
+
+  base::UmaHistogramEnumeration(model_utils::AddHistogramSuffix(
+                                    name_space, "OfflinePages.MhtmlLoadResult"),
+                                load_result);
 }
 }  // namespace
 
@@ -81,40 +101,61 @@ bool OfflinePageTabHelper::LoadedOfflinePageInfo::IsValid() const {
 
 OfflinePageTabHelper::OfflinePageTabHelper(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
-      mhtml_page_notifier_bindings_(web_contents, this),
-      weak_ptr_factory_(this) {
+      mhtml_page_notifier_receivers_(web_contents, this) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  prefetch_service_ = PrefetchServiceFactory::GetForBrowserContext(
-      web_contents->GetBrowserContext());
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  prefetch_service_ =
+      PrefetchServiceFactory::GetForKey(profile->GetProfileKey());
 }
 
 OfflinePageTabHelper::~OfflinePageTabHelper() {}
 
-void OfflinePageTabHelper::NotifyIsMhtmlPage(const GURL& main_frame_url,
-                                             base::Time creation_time) {
-  if (mhtml_page_notifier_bindings_.GetCurrentTargetFrame() !=
+void OfflinePageTabHelper::NotifyMhtmlPageLoadAttempted(
+    MHTMLLoadResult load_result,
+    const GURL& main_frame_url,
+    base::Time date) {
+  if (mhtml_page_notifier_receivers_.GetCurrentTargetFrame() !=
       web_contents()->GetMainFrame()) {
     return;
   }
+
+  bool is_trusted = provisional_offline_info_.trusted_state !=
+                    OfflinePageTrustedState::UNTRUSTED;
+
+  // We shouldn't have a trusted page without valid offline info and namespace.
+  DCHECK(!(!provisional_offline_info_.IsValid() && is_trusted));
+
+  // If file is untrusted or we are missing the namespace, MHTML load result is
+  // reported on the "untrusted" histogram.
+  if (is_trusted) {
+    // Ensure we have a non-empy namespace.
+    DCHECK(
+        provisional_offline_info_.offline_page &&
+        !provisional_offline_info_.offline_page->client_id.name_space.empty());
+
+    ReportMhtmlLoadResult(
+        provisional_offline_info_.offline_page->client_id.name_space,
+        load_result);
+
+    // If we're here, we have valid offline info, so since the page is trusted,
+    // we should not use the renderer's information.
+    return;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("OfflinePages.MhtmlLoadResultUntrusted",
+                            load_result);
 
   // Sanity checking the input URL.
   if (!main_frame_url.is_valid() || !main_frame_url.SchemeIsHTTPOrHTTPS())
     return;
 
-  // The renderer's info should only be used if the offline page is not trusted,
-  // so ignore this information if we have a trusted page already.
-  if (provisional_offline_info_.IsValid() &&
-      provisional_offline_info_.trusted_state !=
-          OfflinePageTrustedState::UNTRUSTED) {
-    return;
-  }
-
   if (!provisional_offline_info_.IsValid())
     provisional_offline_info_ = LoadedOfflinePageInfo::MakeUntrusted();
   provisional_offline_info_.offline_page->url = main_frame_url;
 
-  if (!creation_time.is_null())
-    provisional_offline_info_.offline_page->creation_time = creation_time;
+  if (!date.is_null())
+    provisional_offline_info_.offline_page->creation_time = date;
 }
 
 void OfflinePageTabHelper::DidStartNavigation(
@@ -123,19 +164,8 @@ void OfflinePageTabHelper::DidStartNavigation(
   if (!navigation_handle->IsInMainFrame())
     return;
 
-  // This is a new navigation so we can invalidate any previously scheduled
-  // operations.
-  weak_ptr_factory_.InvalidateWeakPtrs();
-  reloading_url_on_net_error_ = false;
-
   // The provisional offline info can be cleared no matter how.
   provisional_offline_info_.Clear();
-
-  // If not a fragment navigation, clear the cached offline info.
-  if (offline_info_.offline_page.get() &&
-      !navigation_handle->IsSameDocument()) {
-    offline_info_.Clear();
-  }
 
   // Report any attempted navigation as indication that browser is in use.
   // This doesn't have to be a successful navigation.
@@ -155,6 +185,20 @@ void OfflinePageTabHelper::DidFinishNavigation(
 
   if (navigation_handle->IsSameDocument())
     return;
+
+  if (offline_info_.IsValid()) {
+    // Do not store the offline page we are navigating away from in bfcache.
+    // If we managed to establish a network connection, we should reload the
+    // full page on back navigation. If not, offline page is fast to load,
+    // so back-forward cache is not going to be useful here.
+    content::BackForwardCache::DisableForRenderFrameHost(
+        navigation_handle->GetPreviousRenderFrameHostId(), "OfflinePage");
+  }
+
+  // This is a new navigation so we can invalidate any previously scheduled
+  // operations.
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  reloading_url_on_net_error_ = false;
 
   FinalizeOfflineInfo(navigation_handle);
   provisional_offline_info_.Clear();
@@ -195,7 +239,7 @@ void OfflinePageTabHelper::FinalizeOfflineInfo(
   } else if (navigated_url.SchemeIsHTTPOrHTTPS()) {
     // For http/https URL, commit the provisional offline info if any.
     if (provisional_offline_info_.IsValid()) {
-      DCHECK(OfflinePageUtils::EqualsIgnoringFragment(
+      DCHECK(EqualsIgnoringFragment(
           navigated_url, provisional_offline_info_.offline_page->url));
       offline_info_ = std::move(provisional_offline_info_);
       provisional_offline_info_.Clear();
@@ -227,7 +271,7 @@ void OfflinePageTabHelper::ReportPrefetchMetrics(
 
   if (offline_page()) {
     // Report prefetch usage.
-    if (policy_controller_.IsSuggested(offline_page()->client_id.name_space))
+    if (GetPolicy(offline_page()->client_id.name_space).is_suggested)
       metrics_collector->OnPrefetchedPageOpened();
     // Note that navigation to offline page may happen even if network is
     // connected. For the purposes of collecting offline usage statistics,
@@ -283,8 +327,14 @@ void OfflinePageTabHelper::TryLoadingOfflinePageOnNetError(
     return;
   }
 
-  OfflinePageUtils::SelectPagesForURL(
-      web_contents()->GetBrowserContext(), navigation_handle->GetURL(), tab_id,
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  PageCriteria criteria;
+  criteria.url = navigation_handle->GetURL();
+  criteria.pages_for_tab_id = tab_id;
+  criteria.maximum_matches = 1;
+  OfflinePageUtils::SelectPagesWithCriteria(
+      profile->GetProfileKey(), criteria,
       base::BindOnce(&OfflinePageTabHelper::SelectPagesForURLDone,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -335,6 +385,10 @@ bool OfflinePageTabHelper::IsShowingTrustedOfflinePage() const {
          (offline_info_.trusted_state != OfflinePageTrustedState::UNTRUSTED);
 }
 
+bool OfflinePageTabHelper::IsLoadingOfflinePage() const {
+  return provisional_offline_info_.offline_page.get() != nullptr;
+}
+
 const OfflinePageItem* OfflinePageTabHelper::GetOfflinePageForTest() const {
   return provisional_offline_info_.offline_page.get();
 }
@@ -345,7 +399,7 @@ OfflinePageTrustedState OfflinePageTabHelper::GetTrustedStateForTest() const {
 
 void OfflinePageTabHelper::SetCurrentTargetFrameForTest(
     content::RenderFrameHost* render_frame_host) {
-  mhtml_page_notifier_bindings_.SetCurrentTargetFrameForTesting(
+  mhtml_page_notifier_receivers_.SetCurrentTargetFrameForTesting(
       render_frame_host);
 }
 

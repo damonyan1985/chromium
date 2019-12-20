@@ -12,11 +12,12 @@
 #include "chrome/browser/android/vr/gvr_input_delegate.h"
 #include "chrome/browser/android/vr/gvr_keyboard_delegate.h"
 #include "chrome/browser/android/vr/gvr_scheduler_delegate.h"
+#include "chrome/browser/android/vr/ui_factory.h"
 #include "chrome/browser/android/vr/vr_gl_thread.h"
 #include "chrome/browser/vr/browser_renderer.h"
 #include "chrome/browser/vr/sounds_manager_audio_delegate.h"
 #include "chrome/browser/vr/text_input_delegate.h"
-#include "chrome/browser/vr/ui_factory.h"
+#include "chrome/browser/vr/ui_interface.h"
 
 namespace {
 // Number of frames to use for sliding averages for pose timings,
@@ -69,8 +70,7 @@ std::unique_ptr<BrowserRenderer> BrowserRendererFactory::Create(
   if (params->cardboard_gamepad) {
     input_delegate = std::make_unique<CardboardInputDelegate>(params->gvr_api);
   } else {
-    input_delegate =
-        std::make_unique<GvrInputDelegate>(params->gvr_api, vr_gl_thread);
+    input_delegate = std::make_unique<GvrInputDelegate>(params->gvr_api);
   }
   auto graphics_delegate = std::make_unique<GvrGraphicsDelegate>(
       vr_gl_thread,
@@ -87,7 +87,7 @@ std::unique_ptr<BrowserRenderer> BrowserRendererFactory::Create(
       base::BindOnce(&GvrGraphicsDelegate::Init,
                      graphics_delegate->GetWeakPtr(),
                      base::Unretained(params->gl_surface_created_event),
-                     base::Passed(std::move(params->surface_callback)),
+                     std::move(params->surface_callback),
                      params->ui_initial_state.in_web_vr));
   auto browser_renderer = std::make_unique<BrowserRenderer>(
       std::move(ui), std::move(scheduler_delegate),

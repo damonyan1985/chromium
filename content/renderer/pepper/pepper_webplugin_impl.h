@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "ppapi/c/pp_var.h"
 #include "third_party/blink/public/mojom/clipboard/clipboard.mojom.h"
 #include "third_party/blink/public/web/web_plugin.h"
@@ -72,13 +73,13 @@ class PepperWebPluginImpl : public blink::WebPlugin {
   blink::WebURL LinkAtPosition(const blink::WebPoint& position) const override;
   bool GetPrintPresetOptionsFromDocument(
       blink::WebPrintPresetOptions* preset_options) override;
+  bool IsPdfPlugin() override;
   bool StartFind(const blink::WebString& search_text,
                  bool case_sensitive,
                  int identifier) override;
   void SelectFindResult(bool forward, int identifier) override;
   void StopFind() override;
   bool SupportsPaginatedPrint() override;
-  bool IsPrintScalingDisabled() override;
 
   int PrintBegin(const blink::WebPrintParams& print_params) override;
   void PrintPage(int page_number, cc::PaintCanvas* canvas) override;
@@ -106,7 +107,7 @@ class PepperWebPluginImpl : public blink::WebPlugin {
   gfx::Rect plugin_rect_;
   PP_Var instance_object_;
   blink::WebPluginContainer* container_;
-  blink::mojom::ClipboardHostPtr clipboard_;
+  mojo::Remote<blink::mojom::ClipboardHost> clipboard_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperWebPluginImpl);
 };

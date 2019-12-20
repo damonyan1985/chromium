@@ -171,10 +171,11 @@ google_apis::CancelCallback DriveServiceOnWorker::GetRemainingTeamDriveList(
   DCHECK(sequence_checker_.CalledOnValidSequence());
 
   ui_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&DriveServiceWrapper::GetRemainingTeamDriveList,
-                            wrapper_, page_token,
-                            RelayCallbackToTaskRunner(worker_task_runner_.get(),
-                                                      FROM_HERE, callback)));
+      FROM_HERE,
+      base::BindOnce(&DriveServiceWrapper::GetRemainingTeamDriveList, wrapper_,
+                     page_token,
+                     RelayCallbackToTaskRunner(worker_task_runner_.get(),
+                                               FROM_HERE, callback)));
 
   return google_apis::CancelCallback();
 }
@@ -262,7 +263,7 @@ bool DriveServiceOnWorker::HasRefreshToken() const {
   return false;
 }
 
-void DriveServiceOnWorker::Initialize(const std::string& account_id) {
+void DriveServiceOnWorker::Initialize(const CoreAccountId& account_id) {
   NOTREACHED();
 }
 

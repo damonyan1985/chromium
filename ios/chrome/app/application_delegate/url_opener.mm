@@ -12,6 +12,7 @@
 #import "ios/chrome/app/application_delegate/tab_opening.h"
 #include "ios/chrome/app/startup/chrome_app_startup_parameters.h"
 #import "ios/chrome/browser/chrome_url_util.h"
+#import "ios/chrome/browser/url_loading/url_loading_params.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -63,15 +64,41 @@ const char* const kUMAMobileSessionStartFromAppsHistogram =
         [startupInformation setStartupParameters:nil];
       };
 
+      // TODO(crbug.com/935019): Exacly the same copy of this code is present in
+      // +[UserAcrtivityHandler
+      // handleStartupParametersWithTabOpener:startupInformation:interfaceProvider:]
+
+      GURL URL;
+      GURL virtualURL;
+      if ([params completeURL].SchemeIsFile()) {
+        // External URL will be loaded by WebState, which expects |completeURL|.
+        // Omnibox however suppose to display |externalURL|, which is used as
+        // virtual URL.
+        URL = [params completeURL];
+        virtualURL = [params externalURL];
+      } else {
+        URL = [params externalURL];
+      }
+      UrlLoadParams urlLoadParams = UrlLoadParams::InNewTab(URL, virtualURL);
+
+      ApplicationModeForTabOpening targetMode =
+          [params launchInIncognito] ? ApplicationModeForTabOpening::INCOGNITO
+                                     : ApplicationModeForTabOpening::NORMAL;
+      // If the call is coming from the app, it should be opened in the current
+      // mode to avoid changing mode.
+      if (callerApp == CALLER_APP_GOOGLE_CHROME)
+        targetMode = ApplicationModeForTabOpening::CURRENT;
+
+      if (![params launchInIncognito] &&
+          [tabOpener URLIsOpenedInRegularMode:urlLoadParams.web_params.url]) {
+        // Record metric.
+      }
+
       [tabOpener
-          dismissModalsAndOpenSelectedTabInMode:[params launchInIncognito]
-                                                    ? ApplicationMode::INCOGNITO
-                                                    : ApplicationMode::NORMAL
-                                        withURL:[params externalURL]
-                                     virtualURL:GURL::EmptyGURL()
+          dismissModalsAndOpenSelectedTabInMode:targetMode
+                              withUrlLoadParams:urlLoadParams
                                  dismissOmnibox:[params postOpeningAction] !=
                                                 FOCUS_OMNIBOX
-                                     transition:ui::PAGE_TRANSITION_LINK
                                      completion:tabOpenedCompletion];
       return YES;
     }
@@ -91,12 +118,16 @@ const char* const kUMAMobileSessionStartFromAppsHistogram =
          startupInformation:(id<StartupInformation>)startupInformation
                    appState:(AppState*)appState {
   NSURL* url = launchOptions[UIApplicationLaunchOptionsURLKey];
-  NSString* sourceApplication =
-      launchOptions[UIApplicationLaunchOptionsSourceApplicationKey];
 
-  if (url && sourceApplication) {
-    NSDictionary<NSString*, id>* options =
-        @{UIApplicationOpenURLOptionsSourceApplicationKey : sourceApplication};
+  if (url) {
+    NSMutableDictionary<NSString*, id>* options =
+        [[NSMutableDictionary alloc] init];
+    NSString* sourceApplication =
+        launchOptions[UIApplicationLaunchOptionsSourceApplicationKey];
+    if (sourceApplication) {
+      options[UIApplicationOpenURLOptionsSourceApplicationKey] =
+          sourceApplication;
+    }
 
     BOOL openURLResult = [URLOpener openURL:url
                           applicationActive:applicationActive

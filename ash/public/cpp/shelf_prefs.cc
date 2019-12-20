@@ -20,6 +20,8 @@ namespace ash {
 const char kShelfAutoHideBehaviorAlways[] = "Always";
 const char kShelfAutoHideBehaviorNever[] = "Never";
 
+// If any of the following ShelfAlignment values changed, the ShelfAlignment
+// policy should be updated.
 const char kShelfAlignmentBottom[] = "Bottom";
 const char kShelfAlignmentLeft[] = "Left";
 const char kShelfAlignmentRight[] = "Right";
@@ -50,7 +52,7 @@ std::string GetPerDisplayPref(PrefService* prefs,
   if (local_pref->IsManaged())
     return value;
 
-  std::string pref_key = base::Int64ToString(display_id);
+  std::string pref_key = base::NumberToString(display_id);
   bool has_per_display_prefs = false;
   if (!pref_key.empty()) {
     const base::DictionaryValue* shelf_prefs =
@@ -95,7 +97,7 @@ void SetPerDisplayPref(PrefService* prefs,
   const base::DictionaryValue* current_shelf_prefs =
       prefs->GetDictionary(prefs::kShelfPreferences);
   DCHECK(current_shelf_prefs);
-  std::string display_key = base::Int64ToString(display_id);
+  std::string display_key = base::NumberToString(display_id);
   const base::DictionaryValue* current_display_prefs = nullptr;
   std::string current_value;
   if (current_shelf_prefs->GetDictionary(display_key, &current_display_prefs) &&
@@ -117,22 +119,22 @@ void SetPerDisplayPref(PrefService* prefs,
 
 ShelfAlignment AlignmentFromPref(const std::string& value) {
   if (value == kShelfAlignmentLeft)
-    return SHELF_ALIGNMENT_LEFT;
+    return ShelfAlignment::kLeft;
   if (value == kShelfAlignmentRight)
-    return SHELF_ALIGNMENT_RIGHT;
+    return ShelfAlignment::kRight;
   // Default to bottom.
-  return SHELF_ALIGNMENT_BOTTOM;
+  return ShelfAlignment::kBottom;
 }
 
 const char* AlignmentToPref(ShelfAlignment alignment) {
   switch (alignment) {
-    case SHELF_ALIGNMENT_BOTTOM:
+    case ShelfAlignment::kBottom:
       return kShelfAlignmentBottom;
-    case SHELF_ALIGNMENT_LEFT:
+    case ShelfAlignment::kLeft:
       return kShelfAlignmentLeft;
-    case SHELF_ALIGNMENT_RIGHT:
+    case ShelfAlignment::kRight:
       return kShelfAlignmentRight;
-    case SHELF_ALIGNMENT_BOTTOM_LOCKED:
+    case ShelfAlignment::kBottomLocked:
       // This should not be a valid preference option for now. We only want to
       // lock the shelf during login or when adding a user.
       return nullptr;
@@ -147,17 +149,17 @@ ShelfAutoHideBehavior AutoHideBehaviorFromPref(const std::string& value) {
   // "Default" as well as "Never" and "Always", "Default" should now
   // be treated as "Never" (http://crbug.com/146773).
   if (value == kShelfAutoHideBehaviorAlways)
-    return SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS;
-  return SHELF_AUTO_HIDE_BEHAVIOR_NEVER;
+    return ShelfAutoHideBehavior::kAlways;
+  return ShelfAutoHideBehavior::kNever;
 }
 
 const char* AutoHideBehaviorToPref(ShelfAutoHideBehavior behavior) {
   switch (behavior) {
-    case SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS:
+    case ShelfAutoHideBehavior::kAlways:
       return kShelfAutoHideBehaviorAlways;
-    case SHELF_AUTO_HIDE_BEHAVIOR_NEVER:
+    case ShelfAutoHideBehavior::kNever:
       return kShelfAutoHideBehaviorNever;
-    case SHELF_AUTO_HIDE_ALWAYS_HIDDEN:
+    case ShelfAutoHideBehavior::kAlwaysHidden:
       // This should not be a valid preference option for now. We only want to
       // completely hide it when we run in app mode - or while we temporarily
       // hide the shelf (e.g. SessionAbortedDialog).

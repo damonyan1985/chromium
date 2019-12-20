@@ -16,14 +16,13 @@
 #include "content/browser/background_fetch/background_fetch_test_base.h"
 #include "content/browser/background_fetch/background_fetch_test_data_manager.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
-
-using ::testing::ElementsAre;
 
 namespace content {
 
@@ -52,14 +51,15 @@ class FakeController : public BackgroundFetchJobController {
   ~FakeController() override = default;
 
   void DidCompleteRequest(
-      const scoped_refptr<BackgroundFetchRequestInfo>& request) override {
+      const std::string& guid,
+      std::unique_ptr<BackgroundFetchResult> result) override {
     // Record the completed request. Store everything after the origin and the
     // slash, to be able to directly compare with the provided requests.
     controller_sequence_list_->push_back(
-        request->fetch_request()->url.path().substr(1));
+        result->response->url_chain[0].path().substr(1));
 
     // Continue normally.
-    BackgroundFetchJobController::DidCompleteRequest(request);
+    BackgroundFetchJobController::DidCompleteRequest(guid, std::move(result));
   }
 
  private:
@@ -75,13 +75,17 @@ class BackgroundFetchSchedulerTest : public BackgroundFetchTestBase {
     data_manager_ = std::make_unique<BackgroundFetchTestDataManager>(
         browser_context(), storage_partition(),
         embedded_worker_test_helper()->context_wrapper());
-    data_manager_->InitializeOnIOThread();
+    data_manager_->InitializeOnCoreThread();
 
     delegate_proxy_ =
         std::make_unique<BackgroundFetchDelegateProxy>(browser_context());
 
+    auto* background_fetch_context =
+        static_cast<StoragePartitionImpl*>(storage_partition())
+            ->GetBackgroundFetchContext();
     scheduler_ = std::make_unique<BackgroundFetchScheduler>(
-        data_manager_.get(), nullptr, delegate_proxy_.get(),
+        background_fetch_context, data_manager_.get(), nullptr,
+        delegate_proxy_.get(), devtools_context().get(),
         embedded_worker_test_helper()->context_wrapper());
   }
 
@@ -115,7 +119,7 @@ class BackgroundFetchSchedulerTest : public BackgroundFetchTestBase {
         registration_id, std::move(fetch_requests),
         blink::mojom::BackgroundFetchOptions::New(), SkBitmap(),
         /* start_paused= */ false, base::DoNothing());
-    thread_bundle_.RunUntilIdle();
+    task_environment_.RunUntilIdle();
 
     auto controller = std::make_unique<FakeController>(
         data_manager_.get(), delegate_proxy_.get(), registration_id,
@@ -133,7 +137,7 @@ class BackgroundFetchSchedulerTest : public BackgroundFetchTestBase {
 
   void RunSchedulerToCompletion() {
     scheduler_->ScheduleDownload();
-    thread_bundle_.RunUntilIdle();
+    task_environment_.RunUntilIdle();
   }
 
   void DidJobFinish(

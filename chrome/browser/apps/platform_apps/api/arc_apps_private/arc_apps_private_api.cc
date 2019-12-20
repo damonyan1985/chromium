@@ -9,6 +9,7 @@
 
 #include "base/logging.h"
 #include "base/no_destructor.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/common/apps/platform_apps/api/arc_apps_private.h"
@@ -27,7 +28,7 @@ ArcAppsPrivateAPI::GetFactoryInstance() {
 }
 
 ArcAppsPrivateAPI::ArcAppsPrivateAPI(content::BrowserContext* context)
-    : context_(context), scoped_prefs_observer_(this) {
+    : context_(context) {
   extensions::EventRouter::Get(context_)->RegisterObserver(
       this, api::arc_apps_private::OnInstalled::kEventName);
 }
@@ -112,11 +113,16 @@ ExtensionFunction::ResponseAction ArcAppsPrivateLaunchAppFunction::Run() {
   const std::string app_id = prefs->GetAppIdByPackageName(params->package_name);
   if (app_id.empty())
     return RespondNow(Error("App not found"));
+
   if (!arc::LaunchApp(
           browser_context(), app_id, ui::EF_NONE,
           arc::UserInteractionType::APP_STARTED_FROM_EXTENSION_API)) {
     return RespondNow(Error("Launch failed"));
   }
+
+  chromeos::DemoSession::RecordAppLaunchSourceIfInDemoMode(
+      chromeos::DemoSession::AppLaunchSource::kExtensionApi);
+
   return RespondNow(NoArguments());
 }
 

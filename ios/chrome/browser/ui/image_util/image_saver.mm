@@ -124,13 +124,13 @@
 - (void)saveImage:(NSData*)data
     withFileExtension:(NSString*)fileExtension
            completion:(void (^)(BOOL, NSError*))completion {
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(^{
         base::ScopedBlockingCall scoped_blocking_call(
-            base::BlockingType::MAY_BLOCK);
+            FROM_HERE, base::BlockingType::MAY_BLOCK);
 
         NSString* fileName = [[[NSProcessInfo processInfo] globallyUniqueString]
             stringByAppendingString:fileExtension];
@@ -145,18 +145,20 @@
           return;
         }
 
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-          [PHAssetChangeRequest
-              creationRequestForAssetFromImageAtFileURL:fileURL];
-        }
+        [[PHPhotoLibrary sharedPhotoLibrary]
+            performChanges:^{
+              [PHAssetChangeRequest
+                  creationRequestForAssetFromImageAtFileURL:fileURL];
+            }
             completionHandler:^(BOOL success, NSError* error) {
-              base::PostTaskWithTraits(
+              base::PostTask(
                   FROM_HERE,
-                  {base::MayBlock(), base::TaskPriority::BEST_EFFORT,
+                  {base::ThreadPool(), base::MayBlock(),
+                   base::TaskPriority::BEST_EFFORT,
                    base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
                   base::BindOnce(^{
                     base::ScopedBlockingCall scoped_blocking_call(
-                        base::BlockingType::MAY_BLOCK);
+                        FROM_HERE, base::BlockingType::MAY_BLOCK);
                     if (completion)
                       completion(success, error);
 

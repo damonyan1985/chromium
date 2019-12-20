@@ -13,6 +13,7 @@ class TransferLocationInfo {
    *
    * @param{{
          volumeName: !string,
+         breadcrumbsPath: !string,
          isTeamDrive: boolean,
          initialEntries: !Array<TestEntryInfo>
      }} opts Options for creating TransferLocationInfo.
@@ -20,12 +21,13 @@ class TransferLocationInfo {
   constructor(opts) {
     /**
      * The volume type (e.g. downloads, drive, drive_recent,
-     * drive_shared_with_me, drive_offline) or team drive name. This is used to
-     * select the volume with selectVolume() or the team drive with
-     * selectTeamDrive().
+     * drive_shared_with_me, drive_offline) or team drive name.
      * @type {string}
      */
     this.volumeName = opts.volumeName;
+
+    /** @type {string} */
+    this.breadcrumbsPath = opts.breadcrumbsPath;
 
     /**
      * Whether this transfer location is a team drive. Defaults to false.
@@ -108,36 +110,32 @@ async function transferBetweenVolumes(transferInfo) {
   if (transferInfo.source.isTeamDrive) {
     srcContents =
         TestEntryInfo.getExpectedRows(transferInfo.source.initialEntries.filter(
-            entry => entry.type !== EntryType.TEAM_DRIVE &&
+            entry => entry.type !== EntryType.SHARED_DRIVE &&
                 entry.teamDriveName === transferInfo.source.volumeName));
   } else {
     srcContents =
         TestEntryInfo.getExpectedRows(transferInfo.source.initialEntries.filter(
-            entry => entry.type !== EntryType.TEAM_DRIVE &&
+            entry => entry.type !== EntryType.SHARED_DRIVE &&
                 entry.teamDriveName === ''));
   }
-  const myDriveContent =
-      TestEntryInfo.getExpectedRows(transferInfo.source.initialEntries.filter(
-          entry => entry.type !== EntryType.TEAM_DRIVE &&
-              entry.teamDriveName === ''));
 
   let dstContents;
   if (transferInfo.destination.isTeamDrive) {
     dstContents = TestEntryInfo.getExpectedRows(
         transferInfo.destination.initialEntries.filter(
-            entry => entry.type !== EntryType.TEAM_DRIVE &&
+            entry => entry.type !== EntryType.SHARED_DRIVE &&
                 entry.teamDriveName === transferInfo.destination.volumeName));
   } else {
     dstContents = TestEntryInfo.getExpectedRows(
         transferInfo.destination.initialEntries.filter(
-            entry => entry.type !== EntryType.TEAM_DRIVE &&
+            entry => entry.type !== EntryType.SHARED_DRIVE &&
                 entry.teamDriveName === ''));
   }
 
   const localFiles = BASIC_LOCAL_ENTRY_SET;
   const driveFiles = (transferInfo.source.isTeamDrive ||
                       transferInfo.destination.isTeamDrive) ?
-      TEAM_DRIVE_ENTRY_SET :
+      SHARED_DRIVE_ENTRY_SET :
       BASIC_DRIVE_ENTRY_SET;
 
   // Open files app.
@@ -146,6 +144,8 @@ async function transferBetweenVolumes(transferInfo) {
 
   // Expand Drive root if either src or dst is within Drive.
   if (transferInfo.source.isTeamDrive || transferInfo.destination.isTeamDrive) {
+    const myDriveContent = TestEntryInfo.getExpectedRows(
+        driveFiles.filter(e => e.teamDriveName === '' && e.computerName === ''));
     // Select + expand + wait for its content.
     chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
         'selectFolderInTree', appId, ['Google Drive']));
@@ -154,10 +154,8 @@ async function transferBetweenVolumes(transferInfo) {
     await remoteCall.waitForFiles(appId, myDriveContent);
   }
 
-  // Select the source volume.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      transferInfo.source.isTeamDrive ? 'selectTeamDrive' : 'selectVolume',
-      appId, [transferInfo.source.volumeName]));
+  // Select the source folder.
+  await navigateWithDirectoryTree(appId, transferInfo.source.breadcrumbsPath);
 
   // Wait for the expected files to appear in the file list.
   await remoteCall.waitForFiles(appId, srcContents);
@@ -171,14 +169,13 @@ async function transferBetweenVolumes(transferInfo) {
       'selectFile', appId, [transferInfo.fileToTransfer.nameText]));
 
   // Copy the file.
-  let transferCommand = transferInfo.isMove ? 'cut' : 'copy';
+  const transferCommand = transferInfo.isMove ? 'cut' : 'copy';
   chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
       'execCommand', appId, [transferCommand]));
 
-  // Select the destination volume.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      transferInfo.destination.isTeamDrive ? 'selectTeamDrive' : 'selectVolume',
-      appId, [transferInfo.destination.volumeName]));
+  // Select the destination folder.
+  await navigateWithDirectoryTree(
+      appId, transferInfo.destination.breadcrumbsPath);
 
   // Wait for the expected files to appear in the file list.
   await remoteCall.waitForFiles(
@@ -200,7 +197,7 @@ async function transferBetweenVolumes(transferInfo) {
 
   // Wait for the file list to change, if the test is expected to pass.
   const dstContentsAfterPaste = dstContents.slice();
-  var ignoreFileSize =
+  const ignoreFileSize =
       transferInfo.source.volumeName == 'drive_shared_with_me' ||
       transferInfo.source.volumeName == 'drive_offline' ||
       transferInfo.destination.volumeName == 'drive_shared_with_me' ||
@@ -209,11 +206,12 @@ async function transferBetweenVolumes(transferInfo) {
 
   // If we expected the transfer to succeed, add the pasted file to the list
   // of expected rows.
-  if (!transferInfo.expectFailure) {
-    var pasteFile = transferInfo.fileToTransfer.getExpectedRow();
+  if (!transferInfo.expectFailure &&
+      transferInfo.source !== transferInfo.destination) {
+    const pasteFile = transferInfo.fileToTransfer.getExpectedRow();
     // Check if we need to add (1) to the filename, in the case of a
     // duplicate file.
-    for (var i = 0; i < dstContentsAfterPaste.length; i++) {
+    for (let i = 0; i < dstContentsAfterPaste.length; i++) {
       if (dstContentsAfterPaste[i][0] === pasteFile[0]) {
         // Replace the last '.' in filename with ' (1).'.
         // e.g. 'my.note.txt' -> 'my.note (1).txt'
@@ -228,6 +226,8 @@ async function transferBetweenVolumes(transferInfo) {
   await remoteCall.waitForFiles(
       appId, dstContentsAfterPaste,
       {ignoreFileSize: ignoreFileSize, ignoreLastModifiedTime: true});
+
+  return appId;
 }
 
 /**
@@ -235,36 +235,52 @@ async function transferBetweenVolumes(transferInfo) {
  * @enum{TransferLocationInfo}
  */
 const TRANSFER_LOCATIONS = Object.freeze({
-  drive: new TransferLocationInfo(
-      {volumeName: 'drive', initialEntries: BASIC_DRIVE_ENTRY_SET}),
+  drive: new TransferLocationInfo({
+    breadcrumbsPath: '/My Drive',
+    volumeName: 'drive',
+    initialEntries: BASIC_DRIVE_ENTRY_SET
+  }),
 
-  driveWithTeamDriveEntries: new TransferLocationInfo(
-      {volumeName: 'drive', initialEntries: TEAM_DRIVE_ENTRY_SET}),
+  driveWithTeamDriveEntries: new TransferLocationInfo({
+    breadcrumbsPath: '/My Drive',
+    volumeName: 'drive',
+    initialEntries: SHARED_DRIVE_ENTRY_SET
+  }),
 
-  downloads: new TransferLocationInfo(
-      {volumeName: 'downloads', initialEntries: BASIC_LOCAL_ENTRY_SET}),
+  downloads: new TransferLocationInfo({
+    breadcrumbsPath: '/My files/Downloads',
+    volumeName: 'downloads',
+    initialEntries: BASIC_LOCAL_ENTRY_SET
+  }),
 
   sharedWithMe: new TransferLocationInfo({
+    breadcrumbsPath: '/Shared with me',
     volumeName: 'drive_shared_with_me',
     initialEntries: SHARED_WITH_ME_ENTRY_SET
   }),
 
-  driveOffline: new TransferLocationInfo(
-      {volumeName: 'drive_offline', initialEntries: OFFLINE_ENTRY_SET}),
+  driveOffline: new TransferLocationInfo({
+    breadcrumbsPath: '/Offline',
+    volumeName: 'drive_offline',
+    initialEntries: OFFLINE_ENTRY_SET
+  }),
 
   driveTeamDriveA: new TransferLocationInfo({
+    breadcrumbsPath: '/Shared drives/Team Drive A',
     volumeName: 'Team Drive A',
     isTeamDrive: true,
-    initialEntries: TEAM_DRIVE_ENTRY_SET
+    initialEntries: SHARED_DRIVE_ENTRY_SET
   }),
 
   driveTeamDriveB: new TransferLocationInfo({
+    breadcrumbsPath: '/Shared drives/Team Drive B',
     volumeName: 'Team Drive B',
     isTeamDrive: true,
-    initialEntries: TEAM_DRIVE_ENTRY_SET
+    initialEntries: SHARED_DRIVE_ENTRY_SET
   }),
 
   my_files: new TransferLocationInfo({
+    breadcrumbsPath: '/My files',
     volumeName: 'my_files',
     initialEntries: [
       new TestEntryInfo({
@@ -298,7 +314,7 @@ const TRANSFER_LOCATIONS = Object.freeze({
 /**
  * Tests copying from Drive to Downloads.
  */
-testcase.transferFromDriveToDownloads = function() {
+testcase.transferFromDriveToDownloads = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.drive,
@@ -309,7 +325,7 @@ testcase.transferFromDriveToDownloads = function() {
 /**
  * Tests moving files from MyFiles/Downloads to MyFiles crbug.com/925175.
  */
-testcase.transferFromDownloadsToMyFilesMove = function() {
+testcase.transferFromDownloadsToMyFilesMove = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.downloads,
@@ -321,7 +337,7 @@ testcase.transferFromDownloadsToMyFilesMove = function() {
 /**
  * Tests copying files from MyFiles/Downloads to MyFiles crbug.com/925175.
  */
-testcase.transferFromDownloadsToMyFiles = function() {
+testcase.transferFromDownloadsToMyFiles = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.downloads,
@@ -333,7 +349,7 @@ testcase.transferFromDownloadsToMyFiles = function() {
 /**
  * Tests copying from Downloads to Drive.
  */
-testcase.transferFromDownloadsToDrive = function() {
+testcase.transferFromDownloadsToDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.downloads,
@@ -344,9 +360,9 @@ testcase.transferFromDownloadsToDrive = function() {
 /**
  * Tests copying from Drive shared with me to Downloads.
  */
-testcase.transferFromSharedToDownloads = function() {
+testcase.transferFromSharedToDownloads = () => {
   return transferBetweenVolumes(new TransferInfo({
-    fileToTransfer: ENTRIES.testSharedDocument,
+    fileToTransfer: ENTRIES.testSharedFile,
     source: TRANSFER_LOCATIONS.sharedWithMe,
     destination: TRANSFER_LOCATIONS.downloads,
   }));
@@ -355,7 +371,7 @@ testcase.transferFromSharedToDownloads = function() {
 /**
  * Tests copying from Drive shared with me to Drive.
  */
-testcase.transferFromSharedToDrive = function() {
+testcase.transferFromSharedToDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.testSharedDocument,
     source: TRANSFER_LOCATIONS.sharedWithMe,
@@ -366,9 +382,9 @@ testcase.transferFromSharedToDrive = function() {
 /**
  * Tests copying from Drive offline to Downloads.
  */
-testcase.transferFromOfflineToDownloads = function() {
+testcase.transferFromOfflineToDownloads = () => {
   return transferBetweenVolumes(new TransferInfo({
-    fileToTransfer: ENTRIES.testDocument,
+    fileToTransfer: ENTRIES.testSharedFile,
     source: TRANSFER_LOCATIONS.driveOffline,
     destination: TRANSFER_LOCATIONS.downloads,
   }));
@@ -377,7 +393,7 @@ testcase.transferFromOfflineToDownloads = function() {
 /**
  * Tests copying from Drive offline to Drive.
  */
-testcase.transferFromOfflineToDrive = function() {
+testcase.transferFromOfflineToDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.testDocument,
     source: TRANSFER_LOCATIONS.driveOffline,
@@ -388,7 +404,7 @@ testcase.transferFromOfflineToDrive = function() {
 /**
  * Tests copying from a Team Drive to Drive.
  */
-testcase.transferFromTeamDriveToDrive = function() {
+testcase.transferFromTeamDriveToDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.teamDriveAFile,
     source: TRANSFER_LOCATIONS.driveTeamDriveA,
@@ -399,7 +415,7 @@ testcase.transferFromTeamDriveToDrive = function() {
 /**
  * Tests copying from Drive to a Team Drive.
  */
-testcase.transferFromDriveToTeamDrive = function() {
+testcase.transferFromDriveToTeamDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.driveWithTeamDriveEntries,
@@ -413,7 +429,7 @@ testcase.transferFromDriveToTeamDrive = function() {
 /**
  * Tests copying from a Team Drive to Downloads.
  */
-testcase.transferFromTeamDriveToDownloads = function() {
+testcase.transferFromTeamDriveToDownloads = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.teamDriveAFile,
     source: TRANSFER_LOCATIONS.driveTeamDriveA,
@@ -426,11 +442,11 @@ testcase.transferFromTeamDriveToDownloads = function() {
  * drive (e.g. Downloads). Hosted documents only make sense in the context of
  * Drive.
  */
-testcase.transferHostedFileFromTeamDriveToDownloads = function() {
+testcase.transferHostedFileFromTeamDriveToDownloads = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.teamDriveAHostedFile,
     source: TRANSFER_LOCATIONS.driveTeamDriveA,
-    destination: TRANSFER_LOCATIONS.driveWithTeamDriveEntries,
+    destination: TRANSFER_LOCATIONS.downloads,
     expectFailure: true,
   }));
 };
@@ -438,7 +454,7 @@ testcase.transferHostedFileFromTeamDriveToDownloads = function() {
 /**
  * Tests copying from Downloads to a Team Drive.
  */
-testcase.transferFromDownloadsToTeamDrive = function() {
+testcase.transferFromDownloadsToTeamDrive = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.hello,
     source: TRANSFER_LOCATIONS.downloads,
@@ -452,7 +468,7 @@ testcase.transferFromDownloadsToTeamDrive = function() {
 /**
  * Tests copying between Team Drives.
  */
-testcase.transferBetweenTeamDrives = function() {
+testcase.transferBetweenTeamDrives = () => {
   return transferBetweenVolumes(new TransferInfo({
     fileToTransfer: ENTRIES.teamDriveBFile,
     source: TRANSFER_LOCATIONS.driveTeamDriveB,
@@ -461,4 +477,294 @@ testcase.transferBetweenTeamDrives = function() {
         'Members of \'Team Drive A\' will gain access to the copy of these ' +
         'items.CopyCancel',
   }));
+};
+
+/**
+ * Tests that moving a file to its current location is a no-op.
+ */
+testcase.transferFromDownloadsToDownloads = async () => {
+  const appId = await transferBetweenVolumes(new TransferInfo({
+    fileToTransfer: ENTRIES.hello,
+    source: TRANSFER_LOCATIONS.downloads,
+    destination: TRANSFER_LOCATIONS.downloads,
+    isMove: true,
+  }));
+  chrome.test.assertEq(
+      '',
+      (await remoteCall.waitForElement(appId, '.progress-frame label')).text);
+};
+
+/**
+ * Tests that we can drag a file from #file-list to #directory-tree.
+ * It copies the file from Downloads to Downloads/photos.
+ */
+testcase.transferDragAndDrop = async () => {
+  const entries = [ENTRIES.hello, ENTRIES.photos];
+
+  // Open files app.
+  const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, entries, []);
+
+  // Expand Downloads to display "photos" folder in the directory tree.
+  await expandTreeItem(appId, '#directory-tree [entry-label="Downloads"]');
+
+  // Drag has to start in the file list column "name" text content, otherwise it
+  // starts a selection instead of a drag.
+  const src =
+      `#file-list li[file-name="${ENTRIES.hello.nameText}"] .entry-name`;
+  const dst = '#directory-tree [entry-label="photos"]';
+
+  // Select the file to be dragged.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('fakeMouseClick', appId, [src]),
+      'fakeMouseClick failed');
+
+  // Drag and drop it.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('fakeDragAndDrop', appId, [src, dst]),
+      'fakeDragAndDrop failed');
+
+  // Navigate to the dst folder.
+  chrome.test.assertTrue(
+      !!await remoteCall.callRemoteTestUtil('fakeMouseClick', appId, [dst]),
+      'fakeMouseClick failed');
+
+  // Wait for navigation to finish.
+  await remoteCall.waitUntilCurrentDirectoryIsChanged(
+      appId, '/My files/Downloads/photos');
+
+  // Wait for the expected files to appear in the file list.
+  await remoteCall.waitForFiles(
+      appId, TestEntryInfo.getExpectedRows([ENTRIES.hello]),
+      {ignoreLastModifiedTime: true});
+};
+
+/**
+ * Tests that we can drag a file from #file-list and hover above USB root as
+ * EntryList without raising an error.
+ */
+testcase.transferDragAndHover = async () => {
+  const entries = [ENTRIES.hello, ENTRIES.photos];
+
+  await sendTestMessage({name: 'mountUsbWithPartitions'});
+  await sendTestMessage({name: 'mountFakeUsb'});
+
+  // Open files app.
+  const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, entries, []);
+
+  // Drag has to start in the file list column "name" text content, otherwise it
+  // starts a selection instead of a drag.
+  const src =
+      `#file-list li[file-name="${ENTRIES.hello.nameText}"] .entry-name`;
+  const dst1 = '#directory-tree [entry-label="Drive Label"]';
+  const dst2 = '#directory-tree [entry-label="fake-usb"]';
+
+  // Wait for USB roots to be ready.
+  await remoteCall.waitForElement(appId, dst1);
+  await remoteCall.waitForElement(appId, dst2);
+
+  // Drag and hover it.
+  const skipDrop = true;
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil(
+          'fakeDragAndDrop', appId, [src, dst1, skipDrop]),
+      'fakeDragAndDrop failed');
+};
+
+/**
+ * Tests that copying a deleted file shows an error.
+ */
+testcase.transferDeletedFile = async () => {
+  const entry = ENTRIES.hello;
+
+  // Open files app.
+  const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, [entry], []);
+
+  // Select the file.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, [entry.nameText]));
+
+  // Copy the file.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['copy']));
+
+  // Delete the file.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'deleteFile', appId, [entry.nameText]));
+
+  // Confirm deletion.
+  await waitAndAcceptDialog(appId);
+
+  // Paste the file.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['paste']));
+
+  // Check that the error appears in the feedback panel.
+  const element = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  chrome.test.assertEq(
+      `Whoops, ${entry.nameText} no longer exists.`,
+      element.attributes['primary-text']);
+
+  // Check that only one line of text is shown.
+  chrome.test.assertFalse(!!element.attributes['secondary-text']);
+};
+
+/**
+ * Tests that transfer source/destination persists if app window is re-opened.
+ */
+testcase.transferInfoIsRemembered = async () => {
+  const entry = ENTRIES.hello;
+
+  // Open files app.
+  let appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, [entry], []);
+
+  // Select the file.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, [entry.nameText]));
+
+  // Copy the file.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['copy']));
+
+  // Tell the background page to never finish the file copy.
+  await remoteCall.callRemoteTestUtil(
+      'progressCenterNeverNotifyCompleted', appId, []);
+
+  // Paste the file to begin a copy operation.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['paste']));
+
+  // The feedback panel should appear: record the feedback panel text.
+  let panel = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  const primaryText = panel.attributes['primary-text'];
+  const secondaryText = panel.attributes['secondary-text'];
+
+  // Close the Files app window.
+  await remoteCall.closeWindowAndWait(appId);
+
+  // Open a Files app window again.
+  appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS);
+
+  // Check the feedback panel text is remembered.
+  panel = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  chrome.test.assertEq(primaryText, panel.attributes['primary-text']);
+  chrome.test.assertEq(secondaryText, panel.attributes['secondary-text']);
+};
+
+/**
+ * Tests that destination text line shows name for USB targets.
+ */
+testcase.transferToUsbHasDestinationText = async () => {
+  const USB_VOLUME_QUERY = '#directory-tree [volume-type-icon="removable"]';
+  const entry = ENTRIES.hello;
+
+  // Open files app.
+  const appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, [entry], []);
+
+  // Mount a USB volume.
+  await sendTestMessage({name: 'mountFakeUsbEmpty'});
+
+  // Wait for the USB volume to mount.
+  await remoteCall.waitForElement(appId, USB_VOLUME_QUERY);
+
+  // Select the file.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, [entry.nameText]));
+
+  // Copy the file.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['copy']));
+
+  // Select USB volume.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectInDirectoryTree', appId, [USB_VOLUME_QUERY]));
+
+  // Tell the background page to never finish the file copy.
+  await remoteCall.callRemoteTestUtil(
+      'progressCenterNeverNotifyCompleted', appId, []);
+
+  // Paste the file to begin a copy operation.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['paste']));
+
+  // Check the feedback panel destination message contains the target device.
+  const panel = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  chrome.test.assertEq('To fake-usb', panel.attributes['secondary-text']);
+};
+
+/**
+ * Tests that dismissing an error notification on the foreground
+ * page is propagated to the background page.
+ */
+testcase.transferDismissedErrorIsRemembered = async () => {
+  const DOWNLOADS_QUERY = '#directory-tree [entry-label="Downloads"]';
+  const entry = ENTRIES.hello;
+
+  // Open Files app on Downloads.
+  let appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, [entry], []);
+
+  // Select a file to copy.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, [entry.nameText]));
+
+  // Copy the file.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['copy']));
+
+  // Force all file copy operations to trigger an error.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'forceErrorsOnFileOperations', appId, [true]));
+
+  // Select Downloads.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectInDirectoryTree', appId, [DOWNLOADS_QUERY]));
+
+  // Paste the file to begin a copy operation.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['paste']));
+
+  // Check: an error feedback panel with failure status should appear.
+  let errorPanel = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  // If we've grabbed a reference to a progress panel, it will disappear
+  // quickly and be replaced by the error panel, so loop and wait for it.
+  while (errorPanel.attributes['indicator'] === 'progress') {
+    chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+        'requestAnimationFrame', appId, []));
+    errorPanel = await remoteCall.waitForElement(
+        appId, ['#progress-panel', 'xf-panel-item']);
+  }
+  chrome.test.assertEq('failure', errorPanel.attributes['status']);
+
+  // Press the dismiss button on the error feedback panel.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'fakeMouseClick', appId,
+      [['#progress-panel', 'xf-panel-item', 'xf-button#secondary-action']]));
+
+  // Close the Files app window.
+  await remoteCall.closeWindowAndWait(appId);
+
+  // Open a Files app window again.
+  appId = await setupAndWaitUntilReady(RootPath.DOWNLOADS, [entry], []);
+
+  // Turn off the error generation for file operations.
+  chrome.test.assertFalse(await remoteCall.callRemoteTestUtil(
+      'forceErrorsOnFileOperations', appId, [false]));
+
+  // Tell the background page to never finish the file copy.
+  await remoteCall.callRemoteTestUtil(
+      'progressCenterNeverNotifyCompleted', appId, []);
+
+  // Paste the file to begin a copy operation.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('execCommand', appId, ['paste']));
+
+  // Check: the first feedback panel item should be a progress panel.
+  // If the error persisted then we'd see a summary panel here.
+  const progressPanel = await remoteCall.waitForElement(
+      appId, ['#progress-panel', 'xf-panel-item']);
+  chrome.test.assertEq('progress', progressPanel.attributes['indicator']);
 };

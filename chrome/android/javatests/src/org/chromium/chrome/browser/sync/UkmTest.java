@@ -14,15 +14,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.metrics.UmaSessionStats;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.sync.ModelType;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.base.PageTransition;
 
 /**
@@ -43,13 +42,13 @@ public class UkmTest {
     public void setUp() throws InterruptedException {
         mSyncTestRule.startMainActivityOnBlankPage();
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.initMetricsAndCrashReportingForTesting());
     }
 
     @After
-    public void tearDown() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(
+    public void tearDown() {
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.unSetMetricsAndCrashReportingForTesting());
     }
 
@@ -83,7 +82,7 @@ public class UkmTest {
         // chrome/browser/metrics/ukm_browsertest.cc.
         // Make sure that UKM is disabled when metrics consent is revoked.
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
 
         // Enable a Syncing account.
@@ -98,12 +97,12 @@ public class UkmTest {
         // in the ukm_browsertest.cc version.
 
         // Verify that after revoking consent, UKM is disabled.
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(false));
         Assert.assertFalse("UKM Enabled:", isUkmEnabled(normalTab));
 
         // Re-enable consent, UKM is re-enabled.
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
         Assert.assertTrue("UKM Enabled:", isUkmEnabled(normalTab));
 
@@ -118,13 +117,13 @@ public class UkmTest {
         // chrome/browser/metrics/ukm_browsertest.cc.
         // Make sure that providing consent doesn't enable UKM when sync is disabled.
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(false));
         Tab normalTab = mSyncTestRule.getActivity().getActivityTab();
         Assert.assertFalse("UKM Enabled:", isUkmEnabled(normalTab));
 
         // Enable consent, Sync still not enabled so UKM should be disabled.
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
         Assert.assertFalse("UKM Enabled:", isUkmEnabled(normalTab));
 
@@ -135,38 +134,12 @@ public class UkmTest {
 
     @Test
     @SmallTest
-    public void secondaryPassphraseCheck() throws Exception {
-        // Keep in sync with UkmBrowserTest.SecondaryPassphraseCheck in
-        // chrome/browser/metrics/ukm_browsertest.cc.
-        // Make sure that UKM is disabled when an secondary passphrase is set.
-
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
-
-        // Enable a Syncing account.
-        Account account = mSyncTestRule.setUpTestAccountAndSignIn();
-        Tab normalTab = mSyncTestRule.getActivity().getActivityTab();
-        Assert.assertTrue("UKM Enabled:", isUkmEnabled(normalTab));
-
-        String clientId = getUkmClientId(normalTab);
-
-        // Add a passphrase. This should disable UKM.
-        SyncTestUtil.encryptWithPassphrase("passphrase");
-
-        Assert.assertFalse("UKM Enabled:", isUkmEnabled(normalTab));
-
-        // Client ID should have been reset.
-        Assert.assertNotEquals("Client id:", clientId, getUkmClientId(normalTab));
-    }
-
-    @Test
-    @SmallTest
     public void singleSyncSignoutCheck() throws Exception {
         // Keep in sync with UkmBrowserTest.SingleSyncSignoutCheck in
         // chrome/browser/metrics/ukm_browsertest.cc.
         // Make sure that UKM is disabled when an secondary passphrase is set.
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
 
         // Enable a Syncing account.
@@ -192,7 +165,7 @@ public class UkmTest {
         // chrome/browser/metrics/ukm_browsertest.cc.
         // Make sure that UKM is disabled when an secondary passphrase is set.
 
-        ThreadUtils.runOnUiThreadBlocking(
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> UmaSessionStats.updateMetricsAndCrashReportingForTesting(true));
 
         // Enable a Syncing account.
@@ -205,17 +178,7 @@ public class UkmTest {
         // Disable Sync for history.
         mSyncTestRule.disableDataType(ModelType.TYPED_URLS);
 
-        Assert.assertFalse("UKM Enabled:", isUkmEnabled(normalTab));
-
-        // Client ID should have been reset.
-        Assert.assertNotEquals("Client id:", originalClientId, getUkmClientId(normalTab));
-
-        // Re-enable Sync for history.
-        mSyncTestRule.enableDataType(ModelType.TYPED_URLS);
-
+        // Disable history sync does not disable UKM
         Assert.assertTrue("UKM Enabled:", isUkmEnabled(normalTab));
-
-        // Client ID should still be different.
-        Assert.assertNotEquals("Client id:", originalClientId, getUkmClientId(normalTab));
     }
 }

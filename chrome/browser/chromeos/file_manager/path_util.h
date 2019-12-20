@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/files/file_path.h"
-#include "storage/browser/fileapi/file_system_url.h"
+#include "storage/browser/file_system/file_system_url.h"
 
 class GURL;
 class Profile;
@@ -38,12 +38,15 @@ base::FilePath GetMyFilesFolderForProfile(Profile* profile);
 // As of now (M40), the conversion is used only during initialization of
 // download_prefs, where profile unaware initialization precedes profile
 // aware stage. Below are the list of relocations we have made in the past.
+// *Updated in M73 to handle /home/chronos/user to
+// /home/chronos/u-{hash}/MyFiles/Downloads
 //
 // M27: crbug.com/229304, for supporting {offline, recent, shared} folders
 //   in Drive. Migration code for this is removed in M34.
 // M34-35: crbug.com/313539, 356322, for supporting multi profiles.
 //   Migration code is removed in M40.
 bool MigratePathFromOldFormat(Profile* profile,
+                              const base::FilePath& old_base,
                               const base::FilePath& old_path,
                               base::FilePath* new_path);
 
@@ -57,6 +60,14 @@ bool MigratePathFromOldFormat(Profile* profile,
 bool MigrateFromDownloadsToMyFiles(Profile* profile,
                                    const base::FilePath& old_path,
                                    base::FilePath* new_path);
+
+// Convers |old_path| in /special/drive-<hash> to |new_path| in
+// /media/fuse/drivefs-<id>. Returns true if path is changed else
+// returns false if |old_path| was not inside Drive, and |new_path| is
+// undefined.
+bool MigrateToDriveFs(Profile* profile,
+                      const base::FilePath& old_path,
+                      base::FilePath* new_path);
 
 // The canonical mount point name for "Downloads" folder.
 std::string GetDownloadsMountPointName(Profile* profile);
@@ -103,19 +114,21 @@ void ConvertToContentUrls(
 // Replacements:
 // * /home/chronos/user/Downloads                => Downloads
 // * /home/chronos/u-<hash>/Downloads            => Downloads
-// * /special/drive-<hash>/root                  => Google Drive
-// * /special/drive-<hash>/team_drives           => Team Drives
-// * /special/drive-<hash>/Computers             => Computers
+// * /media/fuse/drivefs-<hash>/root             => Google Drive
+// * /media/fuse/drivefs-<hash>/team_drives      => Team Drives
+// * /media/fuse/drivefs-<hash>/Computers        => Computers
 // * /run/arc/sdcard/write/emulated/0            => Play files
 // * /media/fuse/crostini_<hash>_termina_penguin => Linux files
 // * '/' with ' \u203a ' (angled quote sign) for display purposes.
 std::string GetPathDisplayTextForSettings(Profile* profile,
                                           const std::string& path);
 
-// Extracts |mount_name| and |full_path| from given |absolute_path|.
-bool ExtractMountNameAndFullPath(const base::FilePath& absolute_path,
-                                 std::string* mount_name,
-                                 std::string* full_path);
+// Extracts |mount_name|, |file_system_name|, and |full_path| from given
+// |absolute_path|.
+bool ExtractMountNameFileSystemNameFullPath(const base::FilePath& absolute_path,
+                                            std::string* mount_name,
+                                            std::string* file_system_name,
+                                            std::string* full_path);
 }  // namespace util
 }  // namespace file_manager
 

@@ -12,7 +12,6 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/observer_list_threadsafe.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/passwords/settings/password_manager_presenter.h"
@@ -28,9 +27,9 @@ class WebContents;
 
 namespace extensions {
 
-// Delegate used by the chrome.passwordsPrivate API to facilitate removing saved
-// passwords and password exceptions and to notify listeners when these values
-// have changed.
+// Delegate used by the chrome.passwordsPrivate API to facilitate working with
+// saved passwords and password exceptions (reading, changing, removing,
+// import/export) and to notify listeners when these values have changed.
 class PasswordsPrivateDelegate : public KeyedService {
  public:
   using PlaintextPasswordCallback =
@@ -38,16 +37,10 @@ class PasswordsPrivateDelegate : public KeyedService {
 
   ~PasswordsPrivateDelegate() override {}
 
-  // Sends the saved passwords list to the event router.
-  virtual void SendSavedPasswordsList() = 0;
-
   // Gets the saved passwords list.
   using UiEntries = std::vector<api::passwords_private::PasswordUiEntry>;
   using UiEntriesCallback = base::OnceCallback<void(const UiEntries&)>;
   virtual void GetSavedPasswordsList(UiEntriesCallback callback) = 0;
-
-  // Sends the password exceptions list to the event router.
-  virtual void SendPasswordExceptionsList() = 0;
 
   // Gets the password exceptions list.
   using ExceptionEntries = std::vector<api::passwords_private::ExceptionEntry>;

@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/web/dom_altering_lock.h"
 
 #include "base/logging.h"
-#include "ios/web/public/web_thread.h"
+#include "ios/web/public/thread/web_thread.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -48,3 +48,5 @@ void DOMAlteringLock::Release(id<DOMAltering> feature) {
   if (current_dom_altering_feature_ == feature)
     current_dom_altering_feature_ = nil;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(DOMAlteringLock)

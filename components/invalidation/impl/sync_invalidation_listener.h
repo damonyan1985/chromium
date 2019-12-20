@@ -32,6 +32,8 @@ class RegistrationManager;
 
 // SyncInvalidationListener is not thread-safe and lives on the sync
 // thread.
+// TODO(crbug.com/1029481): Part of the legacy implementation of invalidations,
+// scheduled for deletion.
 class INVALIDATION_EXPORT SyncInvalidationListener
     : public invalidation::InvalidationListener,
       public StateWriter,
@@ -75,7 +77,8 @@ class INVALIDATION_EXPORT SyncInvalidationListener
           invalidation_state_tracker_task_runner,
       Delegate* delegate);
 
-  void UpdateCredentials(const std::string& email, const std::string& token);
+  void UpdateCredentials(const CoreAccountId& account_id,
+                         const std::string& token);
 
   // Update the set of object IDs that we're interested in getting
   // notifications for.  May be called at any time.
@@ -175,7 +178,7 @@ class INVALIDATION_EXPORT SyncInvalidationListener
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<SyncInvalidationListener> weak_ptr_factory_;
+  base::WeakPtrFactory<SyncInvalidationListener> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SyncInvalidationListener);
 };

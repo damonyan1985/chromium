@@ -30,12 +30,14 @@
 
 #include "third_party/blink/renderer/core/clipboard/data_object_item.h"
 
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/clipboard/clipboard_mime_types.h"
 #include "third_party/blink/renderer/core/clipboard/system_clipboard.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/image-encoders/image_encoder.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
-#include "ui/gfx/codec/png_codec.h"
 
 namespace blink {
 
@@ -127,25 +129,36 @@ File* DataObjectItem::GetAsFile() const {
     if (file_)
       return file_.Get();
     DCHECK(shared_buffer_);
-    // FIXME: This code is currently impossible--we never populate
-    // m_sharedBuffer when dragging in. At some point though, we may need to
+    // TODO: This code is currently impossible--we never populate
+    // |shared_buffer_| when dragging in. At some point though, we may need to
     // support correctly converting a shared buffer into a file.
     return nullptr;
   }
 
   DCHECK_EQ(source_, kClipboardSource);
   if (GetType() == kMimeTypeImagePng) {
-    SkBitmap image = SystemClipboard::GetInstance().ReadImage(
+    SkBitmap bitmap = SystemClipboard::GetInstance().ReadImage(
         mojom::ClipboardBuffer::kStandard);
-    std::vector<unsigned char> png_data;
-    if (gfx::PNGCodec::FastEncodeBGRASkBitmap(image, false, &png_data)) {
-      std::unique_ptr<BlobData> data = BlobData::Create();
-      data->SetContentType(kMimeTypeImagePng);
-      data->AppendBytes(png_data.data(), png_data.size());
-      const uint64_t length = data->length();
-      auto blob = BlobDataHandle::Create(std::move(data), length);
-      return File::Create("image.png", CurrentTimeMS(), std::move(blob));
-    }
+
+    SkPixmap pixmap;
+    bitmap.peekPixels(&pixmap);
+
+    // Set encoding options to favor speed over size.
+    SkPngEncoder::Options options;
+    options.fZLibLevel = 1;
+    options.fFilterFlags = SkPngEncoder::FilterFlag::kNone;
+
+    Vector<uint8_t> png_data;
+    if (!ImageEncoder::Encode(&png_data, pixmap, options))
+      return nullptr;
+
+    auto data = std::make_unique<BlobData>();
+    data->SetContentType(kMimeTypeImagePng);
+    data->AppendBytes(png_data.data(), png_data.size());
+    const uint64_t length = data->length();
+    auto blob = BlobDataHandle::Create(std::move(data), length);
+    return MakeGarbageCollected<File>("image.png", base::Time::Now(),
+                                      std::move(blob));
   }
 
   return nullptr;
@@ -180,7 +193,7 @@ String DataObjectItem::GetAsString() const {
 }
 
 bool DataObjectItem::IsFilename() const {
-  // FIXME: https://bugs.webkit.org/show_bug.cgi?id=81261: When we properly
+  // TODO(https://bugs.webkit.org/show_bug.cgi?id=81261): When we properly
   // support File dragout, we'll need to make sure this works as expected for
   // DragDataChromium.
   return kind_ == kFileKind && file_;

@@ -39,15 +39,12 @@ void NSSCertDatabaseChromeOS::SetSystemSlot(
   profile_filter_.Init(GetPublicSlot(), GetPrivateSlot(), GetSystemSlot());
 }
 
-ScopedCERTCertificateList NSSCertDatabaseChromeOS::ListCertsSync() {
-  return ListCertsImpl(profile_filter_);
-}
-
 void NSSCertDatabaseChromeOS::ListCerts(
     NSSCertDatabase::ListCertsCallback callback) {
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      {base::ThreadPool(), base::MayBlock(),
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&NSSCertDatabaseChromeOS::ListCertsImpl, profile_filter_),
       std::move(callback));
 }
@@ -78,7 +75,8 @@ ScopedCERTCertificateList NSSCertDatabaseChromeOS::ListCertsImpl(
   // hooks (such as smart card UI). To ensure threads are not starved or
   // deadlocked, the base::ScopedBlockingCall below increments the thread pool
   // capacity if this method takes too much time to run.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   ScopedCERTCertificateList certs(
       NSSCertDatabase::ListCertsImpl(crypto::ScopedPK11Slot()));

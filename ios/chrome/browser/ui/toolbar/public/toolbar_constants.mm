@@ -8,20 +8,24 @@
 #error "This file requires ARC support."
 #endif
 
+const NSUInteger kControlStateSpotlighted = 0x00010000;
+
 const CGFloat kToolbarBackgroundColor = 0xF2F2F2;
 const CGFloat kIncognitoToolbarBackgroundColor = 0x505050;
 const CGFloat kNTPBackgroundColorBrightnessIncognito = 34.0 / 255.0;
 
 const CGFloat kTopButtonsBottomMargin = 3.0f;
 const CGFloat kBottomButtonsBottomMargin = 2.0f;
-const CGFloat kAdaptiveToolbarMargin = 4.0f;
+const CGFloat kAdaptiveToolbarMargin = 10.0f;
 const CGFloat kAdaptiveToolbarStackViewSpacing = 11.0f;
 
 const CGFloat kProgressBarHeight = 2.0f;
 
+const CGFloat kToolbarSeparatorHeight = 0.1f;
+
 const CGFloat kAdaptiveToolbarButtonHeight = 44.0f;
 const CGFloat kAdaptiveToolbarButtonWidth = 44.0f;
-const CGFloat kOmniboxButtonWidth = 70.0f;
+const CGFloat kSearchButtonWidth = 70.0f;
 const CGFloat kCancelButtonHorizontalInset = 8;
 const CGFloat kToolbarDimmedButtonAlpha = 0.5;
 
@@ -56,8 +60,8 @@ NSString* const kToolbarStackButtonIdentifier =
     @"kToolbarStackButtonIdentifier";
 NSString* const kToolbarShareButtonIdentifier =
     @"kToolbarShareButtonIdentifier";
-NSString* const kToolbarOmniboxButtonIdentifier =
-    @"kToolbarOmniboxButtonIdentifier";
+NSString* const kToolbarSearchButtonIdentifier =
+    @"kToolbarSearchButtonIdentifier";
 NSString* const kToolbarCancelOmniboxEditButtonIdentifier =
     @"kToolbarCancelOmniboxEditButtonIdentifier";
 

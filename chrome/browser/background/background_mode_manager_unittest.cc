@@ -17,7 +17,6 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/background/background_trigger.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -34,7 +33,7 @@
 #include "components/keep_alive_registry/keep_alive_registry.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_builder.h"
@@ -62,34 +61,6 @@ std::unique_ptr<TestingProfileManager> CreateTestingProfileManager() {
       new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
   EXPECT_TRUE(profile_manager->SetUp());
   return profile_manager;
-}
-
-class FakeBackgroundTrigger : public BackgroundTrigger {
- public:
-  ~FakeBackgroundTrigger() override;
-  base::string16 GetName() override;
-  gfx::ImageSkia* GetIcon() override;
-  void OnMenuClick() override;
-  int get_name_call_count_ = 0;
-  int get_icon_call_count_ = 0;
-  int on_menu_click_call_count_ = 0;
-};
-
-FakeBackgroundTrigger::~FakeBackgroundTrigger() {
-}
-
-base::string16 FakeBackgroundTrigger::GetName() {
-  get_name_call_count_++;
-  return base::ASCIIToUTF16("FakeBackgroundTrigger");
-}
-
-gfx::ImageSkia* FakeBackgroundTrigger::GetIcon() {
-  get_icon_call_count_++;
-  return nullptr;
-}
-
-void FakeBackgroundTrigger::OnMenuClick() {
-  on_menu_click_call_count_++;
 }
 
 // Helper class that tracks state transitions in BackgroundModeManager and
@@ -165,35 +136,54 @@ class AdvancedTestBackgroundModeManager : public TestBackgroundModeManager {
   ~AdvancedTestBackgroundModeManager() override {}
 
   // TestBackgroundModeManager:
-  bool HasBackgroundClient() const override {
-    for (const auto& profile_count_pair : profile_app_counts_) {
-      if (profile_count_pair.second > 0)
-        return true;
-    }
-    return false;
+  bool HasPersistentBackgroundClient() const override {
+    return std::find_if(profile_app_counts_.begin(), profile_app_counts_.end(),
+                        [](const auto& profile_count_pair) {
+                          return profile_count_pair.second.persistent > 0;
+                        }) != profile_app_counts_.end();
   }
-  bool HasBackgroundClientForProfile(const Profile* profile) const override {
+  bool HasAnyBackgroundClient() const override {
+    return std::find_if(profile_app_counts_.begin(), profile_app_counts_.end(),
+                        [](const auto& profile_count_pair) {
+                          return profile_count_pair.second.any > 0;
+                        }) != profile_app_counts_.end();
+  }
+  bool HasPersistentBackgroundClientForProfile(
+      const Profile* profile) const override {
     auto it = profile_app_counts_.find(profile);
     if (it == profile_app_counts_.end()) {
       ADD_FAILURE();
       return false;
     }
-    return it->second > 0;
+    return it->second.persistent > 0;
   }
+
   bool IsBackgroundModePrefEnabled() const override { return enabled_; }
 
   void SetBackgroundClientCountForProfile(const Profile* profile,
                                           size_t count) {
-    profile_app_counts_[profile] = count;
+    profile_app_counts_[profile] = {count, count};
   }
+
+  void SetPersistentBackgroundClientCountForProfile(const Profile* profile,
+                                                    size_t count) {
+    profile_app_counts_[profile].persistent = count;
+  }
+
   void SetEnabled(bool enabled) {
     enabled_ = enabled;
     OnBackgroundModeEnabledPrefChanged();
   }
 
+  using BackgroundModeManager::OnApplicationListChanged;
+
  private:
+  struct AppCounts {
+    size_t any = 0;
+    size_t persistent = 0;
+  };
   bool enabled_;
-  std::map<const Profile*, size_t> profile_app_counts_;
+  std::map<const Profile*, AppCounts> profile_app_counts_;
 
   DISALLOW_COPY_AND_ASSIGN(AdvancedTestBackgroundModeManager);
 };
@@ -210,7 +200,7 @@ class BackgroundModeManagerTest : public testing::Test {
   }
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<base::CommandLine> command_line_;
 
   std::unique_ptr<TestingProfileManager> profile_manager_;
@@ -299,7 +289,7 @@ class BackgroundModeManagerWithExtensionsTest : public testing::Test {
 
  private:
   // Required for extension service.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   // BackgroundModeManager actually affects Chrome start/stop state,
   // tearing down our thread bundle before we've had chance to clean
@@ -387,10 +377,12 @@ TEST_F(BackgroundModeManagerTest, BackgroundAppInstallUninstallWhileDisabled) {
       *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
 
-  // Turn off background mode (shouldn't explicitly disable launch-on-startup as
-  // the app-count is zero and launch-on-startup shouldn't be considered on).
+  // Turn off background mode (should explicitly disable launch-on-startup as
+  // the app-count is zero and launch-on-startup hasn't been initialized yet).
+  EXPECT_CALL(manager, EnableLaunchOnStartup(false)).Times(Exactly(1));
   manager.SetEnabled(false);
   AssertBackgroundModeInactive(manager);
+  Mock::VerifyAndClearExpectations(&manager);
 
   // When a new client is installed, status tray icons will not be created,
   // launch on startup status will not be modified.
@@ -920,56 +912,127 @@ TEST_F(BackgroundModeManagerWithExtensionsTest, BalloonDisplay) {
   EXPECT_TRUE(manager_->HasShownBalloon());
 }
 
-TEST_F(BackgroundModeManagerTest, TriggerRegisterUnregister) {
-  FakeBackgroundTrigger trigger;
-  TestBackgroundModeManager manager(
-      *command_line_, profile_manager_->profile_attributes_storage());
+TEST_F(BackgroundModeManagerTest, TransientBackgroundApp) {
+  AdvancedTestBackgroundModeManager manager(
+      *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
-  AssertBackgroundModeInactive(manager);
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(profile_manager_->profile_attributes_storage()
+                  ->GetProfileAttributesWithPath(profile_->GetPath(), &entry));
+  EXPECT_FALSE(entry->GetBackgroundStatus());
 
-  // Registering a trigger turns on background mode and shows a notification to
-  // the user.
-  EXPECT_CALL(manager, EnableLaunchOnStartup(true));
-  manager.RegisterTrigger(profile_, &trigger, true /* should_notify_user */);
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
+
+  EXPECT_CALL(manager, EnableLaunchOnStartup(false)).Times(1);
+  manager.SetBackgroundClientCountForProfile(profile_, 0);
+  manager.OnApplicationListChanged(profile_);
   Mock::VerifyAndClearExpectations(&manager);
-  ASSERT_TRUE(manager.HasBackgroundClientForProfile(profile_));
+
+  // Mimic transient app launch.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(_)).Times(0);
+  manager.SetBackgroundClientCountForProfile(profile_, 1);
+  manager.SetPersistentBackgroundClientCountForProfile(profile_, 0);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
   AssertBackgroundModeActive(manager);
-  ASSERT_TRUE(manager.HasShownBalloon());
+  EXPECT_FALSE(entry->GetBackgroundStatus());
 
-  // Unregistering the trigger turns off background mode.
-  EXPECT_CALL(manager, EnableLaunchOnStartup(false));
-  manager.UnregisterTrigger(profile_, &trigger);
-  Mock::VerifyAndClearExpectations(&manager);
-  ASSERT_FALSE(manager.HasBackgroundClientForProfile(profile_));
+  manager.SuspendBackgroundMode();
   AssertBackgroundModeInactive(manager);
+  EXPECT_FALSE(entry->GetBackgroundStatus());
+  manager.ResumeBackgroundMode();
+
+  // Mimic transient app shutdown.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(_)).Times(0);
+  manager.SetBackgroundClientCountForProfile(profile_, 0);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeInactive(manager);
+  EXPECT_FALSE(entry->GetBackgroundStatus());
 }
 
-// TODO(mvanouwerkerk): Make background mode behavior consistent when
-// registering a client while the pref is disabled - crbug.com/527032.
-TEST_F(BackgroundModeManagerTest, TriggerRegisterWhileDisabled) {
-  g_browser_process->local_state()->SetBoolean(prefs::kBackgroundModeEnabled,
-                                               false);
-  FakeBackgroundTrigger trigger;
-  TestBackgroundModeManager manager(
-      *command_line_, profile_manager_->profile_attributes_storage());
+TEST_F(BackgroundModeManagerTest, TransientBackgroundAppWithPersistent) {
+  AdvancedTestBackgroundModeManager manager(
+      *command_line_, profile_manager_->profile_attributes_storage(), true);
   manager.RegisterProfile(profile_);
-  AssertBackgroundModeInactive(manager);
-  ASSERT_FALSE(manager.IsBackgroundModePrefEnabled());
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(profile_manager_->profile_attributes_storage()
+                  ->GetProfileAttributesWithPath(profile_->GetPath(), &entry));
+  EXPECT_FALSE(entry->GetBackgroundStatus());
 
-  // Registering a trigger while disabled has no immediate effect but it is
-  // stored as pending in case background mode is later enabled.
-  manager.RegisterTrigger(profile_, &trigger, true /* should_notify_user */);
-  ASSERT_FALSE(manager.HasBackgroundClientForProfile(profile_));
-  AssertBackgroundModeInactive(manager);
-  ASSERT_FALSE(manager.HasShownBalloon());
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
 
-  // When the background mode pref is enabled and there are pending triggers
-  // they will be registered and the user will be notified.
-  EXPECT_CALL(manager, EnableLaunchOnStartup(true));
-  g_browser_process->local_state()->SetBoolean(prefs::kBackgroundModeEnabled,
-                                               true);
+  EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(1);
+  manager.SetBackgroundClientCountForProfile(profile_, 1);
+  manager.OnApplicationListChanged(profile_);
   Mock::VerifyAndClearExpectations(&manager);
-  ASSERT_TRUE(manager.HasBackgroundClientForProfile(profile_));
   AssertBackgroundModeActive(manager);
-  ASSERT_TRUE(manager.HasShownBalloon());
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+
+  // Mimic transient app launch.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(_)).Times(0);
+  manager.SetBackgroundClientCountForProfile(profile_, 2);
+  manager.SetPersistentBackgroundClientCountForProfile(profile_, 1);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeActive(manager);
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+
+  manager.SuspendBackgroundMode();
+  AssertBackgroundModeInactive(manager);
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+  manager.ResumeBackgroundMode();
+
+  // Mimic transient app shutdown.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(_)).Times(0);
+  manager.SetBackgroundClientCountForProfile(profile_, 1);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeActive(manager);
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+}
+
+TEST_F(BackgroundModeManagerTest,
+       BackgroundPersistentAppWhileTransientRunning) {
+  AdvancedTestBackgroundModeManager manager(
+      *command_line_, profile_manager_->profile_attributes_storage(), true);
+  manager.RegisterProfile(profile_);
+  ProfileAttributesEntry* entry;
+  ASSERT_TRUE(profile_manager_->profile_attributes_storage()
+                  ->GetProfileAttributesWithPath(profile_->GetPath(), &entry));
+  EXPECT_FALSE(entry->GetBackgroundStatus());
+
+  EXPECT_FALSE(KeepAliveRegistry::GetInstance()->IsKeepingAlive());
+
+  // Mimic transient app launch.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(false)).Times(1);
+  manager.SetBackgroundClientCountForProfile(profile_, 1);
+  manager.SetPersistentBackgroundClientCountForProfile(profile_, 0);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeActive(manager);
+  EXPECT_FALSE(entry->GetBackgroundStatus());
+
+  // Mimic persistent app install.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(true)).Times(1);
+  manager.SetBackgroundClientCountForProfile(profile_, 2);
+  manager.SetPersistentBackgroundClientCountForProfile(profile_, 1);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeActive(manager);
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+
+  manager.SuspendBackgroundMode();
+  AssertBackgroundModeInactive(manager);
+  EXPECT_TRUE(entry->GetBackgroundStatus());
+  manager.ResumeBackgroundMode();
+
+  // Mimic persistent app uninstall.
+  EXPECT_CALL(manager, EnableLaunchOnStartup(false)).Times(1);
+  manager.SetBackgroundClientCountForProfile(profile_, 1);
+  manager.SetPersistentBackgroundClientCountForProfile(profile_, 0);
+  manager.OnApplicationListChanged(profile_);
+  Mock::VerifyAndClearExpectations(&manager);
+  AssertBackgroundModeActive(manager);
+  EXPECT_FALSE(entry->GetBackgroundStatus());
 }

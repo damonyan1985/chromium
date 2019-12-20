@@ -6,7 +6,6 @@
 #define CHROME_BROWSER_UI_NAVIGATION_CORRECTION_TAB_OBSERVER_H_
 
 #include "base/macros.h"
-#include "components/google/core/browser/google_url_tracker.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -24,6 +23,12 @@ class NavigationCorrectionTabObserver
  public:
   ~NavigationCorrectionTabObserver() override;
 
+  // Sets whether navigation corrections can be enable via
+  // prefs::kAlternateErrorPagesEnabled. Currently, this is false in production,
+  // due to a server issue.
+  static void SetAllowEnableCorrectionsForTesting(
+      bool allow_enable_corrections_for_testing);
+
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
  private:
@@ -34,9 +39,6 @@ class NavigationCorrectionTabObserver
   void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
 
   // Internal helpers ----------------------------------------------------------
-
-  // Callback that is called when the Google URL is updated.
-  void OnGoogleURLUpdated();
 
   // Returns the URL for the correction service.  If the returned URL
   // is empty, the default error pages will be used.
@@ -51,8 +53,6 @@ class NavigationCorrectionTabObserver
 
   Profile* profile_;
   PrefChangeRegistrar pref_change_registrar_;
-  std::unique_ptr<GoogleURLTracker::Subscription>
-      google_url_updated_subscription_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

@@ -24,7 +24,6 @@
 #include "gpu/command_buffer/service/shader_manager.h"
 #include "gpu/command_buffer/service/shared_image_factory.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "gpu/command_buffer/service/transfer_buffer_manager.h"
 #include "gpu/config/gpu_preferences.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_version_info.h"
@@ -57,6 +56,9 @@ DisallowedFeatures AdjustDisallowedFeatures(
     adjusted_disallowed_features.oes_texture_float_linear = true;
     adjusted_disallowed_features.ext_color_buffer_half_float = true;
     adjusted_disallowed_features.oes_texture_half_float_linear = true;
+    adjusted_disallowed_features.ext_texture_filter_anisotropic = true;
+    adjusted_disallowed_features.ext_float_blend = true;
+    adjusted_disallowed_features.oes_fbo_render_mipmap = true;
   }
   return adjusted_disallowed_features;
 }
@@ -124,12 +126,10 @@ ContextGroup::ContextGroup(
       shared_image_representation_factory_(
           std::make_unique<SharedImageRepresentationFactory>(
               shared_image_manager,
-              memory_tracker.get())) {
+              memory_tracker_.get())) {
   DCHECK(discardable_manager);
   DCHECK(feature_info_);
   DCHECK(mailbox_manager_);
-  transfer_buffer_manager_ =
-      std::make_unique<TransferBufferManager>(memory_tracker_.get());
   use_passthrough_cmd_decoder_ = supports_passthrough_command_decoders &&
                                  gpu_preferences_.use_passthrough_cmd_decoder;
 }
@@ -173,6 +173,15 @@ gpu::ContextResult ContextGroup::Initialize(
 
   feature_info_->Initialize(context_type, use_passthrough_cmd_decoder_,
                             adjusted_disallowed_features);
+
+  // Fail early if ES3 is requested and driver does not support it.
+  if ((context_type == CONTEXT_TYPE_WEBGL2 ||
+       context_type == CONTEXT_TYPE_OPENGLES3) &&
+      !feature_info_->IsES3Capable()) {
+    LOG(ERROR) << "ContextResult::kFatalFailure: "
+               << "ES3 is blacklisted/disabled/unsupported by driver.";
+    return gpu::ContextResult::kFatalFailure;
+  }
 
   const GLint kMinRenderbufferSize = 512;  // GL says 1 pixel!
   GLint max_renderbuffer_size = 0;
@@ -365,6 +374,18 @@ gpu::ContextResult ContextGroup::Initialize(
     max_rectangle_texture_size = std::min(
         max_rectangle_texture_size,
         feature_info_->workarounds().max_texture_size);
+    max_cube_map_texture_size =
+        std::min(max_cube_map_texture_size,
+                 feature_info_->workarounds().max_texture_size);
+  }
+
+  if (feature_info_->workarounds().max_3d_array_texture_size) {
+    max_3d_texture_size =
+        std::min(max_3d_texture_size,
+                 feature_info_->workarounds().max_3d_array_texture_size);
+    max_array_texture_layers =
+        std::min(max_array_texture_layers,
+                 feature_info_->workarounds().max_3d_array_texture_size);
   }
 
   texture_manager_.reset(new TextureManager(
@@ -600,18 +621,17 @@ void ContextGroup::Destroy(DecoderContext* decoder, bool have_context) {
     ReportProgress();
   }
 
-  memory_tracker_ = nullptr;
-
   if (passthrough_discardable_manager_) {
     passthrough_discardable_manager_->DeleteContextGroup(this);
   }
 
   if (passthrough_resources_) {
     gl::GLApi* api = have_context ? gl::g_current_gl_context : nullptr;
-    passthrough_resources_->Destroy(api);
+    passthrough_resources_->Destroy(api, progress_reporter_);
     passthrough_resources_.reset();
     ReportProgress();
   }
+  memory_tracker_ = nullptr;
 }
 
 uint32_t ContextGroup::GetMemRepresented() const {

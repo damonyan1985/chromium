@@ -48,7 +48,8 @@ const char* const kNetDeviceNamePrefixes[] = {
 typedef std::map<base::FilePath, base::FilePath> DiskEntries;
 
 std::string GetDiskUuid() {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   DiskEntries disk_uuids;
   base::FileEnumerator files(base::FilePath(kDiskByUuidDirectoryName),
@@ -150,7 +151,8 @@ class MacAddressProcessor {
 
 std::string GetMacAddress(
     const IsValidMacAddressCallback& is_valid_mac_address) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   struct ifaddrs* ifaddrs;
   int rv = getifaddrs(&ifaddrs);
@@ -180,8 +182,8 @@ void GetRawDeviceIdImpl(const IsValidMacAddressCallback& is_valid_mac_address,
     raw_device_id = mac_address + disk_id;
   }
 
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(callback, raw_device_id));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(callback, raw_device_id));
 }
 
 }  // namespace
@@ -190,7 +192,7 @@ void GetRawDeviceIdImpl(const IsValidMacAddressCallback& is_valid_mac_address,
 void DeviceId::GetRawDeviceId(const IdCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, traits(),
       base::BindOnce(&GetRawDeviceIdImpl,
                      base::Bind(&DeviceId::IsValidMacAddress), callback));

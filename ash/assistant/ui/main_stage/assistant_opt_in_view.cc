@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "ash/assistant/ui/assistant_ui_constants.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
+#include "ash/assistant/ui/assistant_view_ids.h"
+#include "ash/public/cpp/app_list/app_list_features.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas.h"
@@ -32,6 +35,14 @@ views::StyledLabel::RangeStyleInfo CreateStyleInfo(
                           .DeriveWithWeight(weight);
   style.override_color = SK_ColorWHITE;
   return style;
+}
+
+base::string16 GetAction(int consent_status) {
+  return consent_status ==
+                 chromeos::assistant::prefs::ConsentStatus::kUnauthorized
+             ? l10n_util::GetStringUTF16(
+                   IDS_ASH_ASSISTANT_OPT_IN_ASK_ADMINISTRATOR)
+             : l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_OPT_IN_GET_STARTED);
 }
 
 // AssistantOptInContainer -----------------------------------------------------
@@ -77,11 +88,16 @@ class AssistantOptInContainer : public views::Button {
 
 // AssistantOptInView ----------------------------------------------------------
 
-AssistantOptInView::AssistantOptInView() {
+AssistantOptInView::AssistantOptInView(AssistantViewDelegate* delegate)
+    : delegate_(delegate) {
+  SetID(AssistantViewID::kOptInView);
   InitLayout();
+  AssistantState::Get()->AddObserver(this);
 }
 
-AssistantOptInView::~AssistantOptInView() = default;
+AssistantOptInView::~AssistantOptInView() {
+  AssistantState::Get()->RemoveObserver(this);
+}
 
 const char* AssistantOptInView::GetClassName() const {
   return "AssistantOptInView";
@@ -95,49 +111,66 @@ void AssistantOptInView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
   label_->SizeToFit(width());
 }
 
+void AssistantOptInView::ButtonPressed(views::Button* sender,
+                                       const ui::Event& event) {
+  delegate_->OnOptInButtonPressed();
+}
+
+void AssistantOptInView::OnAssistantConsentStatusChanged(int consent_status) {
+  UpdateLabel(consent_status);
+}
+
 void AssistantOptInView::InitLayout() {
   views::BoxLayout* layout_manager =
       SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kHorizontal));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_END);
+      app_list_features::IsAssistantLauncherUIEnabled()
+          ? views::BoxLayout::CrossAxisAlignment::kCenter
+          : views::BoxLayout::CrossAxisAlignment::kEnd);
 
   layout_manager->set_main_axis_alignment(
-      views::BoxLayout::MainAxisAlignment::MAIN_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::MainAxisAlignment::kCenter);
 
   // Container.
-  AssistantOptInContainer* container =
-      new AssistantOptInContainer(/*listener=*/this);
+  container_ = new AssistantOptInContainer(/*listener=*/this);
 
   layout_manager =
-      container->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kHorizontal,
           gfx::Insets(0, kPaddingDip)));
 
   layout_manager->set_cross_axis_alignment(
-      views::BoxLayout::CrossAxisAlignment::CROSS_AXIS_ALIGNMENT_CENTER);
+      views::BoxLayout::CrossAxisAlignment::kCenter);
 
-  AddChildView(container);
+  AddChildView(container_);
 
   // Label.
   label_ = new views::StyledLabel(base::string16(), /*listener=*/nullptr);
-  label_->set_auto_color_readability_enabled(false);
+  label_->SetAutoColorReadabilityEnabled(false);
   label_->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_CENTER);
 
+  container_->AddChildView(label_);
+  container_->SetFocusForPlatform();
+
+  UpdateLabel(AssistantState::Get()->consent_status().value_or(
+      chromeos::assistant::prefs::ConsentStatus::kUnknown));
+}
+
+void AssistantOptInView::UpdateLabel(int consent_status) {
   // First substitution string: "Unlock more Assistant features."
   const base::string16 unlock_features =
       l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_OPT_IN_UNLOCK_MORE_FEATURES);
 
-  // Second substitution string: "Get Started".
-  const base::string16 get_started =
-      l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_OPT_IN_GET_STARTED);
+  // Second substitution string specifies the action to be taken.
+  const base::string16 action = GetAction(consent_status);
 
   // Set the text, having replaced placeholders in the opt in prompt with
   // substitution strings and caching their offset positions for styling.
   std::vector<size_t> offsets;
   auto label_text = l10n_util::GetStringFUTF16(
-      IDS_ASH_ASSISTANT_OPT_IN_PROMPT, unlock_features, get_started, &offsets);
+      IDS_ASH_ASSISTANT_OPT_IN_PROMPT, unlock_features, action, &offsets);
   label_->SetText(label_text);
 
   // Style the first substitution string.
@@ -147,19 +180,16 @@ void AssistantOptInView::InitLayout() {
 
   // Style the second substitution string.
   label_->AddStyleRange(
-      gfx::Range(offsets.at(1), offsets.at(1) + get_started.length()),
+      gfx::Range(offsets.at(1), offsets.at(1) + action.length()),
       CreateStyleInfo(gfx::Font::Weight::BOLD));
 
-  container->AddChildView(label_);
+  container_->SetAccessibleName(label_text);
 
-  container->SetFocusForPlatform();
-  container->SetAccessibleName(label_text);
-}
-
-void AssistantOptInView::ButtonPressed(views::Button* sender,
-                                       const ui::Event& event) {
-  if (delegate_)
-    delegate_->OnOptInButtonPressed();
+  // After updating the |label_| we need to ensure that it is remeasured and
+  // repainted to address a timing bug in which the AssistantOptInView was
+  // sometimes drawn in an invalid state (b/130758812).
+  container_->Layout();
+  container_->SchedulePaint();
 }
 
 }  // namespace ash

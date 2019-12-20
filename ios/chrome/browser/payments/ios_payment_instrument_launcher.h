@@ -5,13 +5,10 @@
 #ifndef IOS_CHROME_BROWSER_PAYMENTS_IOS_PAYMENT_INSTRUMENT_LAUNCHER_H_
 #define IOS_CHROME_BROWSER_PAYMENTS_IOS_PAYMENT_INSTRUMENT_LAUNCHER_H_
 
+#include "base/values.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/payments/core/payment_currency_amount.h"
 #include "ios/chrome/browser/payments/payment_request.h"
-
-namespace base {
-class DictionaryValue;
-}  // namespace base
 
 namespace web {
 class NavigationItem;
@@ -42,11 +39,10 @@ class IOSPaymentInstrumentLauncher : public KeyedService {
   // indicating if it made an attempt to launch the IOSPaymentInstrument. The
   // only instance when the launcher will not attempt a launch is when there is
   // another in-flight request already happening.
-  bool LaunchIOSPaymentInstrument(
-      payments::PaymentRequest* payment_request,
-      web::WebState* active_web_state,
-      GURL& universal_link,
-      payments::PaymentInstrument::Delegate* delegate);
+  bool LaunchIOSPaymentInstrument(payments::PaymentRequest* payment_request,
+                                  web::WebState* active_web_state,
+                                  GURL& universal_link,
+                                  payments::PaymentApp::Delegate* delegate);
 
   // Callback for when an iOS payment app sends a response back to Chrome.
   // |response| is a base-64 encodeded string. When decoded, |response| is
@@ -61,10 +57,10 @@ class IOSPaymentInstrumentLauncher : public KeyedService {
 
   // Before invoking ReceieveResponseFromIOSPaymentInstrument, callers can
   // use delegate() to ensure that the delegate property is valid.
-  payments::PaymentInstrument::Delegate* delegate() { return delegate_; }
+  payments::PaymentApp::Delegate* delegate() { return delegate_; }
 
   // Sets the delegate for the current IOSPaymentInstrumentLauncher request.
-  void set_delegate(payments::PaymentInstrument::Delegate* delegate) {
+  void set_delegate(payments::PaymentApp::Delegate* delegate) {
     delegate_ = delegate;
   }
 
@@ -80,21 +76,20 @@ class IOSPaymentInstrumentLauncher : public KeyedService {
   // a mapping of the payment method names to the corresponding JSON-stringified
   // payment method specific data. This function converts that map into a JSON
   // readable object.
-  std::unique_ptr<base::DictionaryValue> SerializeMethodData(
+  base::Value SerializeMethodData(
       const std::map<std::string, std::set<std::string>>&
           stringified_method_data);
 
   // Returns the JSON-serialized top-level certificate chain of the browsing
   // context. |item| has information on the browsing state, including the
   // SSL certificate needed to build the certificate chain.
-  std::unique_ptr<base::ListValue> SerializeCertificateChain(
-      web::NavigationItem* item);
+  base::Value SerializeCertificateChain(web::NavigationItem* item);
 
   // Returns the JSON-serialized array of PaymentDetailsModifier objects.
   // |details| is the object that represents the details of a PaymentRequest
   // object and contains the vector of PaymentDetailsModifier objects to
   // serialize.
-  std::unique_ptr<base::ListValue> SerializeModifiers(PaymentDetails details);
+  base::Value SerializeModifiers(PaymentDetails details);
 
   // Invokes the payment instrument delegate with the appropriate function.
   // If |method_name| or |details| are empty then |delegate_| calls
@@ -104,7 +99,7 @@ class IOSPaymentInstrumentLauncher : public KeyedService {
   void CompleteLaunchRequest(const std::string& method_name,
                              const std::string& details);
 
-  payments::PaymentInstrument::Delegate* delegate_;
+  payments::PaymentApp::Delegate* delegate_;
   std::string payment_request_id_;
 };
 

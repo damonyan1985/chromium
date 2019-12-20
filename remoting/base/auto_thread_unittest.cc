@@ -3,13 +3,15 @@
 // found in the LICENSE file.
 
 #include "remoting/base/auto_thread.h"
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/scoped_native_library.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -28,7 +30,7 @@ void SetFlagTask(bool* success) {
 void PostSetFlagTask(
     scoped_refptr<base::TaskRunner> task_runner,
     bool* success) {
-  task_runner->PostTask(FROM_HERE, base::Bind(&SetFlagTask, success));
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&SetFlagTask, success));
 }
 
 #if defined(OS_WIN)
@@ -56,20 +58,20 @@ namespace remoting {
 class AutoThreadTest : public testing::Test {
  public:
   void RunMessageLoop() {
-    // Release |main_task_runner_|, then run |message_loop_| until other
-    // references created in tests are gone.  We also post a delayed quit
+    // Release |main_task_runner_|, then run |task_environment_| until
+    // other references created in tests are gone.  We also post a delayed quit
     // task to |message_loop_| so the test will not hang on failure.
-    main_task_runner_ = NULL;
+    main_task_runner_.reset();
     base::RunLoop run_loop;
     quit_closure_ = run_loop.QuitClosure();
-    message_loop_.task_runner()->PostDelayedTask(
+    task_environment_.GetMainThreadTaskRunner()->PostDelayedTask(
         FROM_HERE, run_loop.QuitClosure(), base::TimeDelta::FromSeconds(5));
     run_loop.Run();
   }
 
   void SetUp() override {
     main_task_runner_ = new AutoThreadTaskRunner(
-        message_loop_.task_runner(),
+        task_environment_.GetMainThreadTaskRunner(),
         base::Bind(&AutoThreadTest::QuitMainMessageLoop,
                    base::Unretained(this)));
   }
@@ -82,7 +84,7 @@ class AutoThreadTest : public testing::Test {
  protected:
   void QuitMainMessageLoop() { std::move(quit_closure_).Run(); }
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   base::OnceClosure quit_closure_;
   scoped_refptr<AutoThreadTaskRunner> main_task_runner_;
 };
@@ -93,7 +95,7 @@ TEST_F(AutoThreadTest, StartAndStop) {
       AutoThread::Create(kThreadName, main_task_runner_);
   EXPECT_TRUE(task_runner);
 
-  task_runner = NULL;
+  task_runner.reset();
   RunMessageLoop();
 }
 
@@ -105,9 +107,9 @@ TEST_F(AutoThreadTest, ProcessTask) {
 
   // Post a task to it.
   bool success = false;
-  task_runner->PostTask(FROM_HERE, base::Bind(&SetFlagTask, &success));
+  task_runner->PostTask(FROM_HERE, base::BindOnce(&SetFlagTask, &success));
 
-  task_runner = NULL;
+  task_runner.reset();
   RunMessageLoop();
 
   EXPECT_TRUE(success);
@@ -124,11 +126,11 @@ TEST_F(AutoThreadTest, ThreadDependency) {
 
   // Post a task to thread 1 that will post a task to thread 2.
   bool success = false;
-  task_runner1->PostTask(FROM_HERE,
-      base::Bind(&PostSetFlagTask, task_runner2, &success));
+  task_runner1->PostTask(
+      FROM_HERE, base::BindOnce(&PostSetFlagTask, task_runner2, &success));
 
-  task_runner1 = NULL;
-  task_runner2 = NULL;
+  task_runner1.reset();
+  task_runner2.reset();
   RunMessageLoop();
 
   EXPECT_TRUE(success);
@@ -137,19 +139,18 @@ TEST_F(AutoThreadTest, ThreadDependency) {
 #if defined(OS_WIN)
 TEST_F(AutoThreadTest, ThreadWithComMta) {
   scoped_refptr<base::TaskRunner> task_runner =
-      AutoThread::CreateWithLoopAndComInitTypes(kThreadName,
-                                                main_task_runner_,
-                                                base::MessageLoop::TYPE_DEFAULT,
+      AutoThread::CreateWithLoopAndComInitTypes(kThreadName, main_task_runner_,
+                                                base::MessagePumpType::DEFAULT,
                                                 AutoThread::COM_INIT_MTA);
   EXPECT_TRUE(task_runner);
 
   // Post a task to query the COM apartment type.
   HRESULT hresult = E_FAIL;
   APTTYPE apt_type = APTTYPE_NA;
-  task_runner->PostTask(FROM_HERE,
-                        base::Bind(&CheckComAptTypeTask, &apt_type, &hresult));
+  task_runner->PostTask(
+      FROM_HERE, base::BindOnce(&CheckComAptTypeTask, &apt_type, &hresult));
 
-  task_runner = NULL;
+  task_runner.reset();
   RunMessageLoop();
 
   EXPECT_EQ(S_OK, hresult);
@@ -158,19 +159,18 @@ TEST_F(AutoThreadTest, ThreadWithComMta) {
 
 TEST_F(AutoThreadTest, ThreadWithComSta) {
   scoped_refptr<base::TaskRunner> task_runner =
-      AutoThread::CreateWithLoopAndComInitTypes(kThreadName,
-                                                main_task_runner_,
-                                                base::MessageLoop::TYPE_UI,
+      AutoThread::CreateWithLoopAndComInitTypes(kThreadName, main_task_runner_,
+                                                base::MessagePumpType::UI,
                                                 AutoThread::COM_INIT_STA);
   EXPECT_TRUE(task_runner);
 
   // Post a task to query the COM apartment type.
   HRESULT hresult = E_FAIL;
   APTTYPE apt_type = APTTYPE_NA;
-  task_runner->PostTask(FROM_HERE,
-                        base::Bind(&CheckComAptTypeTask, &apt_type, &hresult));
+  task_runner->PostTask(
+      FROM_HERE, base::BindOnce(&CheckComAptTypeTask, &apt_type, &hresult));
 
-  task_runner = NULL;
+  task_runner.reset();
   RunMessageLoop();
 
   EXPECT_EQ(S_OK, hresult);

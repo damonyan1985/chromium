@@ -12,7 +12,11 @@ namespace syncable {
 TestDirectoryBackingStore::TestDirectoryBackingStore(
     const std::string& dir_name,
     sql::Database* db)
-    : DirectoryBackingStore(dir_name, db) {}
+    : DirectoryBackingStore(dir_name,
+                            base::BindRepeating([]() -> std::string {
+                              return "test_cache_guid";
+                            }),
+                            db) {}
 
 TestDirectoryBackingStore::~TestDirectoryBackingStore() {
   // This variant of the DirectoryBackingStore does not own its connection, so
@@ -22,24 +26,22 @@ TestDirectoryBackingStore::~TestDirectoryBackingStore() {
 
 DirOpenResult TestDirectoryBackingStore::Load(
     Directory::MetahandlesMap* handles_map,
-    JournalIndex* delete_journals,
     MetahandleSet* metahandles_to_purge,
     Directory::KernelLoadInfo* kernel_load_info) {
   DCHECK(db_->is_open());
 
-  if (!InitializeTables())
+  bool did_start_new = false;
+  if (!InitializeTables(&did_start_new))
     return FAILED_OPEN_DATABASE;
 
   if (!LoadEntries(handles_map, metahandles_to_purge))
-    return FAILED_DATABASE_CORRUPT;
-  if (!LoadDeleteJournals(delete_journals))
     return FAILED_DATABASE_CORRUPT;
   if (!LoadInfo(kernel_load_info))
     return FAILED_DATABASE_CORRUPT;
   if (!VerifyReferenceIntegrity(handles_map))
     return FAILED_DATABASE_CORRUPT;
 
-  return OPENED;
+  return did_start_new ? OPENED_NEW : OPENED_EXISTING;
 }
 
 bool TestDirectoryBackingStore::DeleteEntries(const MetahandleSet& handles) {

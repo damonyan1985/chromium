@@ -22,7 +22,7 @@ content::WebContents* GetWebContentsByFrameID(int render_process_id,
   return content::WebContents::FromRenderFrameHost(render_frame_host);
 }
 
-};  // namespace
+}  // namespace
 
 UnsafeResource::UnsafeResource()
     : is_subresource(false),
@@ -45,11 +45,20 @@ bool UnsafeResource::IsMainPageLoadBlocked() const {
     // frame load, since they happen after the page is finished loading.
     case safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING:
     case safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE:
+    // Malicious ad activity reporting happens in the background.
+    case safe_browsing::SB_THREAT_TYPE_BLOCKED_AD_POPUP:
+    case safe_browsing::SB_THREAT_TYPE_BLOCKED_AD_REDIRECT:
     // Ad sampling happens in the background.
     case safe_browsing::SB_THREAT_TYPE_AD_SAMPLE:
-    // Sign-in password reuse warning happens after the page is finished
+    // Chrome SAVED password reuse warning happens after the page is finished
     // loading.
-    case safe_browsing::SB_THREAT_TYPE_SIGN_IN_PASSWORD_REUSE:
+    case safe_browsing::SB_THREAT_TYPE_SAVED_PASSWORD_REUSE:
+    // Chrome GAIA signed in and syncing password reuse warning happens after
+    // the page is finished loading.
+    case safe_browsing::SB_THREAT_TYPE_SIGNED_IN_SYNC_PASSWORD_REUSE:
+    // Chrome GAIA signed in and non-syncing password reuse warning happens
+    // after the page is finished loading.
+    case safe_browsing::SB_THREAT_TYPE_SIGNED_IN_NON_SYNC_PASSWORD_REUSE:
     // Enterprise password reuse warning happens after the page is finished
     // loading.
     case safe_browsing::SB_THREAT_TYPE_ENTERPRISE_PASSWORD_REUSE:
@@ -82,12 +91,11 @@ UnsafeResource::GetNavigationEntryForResource() const {
 }
 
 // static
-base::Callback<content::WebContents*(void)>
-UnsafeResource::GetWebContentsGetter(
-    int render_process_host_id,
-    int render_frame_id) {
-  return base::Bind(&GetWebContentsByFrameID, render_process_host_id,
-                    render_frame_id);
+base::RepeatingCallback<content::WebContents*(void)>
+UnsafeResource::GetWebContentsGetter(int render_process_host_id,
+                                     int render_frame_id) {
+  return base::BindRepeating(&GetWebContentsByFrameID, render_process_host_id,
+                             render_frame_id);
 }
 
 }  // security_interstitials

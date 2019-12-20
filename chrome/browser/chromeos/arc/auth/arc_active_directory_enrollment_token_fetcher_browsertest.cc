@@ -12,6 +12,7 @@
 #include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 #include "chrome/browser/chromeos/arc/auth/arc_active_directory_enrollment_token_fetcher.h"
 #include "chrome/browser/chromeos/arc/extensions/fake_arc_support.h"
@@ -20,8 +21,7 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/fake_cryptohome_client.h"
 #include "components/arc/arc_util.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/policy_switches.h"
@@ -53,7 +53,9 @@ using Status = ArcActiveDirectoryEnrollmentTokenFetcher::Status;
 std::string GetDmServerUrl() {
   policy ::BrowserPolicyConnectorChromeOS* const connector =
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  return connector->device_management_service()->GetServerUrl();
+  return connector->device_management_service()
+      ->configuration()
+      ->GetDMServerUrl();
 }
 
 // Observer for FakeArcSupport.
@@ -242,14 +244,6 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
     SetArcAvailableCommandLineForTesting(command_line);
   }
 
-  void SetUpInProcessBrowserTestFixture() override {
-    // Set fake cryptohome, because we want to fail DMToken retrieval
-    auto cryptohome_client = std::make_unique<chromeos::FakeCryptohomeClient>();
-    fake_cryptohome_client_ = cryptohome_client.get();
-    chromeos::DBusThreadManager::GetSetterForTesting()->SetCryptohomeClient(
-        std::move(cryptohome_client));
-  }
-
   void SetUpOnMainThread() override {
     support_host_ = std::make_unique<ArcSupportHost>(browser()->profile());
     support_host_->SetErrorDelegate(this);
@@ -257,16 +251,11 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
     token_fetcher_ = std::make_unique<ArcActiveDirectoryEnrollmentTokenFetcher>(
         support_host_.get());
 
-    test_url_loader_factory_ =
-        std::make_unique<network::TestURLLoaderFactory>();
-    test_shared_loader_factory_ =
-        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-            test_url_loader_factory_.get());
-    token_fetcher_->SetURLLoaderFactoryForTesting(test_shared_loader_factory_);
+    token_fetcher_->SetURLLoaderFactoryForTesting(
+        test_url_loader_factory_.GetSafeWeakWrapper());
   }
 
   void TearDownOnMainThread() override {
-    test_shared_loader_factory_->Detach();
     token_fetcher_.reset();
     fake_arc_support_.reset();
     support_host_->SetErrorDelegate(nullptr);
@@ -277,9 +266,9 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
   // ArcActiveDirectoryEnrollmentTokenFetcher will succeed to fetch the DM
   // token.
   void StoreCorrectDmToken() {
-    fake_cryptohome_client_->set_system_salt(
+    chromeos::FakeCryptohomeClient::Get()->set_system_salt(
         chromeos::FakeCryptohomeClient::GetStubSystemSalt());
-    fake_cryptohome_client_->SetServiceIsAvailable(true);
+    chromeos::FakeCryptohomeClient::Get()->SetServiceIsAvailable(true);
     // Store a fake DM token.
     base::RunLoop run_loop;
     auto dm_token_storage = std::make_unique<policy::DMTokenStorage>(
@@ -300,8 +289,9 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
   // Does not store a correct DM token.
   // ArcActiveDirectoryEnrollmentTokenFetcher will fail to fetch the DM token.
   void FailDmToken() {
-    fake_cryptohome_client_->set_system_salt(std::vector<uint8_t>());
-    fake_cryptohome_client_->SetServiceIsAvailable(true);
+    chromeos::FakeCryptohomeClient::Get()->set_system_salt(
+        std::vector<uint8_t>());
+    chromeos::FakeCryptohomeClient::Get()->SetServiceIsAvailable(true);
   }
 
   void FetchEnrollmentToken(base::RunLoop* run_loop,
@@ -365,9 +355,7 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
 
   std::unique_ptr<FakeArcSupport> fake_arc_support_;
   std::unique_ptr<ArcActiveDirectoryEnrollmentTokenFetcher> token_fetcher_;
-  std::unique_ptr<network::TestURLLoaderFactory> test_url_loader_factory_;
-  scoped_refptr<network::WeakWrapperSharedURLLoaderFactory>
-      test_shared_loader_factory_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
 
  private:
   ArcSupportHost::AuthDelegate* GetAuthDelegate() {
@@ -381,8 +369,6 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
   void OnSendFeedbackClicked() override {}
 
   std::unique_ptr<ArcSupportHost> support_host_;
-  // DBusThreadManager owns this.
-  chromeos::FakeCryptohomeClient* fake_cryptohome_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest);
 };
@@ -391,7 +377,7 @@ class ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        RequestAccountInfoSuccess) {
   StoreCorrectDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         CheckRequestAndGetEnrollRequest(request);
 
@@ -405,8 +391,7 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
         std::string response_data;
         EXPECT_TRUE(response.SerializeToString(&response_data));
 
-        test_url_loader_factory_->AddResponse(request.url.spec(),
-                                              response_data);
+        test_url_loader_factory_.AddResponse(request.url.spec(), response_data);
       }));
 
   base::RunLoop run_loop;
@@ -417,7 +402,7 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        DmTokenRetrievalFailed) {
   FailDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         // If this gets called, the test will fail.
         ADD_FAILURE() << "DMServer called when not expected";
@@ -431,10 +416,10 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        RequestAccountInfoError) {
   StoreCorrectDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
-        test_url_loader_factory_->AddResponse(request.url.spec(), std::string(),
-                                              net::HTTP_BAD_REQUEST);
+        test_url_loader_factory_.AddResponse(request.url.spec(), std::string(),
+                                             net::HTTP_BAD_REQUEST);
       }));
 
   base::RunLoop run_loop;
@@ -446,17 +431,17 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        ArcDisabled) {
   StoreCorrectDmToken();
 
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
-        network::ResourceResponseHead head;
+        auto head = network::mojom::URLResponseHead::New();
         std::string status_line("HTTP/1.1 904 ARC Disabled");
         std::string headers = status_line + "\nContent-type: text/html\n\n";
-        head.headers = new net::HttpResponseHeaders(
-            net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+        head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+            net::HttpUtil::AssembleRawHeaders(headers));
         network::URLLoaderCompletionStatus status;
 
-        test_url_loader_factory_->AddResponse(request.url, head, std::string(),
-                                              status);
+        test_url_loader_factory_.AddResponse(request.url, std::move(head),
+                                             std::string(), status);
       }));
   base::RunLoop run_loop;
   ExpectEnrollmentTokenFetchFails(&run_loop, Status::ARC_DISABLED);
@@ -482,13 +467,13 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        SamlFlowSuccess) {
   StoreCorrectDmToken();
 
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         static int count = 0;
         if (count == 0) {
-          InitiateSamlResponseJob(request, test_url_loader_factory_.get());
+          InitiateSamlResponseJob(request, &test_url_loader_factory_);
         } else if (count == 1) {
-          FinishSamlResponseJob(request, test_url_loader_factory_.get());
+          FinishSamlResponseJob(request, &test_url_loader_factory_);
         } else {
           NOTREACHED();
         }
@@ -506,9 +491,9 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        SamlFlowFailsUserCancelled) {
   StoreCorrectDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
-        InitiateSamlResponseJob(request, test_url_loader_factory_.get());
+        InitiateSamlResponseJob(request, &test_url_loader_factory_);
       }));
 
   base::RunLoop run_loop;
@@ -526,9 +511,9 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        SamlFlowFailsError) {
   StoreCorrectDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
-        InitiateSamlResponseJob(request, test_url_loader_factory_.get());
+        InitiateSamlResponseJob(request, &test_url_loader_factory_);
       }));
   base::RunLoop run_loop;
   SimulateAuthFailsObserver observer(fake_arc_support_.get(), &run_loop);
@@ -548,16 +533,16 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        SamlFlowSucceedsWithDmRetry) {
   StoreCorrectDmToken();
 
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         static int count = 0;
         if (count == 0) {
-          test_url_loader_factory_->AddResponse(
+          test_url_loader_factory_.AddResponse(
               request.url.spec(), std::string(), net::HTTP_BAD_REQUEST);
         } else if (count == 1) {
-          InitiateSamlResponseJob(request, test_url_loader_factory_.get());
+          InitiateSamlResponseJob(request, &test_url_loader_factory_);
         } else if (count == 2) {
-          FinishSamlResponseJob(request, test_url_loader_factory_.get());
+          FinishSamlResponseJob(request, &test_url_loader_factory_);
         } else {
           NOTREACHED();
         }
@@ -578,13 +563,13 @@ IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
 IN_PROC_BROWSER_TEST_F(ArcActiveDirectoryEnrollmentTokenFetcherBrowserTest,
                        SamlFlowSucceedsWithAuthRetry) {
   StoreCorrectDmToken();
-  test_url_loader_factory_->SetInterceptor(
+  test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         static int count = 0;
         if (count == 0 || count == 1) {
-          InitiateSamlResponseJob(request, test_url_loader_factory_.get());
+          InitiateSamlResponseJob(request, &test_url_loader_factory_);
         } else if (count == 2) {
-          FinishSamlResponseJob(request, test_url_loader_factory_.get());
+          FinishSamlResponseJob(request, &test_url_loader_factory_);
         } else {
           NOTREACHED();
         }

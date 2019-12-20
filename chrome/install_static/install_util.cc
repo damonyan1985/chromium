@@ -14,11 +14,12 @@
 #include <memory>
 #include <sstream>
 
+#include "build/branding_buildflags.h"
+#include "chrome/chrome_elf/nt_registry/nt_registry.h"
 #include "chrome/install_static/install_details.h"
 #include "chrome/install_static/install_modes.h"
 #include "chrome/install_static/policy_path_parser.h"
 #include "chrome/install_static/user_data_dir.h"
-#include "chrome_elf/nt_registry/nt_registry.h"
 #include "components/nacl/common/buildflags.h"
 #include "components/version_info/channel.h"
 
@@ -664,7 +665,7 @@ void GetExecutableVersionDetails(const std::wstring& exe_path,
 }
 
 version_info::Channel GetChromeChannel() {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   std::wstring channel_name(GetChromeChannelName());
   if (channel_name.empty()) {
     return version_info::Channel::STABLE;
@@ -847,13 +848,15 @@ std::vector<std::wstring> TokenizeCommandLineToArray(
 
 std::wstring GetSwitchValueFromCommandLine(const std::wstring& command_line,
                                            const std::wstring& switch_name) {
+  static constexpr wchar_t kSwitchTerminator[] = L"--";
   assert(!command_line.empty());
   assert(!switch_name.empty());
 
   std::vector<std::wstring> as_array = TokenizeCommandLineToArray(command_line);
   std::wstring switch_with_equal = L"--" + switch_name + L"=";
-  for (size_t i = 1; i < as_array.size(); ++i) {
-    const std::wstring& arg = as_array[i];
+  auto end = std::find(as_array.cbegin(), as_array.cend(), kSwitchTerminator);
+  for (auto scan = as_array.cbegin(); scan != end; ++scan) {
+    const std::wstring& arg = *scan;
     if (arg.compare(0, switch_with_equal.size(), switch_with_equal) == 0)
       return arg.substr(switch_with_equal.size());
   }

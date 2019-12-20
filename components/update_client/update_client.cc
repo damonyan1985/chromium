@@ -69,8 +69,8 @@ UpdateClientImpl::UpdateClientImpl(
           update_checker_factory,
           crx_downloader_factory,
           ping_manager_.get(),
-          base::Bind(&UpdateClientImpl::NotifyObservers,
-                     base::Unretained(this)))) {}
+          base::BindRepeating(&UpdateClientImpl::NotifyObservers,
+                              base::Unretained(this)))) {}
 
 UpdateClientImpl::~UpdateClientImpl() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -181,14 +181,14 @@ bool UpdateClientImpl::IsUpdating(const std::string& id) const {
 
   for (const auto task : tasks_) {
     const auto ids = task->GetIds();
-    if (base::ContainsValue(ids, id)) {
+    if (base::Contains(ids, id)) {
       return true;
     }
   }
 
   for (const auto task : task_queue_) {
     const auto ids = task->GetIds();
-    if (base::ContainsValue(ids, id)) {
+    if (base::Contains(ids, id)) {
       return true;
     }
   }

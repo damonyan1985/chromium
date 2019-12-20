@@ -12,9 +12,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.StrictMode;
 import android.support.v4.app.ActivityOptionsCompat;
@@ -22,21 +20,24 @@ import android.text.TextUtils;
 import android.view.View;
 import android.widget.RemoteViews;
 
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.omnibox.UrlBarData;
-import org.chromium.chrome.browser.search_engines.TemplateUrl;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService.LoadListener;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.components.search_engines.TemplateUrl;
+import org.chromium.components.search_engines.TemplateUrlService;
+import org.chromium.components.search_engines.TemplateUrlService.LoadListener;
+import org.chromium.components.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 
 /**
  * Widget that lets the user search using their default search engine.
@@ -56,18 +57,11 @@ public class SearchWidgetProvider extends AppWidgetProvider {
     /** Wraps up all things that a {@link SearchWidgetProvider} can request things from. */
     static class SearchWidgetProviderDelegate {
         private final Context mContext;
-        private final AppWidgetManager mManager;
+        private final @Nullable AppWidgetManager mManager;
 
         public SearchWidgetProviderDelegate(Context context) {
             mContext = context == null ? ContextUtils.getApplicationContext() : context;
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2
-                    && !mContext.getPackageManager().hasSystemFeature(
-                               PackageManager.FEATURE_APP_WIDGETS)) {
-                mManager = null;
-            } else {
-                mManager = AppWidgetManager.getInstance(mContext);
-            }
+            mManager = AppWidgetManager.getInstance(mContext);
         }
 
         /** Returns the Context to pull resources from. */
@@ -99,7 +93,7 @@ public class SearchWidgetProvider extends AppWidgetProvider {
             implements LoadListener, TemplateUrlServiceObserver {
         @Override
         public void onTemplateUrlServiceLoaded() {
-            TemplateUrlService.getInstance().unregisterLoadListener(this);
+            TemplateUrlServiceFactory.get().unregisterLoadListener(this);
             updateCachedEngineName();
         }
 
@@ -120,7 +114,7 @@ public class SearchWidgetProvider extends AppWidgetProvider {
     static final String ACTION_UPDATE_ALL_WIDGETS =
             "org.chromium.chrome.browser.searchwidget.UPDATE_ALL_WIDGETS";
 
-    static final String EXTRA_START_VOICE_SEARCH =
+    public static final String EXTRA_START_VOICE_SEARCH =
             "org.chromium.chrome.browser.searchwidget.START_VOICE_SEARCH";
 
     private static final String PREF_IS_VOICE_SEARCH_AVAILABLE =
@@ -157,7 +151,7 @@ public class SearchWidgetProvider extends AppWidgetProvider {
             if (sObserver != null) return;
             sObserver = new SearchWidgetTemplateUrlServiceObserver();
 
-            TemplateUrlService service = TemplateUrlService.getInstance();
+            TemplateUrlService service = TemplateUrlServiceFactory.get();
             service.registerLoadListener(sObserver);
             service.addObserver(sObserver);
             if (!service.isLoaded()) service.load();
@@ -313,7 +307,7 @@ public class SearchWidgetProvider extends AppWidgetProvider {
 
         // Getting an instance of the TemplateUrlService requires that the native library be
         // loaded, but the TemplateUrlService also itself needs to be initialized.
-        TemplateUrlService service = TemplateUrlService.getInstance();
+        TemplateUrlService service = TemplateUrlServiceFactory.get();
         if (!service.isLoaded()) return;
 
         // Update the URL that we show for zero-suggest.
@@ -412,8 +406,7 @@ public class SearchWidgetProvider extends AppWidgetProvider {
     }
 
     static boolean shouldShowFullString() {
-        boolean freIsNotNecessary = !FirstRunFlowSequencer.checkIfFirstRunIsNecessary(
-                getDelegate().getContext(), null, false);
+        boolean freIsNotNecessary = !FirstRunFlowSequencer.checkIfFirstRunIsNecessary(null, false);
         boolean noNeedToCheckForSearchDialog =
                 !LocaleManager.getInstance().needToCheckForSearchEnginePromo();
         return freIsNotNecessary && noNeedToCheckForSearchDialog;

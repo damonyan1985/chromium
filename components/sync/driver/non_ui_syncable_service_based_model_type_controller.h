@@ -15,7 +15,6 @@
 #include "components/sync/base/model_type.h"
 #include "components/sync/driver/model_type_controller.h"
 #include "components/sync/model/model_type_store.h"
-#include "components/sync/model_impl/syncable_service_based_bridge.h"
 
 namespace syncer {
 
@@ -35,14 +34,15 @@ class NonUiSyncableServiceBasedModelTypeController
 
   // |syncable_service_provider| and |store_factory| will be run on the backend
   // sequence, i.e. |task_runner|.
+  // |allow_transport_mode| will sync the data in both full-sync mode and in
+  // transport-only mode.
   NonUiSyncableServiceBasedModelTypeController(
       ModelType type,
       OnceModelTypeStoreFactory store_factory,
       SyncableServiceProvider syncable_service_provider,
       const base::RepeatingClosure& dump_stack,
       scoped_refptr<base::SequencedTaskRunner> task_runner,
-      scoped_refptr<SyncableServiceBasedBridge::ModelCryptographer>
-          cryptographer = nullptr);
+      bool allow_transport_mode = false);
   ~NonUiSyncableServiceBasedModelTypeController() override;
 
  private:

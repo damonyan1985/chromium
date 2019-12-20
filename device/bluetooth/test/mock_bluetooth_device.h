@@ -16,7 +16,7 @@
 #include "base/strings/string16.h"
 #include "device/bluetooth/bluetooth_common.h"
 #include "device/bluetooth/bluetooth_device.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device/bluetooth/test/mock_bluetooth_gatt_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -63,16 +63,24 @@ class MockBluetoothDevice : public BluetoothDevice {
                void(ConnectionLatency connection_latency,
                     const base::Closure& callback,
                     const ErrorCallback& error_callback));
-  MOCK_METHOD3(Connect,
+  void Connect(BluetoothDevice::PairingDelegate* pairing_delegate,
+               base::OnceClosure callback,
+               BluetoothDevice::ConnectErrorCallback error_callback) override {
+    Connect_(pairing_delegate, callback, error_callback);
+  }
+  MOCK_METHOD3(Connect_,
                void(BluetoothDevice::PairingDelegate* pairing_delegate,
-                    const base::Closure& callback,
-                    const BluetoothDevice::ConnectErrorCallback&
-                        error_callback));
-  MOCK_METHOD3(
-      Pair,
-      void(BluetoothDevice::PairingDelegate* pairing_delegate,
-           const base::Closure& callback,
-           const BluetoothDevice::ConnectErrorCallback& error_callback));
+                    base::OnceClosure& callback,
+                    BluetoothDevice::ConnectErrorCallback& error_callback));
+  void Pair(BluetoothDevice::PairingDelegate* pairing_delegate,
+            base::OnceClosure callback,
+            BluetoothDevice::ConnectErrorCallback error_callback) override {
+    Pair_(pairing_delegate, callback, error_callback);
+  }
+  MOCK_METHOD3(Pair_,
+               void(BluetoothDevice::PairingDelegate* pairing_delegate,
+                    base::OnceClosure& callback,
+                    BluetoothDevice::ConnectErrorCallback& error_callback));
   MOCK_METHOD1(SetPinCode, void(const std::string&));
   MOCK_METHOD1(SetPasskey, void(uint32_t));
   MOCK_METHOD0(ConfirmPairing, void());
@@ -92,9 +100,13 @@ class MockBluetoothDevice : public BluetoothDevice {
                void(const BluetoothUUID& uuid,
                     const ConnectToServiceCallback& callback,
                     const ConnectToServiceErrorCallback& error_callback));
-  MOCK_METHOD2(CreateGattConnection,
-               void(const GattConnectionCallback& callback,
-                    const ConnectErrorCallback& error_callback));
+  void CreateGattConnection(GattConnectionCallback callback,
+                            ConnectErrorCallback error_callback) override {
+    CreateGattConnection_(callback, error_callback);
+  }
+  MOCK_METHOD2(CreateGattConnection_,
+               void(GattConnectionCallback& callback,
+                    ConnectErrorCallback& error_callback));
 
   MOCK_METHOD1(SetGattServicesDiscoveryComplete, void(bool));
   MOCK_CONST_METHOD0(IsGattServicesDiscoveryComplete, bool());
@@ -133,7 +145,7 @@ class MockBluetoothDevice : public BluetoothDevice {
   // trying to run callbacks in response to other actions e.g. run a read
   // value callback in response to a connection request.
   // Appends callback to the end of the callbacks queue.
-  void PushPendingCallback(const base::Closure& callback);
+  void PushPendingCallback(base::OnceClosure callback);
   // Runs all pending callbacks.
   void RunPendingCallbacks();
 
@@ -147,7 +159,7 @@ class MockBluetoothDevice : public BluetoothDevice {
   bool connected_;
 
   // Used by tests to save callbacks that will be run in the future.
-  base::queue<base::Closure> pending_callbacks_;
+  base::queue<base::OnceClosure> pending_callbacks_;
 
   std::vector<std::unique_ptr<MockBluetoothGattService>> mock_services_;
 };

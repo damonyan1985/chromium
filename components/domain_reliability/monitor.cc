@@ -12,11 +12,11 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/domain_reliability/baked_in_configs.h"
 #include "components/domain_reliability/google_configs.h"
 #include "components/domain_reliability/header.h"
 #include "components/domain_reliability/quic_error_mapping.h"
-#include "net/base/ip_endpoint.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -27,22 +27,6 @@
 namespace domain_reliability {
 
 namespace {
-
-int URLRequestStatusToNetError(const net::URLRequestStatus& status) {
-  switch (status.status()) {
-    case net::URLRequestStatus::SUCCESS:
-      return net::OK;
-    case net::URLRequestStatus::IO_PENDING:
-      return net::ERR_IO_PENDING;
-    case net::URLRequestStatus::CANCELED:
-      return net::ERR_ABORTED;
-    case net::URLRequestStatus::FAILED:
-      return status.error();
-    default:
-      NOTREACHED();
-      return net::ERR_UNEXPECTED;
-  }
-}
 
 // Creates a new beacon based on |beacon_template| but fills in the status,
 // chrome_error, and server_ip fields based on the endpoint and result of
@@ -85,8 +69,7 @@ DomainReliabilityMonitor::DomainReliabilityMonitor(
           DomainReliabilityScheduler::Params::GetFromFieldTrialsOrDefaults()),
       dispatcher_(time_.get()),
       context_manager_(this),
-      discard_uploads_set_(false),
-      weak_factory_(this) {
+      discard_uploads_set_(false) {
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
@@ -102,8 +85,7 @@ DomainReliabilityMonitor::DomainReliabilityMonitor(
           DomainReliabilityScheduler::Params::GetFromFieldTrialsOrDefaults()),
       dispatcher_(time_.get()),
       context_manager_(this),
-      discard_uploads_set_(false),
-      weak_factory_(this) {
+      discard_uploads_set_(false) {
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
@@ -161,17 +143,19 @@ void DomainReliabilityMonitor::SetDiscardUploads(bool discard_uploads) {
 void DomainReliabilityMonitor::OnBeforeRedirect(net::URLRequest* request) {
   DCHECK(discard_uploads_set_);
 
-  // Record the redirect itself in addition to the final request.
-  OnRequestLegComplete(RequestInfo(*request));
+  // Record the redirect itself in addition to the final request. The fact that
+  // a redirect is being followed indicates success.
+  OnRequestLegComplete(RequestInfo(*request, net::OK));
 }
 
 void DomainReliabilityMonitor::OnCompleted(net::URLRequest* request,
-                                           bool started) {
+                                           bool started,
+                                           int net_error) {
   DCHECK(discard_uploads_set_);
 
   if (!started)
     return;
-  RequestInfo request_info(*request);
+  RequestInfo request_info(*request, net_error);
   OnRequestLegComplete(request_info);
 
   if (request_info.response_info.network_accessed) {
@@ -187,8 +171,8 @@ void DomainReliabilityMonitor::OnNetworkChanged(
 }
 
 void DomainReliabilityMonitor::ClearBrowsingData(
-   DomainReliabilityClearMode mode,
-   const base::Callback<bool(const GURL&)>& origin_filter) {
+    DomainReliabilityClearMode mode,
+    const base::Callback<bool(const GURL&)>& origin_filter) {
   switch (mode) {
     case CLEAR_BEACONS:
       context_manager_.ClearBeacons(origin_filter);
@@ -232,9 +216,10 @@ DomainReliabilityMonitor::CreateContextForConfig(
 DomainReliabilityMonitor::RequestInfo::RequestInfo() {}
 
 DomainReliabilityMonitor::RequestInfo::RequestInfo(
-    const net::URLRequest& request)
+    const net::URLRequest& request,
+    int net_error)
     : url(request.url()),
-      status(request.status()),
+      net_error(net_error),
       response_info(request.response_info()),
       load_flags(request.load_flags()),
       upload_depth(
@@ -242,7 +227,7 @@ DomainReliabilityMonitor::RequestInfo::RequestInfo(
   request.GetLoadTimingInfo(&load_timing_info);
   request.GetConnectionAttempts(&connection_attempts);
   request.PopulateNetErrorDetails(&details);
-  if (!request.GetRemoteEndpoint(&remote_endpoint))
+  if (!request.GetTransactionRemoteEndpoint(&remote_endpoint))
     remote_endpoint = net::IPEndPoint();
 }
 
@@ -266,7 +251,7 @@ bool DomainReliabilityMonitor::RequestInfo::ShouldReportRequest(
   // that Domain Reliability is interested in.
   if (request.response_info.network_accessed)
     return true;
-  if (URLRequestStatusToNetError(request.status) != net::OK)
+  if (request.net_error != net::OK)
     return true;
   if (request.details.quic_port_migration_detected)
     return true;
@@ -290,8 +275,8 @@ void DomainReliabilityMonitor::OnRequestLegComplete(
   else
     response_code = -1;
 
-  net::ConnectionAttempt url_request_attempt(
-      request.remote_endpoint, URLRequestStatusToNetError(request.status));
+  net::ConnectionAttempt url_request_attempt(request.remote_endpoint,
+                                             request.net_error);
 
   DomainReliabilityBeacon beacon_template;
   if (request.response_info.connection_info !=

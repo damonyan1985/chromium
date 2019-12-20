@@ -53,11 +53,13 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool use_chromium_screen_space_antialiasing_via_shaders = false;
     bool oes_standard_derivatives = false;
     bool oes_egl_image_external = false;
+    bool oes_egl_image_external_essl3 = false;
     bool nv_egl_stream_consumer_external = false;
     bool oes_depth24 = false;
     bool oes_compressed_etc1_rgb8_texture = false;
     bool packed_depth24_stencil8 = false;
     bool npot_ok = false;
+    bool enable_texture_filter_anisotropic = false;
     bool enable_texture_float_linear = false;
     bool enable_texture_half_float_linear = false;
     bool enable_color_buffer_float = false;
@@ -101,7 +103,8 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool chromium_image_ycbcr_420v = false;
     bool chromium_image_ycbcr_422 = false;
     bool chromium_image_xr30 = false;
-    bool chromium_image_xb30 = false;
+    bool chromium_image_ab30 = false;
+    bool chromium_image_ycbcr_p010 = false;
     bool emulate_primitive_restart_fixed_index = false;
     bool ext_render_buffer_format_bgra8888 = false;
     bool ext_multisample_compatibility = false;
@@ -123,9 +126,6 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool angle_client_arrays = false;
     bool angle_request_extension = false;
     bool ext_debug_marker = false;
-    bool arb_robustness = false;
-    bool khr_robustness = false;
-    bool ext_robustness = false;
     bool ext_pixel_buffer_object = false;
     bool ext_unpack_subimage = false;
     bool oes_rgb8_rgba8 = false;
@@ -137,12 +137,18 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool unpremultiply_and_dither_copy = false;
     bool separate_stencil_ref_mask_writemask = false;
     bool mesa_framebuffer_flip_y = false;
-    bool angle_multiview = false;
+    bool ovr_multiview2 = false;
     bool khr_parallel_shader_compile = false;
     bool android_surface_control = false;
     bool khr_robust_buffer_access_behavior = false;
     bool webgl_multi_draw = false;
-    bool webgl_multi_draw_instanced = false;
+    bool nv_internalformat_sample_query = false;
+    bool amd_framebuffer_multisample_advanced = false;
+    bool ext_float_blend = false;
+    bool chromium_completion_query = false;
+    bool oes_fbo_render_mipmap = false;
+    bool webgl_draw_instanced_base_vertex_base_instance = false;
+    bool webgl_multi_draw_instanced_base_vertex_base_instance = false;
   };
 
   FeatureInfo();
@@ -201,8 +207,11 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
   void EnableCHROMIUMTextureStorageImage();
   void EnableCHROMIUMColorBufferFloatRGBA();
   void EnableCHROMIUMColorBufferFloatRGB();
+  void EnableEXTFloatBlend();
   void EnableEXTColorBufferFloat();
   void EnableEXTColorBufferHalfFloat();
+  void EnableEXTTextureFilterAnisotropic();
+  void EnableOESFboRenderMipmap();
   void EnableOESTextureFloatLinear();
   void EnableOESTextureHalfFloatLinear();
 
@@ -220,6 +229,10 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
 
   bool oes_texture_half_float_linear_available() const {
     return oes_texture_half_float_linear_available_;
+  }
+
+  bool is_passthrough_cmd_decoder() const {
+    return is_passthrough_cmd_decoder_;
   }
 
  private:
@@ -253,6 +266,7 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
 
   bool ext_color_buffer_float_available_ = false;
   bool ext_color_buffer_half_float_available_ = false;
+  bool ext_texture_filter_anisotropic_available_ = false;
   bool oes_texture_float_linear_available_ = false;
   bool oes_texture_half_float_linear_available_ = false;
 

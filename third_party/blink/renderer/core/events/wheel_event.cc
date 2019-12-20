@@ -28,20 +28,28 @@
 #include "third_party/blink/renderer/core/event_interface_names.h"
 #include "third_party/blink/renderer/core/frame/intervention.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
 namespace {
 
 unsigned ConvertDeltaMode(const WebMouseWheelEvent& event) {
-  return event.scroll_by_page ? WheelEvent::kDomDeltaPage
-                              : WheelEvent::kDomDeltaPixel;
+  // WebMouseWheelEvent only supports these units for the delta.
+  DCHECK(
+      event.delta_units == ui::input_types::ScrollGranularity::kScrollByPage ||
+      event.delta_units == ui::input_types::ScrollGranularity::kScrollByPixel ||
+      event.delta_units ==
+          ui::input_types::ScrollGranularity::kScrollByPrecisePixel);
+  return event.delta_units == ui::input_types::ScrollGranularity::kScrollByPage
+             ? WheelEvent::kDomDeltaPage
+             : WheelEvent::kDomDeltaPixel;
 }
 
 // Negate a long value without integer overflow.
-long NegateIfPossible(long value) {
-  if (value == LONG_MIN)
+int32_t NegateIfPossible(int32_t value) {
+  if (value == std::numeric_limits<int32_t>::min())
     return value;
   return -value;
 }
@@ -51,10 +59,10 @@ MouseEventInit* GetMouseEventInitForWheel(const WebMouseWheelEvent& event,
   MouseEventInit* initializer = MouseEventInit::Create();
   initializer->setBubbles(true);
   initializer->setCancelable(event.IsCancelable());
+  auto* local_dom_window = DynamicTo<LocalDOMWindow>(view);
   MouseEvent::SetCoordinatesFromWebPointerProperties(
-      event.FlattenTransform(),
-      view->IsLocalDOMWindow() ? ToLocalDOMWindow(view) : nullptr, initializer);
-  initializer->setButton(static_cast<short>(event.button));
+      event.FlattenTransform(), local_dom_window, initializer);
+  initializer->setButton(static_cast<int16_t>(event.button));
   initializer->setButtons(
       MouseEvent::WebInputEventModifiersToButtons(event.GetModifiers()));
   initializer->setView(view);
@@ -83,10 +91,12 @@ WheelEvent::WheelEvent()
 WheelEvent::WheelEvent(const AtomicString& type,
                        const WheelEventInit* initializer)
     : MouseEvent(type, initializer),
-      wheel_delta_(initializer->wheelDeltaX() ? initializer->wheelDeltaX()
-                                              : -initializer->deltaX(),
-                   initializer->wheelDeltaY() ? initializer->wheelDeltaY()
-                                              : -initializer->deltaY()),
+      wheel_delta_(initializer->wheelDeltaX()
+                       ? initializer->wheelDeltaX()
+                       : NegateIfPossible(-initializer->deltaX()),
+                   initializer->wheelDeltaY()
+                       ? initializer->wheelDeltaY()
+                       : NegateIfPossible(-initializer->deltaY())),
       delta_x_(initializer->deltaX()
                    ? initializer->deltaX()
                    : NegateIfPossible(initializer->wheelDeltaX())),
@@ -130,9 +140,9 @@ void WheelEvent::preventDefault() {
         "Unable to preventDefault inside passive event listener due to "
         "target being treated as passive. See "
         "https://www.chromestatus.com/features/6662647093133312";
-    if (view() && view()->IsLocalDOMWindow() && view()->GetFrame()) {
-      Intervention::GenerateReport(ToLocalDOMWindow(view())->GetFrame(), id,
-                                   message);
+    auto* local_dom_window = DynamicTo<LocalDOMWindow>(view());
+    if (local_dom_window && local_dom_window->GetFrame()) {
+      Intervention::GenerateReport(local_dom_window->GetFrame(), id, message);
     }
   }
 

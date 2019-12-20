@@ -26,6 +26,9 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "third_party/blink/public/common/page/page_visibility_state.h"
+#include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
+#include "third_party/blink/public/platform/web_text_autosizer_page_info.h"
 #include "third_party/blink/public/web/web_window_features.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
@@ -44,8 +47,12 @@
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
-namespace blink {
+namespace cc {
+class AnimationHost;
+}
 
+namespace blink {
+class AgentMetricsCollector;
 class AutoscrollController;
 class BrowserControls;
 class ChromeClient;
@@ -56,9 +63,10 @@ class DragCaret;
 class DragController;
 class FocusController;
 class Frame;
-class LinkHighlights;
+class LinkHighlight;
 class LocalFrame;
 class LocalFrameView;
+class MediaFeatureOverrides;
 class OverscrollController;
 struct PageScaleConstraints;
 class PageScaleConstraintsSet;
@@ -74,13 +82,12 @@ class SpatialNavigationController;
 class TopDocumentRootScrollerController;
 class ValidationMessageClient;
 class VisualViewport;
-class WebLayerTreeView;
 
 typedef uint64_t LinkHash;
 
 float DeviceScaleFactorDeprecated(LocalFrame*);
 
-class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
+class CORE_EXPORT Page final : public GarbageCollected<Page>,
                                public Supplementable<Page>,
                                public PageVisibilityNotifier,
                                public SettingsDelegate,
@@ -96,13 +103,13 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
    public:
     PageClients();
-    ~PageClients();
 
     Member<ChromeClient> chrome_client;
     DISALLOW_COPY_AND_ASSIGN(PageClients);
   };
 
-  static Page* Create(PageClients& page_clients);
+  // Any pages not owned by a web view should be created using this method.
+  static Page* CreateNonOrdinary(PageClients& pages_clients);
 
   // An "ordinary" page is a fully-featured page owned by a web view.
   static Page* CreateOrdinary(PageClients&, Page* opener);
@@ -125,10 +132,11 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   // Returns pages related to the current browsing context (excluding the
   // current page).  See also
-  // https://html.spec.whatwg.org/multipage/browsers.html#unit-of-related-browsing-contexts
+  // https://html.spec.whatwg.org/C/#unit-of-related-browsing-contexts
   HeapVector<Member<Page>> RelatedPages();
 
   static void PlatformColorsChanged();
+  static void ColorSchemeChanged();
 
   void InitialStyleChanged();
   void UpdateAcceleratedCompositingSettings();
@@ -180,6 +188,9 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   ValidationMessageClient& GetValidationMessageClient() const {
     return *validation_message_client_;
   }
+  AgentMetricsCollector* GetAgentMetricsCollector() const {
+    return agent_metrics_collector_.Get();
+  }
   void SetValidationMessageClientForTesting(ValidationMessageClient*);
 
   ScrollingCoordinator* GetScrollingCoordinator();
@@ -210,7 +221,7 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   VisualViewport& GetVisualViewport();
   const VisualViewport& GetVisualViewport() const;
 
-  LinkHighlights& GetLinkHighlights();
+  LinkHighlight& GetLinkHighlight();
 
   OverscrollController& GetOverscrollController();
   const OverscrollController& GetOverscrollController() const;
@@ -224,15 +235,12 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   // Pausing is used to implement the "Optionally, pause while waiting for
   // the user to acknowledge the message" step of simple dialog processing:
-  // https://html.spec.whatwg.org/multipage/webappapis.html#simple-dialogs
+  // https://html.spec.whatwg.org/C/#simple-dialogs
   //
-  // Per https://html.spec.whatwg.org/multipage/webappapis.html#pause, no loads
+  // Per https://html.spec.whatwg.org/C/#pause, no loads
   // are allowed to start/continue in this state, and all background processing
   // is also paused.
   bool Paused() const { return paused_; }
-  // This function is public to be used for suspending/resuming Page's tasks.
-  // Refer to |WebContentImpl::PausePageScheduledTasks| and
-  // http://crbug.com/822564 for more details.
   void SetPaused(bool);
 
   void SetPageScaleFactor(float);
@@ -254,7 +262,9 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   static void AllVisitedStateChanged(bool invalidate_visited_link_hashes);
   static void VisitedStateChanged(LinkHash visited_hash);
 
-  void SetIsHidden(bool hidden, bool is_initial_state);
+  void SetVisibilityState(PageVisibilityState visibility_state,
+                          bool is_initial_state);
+  PageVisibilityState GetVisibilityState() const;
   bool IsPageVisible() const;
 
   PageLifecycleState LifecycleState() const;
@@ -289,8 +299,8 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   void Trace(blink::Visitor*) override;
 
-  void LayerTreeViewInitialized(WebLayerTreeView&, LocalFrameView*);
-  void WillCloseLayerTreeView(WebLayerTreeView&, LocalFrameView*);
+  void AnimationHostInitialized(cc::AnimationHost&, LocalFrameView*);
+  void WillCloseAnimationHost(LocalFrameView*);
 
   void WillBeDestroyed();
 
@@ -301,14 +311,39 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   PageScheduler* GetPageScheduler() const;
 
   // PageScheduler::Delegate implementation.
+  bool IsOrdinary() const override;
   void ReportIntervention(const String& message) override;
   bool RequestBeginMainFrameNotExpected(bool new_state) override;
   void SetLifecycleState(PageLifecycleState) override;
+  bool LocalMainFrameNetworkIsAlmostIdle() const override;
 
   void AddAutoplayFlags(int32_t flags);
   void ClearAutoplayFlags();
 
   int32_t AutoplayFlags() const;
+
+  void SetInsidePortal(bool inside_portal);
+  bool InsidePortal() const;
+
+  void SetTextAutosizePageInfo(const WebTextAutosizerPageInfo& page_info) {
+    web_text_autosizer_page_info_ = page_info;
+  }
+  const WebTextAutosizerPageInfo& TextAutosizerPageInfo() const {
+    return web_text_autosizer_page_info_;
+  }
+
+  void SetMediaFeatureOverride(const AtomicString& media_feature,
+                               const String& value);
+  const MediaFeatureOverrides* GetMediaFeatureOverrides() const {
+    return media_feature_overrides_.get();
+  }
+  void ClearMediaFeatureOverrides();
+
+  WebScopedVirtualTimePauser& HistoryNavigationVirtualTimePauser() {
+    return history_navigation_virtual_time_pauser_;
+  }
+
+  static void PrepareForLeakDetection();
 
  private:
   friend class ScopedPagePauser;
@@ -322,6 +357,8 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   void NotifyPluginsChanged() const;
 
   void SetPageScheduler(std::unique_ptr<PageScheduler>);
+
+  void UpdateHasRelatedPages();
 
   // Typically, the main frame and Page should both be owned by the embedder,
   // which must call Page::willBeDestroyed() prior to destroying Page. This
@@ -353,12 +390,16 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
       global_root_scroller_controller_;
   const Member<VisualViewport> visual_viewport_;
   const Member<OverscrollController> overscroll_controller_;
-  const Member<LinkHighlights> link_highlights_;
+  const Member<LinkHighlight> link_highlight_;
   Member<SpatialNavigationController> spatial_navigation_controller_;
 
   Member<PluginData> plugin_data_;
 
   Member<ValidationMessageClient> validation_message_client_;
+
+  // Stored only for ordinary pages to avoid adding metrics from things like
+  // overlays, popups and SVG.
+  Member<AgentMetricsCollector> agent_metrics_collector_;
 
   Deprecation deprecation_;
   HostsUsingFeatures hosts_using_features_;
@@ -377,7 +418,9 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
 
   float device_scale_factor_;
 
-  bool is_hidden_;
+  PageVisibilityState visibility_state_;
+
+  bool is_ordinary_;
 
   PageLifecycleState page_lifecycle_state_;
 
@@ -396,14 +439,34 @@ class CORE_EXPORT Page final : public GarbageCollectedFinalized<Page>,
   Member<Page> next_related_page_;
   Member<Page> prev_related_page_;
 
+  // A handle to notify the scheduler whether this page has other related
+  // pages or not.
+  FrameScheduler::SchedulingAffectingFeatureHandle has_related_pages_;
+
   std::unique_ptr<PageScheduler> page_scheduler_;
 
+  // Overrides for various media features set from the devtools.
+  std::unique_ptr<MediaFeatureOverrides> media_feature_overrides_;
+
   int32_t autoplay_flags_;
+
+  // Accessed by frames to determine whether to expose the PortalHost object.
+  bool inside_portal_ = false;
+
+  WebTextAutosizerPageInfo web_text_autosizer_page_info_;
+
+  WebScopedVirtualTimePauser history_navigation_virtual_time_pauser_;
 
   DISALLOW_COPY_AND_ASSIGN(Page);
 };
 
 extern template class CORE_EXTERN_TEMPLATE_EXPORT Supplement<Page>;
+
+class CORE_EXPORT InternalSettingsPageSupplementBase : public Supplement<Page> {
+ public:
+  using Supplement<Page>::Supplement;
+  static const char kSupplementName[];
+};
 
 }  // namespace blink
 

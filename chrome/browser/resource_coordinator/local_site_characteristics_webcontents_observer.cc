@@ -4,11 +4,19 @@
 
 #include "chrome/browser/resource_coordinator/local_site_characteristics_webcontents_observer.h"
 
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_factory.h"
+#include "chrome/browser/resource_coordinator/tab_helper.h"
 #include "chrome/browser/resource_coordinator/time.h"
 #include "chrome/browser/resource_coordinator/utils.h"
+#include "components/performance_manager/performance_manager_impl.h"
+#include "components/performance_manager/public/graph/frame_node.h"
+#include "components/performance_manager/public/graph/graph.h"
+#include "components/performance_manager/public/graph/page_node.h"
+#include "components/performance_manager/public/web_contents_proxy.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 
@@ -18,35 +26,42 @@ namespace {
 
 using LoadingState = TabLoadTracker::LoadingState;
 
-TabVisibility ContentVisibilityToRCVisibility(content::Visibility visibility) {
-  if (visibility == content::Visibility::VISIBLE)
-    return TabVisibility::kForeground;
-  return TabVisibility::kBackground;
-}
+// The period of time after loading during which we ignore title/favicon
+// change events. It's possible for some site that are loaded in background to
+// use some of these features without this being an attempt to communicate
+// with the user (e.g. the tab is just really finishing to load).
+constexpr base::TimeDelta kTitleOrFaviconChangePostLoadGracePeriod =
+    base::TimeDelta::FromSeconds(20);
 
-bool g_skip_observer_registration_for_testing = false;
+// The period of time during which we ignore events after a tab gets
+// backgrounded. It's necessary because some events might happen shortly after
+// backgrounding a tab without this being an attempt to communicate with the
+// user:
+//    - There might be a delay between a media request gets initiated and the
+//      time the audio actually starts.
+//    - Same-document navigation can cause the title or favicon to change, if
+//      the user switch tab before this completes this will be recorded as a
+//      background communication event while in reality it's just a navigation
+//      event.
+constexpr base::TimeDelta kFeatureUsagePostBackgroundGracePeriod =
+    base::TimeDelta::FromSeconds(10);
+
+performance_manager::TabVisibility ContentVisibilityToRCVisibility(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::VISIBLE)
+    return performance_manager::TabVisibility::kForeground;
+  return performance_manager::TabVisibility::kBackground;
+}
 
 }  // namespace
-
-// static
-void LocalSiteCharacteristicsWebContentsObserver::
-    SkipObserverRegistrationForTesting() {
-  g_skip_observer_registration_for_testing = true;
-}
 
 LocalSiteCharacteristicsWebContentsObserver::
     LocalSiteCharacteristicsWebContentsObserver(
         content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents) {
-  if (!g_skip_observer_registration_for_testing) {
-    // The PageSignalReceiver has to be enabled in order to properly track the
-    // non-persistent notification events.
-    DCHECK(PageSignalReceiver::IsEnabled());
-
+  // May not be present in some tests.
+  if (performance_manager::PerformanceManagerImpl::IsAvailable()) {
     TabLoadTracker::Get()->AddObserver(this);
-    page_signal_receiver_ = GetPageSignalReceiver();
-    DCHECK(page_signal_receiver_);
-    page_signal_receiver_->AddObserver(this);
   }
 }
 
@@ -68,10 +83,8 @@ void LocalSiteCharacteristicsWebContentsObserver::OnVisibilityChanged(
 
 void LocalSiteCharacteristicsWebContentsObserver::WebContentsDestroyed() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!g_skip_observer_registration_for_testing) {
+  if (performance_manager::PerformanceManagerImpl::IsAvailable())
     TabLoadTracker::Get()->RemoveObserver(this);
-    page_signal_receiver_->RemoveObserver(this);
-  }
   writer_.reset();
   writer_origin_ = url::Origin();
 }
@@ -191,93 +204,38 @@ void LocalSiteCharacteristicsWebContentsObserver::OnLoadingStateChange(
   }
 }
 
-void LocalSiteCharacteristicsWebContentsObserver::
-    OnNonPersistentNotificationCreated(
-        content::WebContents* contents,
-        const PageNavigationIdentity& page_navigation_id) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (web_contents() != contents)
-    return;
-
-  DCHECK_NE(nullptr, page_signal_receiver_);
-
-  // Don't notify the writer if the origin of this navigation event isn't the
-  // same as the one tracked by the writer.
-  if ((page_signal_receiver_->GetNavigationIDForWebContents(contents) ==
-       page_navigation_id.navigation_id) ||
-      url::Origin::Create(GURL(page_navigation_id.url))
-          .IsSameOriginWith(writer_origin_)) {
-    MaybeNotifyBackgroundFeatureUsage(
-        &SiteCharacteristicsDataWriter::NotifyUsesNotificationsInBackground,
-        FeatureType::kNotificationUsage);
-  }
-}
-
-void LocalSiteCharacteristicsWebContentsObserver::OnLoadTimePerformanceEstimate(
-    content::WebContents* contents,
-    const PageNavigationIdentity& page_navigation_id,
-    base::TimeDelta load_duration,
-    base::TimeDelta cpu_usage_estimate,
-    uint64_t private_footprint_kb_estimate) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (web_contents() != contents)
-    return;
-
-  DCHECK_NE(nullptr, page_signal_receiver_);
-
-  bool late_notification = page_signal_receiver_->GetNavigationIDForWebContents(
-                               contents) != page_navigation_id.navigation_id;
-
-  UMA_HISTOGRAM_BOOLEAN(
-      "ResourceCoordinator.Measurement.Memory.LateNotification",
-      late_notification);
-
-  // Don't notify the writer if the origin of this navigation event isn't the
-  // same as the one tracked by the writer.
-  // TODO(siggi): Deal with late notifications by getting a writer for
-  //     the measurement's origin.
-  if (!late_notification || url::Origin::Create(GURL(page_navigation_id.url))
-                                .IsSameOriginWith(writer_origin_)) {
-    if (writer_) {
-      writer_->NotifyLoadTimePerformanceMeasurement(
-          load_duration, cpu_usage_estimate, private_footprint_kb_estimate);
-    }
-  }
-}
-
 bool LocalSiteCharacteristicsWebContentsObserver::ShouldIgnoreFeatureUsageEvent(
     FeatureType feature_type) {
   // The feature usage should be ignored if there's no writer for this tab.
   if (!writer_)
     return true;
 
-  // Ignore all features happening before the website gets fully loaded except
-  // for the non-persistent notifications.
-  if (feature_type != FeatureType::kNotificationUsage &&
-      TabLoadTracker::Get()->GetLoadingState(web_contents()) !=
-          LoadingState::LOADED) {
+  // Ignore all features happening before the website gets fully loaded.
+  if (TabLoadTracker::Get()->GetLoadingState(web_contents()) !=
+      LoadingState::LOADED) {
     return true;
   }
 
   // Ignore events if the tab is not in background.
   if (ContentVisibilityToRCVisibility(web_contents()->GetVisibility()) !=
-      TabVisibility::kBackground) {
+      performance_manager::TabVisibility::kBackground) {
     return true;
   }
 
   if (feature_type == FeatureType::kTitleChange ||
       feature_type == FeatureType::kFaviconChange) {
     DCHECK(!loaded_time_.is_null());
-    if (NowTicks() - loaded_time_ < GetStaticSiteCharacteristicsDatabaseParams()
-                                        .title_or_favicon_change_grace_period) {
+    if (NowTicks() - loaded_time_ < kTitleOrFaviconChangePostLoadGracePeriod) {
       return true;
     }
-  } else if (feature_type == FeatureType::kAudioUsage) {
-    DCHECK(!backgrounded_time_.is_null());
-    if (NowTicks() - backgrounded_time_ <
-        GetStaticSiteCharacteristicsDatabaseParams().audio_usage_grace_period) {
-      return true;
-    }
+  }
+
+  // Ignore events happening shortly after the tab being backgrounded, they're
+  // usually false positives.
+  DCHECK(!backgrounded_time_.is_null());
+  if ((NowTicks() - backgrounded_time_ <
+       kFeatureUsagePostBackgroundGracePeriod)) {
+    return true;
   }
 
   return false;
@@ -302,8 +260,8 @@ void LocalSiteCharacteristicsWebContentsObserver::OnSiteLoaded() {
 }
 
 void LocalSiteCharacteristicsWebContentsObserver::UpdateBackgroundedTime(
-    TabVisibility visibility) {
-  if (visibility == TabVisibility::kBackground) {
+    performance_manager::TabVisibility visibility) {
+  if (visibility == performance_manager::TabVisibility::kBackground) {
     backgrounded_time_ = NowTicks();
   } else {
     backgrounded_time_ = base::TimeTicks();

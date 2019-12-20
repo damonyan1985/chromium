@@ -4,72 +4,128 @@
 
 #include "ash/shelf/shelf_control_button.h"
 
+#include "ash/public/cpp/ash_constants.h"
+#include "ash/public/cpp/shelf_config.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/shelf/ink_drop_button_listener.h"
-#include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_constants.h"
-#include "ash/shelf/shelf_view.h"
+#include "ash/shelf/shelf_button_delegate.h"
+#include "ash/shell.h"
 #include "ash/system/tray/tray_popup_utils.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/ink_drop_mask.h"
+#include "ui/views/controls/highlight_path_generator.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
 
-ShelfControlButton::ShelfControlButton(ShelfView* shelf_view)
-    : ShelfButton(shelf_view), shelf_(shelf_view->shelf()) {
+namespace {
+
+class ShelfControlButtonHighlightPathGenerator
+    : public views::HighlightPathGenerator {
+ public:
+  ShelfControlButtonHighlightPathGenerator() = default;
+
+  // views::HighlightPathGenerator:
+  SkPath GetHighlightPath(const views::View* view) override {
+    const int border_radius = ShelfConfig::Get()->control_border_radius();
+    // Some control buttons have a slightly larger size to fill the shelf and
+    // maximize the click target, but we still want their "visual" size to be
+    // the same, so we find the center point and draw a square around that.
+    const gfx::Point center = view->GetLocalBounds().CenterPoint();
+    const int half_size = ShelfConfig::Get()->control_size() / 2;
+    gfx::Rect visual_size(center.x() - half_size, center.y() - half_size,
+                          ShelfConfig::Get()->control_size(),
+                          ShelfConfig::Get()->control_size());
+    if (chromeos::switches::ShouldShowShelfHotseat() &&
+        Shell::Get()->tablet_mode_controller()->InTabletMode() &&
+        ShelfConfig::Get()->is_in_app()) {
+      visual_size.Inset(
+          0, ShelfConfig::Get()->in_app_control_button_height_inset());
+    }
+    return SkPath().addRoundRect(gfx::RectToSkRect(visual_size), border_radius,
+                                 border_radius);
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ShelfControlButtonHighlightPathGenerator);
+};
+
+}  // namespace
+
+ShelfControlButton::ShelfControlButton(
+    Shelf* shelf,
+    ShelfButtonDelegate* shelf_button_delegate)
+    : ShelfButton(shelf, shelf_button_delegate) {
   set_has_ink_drop_action_on_click(true);
-  SetSize(gfx::Size(kShelfControlSize, kShelfControlSize));
+  SetInstallFocusRingOnFocus(true);
+  views::HighlightPathGenerator::Install(
+      this, std::make_unique<ShelfControlButtonHighlightPathGenerator>());
+  focus_ring()->SetColor(ShelfConfig::Get()->shelf_focus_border_color());
+  SetFocusPainter(nullptr);
+  SetPaintToLayer();
+  layer()->SetFillsBoundsOpaquely(false);
 }
 
 ShelfControlButton::~ShelfControlButton() = default;
 
 gfx::Point ShelfControlButton::GetCenterPoint() const {
-  return gfx::Point(width() / 2.f, width() / 2.f);
+  return GetLocalBounds().CenterPoint();
 }
 
 std::unique_ptr<views::InkDropRipple> ShelfControlButton::CreateInkDropRipple()
     const {
   return std::make_unique<views::FloodFillInkDropRipple>(
-      size(),
-      gfx::Insets(ShelfConstants::button_size() / 2 -
-                  ShelfConstants::control_border_radius()),
-      GetInkDropCenterBasedOnLastEvent(), GetInkDropBaseColor(),
+      size(), GetInkDropCenterBasedOnLastEvent(), GetInkDropBaseColor(),
       ink_drop_visible_opacity());
 }
 
 std::unique_ptr<views::InkDropMask> ShelfControlButton::CreateInkDropMask()
     const {
+  if (chromeos::switches::ShouldShowShelfHotseat() &&
+      Shell::Get()->tablet_mode_controller()->InTabletMode() &&
+      ShelfConfig::Get()->is_in_app()) {
+    return std::make_unique<views::RoundRectInkDropMask>(
+        size(),
+        gfx::Insets(ShelfConfig::Get()->in_app_control_button_height_inset(),
+                    0),
+        ShelfConfig::Get()->control_border_radius());
+  }
+
   return std::make_unique<views::CircleInkDropMask>(
-      size(), GetCenterPoint(), ShelfConstants::control_border_radius());
+      size(), GetCenterPoint(), ShelfConfig::Get()->control_border_radius());
 }
 
-gfx::Rect ShelfControlButton::CalculateButtonBounds() const {
-  ShelfAlignment alignment = shelf_->alignment();
-  gfx::Rect content_bounds = GetContentsBounds();
-  // Align the button to the top of a bottom-aligned shelf, to the right edge
-  // a left-aligned shelf, and to the left edge of a right-aligned shelf.
-  const int inset = (ShelfConstants::shelf_size() - kShelfControlSize) / 2;
-  const int x = alignment == SHELF_ALIGNMENT_LEFT
-                    ? content_bounds.right() - inset - kShelfControlSize
-                    : content_bounds.x() + inset;
-  return gfx::Rect(x, content_bounds.y() + inset, kShelfControlSize,
-                   kShelfControlSize);
+const char* ShelfControlButton::GetClassName() const {
+  return "ash/ShelfControlButton";
+}
+
+gfx::Size ShelfControlButton::CalculatePreferredSize() const {
+  return gfx::Size(ShelfConfig::Get()->control_size(),
+                   ShelfConfig::Get()->control_size());
+}
+
+void ShelfControlButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  ShelfButton::GetAccessibleNodeData(node_data);
+  node_data->SetName(GetAccessibleName());
 }
 
 void ShelfControlButton::PaintButtonContents(gfx::Canvas* canvas) {
-  PaintBackground(canvas, CalculateButtonBounds());
+  PaintBackground(canvas, GetContentsBounds());
 }
 
 void ShelfControlButton::PaintBackground(gfx::Canvas* canvas,
                                          const gfx::Rect& bounds) {
   cc::PaintFlags flags;
   flags.setAntiAlias(true);
-  flags.setColor(kShelfControlPermanentHighlightBackground);
-  canvas->DrawRoundRect(bounds, ShelfConstants::control_border_radius(), flags);
+  flags.setColor(
+      ShelfConfig::Get()->shelf_control_permanent_highlight_background());
+  canvas->DrawRoundRect(bounds, ShelfConfig::Get()->control_border_radius(),
+                        flags);
 }
 
 }  // namespace ash

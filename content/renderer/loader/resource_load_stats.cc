@@ -10,9 +10,10 @@
 #include "content/public/common/resource_load_info.mojom.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "net/base/ip_endpoint.h"
 #include "net/url_request/redirect_info.h"
-#include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace content {
 
@@ -40,21 +41,22 @@ void UpdateUserGestureCarryoverInfo(int render_frame_id) {
 }
 #endif
 
-void ResourceResponseReceived(
-    int render_frame_id,
-    int request_id,
-    const GURL& response_url,
-    const network::ResourceResponseHead& response_head,
-    content::ResourceType resource_type) {
+void ResourceResponseReceived(int render_frame_id,
+                              int request_id,
+                              const url::Origin& origin_of_final_response_url,
+                              network::mojom::URLResponseHeadPtr response_head,
+                              content::ResourceType resource_type,
+                              PreviewsState previews_state) {
   RenderFrameImpl* frame = RenderFrameImpl::FromRoutingID(render_frame_id);
   if (!frame)
     return;
   if (!IsResourceTypeFrame(resource_type)) {
     frame->GetFrameHost()->SubresourceResponseStarted(
-        response_url, response_head.cert_status);
+        origin_of_final_response_url, response_head->cert_status);
   }
-  frame->DidStartResponse(response_url, request_id, response_head,
-                          resource_type);
+  frame->DidStartResponse(origin_of_final_response_url, request_id,
+                          std::move(response_head), resource_type,
+                          previews_state);
 }
 
 void ResourceTransferSizeUpdated(int render_frame_id,
@@ -104,15 +106,17 @@ mojom::ResourceLoadInfoPtr NotifyResourceLoadInitiated(
     const GURL& request_url,
     const std::string& http_method,
     const GURL& referrer,
-    ResourceType resource_type) {
+    ResourceType resource_type,
+    net::RequestPriority request_priority) {
   auto resource_load_info = mojom::ResourceLoadInfo::New();
   resource_load_info->method = http_method;
   resource_load_info->original_url = request_url;
-  resource_load_info->url = request_url;
+  resource_load_info->origin_of_final_url = url::Origin::Create(request_url);
   resource_load_info->resource_type = resource_type;
   resource_load_info->request_id = request_id;
   resource_load_info->referrer = referrer;
   resource_load_info->network_info = mojom::CommonNetworkInfo::New();
+  resource_load_info->request_priority = request_priority;
   return resource_load_info;
 }
 
@@ -120,19 +124,21 @@ void NotifyResourceRedirectReceived(
     int render_frame_id,
     mojom::ResourceLoadInfo* resource_load_info,
     const net::RedirectInfo& redirect_info,
-    const network::ResourceResponseHead& redirect_response) {
-  resource_load_info->url = redirect_info.new_url;
+    network::mojom::URLResponseHeadPtr redirect_response) {
+  resource_load_info->origin_of_final_url =
+      url::Origin::Create(redirect_info.new_url);
   resource_load_info->method = redirect_info.new_method;
   resource_load_info->referrer = GURL(redirect_info.new_referrer);
   mojom::RedirectInfoPtr net_redirect_info = mojom::RedirectInfo::New();
-  net_redirect_info->url = redirect_info.new_url;
+  net_redirect_info->origin_of_new_url =
+      url::Origin::Create(redirect_info.new_url);
   net_redirect_info->network_info = mojom::CommonNetworkInfo::New();
   net_redirect_info->network_info->network_accessed =
-      redirect_response.network_accessed;
+      redirect_response->network_accessed;
   net_redirect_info->network_info->always_access_network =
-      AlwaysAccessNetwork(redirect_response.headers);
-  net_redirect_info->network_info->ip_port_pair =
-      redirect_response.socket_address;
+      AlwaysAccessNetwork(redirect_response->headers);
+  net_redirect_info->network_info->remote_endpoint =
+      redirect_response->remote_endpoint;
   resource_load_info->redirect_info_chain.push_back(
       std::move(net_redirect_info));
 }
@@ -140,47 +146,52 @@ void NotifyResourceRedirectReceived(
 void NotifyResourceResponseReceived(
     int render_frame_id,
     mojom::ResourceLoadInfo* resource_load_info,
-    const network::ResourceResponseHead& response_head) {
-  if (response_head.network_accessed) {
-    if (resource_load_info->resource_type == RESOURCE_TYPE_MAIN_FRAME) {
+    network::mojom::URLResponseHeadPtr response_head,
+    PreviewsState previews_state) {
+  if (response_head->network_accessed) {
+    if (resource_load_info->resource_type == ResourceType::kMainFrame) {
       UMA_HISTOGRAM_ENUMERATION("Net.ConnectionInfo.MainFrame",
-                                response_head.connection_info,
+                                response_head->connection_info,
                                 net::HttpResponseInfo::NUM_OF_CONNECTION_INFOS);
     } else {
       UMA_HISTOGRAM_ENUMERATION("Net.ConnectionInfo.SubResource",
-                                response_head.connection_info,
+                                response_head->connection_info,
                                 net::HttpResponseInfo::NUM_OF_CONNECTION_INFOS);
     }
   }
 
-  resource_load_info->mime_type = response_head.mime_type;
-  resource_load_info->load_timing_info = response_head.load_timing;
+  resource_load_info->mime_type = response_head->mime_type;
+  resource_load_info->load_timing_info = response_head->load_timing;
   resource_load_info->network_info->network_accessed =
-      response_head.network_accessed;
+      response_head->network_accessed;
   resource_load_info->network_info->always_access_network =
-      AlwaysAccessNetwork(response_head.headers);
-  resource_load_info->network_info->ip_port_pair = response_head.socket_address;
+      AlwaysAccessNetwork(response_head->headers);
+  resource_load_info->network_info->remote_endpoint =
+      response_head->remote_endpoint;
 
   auto task_runner = RenderThreadImpl::DeprecatedGetMainTaskRunner();
   if (!task_runner)
     return;
   if (task_runner->BelongsToCurrentThread()) {
     ResourceResponseReceived(render_frame_id, resource_load_info->request_id,
-                             resource_load_info->url, response_head,
-                             resource_load_info->resource_type);
+                             resource_load_info->origin_of_final_url,
+                             std::move(response_head),
+                             resource_load_info->resource_type, previews_state);
     return;
   }
 
-  // Make a deep copy of ResourceResponseHead before passing it cross-thread.
-  auto resource_response = base::MakeRefCounted<network::ResourceResponse>();
-  resource_response->head = response_head;
-  auto deep_copied_response = resource_response->DeepCopy();
+  // Make a deep copy of URLResponseHead before passing it cross-thread.
+  if (response_head->headers) {
+    response_head->headers =
+        new net::HttpResponseHeaders(response_head->headers->raw_headers());
+  }
   task_runner->PostTask(
       FROM_HERE,
       base::BindOnce(ResourceResponseReceived, render_frame_id,
-                     resource_load_info->request_id, resource_load_info->url,
-                     deep_copied_response->head,
-                     resource_load_info->resource_type));
+                     resource_load_info->request_id,
+                     resource_load_info->origin_of_final_url,
+                     std::move(response_head),
+                     resource_load_info->resource_type, previews_state));
 }
 
 void NotifyResourceTransferSizeUpdated(
@@ -205,7 +216,7 @@ void NotifyResourceLoadCompleted(
     int render_frame_id,
     mojom::ResourceLoadInfoPtr resource_load_info,
     const network::URLLoaderCompletionStatus& status) {
-  RecordLoadHistograms(resource_load_info->url,
+  RecordLoadHistograms(resource_load_info->origin_of_final_url,
                        resource_load_info->resource_type, status.error_code);
 
   resource_load_info->was_cached = status.exists_in_cache;
@@ -229,7 +240,7 @@ void NotifyResourceLoadCompleted(
 void NotifyResourceLoadCanceled(int render_frame_id,
                                 mojom::ResourceLoadInfoPtr resource_load_info,
                                 int net_error) {
-  RecordLoadHistograms(resource_load_info->url,
+  RecordLoadHistograms(resource_load_info->origin_of_final_url,
                        resource_load_info->resource_type, net_error);
 
   auto task_runner = RenderThreadImpl::DeprecatedGetMainTaskRunner();

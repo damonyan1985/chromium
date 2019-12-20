@@ -19,20 +19,32 @@ Polymer({
      * Whether network dialog is shown as a part of demo mode setup flow.
      * Additional custom elements can be displayed on network list in demo mode
      * setup.
+     * @type {boolean}
      */
-    isDemoModeSetup: false,
+    isDemoModeSetup: {
+      type: Boolean,
+      value: false,
+    },
 
     /**
      * Whether offline demo mode is enabled. If it is enabled offline setup
      * option will be shown in UI.
+     * @type {boolean}
      */
-    offlineDemoModeEnabled: false,
+    offlineDemoModeEnabled: {
+      type: Boolean,
+      value: false,
+    },
 
     /**
      * Whether device is connected to the network.
+     * @type {boolean}
      * @private
      */
-    isConnected_: false,
+    isConnected_: {
+      type: Boolean,
+      value: false,
+    },
   },
 
   /** Called when dialog is shown. */
@@ -63,9 +75,12 @@ Polymer({
     this.$.networkDialog.show();
   },
 
+  focus: function() {
+    this.$.networkDialog.focus();
+  },
+
   /** Updates localized elements of the UI. */
   updateLocalizedContent: function() {
-    this.$.networkSelectLogin.setCrOncStrings();
     this.i18nUpdateLocale();
   },
 
@@ -73,7 +88,7 @@ Polymer({
    * Returns element of the network list selected by the query.
    * Used to simplify testing.
    * @param {string} query
-   * @return {CrNetworkList.CrNetworkListItemType}
+   * @return {NetworkList.NetworkListItemType}
    */
   getNetworkListItemWithQueryForTest: function(query) {
     let networkList =
@@ -83,14 +98,30 @@ Polymer({
   },
 
   /**
+   * Returns element of the network list with the given name.
+   * Used to simplify testing.
+   * @param {string} name
+   * @return {?NetworkList.NetworkListItemType}
+   */
+  getNetworkListItemByNameForTest: function(name) {
+    return this.$.networkSelectLogin.$$('#networkSelect')
+        .getNetworkListItemByNameForTest(name);
+  },
+
+  /**
    * Called after dialog is shown. Refreshes the list of the networks.
    * @private
    */
   onShown_: function() {
     this.async(function() {
       this.$.networkSelectLogin.refresh();
-      this.$.networkSelectLogin.focus();
-    }.bind(this));
+      if (this.isConnected_)
+        this.$.nextButton.focus();
+      else
+        this.$.networkSelectLogin.focus();
+    }.bind(this), 300);
+    // Timeout is a workaround to correctly propagate focus to
+    // RendererFrameHostImpl see https://crbug.com/955129 for details.
   },
 
   /**
@@ -117,5 +148,13 @@ Polymer({
   onDemoModeSetupChanged_: function() {
     this.$.networkSelectLogin.isOfflineDemoModeSetup =
         this.isDemoModeSetup && this.offlineDemoModeEnabled;
+  },
+
+  /**
+   * This is called when network setup is done.
+   * @private
+   */
+  onNetworkConnected_: function() {
+    chrome.send('login.NetworkScreen.userActed', ['continue']);
   },
 });

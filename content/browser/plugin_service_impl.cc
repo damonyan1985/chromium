@@ -23,13 +23,13 @@
 #include "base/task_runner_util.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "content/browser/plugin_list.h"
 #include "content/browser/ppapi_plugin_process_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/pepper_plugin_list.h"
-#include "content/common/plugin_list.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -38,6 +38,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_constants.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
@@ -99,8 +100,6 @@ PluginServiceImpl* PluginServiceImpl::GetInstance() {
 }
 
 PluginServiceImpl::PluginServiceImpl() : filter_(nullptr) {
-  plugin_list_sequence_checker_.DetachFromSequence();
-
   // Collect the total number of browser processes (which create
   // PluginServiceImpl objects, to be precise). The number is used to normalize
   // the number of processes which start at least one NPAPI/PPAPI Flash process.
@@ -116,11 +115,14 @@ PluginServiceImpl::~PluginServiceImpl() {
 }
 
 void PluginServiceImpl::Init() {
-  plugin_list_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+  plugin_list_task_runner_ = base::CreateSequencedTaskRunner(
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
-  PluginList::Singleton()->set_will_load_plugins_callback(
-      base::Bind(&WillLoadPluginsCallback, &plugin_list_sequence_checker_));
+
+  // Setup the sequence checker right after setting up the task runner.
+  plugin_list_sequence_checker_.DetachFromSequence();
+  PluginList::Singleton()->set_will_load_plugins_callback(base::BindRepeating(
+      &WillLoadPluginsCallback, &plugin_list_sequence_checker_));
 
   RegisterPepperPlugins();
 }
@@ -273,9 +275,9 @@ void PluginServiceImpl::OpenChannelToPpapiBroker(
     int render_frame_id,
     const base::FilePath& path,
     PpapiPluginProcessHost::BrokerClient* client) {
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
-                                          render_process_id, render_frame_id));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&PluginServiceImpl::RecordBrokerUsage,
+                                render_process_id, render_frame_id));
 
   PpapiPluginProcessHost* plugin_host = FindOrStartPpapiBrokerProcess(
       render_process_id, path);
@@ -293,15 +295,12 @@ bool PluginServiceImpl::GetPluginInfoArray(
     bool allow_wildcard,
     std::vector<WebPluginInfo>* plugins,
     std::vector<std::string>* actual_mime_types) {
-  bool use_stale = false;
-  PluginList::Singleton()->GetPluginInfoArray(
-      url, mime_type, allow_wildcard, &use_stale, plugins, actual_mime_types);
-  return use_stale;
+  return PluginList::Singleton()->GetPluginInfoArray(
+      url, mime_type, allow_wildcard, plugins, actual_mime_types);
 }
 
 bool PluginServiceImpl::GetPluginInfo(int render_process_id,
                                       int render_frame_id,
-                                      ResourceContext* context,
                                       const GURL& url,
                                       const url::Origin& main_frame_origin,
                                       const std::string& mime_type,
@@ -309,6 +308,7 @@ bool PluginServiceImpl::GetPluginInfo(int render_process_id,
                                       bool* is_stale,
                                       WebPluginInfo* info,
                                       std::string* actual_mime_type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::vector<WebPluginInfo> plugins;
   std::vector<std::string> mime_types;
   bool stale = GetPluginInfoArray(
@@ -318,8 +318,8 @@ bool PluginServiceImpl::GetPluginInfo(int render_process_id,
 
   for (size_t i = 0; i < plugins.size(); ++i) {
     if (!filter_ ||
-        filter_->IsPluginAvailable(render_process_id, render_frame_id, context,
-                                   url, main_frame_origin, &plugins[i])) {
+        filter_->IsPluginAvailable(render_process_id, render_frame_id, url,
+                                   main_frame_origin, &plugins[i])) {
       *info = plugins[i];
       if (actual_mime_type)
         *actual_mime_type = mime_types[i];
@@ -414,7 +414,7 @@ static const unsigned int kMaxCrashesPerInterval = 3;
 static const unsigned int kCrashesInterval = 120;
 
 void PluginServiceImpl::RegisterPluginCrash(const base::FilePath& path) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto i = crash_times_.find(path);
   if (i == crash_times_.end()) {
     crash_times_[path] = std::vector<base::Time>();
@@ -428,7 +428,7 @@ void PluginServiceImpl::RegisterPluginCrash(const base::FilePath& path) {
 }
 
 bool PluginServiceImpl::IsPluginUnstable(const base::FilePath& path) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   std::map<base::FilePath, std::vector<base::Time> >::const_iterator i =
       crash_times_.find(path);
   if (i == crash_times_.end()) {

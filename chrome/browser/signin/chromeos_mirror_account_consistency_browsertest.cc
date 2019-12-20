@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
@@ -14,12 +16,13 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/account_id/account_id.h"
 #include "components/google/core/common/google_util.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_header_helper.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/test/browser_test_utils.h"
@@ -120,13 +123,9 @@ IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
   ASSERT_EQ(user, user_manager::UserManager::Get()->FindUser(account_id_));
   Profile* profile = chromeos::ProfileHelper::Get()->GetProfileByUser(user);
 
-  // On Chrome OS this is false.
-  ASSERT_FALSE(
-      AccountConsistencyModeManager::IsMirrorEnabledForProfile(profile));
-
   // Require account consistency.
   SupervisedUserSettingsService* supervised_user_settings_service =
-      SupervisedUserSettingsServiceFactory::GetForProfile(profile);
+      SupervisedUserSettingsServiceFactory::GetForKey(profile->GetProfileKey());
   supervised_user_settings_service->SetLocalSetting(
       supervised_users::kAccountConsistencyMirrorRequired,
       std::make_unique<base::Value>(true));
@@ -141,7 +140,8 @@ IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
   ASSERT_EQ(3, signin::PROFILE_MODE_INCOGNITO_DISABLED |
                    signin::PROFILE_MODE_ADD_ACCOUNT_DISABLED);
   TestMirrorRequestForProfile(test_server_.get(), profile,
-                              "mode=3,enable_account_consistency=true");
+                              "mode=3,enable_account_consistency=true,"
+                              "consistency_enabled_by_default=false");
 }
 
 IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
@@ -150,7 +150,7 @@ IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
   chromeos::StartupUtils::MarkOobeCompleted();
 }
 
-// Mirror is not enabled for non-child accounts.
+// Mirror is enabled for non-child accounts.
 IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
                        TestMirrorRequestChromeOsNotChildAccount) {
   // Not a child user.
@@ -161,12 +161,10 @@ IN_PROC_BROWSER_TEST_F(ChromeOsMirrorAccountConsistencyTest,
   ASSERT_EQ(user, user_manager::UserManager::Get()->FindUser(account_id_));
   Profile* profile = chromeos::ProfileHelper::Get()->GetProfileByUser(user);
 
-  // On Chrome OS this is false.
-  ASSERT_FALSE(
+  // With Chrome OS Account Manager enabled, this should be true.
+  EXPECT_TRUE(
       AccountConsistencyModeManager::IsMirrorEnabledForProfile(profile));
-
-  PrefService* prefs = profile->GetPrefs();
-  ASSERT_FALSE(prefs->GetBoolean(prefs::kAccountConsistencyMirrorRequired));
-
-  TestMirrorRequestForProfile(test_server_.get(), profile, "");
+  TestMirrorRequestForProfile(test_server_.get(), profile,
+                              "mode=0,enable_account_consistency=true,"
+                              "consistency_enabled_by_default=false");
 }

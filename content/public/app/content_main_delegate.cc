@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "build/build_config.h"
+#include "content/public/common/content_client.h"
 #include "content/public/gpu/content_gpu_client.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/utility/content_utility_client.h"
@@ -31,10 +32,6 @@ int ContentMainDelegate::RunProcess(
 bool ContentMainDelegate::ProcessRegistersWithSystemProcess(
     const std::string& process_type) {
   return false;
-}
-
-bool ContentMainDelegate::ShouldSendMachPort(const std::string& process_type) {
-  return true;
 }
 
 bool ContentMainDelegate::DelaySandboxInitialization(
@@ -64,11 +61,15 @@ void ContentMainDelegate::AdjustServiceProcessCommandLine(
     base::CommandLine* command_line) {}
 
 void ContentMainDelegate::OnServiceManagerInitialized(
-    const base::Closure& quit_closure,
+    base::OnceClosure quit_closure,
     service_manager::BackgroundServiceManager* service_manager) {}
 
 bool ContentMainDelegate::ShouldCreateFeatureList() {
   return true;
+}
+
+ContentClient* ContentMainDelegate::CreateContentClient() {
+  return new ContentClient();
 }
 
 ContentBrowserClient* ContentMainDelegate::CreateContentBrowserClient() {

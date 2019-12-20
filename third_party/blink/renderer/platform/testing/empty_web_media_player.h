@@ -28,19 +28,15 @@ class EmptyWebMediaPlayer : public WebMediaPlayer {
   void Seek(double seconds) override {}
   void SetRate(double) override {}
   void SetVolume(double) override {}
-  void EnterPictureInPicture(PipWindowOpenedCallback) override {}
-  void ExitPictureInPicture(PipWindowClosedCallback) override {}
-  void SetPictureInPictureCustomControls(
-      const std::vector<PictureInPictureControlInfo>&) override {}
-  void RegisterPictureInPictureWindowResizeCallback(
-      PipWindowResizedCallback) override {}
+  void SetLatencyHint(double) override {}
+  void OnRequestPictureInPicture() override {}
   SurfaceLayerMode GetVideoSurfaceLayerMode() const override {
     return SurfaceLayerMode::kNever;
   }
   WebTimeRanges Buffered() const override;
   WebTimeRanges Seekable() const override;
   void SetSinkId(const WebString& sink_id,
-                 std::unique_ptr<WebSetSinkIdCallbacks>) override {}
+                 WebSetSinkIdCompleteCallback) override {}
   bool HasVideo() const override { return false; }
   bool HasAudio() const override { return false; }
   WebSize NaturalSize() const override;
@@ -49,14 +45,14 @@ class EmptyWebMediaPlayer : public WebMediaPlayer {
   bool Seeking() const override { return false; }
   double Duration() const override { return 0.0; }
   double CurrentTime() const override { return 0.0; }
-  NetworkState GetNetworkState() const override { return kNetworkStateEmpty; }
+  NetworkState GetNetworkState() const override { return kNetworkStateIdle; }
   ReadyState GetReadyState() const override { return kReadyStateHaveNothing; }
   WebString GetErrorMessage() const override;
   bool DidLoadingProgress() override { return false; }
   bool WouldTaintOrigin() const override { return false; }
   double MediaTimeForTimeValue(double time_value) const override {
     return time_value;
-  };
+  }
   unsigned DecodedFrameCount() const override { return 0; }
   unsigned DroppedFrameCount() const override { return 0; }
   uint64_t AudioDecodedByteCount() const override { return 0; }
@@ -66,6 +62,8 @@ class EmptyWebMediaPlayer : public WebMediaPlayer {
              cc::PaintFlags&,
              int already_uploaded_id,
              VideoFrameUploadMetadata*) override {}
+  bool HasAvailableVideoFrame() const override { return false; }
+  base::WeakPtr<WebMediaPlayer> AsWeakPtr() override { return nullptr; }
 };
 
 }  // namespace blink

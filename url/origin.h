@@ -16,11 +16,25 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/unguessable_token.h"
+#include "build/build_config.h"
 #include "ipc/ipc_param_traits.h"
 #include "url/scheme_host_port.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
 #include "url/url_constants.h"
+
+#if defined(OS_ANDROID)
+#include <jni.h>
+
+namespace base {
+namespace android {
+template <typename>
+class ScopedJavaLocalRef;
+template <typename>
+class JavaRef;
+}  // namespace android
+}  // namespace base
+#endif  // OS_ANDROID
 
 class GURL;
 
@@ -260,6 +274,17 @@ class COMPONENT_EXPORT(URL) Origin {
   // |d|, |b| is cross-origin to |a| and |c|, |c| is cross-origin to |b| and
   // |d|, and |d| is cross-origin to |a| and |c|.
   Origin DeriveNewOpaqueOrigin() const;
+
+  // Creates a string representation of the object that can be used for logging
+  // and debugging. It serializes the internal state, such as the nonce value
+  // and precursor information.
+  std::string GetDebugString() const;
+
+#if defined(OS_ANDROID)
+  base::android::ScopedJavaLocalRef<jobject> CreateJavaObject() const;
+  static Origin FromJavaObject(
+      const base::android::JavaRef<jobject>& java_origin);
+#endif  // OS_ANDROID
 
  private:
   friend class blink::SecurityOrigin;

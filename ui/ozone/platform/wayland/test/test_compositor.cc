@@ -6,8 +6,10 @@
 
 #include <wayland-server-core.h>
 
+#include "base/logging.h"
 #include "ui/ozone/platform/wayland/test/mock_surface.h"
 #include "ui/ozone/platform/wayland/test/server_object.h"
+#include "ui/ozone/platform/wayland/test/test_region.h"
 
 namespace wl {
 
@@ -15,24 +17,29 @@ namespace {
 
 constexpr uint32_t kCompositorVersion = 4;
 
-void CreateSurface(wl_client* client, wl_resource* resource, uint32_t id) {
-  auto* compositor = GetUserDataAs<TestCompositor>(resource);
-  wl_resource* surface_resource = wl_resource_create(
-      client, &wl_surface_interface, wl_resource_get_version(resource), id);
-  if (!surface_resource) {
-    wl_client_post_no_memory(client);
-    return;
-  }
-  SetImplementation(surface_resource, &kMockSurfaceImpl,
-                    std::make_unique<MockSurface>(surface_resource));
-  compositor->AddSurface(GetUserDataAs<MockSurface>(surface_resource));
+void CreateSurface(wl_client* client,
+                   wl_resource* compositor_resource,
+                   uint32_t id) {
+  wl_resource* resource =
+      CreateResourceWithImpl<::testing::NiceMock<MockSurface>>(
+          client, &wl_surface_interface,
+          wl_resource_get_version(compositor_resource), &kMockSurfaceImpl, id);
+  GetUserDataAs<TestCompositor>(compositor_resource)
+      ->AddSurface(GetUserDataAs<MockSurface>(resource));
+}
+
+void CreateRegion(wl_client* client, wl_resource* resource, uint32_t id) {
+  wl_resource* region_resource =
+      wl_resource_create(client, &wl_region_interface, 1, id);
+  SetImplementation(region_resource, &kTestWlRegionImpl,
+                    std::make_unique<TestRegion>());
 }
 
 }  // namespace
 
 const struct wl_compositor_interface kTestCompositorImpl = {
-    &CreateSurface,  // create_surface
-    nullptr,         // create_region
+    CreateSurface,  // create_surface
+    CreateRegion,   // create_region
 };
 
 TestCompositor::TestCompositor()

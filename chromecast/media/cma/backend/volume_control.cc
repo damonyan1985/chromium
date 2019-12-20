@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -14,26 +13,30 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/no_destructor.h"
+#include "base/numerics/ranges.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
 #include "base/values.h"
-#include "chromecast/base/init_command_line_shlib.h"
 #include "chromecast/base/serializers.h"
+#include "chromecast/media/audio/mixer_service/control_connection.h"
 #include "chromecast/media/cma/backend/audio_buildflags.h"
 #include "chromecast/media/cma/backend/cast_audio_json.h"
-#include "chromecast/media/cma/backend/post_processing_pipeline_parser.h"
-#include "chromecast/media/cma/backend/stream_mixer.h"
 #include "chromecast/media/cma/backend/system_volume_control.h"
 #include "chromecast/media/cma/backend/volume_map.h"
+
+#if BUILDFLAG(MIXER_IN_CAST_SHELL)
+#include "chromecast/media/cma/backend/mixer/stream_mixer.h"  // nogncheck
+#endif
 
 namespace chromecast {
 namespace media {
@@ -69,11 +72,6 @@ std::string ContentTypeToDbFSKey(AudioContentType type) {
   }
 }
 
-VolumeMap& GetVolumeMap() {
-  static base::NoDestructor<VolumeMap> volume_map;
-  return *volume_map;
-}
-
 class VolumeControlInternal : public SystemVolumeControl::Delegate {
  public:
   VolumeControlInternal()
@@ -82,7 +80,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
             base::WaitableEvent::ResetPolicy::MANUAL,
             base::WaitableEvent::InitialState::NOT_SIGNALED) {
     // Load volume map to check that the config file is correct.
-    GetVolumeMap();
+    VolumeControl::VolumeToDbFS(0.0f);
 
     stored_values_.SetDouble(kKeyMediaDbFS, kDefaultMediaDbFS);
     stored_values_.SetDouble(kKeyAlarmDbFS, kDefaultAlarmDbFS);
@@ -124,7 +122,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     }
 
     base::Thread::Options options;
-    options.message_loop_type = base::MessageLoop::TYPE_IO;
+    options.message_pump_type = base::MessagePumpType::IO;
     thread_.StartWithOptions(options);
 
     thread_.task_runner()->PostTask(
@@ -152,17 +150,37 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     return volumes_[type];
   }
 
-  void SetVolume(AudioContentType type, float level) {
+  void SetVolume(VolumeChangeSource source,
+                 AudioContentType type,
+                 float level) {
     if (type == AudioContentType::kOther) {
       NOTREACHED() << "Can't set volume for content type kOther";
       return;
     }
 
-    level = std::max(0.0f, std::min(level, 1.0f));
+    level = base::ClampToRange(level, 0.0f, 1.0f);
     thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&VolumeControlInternal::SetVolumeOnThread,
-                                  base::Unretained(this), type, level,
+                                  base::Unretained(this), source, type, level,
                                   false /* from_system */));
+  }
+
+  void SetVolumeMultiplier(AudioContentType type, float multiplier) {
+    if (type == AudioContentType::kOther) {
+      NOTREACHED() << "Can't set volume multiplier for content type kOther";
+      return;
+    }
+
+    if (BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
+      LOG(INFO) << "Ignore global volume multiplier since volume is externally "
+                << "controlled";
+      return;
+    }
+
+    thread_.task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&VolumeControlInternal::SetVolumeMultiplierOnThread,
+                       base::Unretained(this), type, multiplier));
   }
 
   bool IsMuted(AudioContentType type) {
@@ -170,7 +188,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     return muted_[type];
   }
 
-  void SetMuted(AudioContentType type, bool muted) {
+  void SetMuted(VolumeChangeSource source, AudioContentType type, bool muted) {
     if (type == AudioContentType::kOther) {
       NOTREACHED() << "Can't set mute state for content type kOther";
       return;
@@ -178,7 +196,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
 
     thread_.task_runner()->PostTask(
         FROM_HERE, base::BindOnce(&VolumeControlInternal::SetMutedOnThread,
-                                  base::Unretained(this), type, muted,
+                                  base::Unretained(this), source, type, muted,
                                   false /* from_system */));
   }
 
@@ -188,12 +206,10 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
       return;
     }
 
-    if (BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
-      return;
-    }
-    limit = std::max(0.0f, std::min(limit, 1.0f));
-    StreamMixer::Get()->SetOutputLimit(
-        type, DbFsToScale(VolumeControl::VolumeToDbFS(limit)));
+    thread_.task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&VolumeControlInternal::SetOutputLimitOnThread,
+                       base::Unretained(this), type, limit));
   }
 
   void SetPowerSaveMode(bool power_save_on) {
@@ -207,18 +223,21 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
   void InitializeOnThread() {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     system_volume_control_ = SystemVolumeControl::Create(this);
+    mixer_ = std::make_unique<mixer_service::ControlConnection>();
+    mixer_->Connect();
 
     double dbfs;
     for (auto type : {AudioContentType::kMedia, AudioContentType::kAlarm,
                       AudioContentType::kCommunication}) {
       CHECK(stored_values_.GetDouble(ContentTypeToDbFSKey(type), &dbfs));
       volumes_[type] = VolumeControl::DbFSToVolume(dbfs);
+      volume_multipliers_[type] = 1.0f;
       if (BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
         // If ALSA owns volume, our internal mixer should not apply any scaling
         // multiplier.
-        StreamMixer::Get()->SetVolume(type, 1.0f);
+        mixer_->SetVolume(type, 1.0f);
       } else {
-        StreamMixer::Get()->SetVolume(type, DbFsToScale(dbfs));
+        mixer_->SetVolume(type, DbFsToScale(dbfs));
       }
 
       // Note that mute state is not persisted across reboots.
@@ -243,10 +262,14 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     initialize_complete_event_.Signal();
   }
 
-  void SetVolumeOnThread(AudioContentType type, float level, bool from_system) {
+  void SetVolumeOnThread(VolumeChangeSource source,
+                         AudioContentType type,
+                         float level,
+                         bool from_system) {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     DCHECK(type != AudioContentType::kOther);
     DCHECK(!from_system || type == AudioContentType::kMedia);
+    DCHECK(volume_multipliers_.find(type) != volume_multipliers_.end());
 
     {
       base::AutoLock lock(volume_lock_);
@@ -262,7 +285,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
 
     float dbfs = VolumeControl::VolumeToDbFS(level);
     if (!BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
-      StreamMixer::Get()->SetVolume(type, DbFsToScale(dbfs));
+      mixer_->SetVolume(type, DbFsToScale(dbfs) * volume_multipliers_[type]);
     }
 
     if (!from_system && type == AudioContentType::kMedia) {
@@ -272,7 +295,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     {
       base::AutoLock lock(observer_lock_);
       for (VolumeObserver* observer : volume_observers_) {
-        observer->OnVolumeChange(type, level);
+        observer->OnVolumeChange(source, type, level);
       }
     }
 
@@ -280,7 +303,21 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     SerializeJsonToFile(storage_path_, stored_values_);
   }
 
-  void SetMutedOnThread(AudioContentType type, bool muted, bool from_system) {
+  void SetVolumeMultiplierOnThread(AudioContentType type, float multiplier) {
+    DCHECK(thread_.task_runner()->BelongsToCurrentThread());
+    DCHECK(type != AudioContentType::kOther);
+    DCHECK(!BUILDFLAG(SYSTEM_OWNS_VOLUME));
+
+    volume_multipliers_[type] = multiplier;
+    float scale =
+        DbFsToScale(VolumeControl::VolumeToDbFS(volumes_[type])) * multiplier;
+    mixer_->SetVolume(type, scale);
+  }
+
+  void SetMutedOnThread(VolumeChangeSource source,
+                        AudioContentType type,
+                        bool muted,
+                        bool from_system) {
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
     DCHECK(type != AudioContentType::kOther);
 
@@ -293,7 +330,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     }
 
     if (!BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
-      StreamMixer::Get()->SetMuted(type, muted);
+      mixer_->SetMuted(type, muted);
     }
 
     if (!from_system && type == AudioContentType::kMedia) {
@@ -303,8 +340,26 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     {
       base::AutoLock lock(observer_lock_);
       for (VolumeObserver* observer : volume_observers_) {
-        observer->OnMuteChange(type, muted);
+        observer->OnMuteChange(source, type, muted);
       }
+    }
+  }
+
+  void SetOutputLimitOnThread(AudioContentType type, float limit) {
+    if (type == AudioContentType::kOther) {
+      NOTREACHED() << "Can't set output limit for content type kOther";
+      return;
+    }
+
+    if (BUILDFLAG(SYSTEM_OWNS_VOLUME)) {
+      return;
+    }
+    limit = base::ClampToRange(limit, 0.0f, 1.0f);
+    mixer_->SetVolumeLimit(type,
+                           DbFsToScale(VolumeControl::VolumeToDbFS(limit)));
+
+    if (type == AudioContentType::kMedia) {
+      system_volume_control_->SetLimit(limit);
     }
   }
 
@@ -318,18 +373,19 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
     LOG(INFO) << "System volume/mute change, new volume = " << new_volume
               << ", new mute = " << new_mute;
     DCHECK(thread_.task_runner()->BelongsToCurrentThread());
-    SetVolumeOnThread(AudioContentType::kMedia, new_volume,
-                      true /* from_system */);
-    SetMutedOnThread(AudioContentType::kMedia, new_mute,
-                     true /* from_system */);
+    SetVolumeOnThread(VolumeChangeSource::kUser, AudioContentType::kMedia,
+                      new_volume, true /* from_system */);
+    SetMutedOnThread(VolumeChangeSource::kUser, AudioContentType::kMedia,
+                     new_mute, true /* from_system */);
   }
 
   base::FilePath storage_path_;
   base::DictionaryValue stored_values_;
 
   base::Lock volume_lock_;
-  std::map<AudioContentType, float> volumes_;
-  std::map<AudioContentType, bool> muted_;
+  base::flat_map<AudioContentType, float> volumes_;
+  base::flat_map<AudioContentType, float> volume_multipliers_;
+  base::flat_map<AudioContentType, bool> muted_;
 
   base::Lock observer_lock_;
   std::vector<VolumeObserver*> volume_observers_;
@@ -338,6 +394,7 @@ class VolumeControlInternal : public SystemVolumeControl::Delegate {
   base::WaitableEvent initialize_complete_event_;
 
   std::unique_ptr<SystemVolumeControl> system_volume_control_;
+  std::unique_ptr<mixer_service::ControlConnection> mixer_;
 
   DISALLOW_COPY_AND_ASSIGN(VolumeControlInternal);
 };
@@ -351,7 +408,9 @@ VolumeControlInternal& GetVolumeControl() {
 
 // static
 void VolumeControl::Initialize(const std::vector<std::string>& argv) {
-  chromecast::InitCommandLineShlib(argv);
+#if BUILDFLAG(MIXER_IN_CAST_SHELL)
+  static base::NoDestructor<StreamMixer> g_mixer;
+#endif
   GetVolumeControl();
 }
 
@@ -376,8 +435,16 @@ float VolumeControl::GetVolume(AudioContentType type) {
 }
 
 // static
-void VolumeControl::SetVolume(AudioContentType type, float level) {
-  GetVolumeControl().SetVolume(type, level);
+void VolumeControl::SetVolume(VolumeChangeSource source,
+                              AudioContentType type,
+                              float level) {
+  GetVolumeControl().SetVolume(source, type, level);
+}
+
+// static
+void VolumeControl::SetVolumeMultiplier(AudioContentType type,
+                                        float multiplier) {
+  GetVolumeControl().SetVolumeMultiplier(type, multiplier);
 }
 
 // static
@@ -386,23 +453,15 @@ bool VolumeControl::IsMuted(AudioContentType type) {
 }
 
 // static
-void VolumeControl::SetMuted(AudioContentType type, bool muted) {
-  GetVolumeControl().SetMuted(type, muted);
+void VolumeControl::SetMuted(VolumeChangeSource source,
+                             AudioContentType type,
+                             bool muted) {
+  GetVolumeControl().SetMuted(source, type, muted);
 }
 
 // static
 void VolumeControl::SetOutputLimit(AudioContentType type, float limit) {
   GetVolumeControl().SetOutputLimit(type, limit);
-}
-
-// static
-float VolumeControl::VolumeToDbFS(float volume) {
-  return GetVolumeMap().VolumeToDbFS(volume);
-}
-
-// static
-float VolumeControl::DbFSToVolume(float db) {
-  return GetVolumeMap().DbFSToVolume(db);
 }
 
 // static

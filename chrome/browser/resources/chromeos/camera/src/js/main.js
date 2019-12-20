@@ -10,194 +10,219 @@
 var cca = cca || {};
 
 /**
+ * import {assert, assertInstanceof} from './chrome_util.js';
+ */
+var {assert, assertInstanceof} = {assert, assertInstanceof};
+
+/**
+ * import {Mode} from './type.js';
+ */
+var Mode = Mode || {};
+
+/**
  * Creates the Camera App main object.
- * @constructor
+ * @implements {cca.bg.ForegroundOps}
  */
-cca.App = function() {
+cca.App = class {
   /**
-   * @type {cca.models.Gallery}
-   * @private
+   * @param {!cca.bg.BackgroundOps} backgroundOps
    */
-  this.model_ = new cca.models.Gallery();
+  constructor(backgroundOps) {
+    /**
+     * @type {!cca.bg.BackgroundOps}
+     * @private
+     */
+    this.backgroundOps_ = backgroundOps;
 
-  /**
-   * @type {cca.views.Camera}
-   * @private
-   */
-  this.cameraView_ = new cca.views.Camera(this.model_);
+    /**
+     * @type {!cca.device.PhotoConstraintsPreferrer}
+     * @private
+     */
+    this.photoPreferrer_ = new cca.device.PhotoConstraintsPreferrer(
+        () => this.cameraView_.restart());
 
-  /**
-   * @type {cca.views.MasterSettings}
-   * @private
-   */
-  this.settingsView_ = new cca.views.MasterSettings();
+    /**
+     * @type {!cca.device.VideoConstraintsPreferrer}
+     * @private
+     */
+    this.videoPreferrer_ = new cca.device.VideoConstraintsPreferrer(
+        () => this.cameraView_.restart());
 
-  /**
-   * @type {cca.views.GridSettings}
-   * @private
-   */
-  this.gridsettingsView_ = new cca.views.GridSettings();
+    /**
+     * @type {!cca.device.DeviceInfoUpdater}
+     * @private
+     */
+    this.infoUpdater_ = new cca.device.DeviceInfoUpdater(
+        this.photoPreferrer_, this.videoPreferrer_);
 
-  /**
-   * @type {cca.views.TimerSettings}
-   * @private
-   */
-  this.timersettingsView_ = new cca.views.TimerSettings();
+    /**
+     * @type {!cca.GalleryButton}
+     * @private
+     */
+    this.galleryButton_ = new cca.GalleryButton();
 
-  /**
-   * @type {cca.views.Browser}
-   * @private
-   */
-  this.browserView_ = new cca.views.Browser(this.model_);
-
-  /**
-   * @type {cca.views.Warning}
-   * @private
-   */
-  this.warningView_ = new cca.views.Warning();
-
-  /**
-   * @type {cca.views.Dialog}
-   * @private
-   */
-  this.dialogView_ = new cca.views.Dialog();
-
-  // End of properties. Seal the object.
-  Object.seal(this);
-
-  document.body.addEventListener('keydown', this.onKeyPressed_.bind(this));
-
-  document.title = chrome.i18n.getMessage('name');
-  this.setupI18nElements_();
-  this.setupToggles_();
-};
-
-/*
- * Checks if it is applicable to use CrOS gallery app.
- * @return {boolean} Whether applicable or not.
- */
-cca.App.useGalleryApp = function() {
-  return chrome.fileManagerPrivate &&
-      document.body.classList.contains('ext-fs');
-};
-
-/**
- * Sets up i18n messages on elements by i18n attributes.
- * @private
- */
-cca.App.prototype.setupI18nElements_ = function() {
-  var getElements = (attr) => document.querySelectorAll('[' + attr + ']');
-  var getMessage = (element, attr) => chrome.i18n.getMessage(
-      element.getAttribute(attr));
-  var setAriaLabel = (element, attr) => element.setAttribute(
-      'aria-label', getMessage(element, attr));
-
-  getElements('i18n-content').forEach(
-      (element) => element.textContent = getMessage(element, 'i18n-content'));
-  getElements('i18n-aria').forEach(
-      (element) => setAriaLabel(element, 'i18n-aria'));
-  cca.tooltip.setup(getElements('i18n-label')).forEach(
-      (element) => setAriaLabel(element, 'i18n-label'));
-};
-
-/**
- * Sets up toggles (checkbox and radio) by data attributes.
- * @private
- */
-cca.App.prototype.setupToggles_ = function() {
-  document.querySelectorAll('input').forEach((element) => {
-    element.addEventListener('keypress', (event) =>
-        cca.util.getShortcutIdentifier(event) == 'Enter' && element.click());
-
-    var css = element.getAttribute('data-css');
-    var key = element.getAttribute('data-key');
-    var payload = () => {
-      var keys = {};
-      keys[key] = element.checked;
-      return keys;
-    };
-    element.addEventListener('change', (event) => {
-      if (css) {
-        document.body.classList.toggle(css, element.checked);
+    /**
+     * @type {!cca.views.Camera}
+     * @private
+     */
+    this.cameraView_ = (() => {
+      const intent = this.backgroundOps_.getIntent();
+      if (intent !== null && intent.shouldHandleResult) {
+        cca.state.set('should-handle-intent-result', true);
+        return new cca.views.CameraIntent(
+            intent, this.infoUpdater_, this.photoPreferrer_,
+            this.videoPreferrer_);
+      } else {
+        return new cca.views.Camera(
+            this.galleryButton_, this.infoUpdater_, this.photoPreferrer_,
+            this.videoPreferrer_, intent !== null ? intent.mode : Mode.PHOTO);
       }
-      if (event.isTrusted) {
-        element.save();
-        if (element.type == 'radio' && element.checked) {
-          // Handle unchecked grouped sibling radios.
-          var grouped = `input[type=radio][name=${element.name}]:not(:checked)`;
-          document.querySelectorAll(grouped).forEach((radio) =>
-              radio.dispatchEvent(new Event('change')) && radio.save());
+    })();
+
+    document.body.addEventListener('keydown', this.onKeyPressed_.bind(this));
+
+    document.title = chrome.i18n.getMessage('name');
+    cca.util.setupI18nElements(document.body);
+    this.setupToggles_();
+
+    // Set up views navigation by their DOM z-order.
+    cca.nav.setup([
+      this.cameraView_,
+      new cca.views.MasterSettings(),
+      new cca.views.BaseSettings('#gridsettings'),
+      new cca.views.BaseSettings('#timersettings'),
+      new cca.views.ResolutionSettings(
+          this.infoUpdater_, this.photoPreferrer_, this.videoPreferrer_),
+      new cca.views.BaseSettings('#photoresolutionsettings'),
+      new cca.views.BaseSettings('#videoresolutionsettings'),
+      new cca.views.BaseSettings('#expertsettings'),
+      new cca.views.Warning(),
+      new cca.views.Dialog('#message-dialog'),
+    ]);
+
+    this.backgroundOps_.bindForegroundOps(this);
+  }
+
+  /**
+   * Sets up toggles (checkbox and radio) by data attributes.
+   * @private
+   */
+  setupToggles_() {
+    cca.proxy.browserProxy.localStorageGet(
+        {expert: false}, ({expert}) => cca.state.set('expert', expert));
+    document.querySelectorAll('input').forEach((element) => {
+      element.addEventListener(
+          'keypress',
+          (event) => cca.util.getShortcutIdentifier(event) === 'Enter' &&
+              element.click());
+
+      const payload = (element) => ({[element.dataset.key]: element.checked});
+      const save = (element) => {
+        if (element.dataset.key !== undefined) {
+          cca.proxy.browserProxy.localStorageSet(payload(element));
         }
+      };
+      element.addEventListener('change', (event) => {
+        if (element.dataset.state !== undefined) {
+          cca.state.set(element.dataset.state, element.checked);
+        }
+        if (event.isTrusted) {
+          save(element);
+          if (element.type === 'radio' && element.checked) {
+            // Handle unchecked grouped sibling radios.
+            const grouped =
+                `input[type=radio][name=${element.name}]:not(:checked)`;
+            document.querySelectorAll(grouped).forEach(
+                (radio) =>
+                    radio.dispatchEvent(new Event('change')) && save(radio));
+          }
+        }
+      });
+      if (element.dataset.key !== undefined) {
+        // Restore the previously saved state on startup.
+        cca.proxy.browserProxy.localStorageGet(
+            payload(element),
+            (values) => cca.util.toggleChecked(
+                assertInstanceof(element, HTMLInputElement),
+                values[element.dataset.key]));
       }
     });
-    element.toggleChecked = (checked) => {
-      element.checked = checked;
-      element.dispatchEvent(new Event('change')); // Trigger toggling css.
-    };
-    element.save = () => {
-      return key && chrome.storage.local.set(payload());
-    };
-    if (key) {
-      // Restore the previously saved state on startup.
-      chrome.storage.local.get(payload(),
-          (values) => element.toggleChecked(values[key]));
-    }
-  });
+  }
+
+  /**
+   * Starts the app by loading the model and opening the camera-view.
+   * @return {!Promise}
+   */
+  async start() {
+    var ackMigrate = false;
+    cca.models.FileSystem
+        .initialize(() => {
+          // Prompt to migrate pictures if needed.
+          var message = chrome.i18n.getMessage('migrate_pictures_msg');
+          return cca.nav.open('message-dialog', {message, cancellable: false})
+              .then((acked) => {
+                if (!acked) {
+                  throw new Error('no-migrate');
+                }
+                ackMigrate = true;
+              });
+        })
+        .then((external) => {
+          cca.state.set('ext-fs', external);
+          assert(cca.models.FileSystem.externalDir !== null);
+          this.galleryButton_.initialize(cca.models.FileSystem.externalDir);
+          cca.nav.open('camera');
+        })
+        .catch((error) => {
+          console.error(error);
+          if (error && error.message === 'no-migrate') {
+            chrome.app.window.current().close();
+            return;
+          }
+          cca.nav.open('warning', 'filesystem-failure');
+        })
+        .finally(() => {
+          cca.metrics.log(cca.metrics.Type.LAUNCH, ackMigrate);
+        });
+    await cca.util.fitWindow();
+    chrome.app.window.current().show();
+    this.backgroundOps_.notifyActivation();
+  }
+
+  /**
+   * Handles pressed keys.
+   * @param {Event} event Key press event.
+   * @private
+   */
+  onKeyPressed_(event) {
+    cca.tooltip.hide();  // Hide shown tooltip on any keypress.
+    cca.nav.onKeyPressed(event);
+  }
+
+  /**
+   * Suspends app and hides app window.
+   * @return {!Promise}
+   */
+  async suspend() {
+    cca.state.set('suspend', true);
+    await this.cameraView_.restart();
+    chrome.app.window.current().hide();
+    this.backgroundOps_.notifySuspension();
+  }
+
+  /**
+   * Resumes app from suspension and shows app window.
+   */
+  resume() {
+    cca.state.set('suspend', false);
+    chrome.app.window.current().show();
+    this.backgroundOps_.notifyActivation();
+  }
 };
 
 /**
- * Starts the app by preparing views/model and opening the camera-view.
- */
-cca.App.prototype.start = function() {
-  cca.nav.setup([
-    this.cameraView_,
-    this.settingsView_,
-    this.gridsettingsView_,
-    this.timersettingsView_,
-    this.browserView_,
-    this.warningView_,
-    this.dialogView_,
-  ]);
-  cca.models.FileSystem.initialize(() => {
-    // Prompt to migrate pictures if needed.
-    var message = chrome.i18n.getMessage('migratePicturesMsg');
-    return cca.nav.open('dialog', message, false).then((acked) => {
-      if (!acked) {
-        throw new Error('no-migrate');
-      }
-    });
-  }).then((external) => {
-    document.body.classList.toggle('ext-fs', external);
-    // Prepare the views/model and open camera-view.
-    this.cameraView_.prepare();
-    this.model_.addObserver(this.cameraView_.galleryButton);
-    if (!cca.App.useGalleryApp()) {
-      this.model_.addObserver(this.browserView_);
-    }
-    this.model_.load();
-    cca.nav.open('camera');
-  }).catch((error) => {
-    console.error(error);
-    if (error && error.message == 'no-migrate') {
-      chrome.app.window.current().close();
-      return;
-    }
-    cca.nav.open('warning', 'filesystem-failure');
-  });
-};
-
-/**
- * Handles pressed keys.
- * @param {Event} event Key press event.
- * @private
- */
-cca.App.prototype.onKeyPressed_ = function(event) {
-  cca.tooltip.hide(); // Hide shown tooltip on any keypress.
-  cca.nav.onKeyPressed(event);
-};
-
-/**
- * @type {cca.App} Singleton of the App object.
+ * Singleton of the App object.
+ * @type {?cca.App}
  * @private
  */
 cca.App.instance_ = null;
@@ -205,10 +230,12 @@ cca.App.instance_ = null;
 /**
  * Creates the App object and starts camera stream.
  */
-document.addEventListener('DOMContentLoaded', () => {
-  if (!cca.App.instance_) {
-    cca.App.instance_ = new cca.App();
+document.addEventListener('DOMContentLoaded', async () => {
+  if (cca.App.instance_ !== null) {
+    return;
   }
-  cca.App.instance_.start();
-  chrome.app.window.current().show();
+  assert(window['backgroundOps'] !== undefined);
+  cca.App.instance_ = new cca.App(
+      /** @type {!cca.bg.BackgroundOps} */ (window['backgroundOps']));
+  await cca.App.instance_.start();
 });

@@ -8,6 +8,7 @@
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "content/common/content_constants_internal.h"
+#include "content/common/url_schemes.h"
 #include "services/tracing/public/cpp/trace_startup.h"
 
 namespace content {
@@ -40,16 +41,24 @@ bool LibraryLoaded(JNIEnv* env,
   TRACE_EVENT0("jni", "JNI_OnLoad continuation");
 
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
   // To view log output with IDs and timestamps use "adb logcat -v threadtime".
   logging::SetLogItems(false,    // Process ID
                        false,    // Thread ID
                        false,    // Timestamp
                        false);   // Tick count
-  VLOG(0) << "Chromium logging enabled: level = " << logging::GetMinLogLevel()
-          << ", default verbosity = " << logging::GetVlogVerbosity();
+  if (logging::GetMinLogLevel() != 0 || logging::GetVlogVerbosity() != 0 ||
+      DCHECK_IS_ON()) {
+    VLOG(0) << "Chromium logging enabled: level = " << logging::GetMinLogLevel()
+            << ", default verbosity = " << logging::GetVlogVerbosity();
+  }
 
+  // Content Schemes need to be registered as early as possible after the
+  // CommandLine has been initialized to allow java and tests to use GURL before
+  // running ContentMain.
+  RegisterContentSchemes();
   return true;
 }
 

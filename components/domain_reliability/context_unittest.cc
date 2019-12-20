@@ -12,7 +12,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/strings/string_piece.h"
 #include "components/domain_reliability/beacon.h"
@@ -118,10 +117,14 @@ class DomainReliabilityContextTest : public testing::Test {
         upload_allowed_callback_, &dispatcher_, &uploader_, std::move(config)));
   }
 
-  TimeDelta min_delay() const { return params_.minimum_upload_delay; }
-  TimeDelta max_delay() const { return params_.maximum_upload_delay; }
-  TimeDelta retry_interval() const { return params_.upload_retry_interval; }
-  TimeDelta zero_delta() const { return TimeDelta::FromMicroseconds(0); }
+  base::TimeDelta min_delay() const { return params_.minimum_upload_delay; }
+  base::TimeDelta max_delay() const { return params_.maximum_upload_delay; }
+  base::TimeDelta retry_interval() const {
+    return params_.upload_retry_interval;
+  }
+  base::TimeDelta zero_delta() const {
+    return base::TimeDelta::FromMicroseconds(0);
+  }
 
   bool upload_allowed_callback_pending() const {
     return !upload_allowed_result_callback_.is_null();
@@ -160,7 +163,7 @@ class DomainReliabilityContextTest : public testing::Test {
 
   void CallUploadAllowedResultCallback(bool allowed) {
     DCHECK(!upload_allowed_result_callback_.is_null());
-    base::ResetAndReturn(&upload_allowed_result_callback_).Run(allowed);
+    std::move(upload_allowed_result_callback_).Run(allowed);
   }
 
   MockTime time_;
@@ -301,7 +304,8 @@ TEST_F(DomainReliabilityContextTest, ReportUpload) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasStringValue(*entry, "failure_data.custom_error",
@@ -358,7 +362,8 @@ TEST_F(DomainReliabilityContextTest, NetworkChanged) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "network_changed", true));
@@ -388,7 +393,8 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
@@ -421,7 +427,8 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
 
@@ -455,7 +462,8 @@ TEST_F(DomainReliabilityContextTest,
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasBooleanValue(*entry, "quic_broken", true));
@@ -500,7 +508,8 @@ TEST_F(DomainReliabilityContextTest, FractionalSampleRate) {
   EXPECT_EQ(0, upload_max_depth());
   EXPECT_EQ(GURL("https://exampleuploader/upload"), upload_url());
 
-  std::unique_ptr<Value> value = base::JSONReader::Read(upload_report());
+  std::unique_ptr<Value> value =
+      base::JSONReader::ReadDeprecated(upload_report());
   const DictionaryValue* entry;
   ASSERT_TRUE(GetEntryFromReport(value.get(), 0, &entry));
   EXPECT_TRUE(HasDoubleValue(*entry, "sample_rate", 0.5));

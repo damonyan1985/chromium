@@ -17,15 +17,10 @@
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/icc_profile.h"
+#include "ui/gfx/transform.h"
 
 namespace display {
 namespace {
-
-constexpr int DEFAULT_BITS_PER_PIXEL = 24;
-constexpr int DEFAULT_BITS_PER_COMPONENT = 8;
-
-constexpr int HDR_BITS_PER_PIXEL = 48;
-constexpr int HDR_BITS_PER_COMPONENT = 16;
 
 // This variable tracks whether the forced device scale factor switch needs to
 // be read from the command line, i.e. if it is set to -1 then the command line
@@ -65,6 +60,8 @@ gfx::ColorSpace ForcedColorProfileStringToColorSpace(const std::string& value) {
     return gfx::ColorSpace::CreateDisplayP3D65();
   if (value == "scrgb-linear")
     return gfx::ColorSpace::CreateSCRGBLinear();
+  if (value == "hdr10")
+    return gfx::ColorSpace::CreateHDR10();
   if (value == "extended-srgb")
     return gfx::ColorSpace::CreateExtendedSRGB();
   if (value == "generic-rgb") {
@@ -78,11 +75,25 @@ gfx::ColorSpace ForcedColorProfileStringToColorSpace(const std::string& value) {
     gfx::ColorSpace color_space(
         gfx::ColorSpace::PrimaryID::WIDE_GAMUT_COLOR_SPIN,
         gfx::ColorSpace::TransferID::GAMMA24);
-    return gfx::ICCProfile::FromParametricColorSpace(color_space)
-        .GetColorSpace();
+    return gfx::ICCProfile::FromColorSpace(color_space).GetColorSpace();
   }
   LOG(ERROR) << "Invalid forced color profile: \"" << value << "\"";
   return gfx::ColorSpace::CreateSRGB();
+}
+
+const char* ToRotationString(display::Display::Rotation rotation) {
+  switch (rotation) {
+    case display::Display::ROTATE_0:
+      return "0";
+    case display::Display::ROTATE_90:
+      return "90";
+    case display::Display::ROTATE_180:
+      return "180";
+    case display::Display::ROTATE_270:
+      return "270";
+  }
+  NOTREACHED();
+  return "unkonwn";
 }
 
 }  // namespace
@@ -210,12 +221,17 @@ Display::Display(int64_t id, const gfx::Rect& bounds)
     : id_(id),
       bounds_(bounds),
       work_area_(bounds),
-      device_scale_factor_(GetForcedDeviceScaleFactor()),
-      color_space_(gfx::ColorSpace::CreateSRGB()),
-      color_depth_(DEFAULT_BITS_PER_PIXEL),
-      depth_per_component_(DEFAULT_BITS_PER_COMPONENT) {
+      device_scale_factor_(GetForcedDeviceScaleFactor()) {
+  // On Android we need to ensure the platform supports a color profile before
+  // using it. Using a not supported profile can result in fatal errors in the
+  // GPU process.
+  auto color_space = gfx::ColorSpace::CreateSRGB();
+#if !defined(OS_ANDROID)
   if (HasForceDisplayColorProfile())
-    SetColorSpaceAndDepth(GetForcedDisplayColorProfile());
+    color_space = GetForcedDisplayColorProfile();
+#endif
+  SetColorSpaceAndDepth(color_space);
+
 #if defined(USE_AURA)
   SetScaleAndBounds(device_scale_factor_, bounds);
 #endif
@@ -265,6 +281,10 @@ void Display::SetRotationAsDegree(int rotation) {
   }
 }
 
+int Display::PanelRotationAsDegree() const {
+  return RotationToDegrees(panel_rotation_);
+}
+
 gfx::Insets Display::GetWorkAreaInsets() const {
   return gfx::Insets(work_area_.y() - bounds_.y(), work_area_.x() - bounds_.x(),
                      bounds_.bottom() - work_area_.bottom(),
@@ -299,14 +319,19 @@ void Display::SetSize(const gfx::Size& size_in_pixel) {
   SetScaleAndBounds(device_scale_factor_, gfx::Rect(origin, size_in_pixel));
 }
 
-void Display::SetColorSpaceAndDepth(const gfx::ColorSpace& color_space) {
+void Display::SetColorSpaceAndDepth(const gfx::ColorSpace& color_space,
+                                    float sdr_white_level) {
   color_space_ = color_space;
-  if (color_space_.IsHDR()) {
-    color_depth_ = HDR_BITS_PER_PIXEL;
-    depth_per_component_ = HDR_BITS_PER_COMPONENT;
+  sdr_white_level_ = sdr_white_level;
+  if (color_space_ == gfx::ColorSpace::CreateHDR10()) {
+    color_depth_ = kHDR10BitsPerPixel;
+    depth_per_component_ = kHDR10BitsPerComponent;
+  } else if (color_space == gfx::ColorSpace::CreateSCRGBLinear()) {
+    color_depth_ = kSCRGBLinearBitsPerPixel;
+    depth_per_component_ = kSCRGBLinearBitsPerComponent;
   } else {
-    color_depth_ = DEFAULT_BITS_PER_PIXEL;
-    depth_per_component_ = DEFAULT_BITS_PER_COMPONENT;
+    color_depth_ = kDefaultBitsPerPixel;
+    depth_per_component_ = kDefaultBitsPerComponent;
   }
 }
 
@@ -323,9 +348,11 @@ gfx::Size Display::GetSizeInPixel() const {
 
 std::string Display::ToString() const {
   return base::StringPrintf(
-      "Display[%lld] bounds=[%s], workarea=[%s], scale=%g, %s.",
+      "Display[%lld] bounds=[%s], workarea=[%s], scale=%g, rotation=%s, "
+      "panel_rotation=%s %s.",
       static_cast<long long int>(id_), bounds_.ToString().c_str(),
       work_area_.ToString().c_str(), device_scale_factor_,
+      ToRotationString(rotation_), ToRotationString(panel_rotation_),
       IsInternal() ? "internal" : "external");
 }
 
@@ -365,7 +392,8 @@ bool Display::operator==(const Display& rhs) const {
          maximum_cursor_size_ == rhs.maximum_cursor_size_ &&
          color_space_ == rhs.color_space_ && color_depth_ == rhs.color_depth_ &&
          depth_per_component_ == rhs.depth_per_component_ &&
-         is_monochrome_ == rhs.is_monochrome_;
+         is_monochrome_ == rhs.is_monochrome_ &&
+         display_frequency_ == rhs.display_frequency_;
 }
 
 }  // namespace display

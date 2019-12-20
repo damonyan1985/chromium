@@ -15,7 +15,6 @@ struct VR_BASE_EXPORT UiInitialState {
   UiInitialState();
   UiInitialState(const UiInitialState& other);
   bool in_web_vr = false;
-  bool web_vr_autopresentation_expected = false;
   bool browsing_disabled = false;
   bool has_or_can_request_record_audio_permission = true;
   bool assets_supported = false;
@@ -23,7 +22,6 @@ struct VR_BASE_EXPORT UiInitialState {
   bool needs_keyboard_update = false;
   bool is_standalone_vr_device = false;
   bool create_tabs_view = false;
-  bool use_new_incognito_strings = false;
 };
 
 }  // namespace vr

@@ -19,7 +19,6 @@
 
 class ChromeDownloadManagerDelegate;
 class DownloadHistory;
-class DownloadOfflineContentProvider;
 class DownloadUIController;
 class ExtensionDownloadsEventRouter;
 class Profile;
@@ -50,6 +49,8 @@ class DownloadCoreServiceImpl : public DownloadCoreService {
   void SetDownloadManagerDelegateForTesting(
       std::unique_ptr<ChromeDownloadManagerDelegate> delegate) override;
   bool IsShelfEnabled() override;
+  void SetDownloadHistoryForTesting(
+      std::unique_ptr<DownloadHistory> download_history) override;
 
   // KeyedService
   void Shutdown() override;
@@ -75,10 +76,6 @@ class DownloadCoreServiceImpl : public DownloadCoreService {
 #if !defined(OS_ANDROID)
   std::unique_ptr<DownloadShelfController> download_shelf_controller_;
 #endif
-
-  // The download provider is the responsible for supplying offline items to the
-  // UI.
-  std::unique_ptr<DownloadOfflineContentProvider> download_provider_;
 
 // On Android, GET downloads are not handled by the DownloadManager.
 // Once we have extensions on android, we probably need the EventRouter

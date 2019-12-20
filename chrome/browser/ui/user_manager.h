@@ -9,7 +9,7 @@
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile_window.h"
-#include "components/signin/core/browser/signin_metrics.h"
+#include "components/signin/public/base/signin_metrics.h"
 #include "content/public/browser/web_contents_delegate.h"
 
 namespace base {
@@ -43,9 +43,10 @@ class UserManager {
   // To be called once the User Manager's contents are showing.
   static void OnUserManagerShown();
 
-  // Add a callback that will be called when OnUserManagerShown is called.
+  // Add a callback that will be called the next time OnUserManagerShown is
+  // called.
   static void AddOnUserManagerShownCallbackForTesting(
-      const base::Closure& callback);
+      base::OnceClosure callback);
 
   // Get the path of profile that is being signed in.
   static base::FilePath GetSigninProfilePath();
@@ -98,7 +99,8 @@ class UserManagerProfileDialog {
     BaseDialogDelegate();
 
     // content::WebContentsDelegate:
-    bool HandleContextMenu(const content::ContextMenuParams& params) override;
+    bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                           const content::ContextMenuParams& params) override;
 
     // content::WebContentsDelegate:
     void LoadingStateChanged(content::WebContents* source,

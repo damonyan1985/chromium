@@ -5,6 +5,7 @@
 #ifndef ASH_ASSISTANT_UI_MAIN_STAGE_ASSISTANT_OPT_IN_VIEW_H_
 #define ASH_ASSISTANT_UI_MAIN_STAGE_ASSISTANT_OPT_IN_VIEW_H_
 
+#include "ash/public/cpp/assistant/assistant_state.h"
 #include "base/component_export.h"
 #include "base/macros.h"
 #include "ui/views/controls/button/button.h"
@@ -15,24 +16,16 @@ class StyledLabel;
 
 namespace ash {
 
-// AssistantOptInDelegate ------------------------------------------------------
-
-class COMPONENT_EXPORT(ASSISTANT_UI) AssistantOptInDelegate {
- public:
-  // Invoked when the Assistant opt in button is pressed.
-  virtual void OnOptInButtonPressed() = 0;
-
- protected:
-  virtual ~AssistantOptInDelegate() = default;
-};
+class AssistantViewDelegate;
 
 // AssistantOptInView ----------------------------------------------------------
 
 class COMPONENT_EXPORT(ASSISTANT_UI) AssistantOptInView
     : public views::View,
-      public views::ButtonListener {
+      public views::ButtonListener,
+      public AssistantStateObserver {
  public:
-  AssistantOptInView();
+  explicit AssistantOptInView(AssistantViewDelegate* delegate_);
   ~AssistantOptInView() override;
 
   // views::View:
@@ -43,14 +36,18 @@ class COMPONENT_EXPORT(ASSISTANT_UI) AssistantOptInView
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
-  void set_delegate(AssistantOptInDelegate* delegate) { delegate_ = delegate; }
+  // AssistantStateObserver:
+  void OnAssistantConsentStatusChanged(int consent_status) override;
 
  private:
   void InitLayout();
+  void UpdateLabel(int consent_status);
 
   views::StyledLabel* label_;  // Owned by view hierarchy.
 
-  AssistantOptInDelegate* delegate_ = nullptr;
+  views::Button* container_;
+
+  AssistantViewDelegate* delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(AssistantOptInView);
 };

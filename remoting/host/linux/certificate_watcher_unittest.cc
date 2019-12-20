@@ -11,9 +11,9 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace remoting {
@@ -27,11 +27,11 @@ const int kMessageLoopWaitMsecs = 150;
 
 class CertificateWatcherTest : public testing::Test {
  public:
-  CertificateWatcherTest() : task_runner_(message_loop_.task_runner()) {
+  CertificateWatcherTest()
+      : task_runner_(task_environment_.GetMainThreadTaskRunner()) {
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
     watcher_.reset(new CertificateWatcher(
-        base::Bind(&CertificateWatcherTest::OnRestart,
-        base::Unretained(this)),
+        base::Bind(&CertificateWatcherTest::OnRestart, base::Unretained(this)),
         task_runner_));
     watcher_->SetDelayForTests(base::TimeDelta::FromSeconds(0));
     watcher_->SetWatchPathForTests(temp_dir_.GetPath());
@@ -55,33 +55,28 @@ class CertificateWatcherTest : public testing::Test {
   // Will quit the loop after kMessageLoopWaitMsecs.
   void RunAndWait() {
     base::RunLoop loop;
-    task_runner_->PostDelayedTask(FROM_HERE,loop.QuitClosure(),
-                                  loop_wait_);
+    task_runner_->PostDelayedTask(FROM_HERE, loop.QuitClosure(), loop_wait_);
     loop.Run();
   }
 
-  void Start() {
-    watcher_->Start();
-  }
+  void Start() { watcher_->Start(); }
 
   void Connect() {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&CertificateWatcher::OnClientConnected,
-                   base::Unretained(watcher_.get()), ""));
+        FROM_HERE, base::BindOnce(&CertificateWatcher::OnClientConnected,
+                                  base::Unretained(watcher_.get()), ""));
   }
 
   void Disconnect() {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&CertificateWatcher::OnClientDisconnected,
-                   base::Unretained(watcher_.get()), ""));
+        FROM_HERE, base::BindOnce(&CertificateWatcher::OnClientDisconnected,
+                                  base::Unretained(watcher_.get()), ""));
   }
 
   void TouchFile(const char* filename) {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&CertificateWatcherTest::TouchFileTask,
-                                      base::Unretained(this), filename));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&CertificateWatcherTest::TouchFileTask,
+                                  base::Unretained(this), filename));
   }
 
   void TouchFileTask(const char* filename) {
@@ -98,7 +93,8 @@ class CertificateWatcherTest : public testing::Test {
     }
   }
 
-  base::MessageLoopForIO message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<CertificateWatcher> watcher_;
@@ -170,4 +166,4 @@ TEST_F(CertificateWatcherTest, TouchOtherFile) {
   EXPECT_EQ(0, restart_count_);
 }
 
-} // namespace remoting
+}  // namespace remoting

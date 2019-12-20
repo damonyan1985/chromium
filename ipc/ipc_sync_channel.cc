@@ -172,8 +172,8 @@ class SyncChannel::ReceivedSyncMsgQueue :
     dispatch_event_.Signal();
     if (!was_task_pending) {
       listener_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&ReceivedSyncMsgQueue::DispatchMessagesTask,
-                                this, base::RetainedRef(context)));
+          FROM_HERE, base::BindOnce(&ReceivedSyncMsgQueue::DispatchMessagesTask,
+                                    this, base::RetainedRef(context)));
     }
   }
 
@@ -288,8 +288,8 @@ class SyncChannel::ReceivedSyncMsgQueue :
         listener_task_runner_(base::ThreadTaskRunnerHandle::Get()),
         sync_dispatch_watcher_(std::make_unique<mojo::SyncEventWatcher>(
             &dispatch_event_,
-            base::Bind(&ReceivedSyncMsgQueue::OnDispatchEventReady,
-                       base::Unretained(this)))) {
+            base::BindRepeating(&ReceivedSyncMsgQueue::OnDispatchEventReady,
+                                base::Unretained(this)))) {
     sync_dispatch_watcher_->AllowWokenUpBySyncWatchOnSameThread();
   }
 
@@ -416,8 +416,8 @@ bool SyncChannel::SyncContext::Pop() {
   // Send() call.  So check if we have any queued replies available that
   // can now unblock the listener thread.
   ipc_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&ReceivedSyncMsgQueue::DispatchReplies,
-                            received_sync_msgs_));
+      FROM_HERE, base::BindOnce(&ReceivedSyncMsgQueue::DispatchReplies,
+                                received_sync_msgs_));
 
   return result;
 }
@@ -578,6 +578,16 @@ SyncChannel::SyncChannel(
   StartWatching();
 }
 
+void SyncChannel::AddListenerTaskRunner(
+    int32_t routing_id,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  context()->AddListenerTaskRunner(routing_id, std::move(task_runner));
+}
+
+void SyncChannel::RemoveListenerTaskRunner(int32_t routing_id) {
+  context()->RemoveListenerTaskRunner(routing_id);
+}
+
 SyncChannel::~SyncChannel() = default;
 
 void SyncChannel::SetRestrictDispatchChannelGroup(int group) {
@@ -652,13 +662,14 @@ void SyncChannel::WaitForReply(mojo::SyncHandleRegistry* registry,
     bool dispatch = false;
     bool send_done = false;
     bool should_pump_messages = false;
-    base::Closure on_send_done_callback = base::Bind(&OnEventReady, &send_done);
+    base::RepeatingClosure on_send_done_callback =
+        base::BindRepeating(&OnEventReady, &send_done);
     registry->RegisterEvent(context->GetSendDoneEvent(), on_send_done_callback);
 
-    base::Closure on_pump_messages_callback;
+    base::RepeatingClosure on_pump_messages_callback;
     if (pump_messages_event) {
       on_pump_messages_callback =
-          base::Bind(&OnEventReady, &should_pump_messages);
+          base::BindRepeating(&OnEventReady, &should_pump_messages);
       registry->RegisterEvent(pump_messages_event, on_pump_messages_callback);
     }
 

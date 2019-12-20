@@ -24,13 +24,13 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_registry.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
-#include "storage/browser/fileapi/async_file_util.h"
-#include "storage/browser/fileapi/external_mount_points.h"
-#include "storage/browser/fileapi/file_system_url.h"
+#include "storage/browser/file_system/async_file_util.h"
+#include "storage/browser/file_system/external_mount_points.h"
+#include "storage/browser/file_system/file_system_url.h"
 #include "storage/browser/test/test_file_system_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -55,8 +55,7 @@ storage::FileSystemURL CreateFileSystemURL(const std::string& mount_point_name,
   const storage::ExternalMountPoints* const mount_points =
       storage::ExternalMountPoints::GetSystemInstance();
   return mount_points->CreateCrackedFileSystemURL(
-      GURL(origin),
-      storage::kFileSystemTypeExternal,
+      url::Origin::Create(GURL(origin)), storage::kFileSystemTypeExternal,
       base::FilePath::FromUTF8Unsafe(mount_point_name).Append(file_path));
 }
 
@@ -96,7 +95,7 @@ class FileSystemProviderFileStreamWriter : public testing::Test {
     ASSERT_TRUE(wrong_file_url_.is_valid());
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   base::ScopedTempDir data_dir_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
   TestingProfile* profile_;  // Owned by TestingProfileManager.

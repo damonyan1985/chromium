@@ -5,12 +5,12 @@
 #include "chrome/browser/ui/ash/network/network_state_notifier.h"
 
 #include "ash/public/cpp/notification_utils.h"
-#include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/chromeos/net/shill_error.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
 #include "chrome/browser/ui/ash/system_tray_client.h"
@@ -42,7 +42,7 @@ bool ShillErrorIsIgnored(const std::string& shill_error) {
   return false;
 }
 
-// Error messages based on |error_name|, not network_state->error().
+// Error messages based on |error_name|, not network_state->GetError().
 base::string16 GetConnectErrorString(const std::string& error_name) {
   if (error_name == NetworkConnectionHandler::kErrorNotFound)
     return l10n_util::GetStringUTF16(IDS_CHROMEOS_NETWORK_ERROR_CONNECT_FAILED);
@@ -64,19 +64,20 @@ base::string16 GetConnectErrorString(const std::string& error_name) {
 const gfx::VectorIcon& GetErrorNotificationVectorIcon(
     const std::string& network_type) {
   if (network_type == shill::kTypeVPN)
-    return ash::kNotificationVpnIcon;
+    return kNotificationVpnIcon;
   if (network_type == shill::kTypeCellular)
-    return ash::kNotificationMobileDataOffIcon;
-  return ash::kNotificationWifiOffIcon;
+    return kNotificationMobileDataOffIcon;
+  return kNotificationWifiOffIcon;
 }
 
-void ShowErrorNotification(const std::string& service_path,
+// |identifier| may be a service path or guid.
+void ShowErrorNotification(const std::string& identifier,
                            const std::string& notification_id,
                            const std::string& network_type,
                            const base::string16& title,
                            const base::string16& message,
                            const base::Closure& callback) {
-  NET_LOG(ERROR) << "ShowErrorNotification: " << service_path << ": "
+  NET_LOG(ERROR) << "ShowErrorNotification: " << identifier << ": "
                  << base::UTF16ToUTF8(title);
   std::unique_ptr<message_center::Notification> notification =
       ash::CreateSystemNotification(
@@ -134,13 +135,15 @@ const char NetworkStateNotifier::kNetworkActivateNotificationId[] =
 const char NetworkStateNotifier::kNetworkOutOfCreditsNotificationId[] =
     "chrome://settings/internet/out-of-credits";
 
-NetworkStateNotifier::NetworkStateNotifier()
-    : did_show_out_of_credits_(false), weak_ptr_factory_(this) {
+NetworkStateNotifier::NetworkStateNotifier() {
   if (!NetworkHandler::IsInitialized())
     return;
   NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
   handler->AddObserver(this, FROM_HERE);
-  UpdateDefaultNetwork(handler->DefaultNetwork());
+  NetworkStateHandler::NetworkStateList active_networks;
+  handler->GetActiveNetworkListByType(NetworkTypePattern::Default(),
+                                      &active_networks);
+  ActiveNetworksChanged(active_networks);
   NetworkHandler::Get()->network_connection_handler()->AddObserver(this);
 }
 
@@ -158,7 +161,7 @@ void NetworkStateNotifier::ConnectToNetworkRequested(
       NetworkHandler::Get()->network_state_handler()->GetNetworkState(
           service_path);
   if (network && network->type() == shill::kTypeVPN)
-    connected_vpn_.clear();
+    connected_vpn_.reset();
 
   RemoveConnectNotification();
 }
@@ -186,105 +189,143 @@ void NetworkStateNotifier::DisconnectRequested(
       NetworkHandler::Get()->network_state_handler()->GetNetworkState(
           service_path);
   if (network && network->type() == shill::kTypeVPN)
-    connected_vpn_.clear();
+    connected_vpn_.reset();
 }
 
-void NetworkStateNotifier::DefaultNetworkChanged(const NetworkState* network) {
-  if (!UpdateDefaultNetwork(network))
-    return;
-  // If the default network changes to another network, allow the out of
-  // credits notification to be shown again. A delay prevents the notification
-  // from being shown too frequently (see below).
-  if (network)
+void NetworkStateNotifier::ActiveNetworksChanged(
+    const std::vector<const NetworkState*>& active_networks) {
+  const NetworkState* active_vpn = nullptr;
+  std::string active_non_vpn_network_guid;
+  // NOTE: The list of 'active' networks includes disconnected networks that
+  // were connected or connecting.
+  for (const auto* network : active_networks) {
+    if (network->type() == shill::kTypeVPN) {
+      // Make sure that if there is an edge case with two active VPNs that we
+      // track the first active one.
+      if (!active_vpn)
+        active_vpn = network;
+    } else if (active_non_vpn_network_guid.empty()) {
+      // We are only interested in the "default" (first active) non virtual
+      // network.
+      if (network->IsConnectingOrConnected())
+        active_non_vpn_network_guid = network->guid();
+    }
+  }
+  UpdateVpnConnectionState(active_vpn);
+
+  // If the default network changes, allow the out of credits notification to be
+  // shown again. A delay prevents the notification from being shown too
+  // frequently (see below).
+  if (active_non_vpn_network_guid != active_non_vpn_network_guid_) {
+    active_non_vpn_network_guid_ = active_non_vpn_network_guid;
     did_show_out_of_credits_ = false;
-}
-
-void NetworkStateNotifier::NetworkConnectionStateChanged(
-    const NetworkState* network) {
-  if (network->type() == shill::kTypeVPN)
-    UpdateVpnConnectionState(network);
+    UpdateCellularOutOfCredits();
+  }
 }
 
 void NetworkStateNotifier::NetworkPropertiesUpdated(
     const NetworkState* network) {
   if (network->type() != shill::kTypeCellular)
     return;
-  UpdateCellularOutOfCredits(network);
+  if (network->cellular_out_of_credits())
+    UpdateCellularOutOfCredits();
   UpdateCellularActivating(network);
 }
 
-bool NetworkStateNotifier::UpdateDefaultNetwork(const NetworkState* network) {
-  std::string default_network_path;
-  if (network)
-    default_network_path = network->path();
-  if (default_network_path != last_default_network_) {
-    last_default_network_ = default_network_path;
-    return true;
-  }
-  return false;
-}
-
-void NetworkStateNotifier::UpdateVpnConnectionState(const NetworkState* vpn) {
-  if (vpn->path() == connected_vpn_) {
-    if (!vpn->IsConnectedState() && !vpn->IsConnectingState()) {
-      if (vpn->GetVpnProviderType() != shill::kProviderArcVpn) {
-        ShowVpnDisconnectedNotification(vpn);
-      }
-      connected_vpn_.clear();
+void NetworkStateNotifier::UpdateVpnConnectionState(
+    const NetworkState* active_vpn) {
+  if (!active_vpn || !active_vpn->IsConnectingOrConnected()) {
+    // No connecting or connected VPN. If we were tracking a connected VPN,
+    // show a notification.
+    if (connected_vpn_) {
+      ShowVpnDisconnectedNotification(connected_vpn_.get());
+      connected_vpn_.reset();
     }
-  } else if (vpn->IsConnectedState()) {
-    connected_vpn_ = vpn->path();
+    return;
+  }
+  if (connected_vpn_ && active_vpn->guid() == connected_vpn_->guid) {
+    // The connected VPN is unchanged and still connected or connecting. If the
+    // VPN goes from connected -> connecting -> connected, we do not want to
+    // show a notification.
+    return;
+  }
+
+  // Do not track ARC VPNs for showing disconnect notifications. Also make sure
+  // |connected_vpn_| is cleared when connected to an ARC VPN.
+  if (active_vpn->GetVpnProviderType() == shill::kProviderArcVpn) {
+    connected_vpn_.reset();
+    return;
+  }
+
+  // If we are connected to a new VPN, track it as the connected VPN. Do not
+  // show a notification, even if we were tracking a different connected VPN,
+  // since we are still connected to a VPN (i.e. just replace |connected_vpn_|).
+  if (active_vpn->IsConnectedState()) {
+    connected_vpn_ =
+        std::make_unique<VpnDetails>(active_vpn->guid(), active_vpn->name());
+  } else {
+    // |active_vpn| is connecting. Clear |connected_vpn_| so that we do not
+    // show a notification for the previous VPN.
+    connected_vpn_.reset();
   }
 }
 
-void NetworkStateNotifier::UpdateCellularOutOfCredits(
-    const NetworkState* cellular) {
-  // Only display a notification if we are out of credits and have not already
-  // shown a notification (or have since connected to another network type).
-  if (!cellular->cellular_out_of_credits() || did_show_out_of_credits_)
+void NetworkStateNotifier::UpdateCellularOutOfCredits() {
+  // Only show the notification once (reset when the primary network changes).
+  if (did_show_out_of_credits_)
     return;
 
-  // Only display a notification if not connected, connecting, or waiting to
-  // connect to another network.
-  NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
-  const NetworkState* default_network = handler->DefaultNetwork();
-  if (default_network && default_network != cellular)
+  NetworkStateHandler::NetworkStateList active_networks;
+  NetworkHandler::Get()->network_state_handler()->GetActiveNetworkListByType(
+      NetworkTypePattern::NonVirtual(), &active_networks);
+  const NetworkState* primary_network = nullptr;
+  for (const auto* network : active_networks) {
+    // Don't display notification if any network is connecting.
+    if (network->IsConnectingState())
+      return;
+    if (!primary_network)
+      primary_network = network;
+  }
+
+  if (!primary_network ||
+      !primary_network->Matches(NetworkTypePattern::Cellular()) ||
+      !primary_network->cellular_out_of_credits()) {
     return;
-  if (handler->ConnectingNetworkByType(NetworkTypePattern::NonVirtual()) ||
-      NetworkHandler::Get()
-          ->network_connection_handler()
-          ->HasPendingConnectRequest())
-    return;
+  }
 
   did_show_out_of_credits_ = true;
   base::TimeDelta dtime = base::Time::Now() - out_of_credits_notify_time_;
   if (dtime.InSeconds() > kMinTimeBetweenOutOfCreditsNotifySeconds) {
     out_of_credits_notify_time_ = base::Time::Now();
-    base::string16 error_msg = l10n_util::GetStringFUTF16(
-        IDS_NETWORK_OUT_OF_CREDITS_BODY, base::UTF8ToUTF16(cellular->name()));
+    base::string16 error_msg =
+        l10n_util::GetStringFUTF16(IDS_NETWORK_OUT_OF_CREDITS_BODY,
+                                   base::UTF8ToUTF16(primary_network->name()));
     ShowErrorNotification(
-        cellular->path(), kNetworkOutOfCreditsNotificationId, cellular->type(),
+        primary_network->path(), kNetworkOutOfCreditsNotificationId,
+        primary_network->type(),
         l10n_util::GetStringUTF16(IDS_NETWORK_OUT_OF_CREDITS_TITLE), error_msg,
         base::Bind(&NetworkStateNotifier::ShowMobileSetup,
-                   weak_ptr_factory_.GetWeakPtr(), cellular->guid()));
+                   weak_ptr_factory_.GetWeakPtr(), primary_network->guid()));
   }
 }
 
 void NetworkStateNotifier::UpdateCellularActivating(
     const NetworkState* cellular) {
+  const std::string cellular_guid = cellular->guid();
   // Keep track of any activating cellular network.
   std::string activation_state = cellular->activation_state();
   if (activation_state == shill::kActivationStateActivating) {
-    cellular_activating_.insert(cellular->path());
+    cellular_activating_guids_.insert(cellular_guid);
     return;
   }
   // Only display a notification if this network was activating and is now
   // activated.
-  if (!cellular_activating_.count(cellular->path()) ||
-      activation_state != shill::kActivationStateActivated)
+  if (!cellular_activating_guids_.count(cellular_guid) ||
+      activation_state != shill::kActivationStateActivated) {
     return;
+  }
 
-  cellular_activating_.erase(cellular->path());
+  cellular_activating_guids_.erase(cellular_guid);
   std::unique_ptr<message_center::Notification> notification =
       ash::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE,
@@ -298,8 +339,8 @@ void NetworkStateNotifier::UpdateCellularActivating(
           {},
           new message_center::HandleNotificationClickDelegate(
               base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
-                         weak_ptr_factory_.GetWeakPtr(), cellular->guid())),
-          ash::kNotificationMobileDataIcon,
+                         weak_ptr_factory_.GetWeakPtr(), cellular_guid)),
+          kNotificationMobileDataIcon,
           message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
   notification->set_priority(message_center::SYSTEM_PRIORITY);
   SystemNotificationHelper::GetInstance()->Display(*notification);
@@ -346,7 +387,7 @@ void NetworkStateNotifier::ShowMobileActivationErrorForGuid(
           new message_center::HandleNotificationClickDelegate(
               base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
                          weak_ptr_factory_.GetWeakPtr(), cellular->guid())),
-          ash::kNotificationMobileDataOffIcon,
+          kNotificationMobileDataOffIcon,
           message_center::SystemNotificationWarningLevel::CRITICAL_WARNING);
   notification->set_priority(message_center::SYSTEM_PRIORITY);
   SystemNotificationHelper::GetInstance()->Display(*notification);
@@ -417,9 +458,9 @@ void NetworkStateNotifier::ShowConnectErrorNotification(
       // a failsafe since more information is better than less when debugging
       // and we have encountered some strange edge cases before.
       NET_LOG(DEBUG) << "Notify: " << service_path
-                     << ": Network.last_error: " << network->last_error();
+                     << ": Network.GetError(): " << network->GetError();
       if (shill_error.empty())
-        shill_error = network->last_error();
+        shill_error = network->GetError();
     }
 
     if (ShillErrorIsIgnored(shill_error)) {
@@ -450,7 +491,7 @@ void NetworkStateNotifier::ShowConnectErrorNotification(
 
   base::string16 error_msg;
   if (!network_error_details.empty()) {
-    // network_name should't be empty if network_error_details is set.
+    // network_name shouldn't be empty if network_error_details is set.
     error_msg = l10n_util::GetStringFUTF16(
         IDS_NETWORK_CONNECTION_ERROR_MESSAGE_WITH_SERVER_MESSAGE,
         base::UTF8ToUTF16(network_name), error,
@@ -475,16 +516,16 @@ void NetworkStateNotifier::ShowConnectErrorNotification(
                  weak_ptr_factory_.GetWeakPtr(), guid));
 }
 
-void NetworkStateNotifier::ShowVpnDisconnectedNotification(
-    const NetworkState* vpn) {
+void NetworkStateNotifier::ShowVpnDisconnectedNotification(VpnDetails* vpn) {
+  DCHECK(vpn);
   base::string16 error_msg = l10n_util::GetStringFUTF16(
-      IDS_NETWORK_VPN_CONNECTION_LOST_BODY, base::UTF8ToUTF16(vpn->name()));
+      IDS_NETWORK_VPN_CONNECTION_LOST_BODY, base::UTF8ToUTF16(vpn->name));
   ShowErrorNotification(
-      vpn->path(), kNetworkConnectNotificationId, shill::kTypeVPN,
+      vpn->guid, kNetworkConnectNotificationId, shill::kTypeVPN,
       l10n_util::GetStringUTF16(IDS_NETWORK_VPN_CONNECTION_LOST_TITLE),
       error_msg,
       base::Bind(&NetworkStateNotifier::ShowNetworkSettings,
-                 weak_ptr_factory_.GetWeakPtr(), vpn->guid()));
+                 weak_ptr_factory_.GetWeakPtr(), vpn->guid));
 }
 
 void NetworkStateNotifier::ShowNetworkSettings(const std::string& network_id) {
@@ -493,7 +534,7 @@ void NetworkStateNotifier::ShowNetworkSettings(const std::string& network_id) {
   const NetworkState* network = GetNetworkStateForGuid(network_id);
   if (!network)
     return;
-  std::string error = network->GetErrorState();
+  std::string error = network->GetError();
   if (!error.empty()) {
     NET_LOG(ERROR) << "Notify ShowNetworkSettings: " << network_id
                    << ": Error: " << error;

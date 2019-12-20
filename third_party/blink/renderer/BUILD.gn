@@ -48,6 +48,13 @@ config("inside_blink") {
       "-Wno-implicit-float-conversion",
       "-Wno-implicit-int-conversion",
     ]
+
+    if (llvm_force_head_revision) {
+      cflags += [
+        "-Wno-enum-enum-conversion",
+        "-Wno-enum-float-conversion",
+      ]
+    }
   }
 }
 
@@ -110,6 +117,14 @@ config("config") {
       "-add-plugin",
       "-Xclang",
       "blink-gc-plugin",
+    ]
+
+    # Don't perform checks for GarbageCollectedFinalized.
+    cflags += [
+      "-Xclang",
+      "-plugin-arg-blink-gc-plugin",
+      "-Xclang",
+      "no-gc-finalized",
     ]
 
     # Add arguments for enabled GC plugin options:

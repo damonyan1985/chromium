@@ -31,7 +31,7 @@ class SessionDesktopEnvironment : public Me2MeDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory,
+      base::WeakPtr<ClientSessionControl> client_session_control,
       const base::RepeatingClosure& inject_sas,
       const base::RepeatingClosure& lock_workstation,
       const DesktopEnvironmentOptions& options);
@@ -53,7 +53,6 @@ class SessionDesktopEnvironmentFactory : public Me2MeDesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      ui::SystemInputInjectorFactory* system_input_injector_factory,
       const base::RepeatingClosure& inject_sas,
       const base::RepeatingClosure& lock_workstation);
   ~SessionDesktopEnvironmentFactory() override;

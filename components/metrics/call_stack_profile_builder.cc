@@ -5,7 +5,10 @@
 #include "components/metrics/call_stack_profile_builder.h"
 
 #include <algorithm>
+#include <iterator>
+#include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "base/files/file_path.h"
@@ -14,6 +17,7 @@
 #include "base/metrics/metrics_hashes.h"
 #include "base/no_destructor.h"
 #include "base/stl_util.h"
+#include "build/build_config.h"
 #include "components/metrics/call_stack_profile_encoding.h"
 
 namespace metrics {
@@ -61,22 +65,35 @@ CallStackProfileBuilder::CallStackProfileBuilder(
 
 CallStackProfileBuilder::~CallStackProfileBuilder() = default;
 
+base::ModuleCache* CallStackProfileBuilder::GetModuleCache() {
+  return &module_cache_;
+}
+
 // This function is invoked on the profiler thread while the target thread is
 // suspended so must not take any locks, including indirectly through use of
 // heap allocation, LOG, CHECK, or DCHECK.
-void CallStackProfileBuilder::RecordMetadata() {
-  if (!work_id_recorder_)
-    return;
-  unsigned int work_id = work_id_recorder_->RecordWorkId();
-  // A work id of 0 indicates that the message loop has not yet started.
-  if (work_id == 0)
-    return;
-  is_continued_work_ = (last_work_id_ == work_id);
-  last_work_id_ = work_id;
+void CallStackProfileBuilder::RecordMetadata(
+    base::ProfileBuilder::MetadataProvider* metadata_provider) {
+  if (work_id_recorder_) {
+    unsigned int work_id = work_id_recorder_->RecordWorkId();
+    // A work id of 0 indicates that the message loop has not yet started.
+    if (work_id != 0) {
+      is_continued_work_ = (last_work_id_ == work_id);
+      last_work_id_ = work_id;
+    }
+  }
+
+  metadata_.RecordMetadata(metadata_provider);
 }
 
 void CallStackProfileBuilder::OnSampleCompleted(
-    std::vector<base::StackSamplingProfiler::Frame> frames) {
+    std::vector<base::Frame> frames) {
+  OnSampleCompleted(std::move(frames), 1, 1);
+}
+
+void CallStackProfileBuilder::OnSampleCompleted(std::vector<base::Frame> frames,
+                                                size_t weight,
+                                                size_t count) {
   // Write CallStackProfile::Stack protobuf message.
   CallStackProfile::Stack stack;
 
@@ -84,22 +101,21 @@ void CallStackProfileBuilder::OnSampleCompleted(
     // keep the frame information even if its module is invalid so we have
     // visibility into how often this issue is happening on the server.
     CallStackProfile::Location* location = stack.add_frame();
-    if (!frame.module.is_valid)
+    if (!frame.module)
       continue;
 
     // Dedup modules.
-    const base::ModuleCache::Module& module = frame.module;
-    auto module_loc = module_index_.find(module.base_address);
+    auto module_loc = module_index_.find(frame.module);
     if (module_loc == module_index_.end()) {
-      modules_.push_back(module);
+      modules_.push_back(frame.module);
       size_t index = modules_.size() - 1;
-      module_loc = module_index_.emplace(module.base_address, index).first;
+      module_loc = module_index_.emplace(frame.module, index).first;
     }
 
     // Write CallStackProfile::Location protobuf message.
     ptrdiff_t module_offset =
         reinterpret_cast<const char*>(frame.instruction_pointer) -
-        reinterpret_cast<const char*>(module.base_address);
+        reinterpret_cast<const char*>(frame.module->GetBaseAddress());
     DCHECK_GE(module_offset, 0);
     location->set_address(static_cast<uint64_t>(module_offset));
     location->set_module_id_index(module_loc->second);
@@ -125,8 +141,15 @@ void CallStackProfileBuilder::OnSampleCompleted(
   CallStackProfile::StackSample* stack_sample_proto =
       call_stack_profile->add_stack_sample();
   stack_sample_proto->set_stack_index(stack_loc->second);
+  if (weight != 1)
+    stack_sample_proto->set_weight(weight);
+  if (count != 1)
+    stack_sample_proto->set_count(count);
   if (is_continued_work_)
     stack_sample_proto->set_continued_work(is_continued_work_);
+
+  *stack_sample_proto->mutable_metadata() = metadata_.CreateSampleMetadata(
+      call_stack_profile->mutable_metadata_name_hash());
 }
 
 void CallStackProfileBuilder::OnProfileCompleted(
@@ -140,11 +163,12 @@ void CallStackProfileBuilder::OnProfileCompleted(
   call_stack_profile->set_sampling_period_ms(sampling_period.InMilliseconds());
 
   // Write CallStackProfile::ModuleIdentifier protobuf message.
-  for (const auto& module : modules_) {
+  for (const auto* module : modules_) {
     CallStackProfile::ModuleIdentifier* module_id =
         call_stack_profile->add_module_id();
-    module_id->set_build_id(module.id);
-    module_id->set_name_md5_prefix(HashModuleFilename(module.filename));
+    module_id->set_build_id(module->GetId());
+    module_id->set_name_md5_prefix(
+        HashModuleFilename(module->GetDebugBasename()));
   }
 
   PassProfilesToMetricsProvider(std::move(sampled_profile_));
@@ -168,7 +192,8 @@ void CallStackProfileBuilder::SetBrowserProcessReceiverCallback(
 
 // static
 void CallStackProfileBuilder::SetParentProfileCollectorForChildProcess(
-    metrics::mojom::CallStackProfileCollectorPtr browser_interface) {
+    mojo::PendingRemote<metrics::mojom::CallStackProfileCollector>
+        browser_interface) {
   g_child_call_stack_profile_collector.Get().SetParentProfileCollector(
       std::move(browser_interface));
 }

@@ -9,13 +9,14 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "base/token.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
@@ -34,14 +35,23 @@
 #include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/common/service_manager_connection.h"
-#include "content/public/common/service_names.mojom.h"
 #include "content/test/not_implemented_network_url_loader_factory.h"
 #include "media/media_buildflags.h"
-#include "mojo/public/cpp/bindings/associated_interface_ptr.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace content {
+
+namespace {
+
+MockRenderProcessHost::CreateNetworkFactoryCallback&
+GetNetworkFactoryCallback() {
+  static base::NoDestructor<MockRenderProcessHost::CreateNetworkFactoryCallback>
+      callback;
+  return *callback;
+}
+
+}  // namespace
 
 MockRenderProcessHost::MockRenderProcessHost(BrowserContext* browser_context)
     : bad_msg_count_(0),
@@ -53,17 +63,11 @@ MockRenderProcessHost::MockRenderProcessHost(BrowserContext* browser_context)
       fast_shutdown_started_(false),
       deletion_callback_called_(false),
       is_for_guests_only_(false),
-      is_never_suitable_for_reuse_(false),
       is_process_backgrounded_(false),
       is_unused_(true),
       keep_alive_ref_count_(0),
-      child_identity_(
-          mojom::kRendererServiceName,
-          BrowserContext::GetServiceInstanceGroupFor(browser_context),
-          base::Token::CreateRandom(),
-          base::Token::CreateRandom()),
-      url_loader_factory_(nullptr),
-      weak_ptr_factory_(this) {
+      foreground_service_worker_count_(0),
+      url_loader_factory_(nullptr) {
   // Child process security operations can't be unit tested unless we add
   // ourselves as an existing child process.
   ChildProcessSecurityPolicyImpl::GetInstance()->Add(GetID(), browser_context);
@@ -92,32 +96,23 @@ void MockRenderProcessHost::SimulateRenderProcessExit(
     base::TerminationStatus status,
     int exit_code) {
   has_connection_ = false;
-  ChildProcessTerminationInfo termination_info{status, exit_code};
+  ChildProcessTerminationInfo termination_info;
+  termination_info.status = status;
+  termination_info.exit_code = exit_code;
+  termination_info.renderer_has_visible_clients = VisibleClientCount() > 0;
+  termination_info.renderer_was_subframe = GetFrameDepth() > 0;
   NotificationService::current()->Notify(
       NOTIFICATION_RENDERER_PROCESS_CLOSED, Source<RenderProcessHost>(this),
       Details<ChildProcessTerminationInfo>(&termination_info));
 
   for (auto& observer : observers_)
     observer.RenderProcessExited(this, termination_info);
+}
 
-  // Send every routing ID a FrameHostMsg_RenderProcessGone message. To ensure a
-  // predictable order for unittests which may assert against the order, we sort
-  // the listeners by descending routing ID, instead of using the arbitrary
-  // hash-map order like RenderProcessHostImpl.
-  std::vector<std::pair<int32_t, IPC::Listener*>> sorted_listeners_;
-  base::IDMap<IPC::Listener*>::iterator iter(&listeners_);
-  while (!iter.IsAtEnd()) {
-    sorted_listeners_.push_back(
-        std::make_pair(iter.GetCurrentKey(), iter.GetCurrentValue()));
-    iter.Advance();
-  }
-  std::sort(sorted_listeners_.rbegin(), sorted_listeners_.rend());
-
-  for (auto& entry_pair : sorted_listeners_) {
-    entry_pair.second->OnMessageReceived(FrameHostMsg_RenderProcessGone(
-        entry_pair.first, static_cast<int>(termination_info.status),
-        termination_info.exit_code));
-  }
+// static
+void MockRenderProcessHost::SetNetworkFactory(
+    const CreateNetworkFactoryCallback& create_network_factory_callback) {
+  GetNetworkFactoryCallback() = create_network_factory_callback;
 }
 
 bool MockRenderProcessHost::Init() {
@@ -158,6 +153,10 @@ void MockRenderProcessHost::ShutdownForBadMessage(
 
 void MockRenderProcessHost::UpdateClientPriority(PriorityClient* client) {}
 
+void MockRenderProcessHost::UpdateFrameWithPriority(
+    base::Optional<FramePriority> previous_priority,
+    base::Optional<FramePriority> new_priority) {}
+
 int MockRenderProcessHost::VisibleClientCount() {
   int count = 0;
   for (auto* client : priority_clients_) {
@@ -183,14 +182,18 @@ bool MockRenderProcessHost::IsForGuestsOnly() {
   return is_for_guests_only_;
 }
 
-RendererAudioOutputStreamFactoryContext*
-MockRenderProcessHost::GetRendererAudioOutputStreamFactoryContext() {
-  return nullptr;
-}
-
 void MockRenderProcessHost::OnMediaStreamAdded() {}
 
 void MockRenderProcessHost::OnMediaStreamRemoved() {}
+
+void MockRenderProcessHost::OnForegroundServiceWorkerAdded() {
+  foreground_service_worker_count_ += 1;
+}
+
+void MockRenderProcessHost::OnForegroundServiceWorkerRemoved() {
+  DCHECK_GT(foreground_service_worker_count_, 0);
+  foreground_service_worker_count_ -= 1;
+}
 
 StoragePartition* MockRenderProcessHost::GetStoragePartition() {
   return BrowserContext::GetDefaultStoragePartition(browser_context_);
@@ -291,11 +294,21 @@ void MockRenderProcessHost::RemovePriorityClient(
   priority_clients_.erase(priority_client);
 }
 
+void MockRenderProcessHost::SetPriorityOverride(bool foreground) {}
+
+bool MockRenderProcessHost::HasPriorityOverride() {
+  return false;
+}
+
+void MockRenderProcessHost::ClearPriorityOverride() {}
+
 #if defined(OS_ANDROID)
 ChildProcessImportance MockRenderProcessHost::GetEffectiveImportance() {
   NOTIMPLEMENTED();
   return ChildProcessImportance::NORMAL;
 }
+
+void MockRenderProcessHost::DumpProcessStack() {}
 #endif
 
 void MockRenderProcessHost::SetSuddenTerminationAllowed(bool allowed) {
@@ -326,18 +339,14 @@ base::TimeDelta MockRenderProcessHost::GetChildProcessIdleTime() {
   return base::TimeDelta::FromMilliseconds(0);
 }
 
-void MockRenderProcessHost::BindInterface(
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {
-  if (binder_overrides_.count(interface_name) > 0)
-    binder_overrides_[interface_name].Run(std::move(interface_pipe));
+void MockRenderProcessHost::BindReceiver(
+    mojo::GenericPendingReceiver receiver) {
+  auto it = binder_overrides_.find(*receiver.interface_name());
+  if (it != binder_overrides_.end())
+    it->second.Run(receiver.PassPipe());
 }
 
-const service_manager::Identity& MockRenderProcessHost::GetChildIdentity() {
-  return child_identity_;
-}
-
-std::unique_ptr<base::SharedPersistentMemoryAllocator>
+std::unique_ptr<base::PersistentMemoryAllocator>
 MockRenderProcessHost::TakeMetricsAllocator() {
   return nullptr;
 }
@@ -356,13 +365,11 @@ size_t MockRenderProcessHost::GetKeepAliveRefCount() const {
   return keep_alive_ref_count_;
 }
 
-void MockRenderProcessHost::IncrementKeepAliveRefCount(
-    KeepAliveClientType client) {
+void MockRenderProcessHost::IncrementKeepAliveRefCount() {
   ++keep_alive_ref_count_;
 }
 
-void MockRenderProcessHost::DecrementKeepAliveRefCount(
-    KeepAliveClientType client) {
+void MockRenderProcessHost::DecrementKeepAliveRefCount() {
   --keep_alive_ref_count_;
 }
 
@@ -384,31 +391,34 @@ bool MockRenderProcessHost::IsKeepAliveRefCountDisabled() {
   return false;
 }
 
-void MockRenderProcessHost::PurgeAndSuspend() {}
-
 void MockRenderProcessHost::Resume() {}
 
 mojom::Renderer* MockRenderProcessHost::GetRendererInterface() {
   if (!renderer_interface_) {
-    renderer_interface_.reset(new mojom::RendererAssociatedPtr);
-    mojo::MakeRequestAssociatedWithDedicatedPipe(renderer_interface_.get());
+    renderer_interface_ =
+        std::make_unique<mojo::AssociatedRemote<mojom::Renderer>>();
+    ignore_result(renderer_interface_
+                      ->BindNewEndpointAndPassDedicatedReceiverForTesting());
   }
   return renderer_interface_->get();
 }
 
 void MockRenderProcessHost::CreateURLLoaderFactory(
-    const base::Optional<url::Origin>& origin,
-    network::mojom::TrustedURLLoaderHeaderClientPtrInfo header_client,
-    network::mojom::URLLoaderFactoryRequest request) {
-  url_loader_factory_->Clone(std::move(request));
-}
+    mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
+    network::mojom::URLLoaderFactoryParamsPtr params) {
+  if (GetNetworkFactoryCallback().is_null()) {
+    url_loader_factory_->Clone(std::move(receiver));
+    return;
+  }
 
-void MockRenderProcessHost::SetIsNeverSuitableForReuse() {
-  is_never_suitable_for_reuse_ = true;
+  mojo::Remote<network::mojom::URLLoaderFactory> original_factory;
+  url_loader_factory_->Clone(original_factory.BindNewPipeAndPassReceiver());
+  GetNetworkFactoryCallback().Run(std::move(receiver), GetID(),
+                                  original_factory.Unbind());
 }
 
 bool MockRenderProcessHost::MayReuseHost() {
-  return !is_never_suitable_for_reuse_;
+  return true;
 }
 
 bool MockRenderProcessHost::IsUnused() {
@@ -433,15 +443,16 @@ void MockRenderProcessHost::LockToOrigin(
 }
 
 void MockRenderProcessHost::BindCacheStorage(
-    blink::mojom::CacheStorageRequest request,
-    const url::Origin& origin) {
-  cache_storage_request_ = std::move(request);
+    const url::Origin& origin,
+    mojo::PendingReceiver<blink::mojom::CacheStorage> receiver) {
+  cache_storage_receiver_ = std::move(receiver);
 }
 
 void MockRenderProcessHost::BindIndexedDB(
-    blink::mojom::IDBFactoryRequest request,
-    const url::Origin& origin) {
-  idb_factory_request_ = std::move(request);
+    int render_frame_id,
+    const url::Origin& origin,
+    mojo::PendingReceiver<blink::mojom::IDBFactory> receiver) {
+  idb_factory_receiver_ = std::move(receiver);
 }
 
 void MockRenderProcessHost::CleanupCorbExceptionForPluginUponDestruction() {}
@@ -456,16 +467,11 @@ void MockRenderProcessHost::EnableAudioDebugRecordings(
 
 void MockRenderProcessHost::DisableAudioDebugRecordings() {}
 
-void MockRenderProcessHost::SetEchoCanceller3(
-    bool enable,
-    base::OnceCallback<void(bool, const std::string&)> callback) {}
-
 RenderProcessHost::WebRtcStopRtpDumpCallback
-MockRenderProcessHost::StartRtpDump(
-    bool incoming,
-    bool outgoing,
-    const WebRtcRtpPacketCallback& packet_callback) {
-  return WebRtcStopRtpDumpCallback();
+MockRenderProcessHost::StartRtpDump(bool incoming,
+                                    bool outgoing,
+                                    WebRtcRtpPacketCallback packet_callback) {
+  return base::NullCallback();
 }
 
 void MockRenderProcessHost::EnableWebRtcEventLogOutput(int lid,
@@ -488,7 +494,7 @@ void MockRenderProcessHost::OverrideBinderForTesting(
 }
 
 void MockRenderProcessHost::OverrideRendererInterfaceForTesting(
-    std::unique_ptr<mojo::AssociatedInterfacePtr<mojom::Renderer>>
+    std::unique_ptr<mojo::AssociatedRemote<mojom::Renderer>>
         renderer_interface) {
   renderer_interface_ = std::move(renderer_interface);
 }
@@ -511,7 +517,7 @@ MockRenderProcessHostFactory::~MockRenderProcessHostFactory() {
 
 RenderProcessHost* MockRenderProcessHostFactory::CreateRenderProcessHost(
     BrowserContext* browser_context,
-    SiteInstance* site_instance) const {
+    SiteInstance* site_instance) {
   std::unique_ptr<MockRenderProcessHost> host =
       std::make_unique<MockRenderProcessHost>(browser_context);
   host->OverrideURLLoaderFactory(default_mock_url_loader_factory_.get());

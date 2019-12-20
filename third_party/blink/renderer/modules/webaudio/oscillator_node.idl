@@ -34,11 +34,10 @@ enum OscillatorType {
 
 // OscillatorNode is an audio generator of periodic waveforms.
 [
-    Constructor(BaseAudioContext context, optional OscillatorOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface OscillatorNode : AudioScheduledSourceNode {
+] interface OscillatorNode : AudioScheduledSourceNode {
+    [RaisesException] constructor(BaseAudioContext context, optional OscillatorOptions options);
 
     [RaisesException=Setter] attribute OscillatorType type;
 

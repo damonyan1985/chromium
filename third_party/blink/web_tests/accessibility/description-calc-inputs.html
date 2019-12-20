@@ -2,12 +2,6 @@
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
 
-<style>
-.hideAllContainers .container {
-    display: none;
-}
-</style>
-
 <div class="container">
     <input id="text1" type="text" placeholder="Placeholder">
 </div>
@@ -135,7 +129,7 @@ test(function(t) {
     assert_equals(axTextInput5.name, "Label");
     assert_equals(axTextInput5.nameFrom, "attribute");
     assert_equals(axTextInput5.description, "Title");
-    assert_equals(axTextInput5.descriptionFrom, "attribute");
+    assert_equals(axTextInput5.descriptionFrom, "title");
 }, "Text input uses title as accessible description if it wasn't used as the accessible name.");
 </script>
 
@@ -171,9 +165,4 @@ test(function(t) {
     assert_equals(axTextInput7.description, "Described By");
     assert_equals(axTextInput7.descriptionFrom, "relatedElement");
 }, "aria-describedby does not include newlines.");
-</script>
-
-<script>
-if (window.testRunner)
-    document.body.className = "hideAllContainers";
 </script>

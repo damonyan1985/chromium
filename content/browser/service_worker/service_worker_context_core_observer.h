@@ -20,6 +20,8 @@ namespace content {
 
 enum class EmbeddedWorkerStatus;
 
+struct ConsoleMessage;
+
 class ServiceWorkerContextCoreObserver {
  public:
   struct ErrorInfo {
@@ -41,28 +43,21 @@ class ServiceWorkerContextCoreObserver {
     const int column_number;
     const GURL source_url;
   };
-  struct ConsoleMessage {
-    ConsoleMessage(int source_identifier,
-                   int message_level,
-                   const base::string16& message,
-                   int line_number,
-                   const GURL& source_url)
-        : source_identifier(source_identifier),
-          message_level(message_level),
-          message(message),
-          line_number(line_number),
-          source_url(source_url) {}
-    const int source_identifier;
-    const int message_level;
-    const base::string16 message;
-    const int line_number;
-    const GURL source_url;
-  };
   virtual void OnNewLiveRegistration(int64_t registration_id,
                                      const GURL& scope) {}
   virtual void OnNewLiveVersion(const ServiceWorkerVersionInfo& version_info) {}
-  virtual void OnRunningStateChanged(int64_t version_id,
-                                     EmbeddedWorkerStatus running_status) {}
+  virtual void OnStarting(int64_t version_id) {}
+  virtual void OnStarted(int64_t version_id,
+                         const GURL& scope,
+                         int process_id,
+                         const GURL& script_url) {}
+  virtual void OnStopping(int64_t version_id) {}
+  virtual void OnStopped(int64_t version_id) {}
+  // Called when the context core is about to be deleted. After this is called,
+  // method calls on this observer will be for a new context core, possibly
+  // reusing version/registration IDs previously seen. So this method gives the
+  // observer a chance to discard any state it has.
+  virtual void OnDeleteAndStartOver() {}
   virtual void OnVersionStateChanged(int64_t version_id,
                                      const GURL& scope,
                                      ServiceWorkerVersion::Status status) {}

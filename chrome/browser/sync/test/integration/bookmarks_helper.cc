@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <vector>
@@ -17,63 +18,82 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/sync/test/integration/profile_sync_service_harness.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/bookmarks/browser/bookmark_client.h"
 #include "components/bookmarks/browser/bookmark_model.h"
-#include "components/bookmarks/browser/bookmark_model_observer.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/favicon_util.h"
-#include "components/history/core/browser/history_db_task.h"
-#include "components/history/core/browser/history_service.h"
-#include "components/history/core/browser/history_types.h"
+#include "components/sync/driver/profile_sync_service.h"
 #include "components/sync/test/fake_server/entity_builder_factory.h"
-#include "components/sync_bookmarks/bookmark_change_processor.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/models/tree_node_iterator.h"
+#include "ui/gfx/favicon_size.h"
 #include "ui/gfx/image/image_skia.h"
+
+namespace bookmarks_helper {
+
+namespace {
 
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
 
-namespace {
+void ApplyBookmarkFavicon(
+    const BookmarkNode* bookmark_node,
+    favicon::FaviconService* favicon_service,
+    const GURL& icon_url,
+    const scoped_refptr<base::RefCountedMemory>& bitmap_data) {
+  // Some tests use no services.
+  if (favicon_service == nullptr)
+    return;
 
-// History task which signals an event.
-class SignalEventTask : public history::HistoryDBTask {
- public:
-  explicit SignalEventTask(base::WaitableEvent* done) : done_(done) {}
+  favicon_service->AddPageNoVisitForBookmark(bookmark_node->url(),
+                                             bookmark_node->GetTitle());
 
-  bool RunOnDBThread(history::HistoryBackend* backend,
-                     history::HistoryDatabase* db) override {
-    done_->Signal();
-    return true;
+  GURL icon_url_to_use = icon_url;
+
+  if (icon_url.is_empty()) {
+    if (bitmap_data->size() == 0) {
+      // Empty icon URL and no bitmap data means no icon mapping.
+      favicon_service->DeleteFaviconMappings({bookmark_node->url()},
+                                             favicon_base::IconType::kFavicon);
+      return;
+    } else {
+      // Ancient clients (prior to M25) may not be syncing the favicon URL. If
+      // the icon URL is not synced, use the page URL as a fake icon URL as it
+      // is guaranteed to be unique.
+      icon_url_to_use = bookmark_node->url();
+    }
   }
 
-  void DoneRunOnMainThread() override {}
-
- private:
-  base::WaitableEvent* done_;
-};
+  // The client may have cached the favicon at 2x. Use MergeFavicon() as not to
+  // overwrite the cached 2x favicon bitmap. Sync favicons are always
+  // gfx::kFaviconSize in width and height. Store the favicon into history
+  // as such.
+  gfx::Size pixel_size(gfx::kFaviconSize, gfx::kFaviconSize);
+  favicon_service->MergeFavicon(bookmark_node->url(), icon_url_to_use,
+                                favicon_base::IconType::kFavicon, bitmap_data,
+                                pixel_size);
+}
 
 // Helper class used to wait for changes to take effect on the favicon of a
 // particular bookmark node in a particular bookmark model.
@@ -94,15 +114,15 @@ class FaviconChangeObserver : public bookmarks::BookmarkModelObserver {
   }
   void BookmarkNodeMoved(BookmarkModel* model,
                          const BookmarkNode* old_parent,
-                         int old_index,
+                         size_t old_index,
                          const BookmarkNode* new_parent,
-                         int new_index) override {}
+                         size_t new_index) override {}
   void BookmarkNodeAdded(BookmarkModel* model,
                          const BookmarkNode* parent,
-                         int index) override {}
+                         size_t index) override {}
   void BookmarkNodeRemoved(BookmarkModel* model,
                            const BookmarkNode* parent,
-                           int old_index,
+                           size_t old_index,
                            const BookmarkNode* node,
                            const std::set<GURL>& removed_urls) override {}
   void BookmarkAllUserNodesRemoved(
@@ -129,21 +149,15 @@ class FaviconChangeObserver : public bookmarks::BookmarkModelObserver {
   DISALLOW_COPY_AND_ASSIGN(FaviconChangeObserver);
 };
 
-// A collection of URLs for which we have added favicons. Since loading a
-// favicon is an asynchronous operation and doesn't necessarily invoke a
-// callback, this collection is used to determine if we must wait for a URL's
-// favicon to load or not.
-std::set<GURL>* urls_with_favicons_ = nullptr;
-
 // Returns the number of nodes of node type |node_type| in |model| whose
 // titles match the string |title|.
-int CountNodesWithTitlesMatching(BookmarkModel* model,
-                                 BookmarkNode::Type node_type,
-                                 const base::string16& title) {
+size_t CountNodesWithTitlesMatching(BookmarkModel* model,
+                                    BookmarkNode::Type node_type,
+                                    const base::string16& title) {
   ui::TreeNodeIterator<const BookmarkNode> iterator(model->root_node());
   // Walk through the model tree looking for bookmark nodes of node type
   // |node_type| whose titles match |title|.
-  int count = 0;
+  size_t count = 0;
   while (iterator.has_next()) {
     const BookmarkNode* node = iterator.Next();
     if ((node->type() == node_type) && (node->GetTitle() == title))
@@ -153,11 +167,11 @@ int CountNodesWithTitlesMatching(BookmarkModel* model,
 }
 
 // Returns the number of nodes of node type |node_type| in |model|.
-int CountNodes(BookmarkModel* model, BookmarkNode::Type node_type) {
+size_t CountNodes(BookmarkModel* model, BookmarkNode::Type node_type) {
   ui::TreeNodeIterator<const BookmarkNode> iterator(model->root_node());
   // Walk through the model tree looking for bookmark nodes of node type
   // |node_type|.
-  int count = 0;
+  size_t count = 0;
   while (iterator.has_next()) {
     const BookmarkNode* node = iterator.Next();
     if (node->type() == node_type)
@@ -213,21 +227,16 @@ struct FaviconData {
 // nullopt if the favicon is still loading.
 base::Optional<FaviconData> GetFaviconData(BookmarkModel* model,
                                            const BookmarkNode* node) {
-  // If a favicon wasn't explicitly set for a particular URL, simply return its
-  // blank favicon.
-  if (!urls_with_favicons_ ||
-      urls_with_favicons_->find(node->url()) == urls_with_favicons_->end()) {
-    return FaviconData();
-  }
-  // If a favicon was explicitly set, we may need to wait for it to be loaded
-  // via BookmarkModel::GetFavicon(), which is an asynchronous operation.
+  // We may need to wait for the favicon to be loaded via
+  // BookmarkModel::GetFavicon(), which is an asynchronous operation.
   if (!node->is_favicon_loaded()) {
     model->GetFavicon(node);
     // Favicon still loading, no data available just yet.
     return base::nullopt;
   }
 
-  // Favicon loaded: return actual image.
+  // Favicon loaded: return actual image, if there is one (the no-favicon case
+  // is also considered loaded).
   return FaviconData(model->GetFavicon(node),
                      node->icon_url() ? *node->icon_url() : GURL());
 }
@@ -238,26 +247,23 @@ void SetFaviconImpl(Profile* profile,
                     const BookmarkNode* node,
                     const GURL& icon_url,
                     const gfx::Image& image,
-                    bookmarks_helper::FaviconSource favicon_source) {
+                    FaviconSource favicon_source) {
   BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
 
   FaviconChangeObserver observer(model, node);
   favicon::FaviconService* favicon_service =
       FaviconServiceFactory::GetForProfile(profile,
                                            ServiceAccessType::EXPLICIT_ACCESS);
-  if (favicon_source == bookmarks_helper::FROM_UI) {
+  if (favicon_source == FROM_UI) {
     favicon_service->SetFavicons({node->url()}, icon_url,
                                  favicon_base::IconType::kFavicon, image);
-    } else {
-      browser_sync::ProfileSyncService* pss =
-          ProfileSyncServiceFactory::GetForProfile(profile);
-      sync_bookmarks::BookmarkChangeProcessor::ApplyBookmarkFavicon(
-          node, pss->GetSyncClientForTest(), icon_url, image.As1xPNGBytes());
-    }
+  } else {
+    ApplyBookmarkFavicon(node, favicon_service, icon_url, image.As1xPNGBytes());
+  }
 
-    // Wait for the favicon for |node| to be invalidated.
-    observer.WaitForSetFavicon();
-    model->GetFavicon(node);
+  // Wait for the favicon for |node| to be invalidated.
+  observer.WaitForSetFavicon();
+  model->GetFavicon(node);
 }
 
 // Expires the favicon for |profile| and |node|. |profile| may be
@@ -283,7 +289,7 @@ void OnGotFaviconData(
 // |test()->verifier()|.
 void DeleteFaviconMappingsImpl(Profile* profile,
                                const BookmarkNode* node,
-                               bookmarks_helper::FaviconSource favicon_source) {
+                               FaviconSource favicon_source) {
   BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
 
   FaviconChangeObserver observer(model, node);
@@ -291,14 +297,12 @@ void DeleteFaviconMappingsImpl(Profile* profile,
       FaviconServiceFactory::GetForProfile(profile,
                                            ServiceAccessType::EXPLICIT_ACCESS);
 
-  if (favicon_source == bookmarks_helper::FROM_UI) {
+  if (favicon_source == FROM_UI) {
     favicon_service->DeleteFaviconMappings({node->url()},
                                            favicon_base::IconType::kFavicon);
   } else {
-    browser_sync::ProfileSyncService* pss =
-        ProfileSyncServiceFactory::GetForProfile(profile);
-    sync_bookmarks::BookmarkChangeProcessor::ApplyBookmarkFavicon(
-        node, pss->GetSyncClientForTest(), /*icon_url=*/GURL(),
+    ApplyBookmarkFavicon(
+        node, favicon_service, /*icon_url=*/GURL(),
         scoped_refptr<base::RefCountedString>(new base::RefCountedString()));
   }
 
@@ -307,51 +311,21 @@ void DeleteFaviconMappingsImpl(Profile* profile,
   model->GetFavicon(node);
 }
 
-// Wait for all currently scheduled tasks on the history thread for all
-// profiles to complete and any notifications sent to the UI thread to have
-// finished processing.
-void WaitForHistoryToProcessPendingTasks() {
-  // Skip waiting for history to complete for tests without favicons.
-  if (!urls_with_favicons_)
-    return;
-
-  std::vector<Profile*> profiles_which_need_to_wait;
-  if (sync_datatype_helper::test()->use_verifier())
-    profiles_which_need_to_wait.push_back(
-        sync_datatype_helper::test()->verifier());
-  for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i)
-    profiles_which_need_to_wait.push_back(
-        sync_datatype_helper::test()->GetProfile(i));
-
-  for (size_t i = 0; i < profiles_which_need_to_wait.size(); ++i) {
-    Profile* profile = profiles_which_need_to_wait[i];
-    history::HistoryService* history_service =
-        HistoryServiceFactory::GetForProfileWithoutCreating(profile);
-    base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
-                             base::WaitableEvent::InitialState::NOT_SIGNALED);
-    base::CancelableTaskTracker task_tracker;
-    // Post a task that signals |done|. Since tasks run in posting order, all
-    // previously posted tasks have run when |done| is signaled.
-    history_service->ScheduleDBTask(
-        FROM_HERE, std::make_unique<SignalEventTask>(&done), &task_tracker);
-    done.Wait();
-  }
-  // Wait such that any notifications broadcast from one of the history threads
-  // to the UI thread are processed.
-  content::RunAllPendingInMessageLoop();
-}
-
 // Checks if the favicon in |node_a| from |model_a| matches that of |node_b|
 // from |model_b|. Returns true if they match.
 bool FaviconsMatch(BookmarkModel* model_a,
                    BookmarkModel* model_b,
                    const BookmarkNode* node_a,
                    const BookmarkNode* node_b) {
+  DCHECK(!node_a->is_folder());
+  DCHECK(!node_b->is_folder());
+
   base::Optional<FaviconData> favicon_data_a = GetFaviconData(model_a, node_a);
   base::Optional<FaviconData> favicon_data_b = GetFaviconData(model_b, node_b);
 
   // If either of the two favicons is still loading, let's return false now
-  // because observers will get notified when the load completes.
+  // because observers will get notified when the load completes. Note that even
+  // the lack of favicon is considered a loaded favicon.
   if (!favicon_data_a.has_value() || !favicon_data_b.has_value())
     return false;
 
@@ -413,7 +387,6 @@ bool NodeCantBeSynced(bookmarks::BookmarkClient* client,
 // terms of the data model and favicon. Returns true if they both match.
 // Note: Some peripheral fields like creation times are allowed to mismatch.
 bool BookmarkModelsMatch(BookmarkModel* model_a, BookmarkModel* model_b) {
-  bool ret_val = true;
   ui::TreeNodeIterator<const BookmarkNode> iterator_a(
       model_a->root_node(), base::Bind(&NodeCantBeSynced, model_a->client()));
   ui::TreeNodeIterator<const BookmarkNode> iterator_b(
@@ -425,13 +398,19 @@ bool BookmarkModelsMatch(BookmarkModel* model_a, BookmarkModel* model_b) {
       return false;
     }
     const BookmarkNode* node_b = iterator_b.Next();
-    ret_val = ret_val && NodesMatch(node_a, node_b);
-    if (node_a->is_folder() || node_b->is_folder())
+    if (!NodesMatch(node_a, node_b)) {
+      LOG(ERROR) << "Nodes do not match";
+      return false;
+    }
+    if (node_a->is_folder() || node_b->is_folder()) {
       continue;
-    ret_val = ret_val && FaviconsMatch(model_a, model_b, node_a, node_b);
+    }
+    if (!FaviconsMatch(model_a, model_b, node_a, node_b)) {
+      LOG(ERROR) << "Favicons do not match";
+      return false;
+    }
   }
-  ret_val = ret_val && (!iterator_b.has_next());
-  return ret_val;
+  return !iterator_b.has_next();
 }
 
 // Finds the node in the verifier bookmark model that corresponds to
@@ -440,21 +419,21 @@ void FindNodeInVerifier(BookmarkModel* foreign_model,
                         const BookmarkNode* foreign_node,
                         const BookmarkNode** result) {
   // Climb the tree.
-  base::stack<int> path;
+  base::stack<size_t> path;
   const BookmarkNode* walker = foreign_node;
   while (walker != foreign_model->root_node()) {
-    path.push(walker->parent()->GetIndexOf(walker));
+    path.push(size_t{walker->parent()->GetIndexOf(walker)});
     walker = walker->parent();
   }
 
   // Swing over to the other tree.
-  walker = bookmarks_helper::GetVerifierBookmarkModel()->root_node();
+  walker = GetVerifierBookmarkModel()->root_node();
 
   // Climb down.
   while (!path.empty()) {
     ASSERT_TRUE(walker->is_folder());
-    ASSERT_LT(path.top(), walker->child_count());
-    walker = walker->GetChild(path.top());
+    ASSERT_LT(path.top(), walker->children().size());
+    walker = walker->children()[path.top()].get();
     path.pop();
   }
 
@@ -462,10 +441,31 @@ void FindNodeInVerifier(BookmarkModel* foreign_model,
   *result = walker;
 }
 
+std::vector<const BookmarkNode*> GetAllBookmarkNodes(
+    const BookmarkModel* model) {
+  std::vector<const BookmarkNode*> all_nodes;
+
+  // Add root node separately as iterator does not include it.
+  all_nodes.push_back(model->root_node());
+
+  ui::TreeNodeIterator<const BookmarkNode> iterator(model->root_node());
+  while (iterator.has_next()) {
+    all_nodes.push_back(iterator.Next());
+  }
+
+  return all_nodes;
+}
+
+void TriggerAllFaviconLoading(BookmarkModel* model) {
+  for (const BookmarkNode* node : GetAllBookmarkNodes(model)) {
+    if (!node->is_favicon_loaded()) {
+      // GetFavicon() kicks off the loading.
+      model->GetFavicon(node);
+    }
+  }
+}
+
 }  // namespace
-
-
-namespace bookmarks_helper {
 
 BookmarkModel* GetBookmarkModel(int index) {
   return BookmarkModelFactory::GetForBrowserContext(
@@ -502,7 +502,7 @@ const BookmarkNode* AddURL(int profile,
 }
 
 const BookmarkNode* AddURL(int profile,
-                           int index,
+                           size_t index,
                            const std::string& title,
                            const GURL& url) {
   return AddURL(profile, GetBookmarkBarNode(profile), index, title, url);
@@ -510,7 +510,7 @@ const BookmarkNode* AddURL(int profile,
 
 const BookmarkNode* AddURL(int profile,
                            const BookmarkNode* parent,
-                           int index,
+                           size_t index,
                            const std::string& title,
                            const GURL& url) {
   BookmarkModel* model = GetBookmarkModel(profile);
@@ -546,14 +546,14 @@ const BookmarkNode* AddFolder(int profile,
 }
 
 const BookmarkNode* AddFolder(int profile,
-                              int index,
+                              size_t index,
                               const std::string& title) {
   return AddFolder(profile, GetBookmarkBarNode(profile), index, title);
 }
 
 const BookmarkNode* AddFolder(int profile,
                               const BookmarkNode* parent,
-                              int index,
+                              size_t index,
                               const std::string& title) {
   BookmarkModel* model = GetBookmarkModel(profile);
   if (bookmarks::GetBookmarkNodeByID(model, parent->id()) != parent) {
@@ -609,9 +609,6 @@ void SetFavicon(int profile,
       << "Profile " << profile;
   ASSERT_EQ(BookmarkNode::URL, node->type()) << "Node " << node->GetTitle()
                                              << " must be a url.";
-  if (urls_with_favicons_ == nullptr)
-    urls_with_favicons_ = new std::set<GURL>();
-  urls_with_favicons_->insert(node->url());
   if (sync_datatype_helper::test()->use_verifier()) {
     const BookmarkNode* v_node = nullptr;
     FindNodeInVerifier(model, node, &v_node);
@@ -635,7 +632,6 @@ void ExpireFavicon(int profile, const BookmarkNode* node) {
       << "Profile " << profile;
   ASSERT_EQ(BookmarkNode::URL, node->type()) << "Node " << node->GetTitle()
                                              << " must be a url.";
-  ASSERT_EQ(1u, urls_with_favicons_->count(node->url()));
 
   if (sync_datatype_helper::test()->use_verifier()) {
     const BookmarkNode* v_node = nullptr;
@@ -643,8 +639,6 @@ void ExpireFavicon(int profile, const BookmarkNode* node) {
     ExpireFaviconImpl(sync_datatype_helper::test()->verifier(), node);
   }
   ExpireFaviconImpl(sync_datatype_helper::test()->GetProfile(profile), node);
-
-  WaitForHistoryToProcessPendingTasks();
 }
 
 void CheckFaviconExpired(int profile, const GURL& icon_url) {
@@ -703,8 +697,6 @@ void DeleteFaviconMappings(int profile,
   }
   DeleteFaviconMappingsImpl(sync_datatype_helper::test()->GetProfile(profile),
                             node, favicon_source);
-
-  WaitForHistoryToProcessPendingTasks();
 }
 
 const BookmarkNode* SetURL(int profile,
@@ -730,7 +722,7 @@ const BookmarkNode* SetURL(int profile,
 void Move(int profile,
           const BookmarkNode* node,
           const BookmarkNode* new_parent,
-          int index) {
+          size_t index) {
   BookmarkModel* model = GetBookmarkModel(profile);
   ASSERT_EQ(bookmarks::GetBookmarkNodeByID(model, node->id()), node)
       << "Node " << node->GetTitle() << " does not belong to "
@@ -745,7 +737,7 @@ void Move(int profile,
   model->Move(node, new_parent, index);
 }
 
-void Remove(int profile, const BookmarkNode* parent, int index) {
+void Remove(int profile, const BookmarkNode* parent, size_t index) {
   BookmarkModel* model = GetBookmarkModel(profile);
   ASSERT_EQ(bookmarks::GetBookmarkNodeByID(model, parent->id()), parent)
       << "Node " << parent->GetTitle() << " does not belong to "
@@ -753,19 +745,20 @@ void Remove(int profile, const BookmarkNode* parent, int index) {
   if (sync_datatype_helper::test()->use_verifier()) {
     const BookmarkNode* v_parent = nullptr;
     FindNodeInVerifier(model, parent, &v_parent);
-    ASSERT_TRUE(NodesMatch(parent->GetChild(index), v_parent->GetChild(index)));
-    GetVerifierBookmarkModel()->Remove(v_parent->GetChild(index));
+    ASSERT_TRUE(NodesMatch(parent->children()[index].get(),
+                           v_parent->children()[index].get()));
+    GetVerifierBookmarkModel()->Remove(v_parent->children()[index].get());
   }
-  model->Remove(parent->GetChild(index));
+  model->Remove(parent->children()[index].get());
 }
 
 void RemoveAll(int profile) {
   if (sync_datatype_helper::test()->use_verifier()) {
     const BookmarkNode* root_node = GetVerifierBookmarkModel()->root_node();
-    for (int i = 0; i < root_node->child_count(); ++i) {
-      const BookmarkNode* permanent_node = root_node->GetChild(i);
-      for (int j = permanent_node->child_count() - 1; j >= 0; --j) {
-        GetVerifierBookmarkModel()->Remove(permanent_node->GetChild(j));
+    for (const auto& permanent_node : root_node->children()) {
+      while (!permanent_node->children().empty()) {
+        GetVerifierBookmarkModel()->Remove(
+            permanent_node->children().back().get());
       }
     }
   }
@@ -791,11 +784,11 @@ void ReverseChildOrder(int profile, const BookmarkNode* parent) {
       parent)
       << "Node " << parent->GetTitle() << " does not belong to "
       << "Profile " << profile;
-  int child_count = parent->child_count();
-  if (child_count <= 0)
+  if (parent->children().empty())
     return;
-  for (int index = 0; index < child_count; ++index) {
-    Move(profile, parent->GetChild(index), parent, child_count - index);
+  for (size_t i = 0; i < parent->children().size(); ++i) {
+    Move(profile, parent->children()[i].get(), parent,
+         parent->children().size() - i);
   }
 }
 
@@ -810,11 +803,6 @@ bool ModelMatchesVerifier(int profile) {
 }
 
 bool AllModelsMatchVerifier() {
-  // Ensure that all tasks have finished processing on the history thread
-  // and that any notifications the history thread may have sent have been
-  // processed before comparing models.
-  WaitForHistoryToProcessPendingTasks();
-
   for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
     if (!ModelMatchesVerifier(i)) {
       LOG(ERROR) << "Model " << i << " does not match the verifier.";
@@ -830,11 +818,6 @@ bool ModelsMatch(int profile_a, int profile_b) {
 }
 
 bool AllModelsMatch() {
-  // Ensure that all tasks have finished processing on the history thread
-  // and that any notifications the history thread may have sent have been
-  // processed before comparing models.
-  WaitForHistoryToProcessPendingTasks();
-
   for (int i = 1; i < sync_datatype_helper::test()->num_clients(); ++i) {
     if (!ModelsMatch(0, i)) {
       LOG(ERROR) << "Model " << i << " does not match Model 0.";
@@ -881,26 +864,36 @@ const BookmarkNode* GetUniqueNodeByURL(int profile, const GURL& url) {
   return nodes[0];
 }
 
-int CountAllBookmarks(int profile) {
+size_t CountAllBookmarks(int profile) {
   return CountNodes(GetBookmarkModel(profile), BookmarkNode::URL);
 }
 
-int CountBookmarksWithTitlesMatching(int profile, const std::string& title) {
+size_t CountBookmarksWithTitlesMatching(int profile, const std::string& title) {
   return CountNodesWithTitlesMatching(GetBookmarkModel(profile),
                                       BookmarkNode::URL,
                                       base::UTF8ToUTF16(title));
 }
 
-int CountBookmarksWithUrlsMatching(int profile, const GURL& url) {
+size_t CountBookmarksWithUrlsMatching(int profile, const GURL& url) {
   std::vector<const BookmarkNode*> nodes;
   GetBookmarkModel(profile)->GetNodesByURL(url, &nodes);
   return nodes.size();
 }
 
-int CountFoldersWithTitlesMatching(int profile, const std::string& title) {
+size_t CountFoldersWithTitlesMatching(int profile, const std::string& title) {
   return CountNodesWithTitlesMatching(GetBookmarkModel(profile),
                                       BookmarkNode::FOLDER,
                                       base::UTF8ToUTF16(title));
+}
+
+bool ContainsBookmarkNodeWithGUID(int profile, const std::string& guid) {
+  for (const BookmarkNode* node :
+       GetAllBookmarkNodes(GetBookmarkModel(profile))) {
+    if (node->guid() == guid) {
+      return true;
+    }
+  }
+  return false;
 }
 
 gfx::Image CreateFavicon(SkColor color) {
@@ -938,24 +931,24 @@ gfx::Image Create1xFaviconFromPNGFile(const std::string& path) {
       base::RefCountedString::TakeString(&contents));
 }
 
-std::string IndexedURL(int i) {
-  return base::StringPrintf("http://www.host.ext:1234/path/filename/%d", i);
+std::string IndexedURL(size_t i) {
+  return "http://www.host.ext:1234/path/filename/" + base::NumberToString(i);
 }
 
-std::string IndexedURLTitle(int i) {
-  return base::StringPrintf("URL Title %d", i);
+std::string IndexedURLTitle(size_t i) {
+  return "URL Title " + base::NumberToString(i);
 }
 
-std::string IndexedFolderName(int i) {
-  return base::StringPrintf("Folder Name %d", i);
+std::string IndexedFolderName(size_t i) {
+  return "Folder Name " + base::NumberToString(i);
 }
 
-std::string IndexedSubfolderName(int i) {
-  return base::StringPrintf("Subfolder Name %d", i);
+std::string IndexedSubfolderName(size_t i) {
+  return "Subfolder Name " + base::NumberToString(i);
 }
 
-std::string IndexedSubsubfolderName(int i) {
-  return base::StringPrintf("Subsubfolder Name %d", i);
+std::string IndexedSubsubfolderName(size_t i) {
+  return "Subsubfolder Name " + base::NumberToString(i);
 }
 
 std::unique_ptr<syncer::LoopbackServerEntity> CreateBookmarkServerEntity(
@@ -967,55 +960,268 @@ std::unique_ptr<syncer::LoopbackServerEntity> CreateBookmarkServerEntity(
   return bookmark_builder.BuildBookmark(url);
 }
 
-}  // namespace bookmarks_helper
+AnyBookmarkChangeObserver::AnyBookmarkChangeObserver(
+    const base::RepeatingClosure& cb)
+    : cb_(cb) {}
 
-BookmarksMatchChecker::BookmarksMatchChecker()
-    : MultiClientStatusChangeChecker(
-          sync_datatype_helper::test()->GetSyncServices()) {}
+AnyBookmarkChangeObserver::~AnyBookmarkChangeObserver() = default;
 
-bool BookmarksMatchChecker::IsExitConditionSatisfied() {
-  return bookmarks_helper::AllModelsMatch();
+void AnyBookmarkChangeObserver::BookmarkModelLoaded(BookmarkModel* model,
+                                                    bool ids_reassigned) {
+  cb_.Run();
 }
 
-std::string BookmarksMatchChecker::GetDebugMessage() const {
-  return "Waiting for matching models";
+void AnyBookmarkChangeObserver::BookmarkModelBeingDeleted(
+    BookmarkModel* model) {
+  cb_.Run();
 }
 
-BookmarksMatchVerifierChecker::BookmarksMatchVerifierChecker()
-    : MultiClientStatusChangeChecker(
-          sync_datatype_helper::test()->GetSyncServices()) {}
-
-bool BookmarksMatchVerifierChecker::IsExitConditionSatisfied() {
-  return bookmarks_helper::AllModelsMatchVerifier();
+void AnyBookmarkChangeObserver::BookmarkNodeMoved(
+    BookmarkModel* model,
+    const BookmarkNode* old_parent,
+    size_t old_index,
+    const BookmarkNode* new_parent,
+    size_t new_index) {
+  cb_.Run();
 }
 
-std::string BookmarksMatchVerifierChecker::GetDebugMessage() const {
-  return "Waiting for model to match verifier";
+void AnyBookmarkChangeObserver::BookmarkNodeAdded(BookmarkModel* model,
+                                                  const BookmarkNode* parent,
+                                                  size_t index) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::OnWillRemoveBookmarks(
+    BookmarkModel* model,
+    const BookmarkNode* parent,
+    size_t old_index,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkNodeRemoved(
+    BookmarkModel* model,
+    const BookmarkNode* parent,
+    size_t old_index,
+    const BookmarkNode* node,
+    const std::set<GURL>& no_longer_bookmarked) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::OnWillChangeBookmarkNode(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkNodeChanged(BookmarkModel* model,
+                                                    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::OnWillChangeBookmarkMetaInfo(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkMetaInfoChanged(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkNodeFaviconChanged(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::OnWillReorderBookmarkNode(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkNodeChildrenReordered(
+    BookmarkModel* model,
+    const BookmarkNode* node) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::ExtensiveBookmarkChangesBeginning(
+    BookmarkModel* model) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::ExtensiveBookmarkChangesEnded(
+    BookmarkModel* model) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::OnWillRemoveAllUserBookmarks(
+    BookmarkModel* model) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::BookmarkAllUserNodesRemoved(
+    BookmarkModel* model,
+    const std::set<GURL>& removed_urls) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::GroupedBookmarkChangesBeginning(
+    BookmarkModel* model) {
+  cb_.Run();
+}
+
+void AnyBookmarkChangeObserver::GroupedBookmarkChangesEnded(
+    BookmarkModel* model) {
+  cb_.Run();
+}
+
+BookmarkModelStatusChangeChecker::BookmarkModelStatusChangeChecker() = default;
+
+BookmarkModelStatusChangeChecker::~BookmarkModelStatusChangeChecker() {
+  for (const auto& model_and_observer : observers_) {
+    model_and_observer.first->RemoveObserver(model_and_observer.second.get());
+  }
+}
+
+void BookmarkModelStatusChangeChecker::Observe(
+    bookmarks::BookmarkModel* model) {
+  auto observer =
+      std::make_unique<AnyBookmarkChangeObserver>(base::BindRepeating(
+          &SingleBookmarkModelStatusChangeChecker::PostCheckExitCondition,
+          weak_ptr_factory_.GetWeakPtr()));
+  model->AddObserver(observer.get());
+  observers_.emplace_back(model, std::move(observer));
+}
+
+void BookmarkModelStatusChangeChecker::CheckExitCondition() {
+  pending_check_exit_condition_ = false;
+  StatusChangeChecker::CheckExitCondition();
+}
+
+void BookmarkModelStatusChangeChecker::PostCheckExitCondition() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (pending_check_exit_condition_) {
+    // Already posted.
+    return;
+  }
+
+  pending_check_exit_condition_ = true;
+
+  // Use base::PostTask() instead of CheckExitCondition() directly to make sure
+  // that the checker doesn't immediately kick in while bookmarks are modified.
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindRepeating(&BookmarkModelStatusChangeChecker::CheckExitCondition,
+                          weak_ptr_factory_.GetWeakPtr()));
+}
+
+BookmarksMatchChecker::BookmarksMatchChecker() {
+  for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
+    Observe(GetBookmarkModel(i));
+  }
+}
+
+bool BookmarksMatchChecker::IsExitConditionSatisfied(std::ostream* os) {
+  *os << "Waiting for matching models";
+  return AllModelsMatch();
+}
+
+bool BookmarksMatchChecker::Wait() {
+  for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
+    TriggerAllFaviconLoading(GetBookmarkModel(i));
+  }
+  return BookmarkModelStatusChangeChecker::Wait();
+}
+
+BookmarksMatchVerifierChecker::BookmarksMatchVerifierChecker() {
+  Observe(GetVerifierBookmarkModel());
+  for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
+    Observe(GetBookmarkModel(i));
+  }
+}
+
+bool BookmarksMatchVerifierChecker::IsExitConditionSatisfied(std::ostream* os) {
+  *os << "Waiting for model to match verifier";
+  return AllModelsMatchVerifier();
+}
+
+bool BookmarksMatchVerifierChecker::Wait() {
+  TriggerAllFaviconLoading(GetVerifierBookmarkModel());
+  for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
+    TriggerAllFaviconLoading(GetBookmarkModel(i));
+  }
+  return BookmarkModelStatusChangeChecker::Wait();
+}
+
+SingleBookmarkModelStatusChangeChecker::SingleBookmarkModelStatusChangeChecker(
+    int profile_index)
+    : profile_index_(profile_index),
+      bookmark_model_(GetBookmarkModel(profile_index)) {
+  Observe(bookmark_model_);
+}
+
+SingleBookmarkModelStatusChangeChecker::
+    ~SingleBookmarkModelStatusChangeChecker() = default;
+
+int SingleBookmarkModelStatusChangeChecker::profile_index() const {
+  return profile_index_;
+}
+
+BookmarkModel* SingleBookmarkModelStatusChangeChecker::bookmark_model() const {
+  return bookmark_model_;
+}
+
+SingleBookmarksModelMatcherChecker::SingleBookmarksModelMatcherChecker(
+    int profile_index,
+    const Matcher& matcher)
+    : SingleBookmarkModelStatusChangeChecker(profile_index),
+      matcher_(matcher) {}
+
+SingleBookmarksModelMatcherChecker::~SingleBookmarksModelMatcherChecker() {}
+
+bool SingleBookmarksModelMatcherChecker::IsExitConditionSatisfied(
+    std::ostream* os) {
+  const std::vector<const BookmarkNode*> all_bookmark_nodes =
+      GetAllBookmarkNodes(bookmark_model());
+
+  testing::StringMatchResultListener result_listener;
+  const bool matches = testing::ExplainMatchResult(matcher_, all_bookmark_nodes,
+                                                   &result_listener);
+  if (TimedOut() && !matches && result_listener.str().empty()) {
+    // Some matchers don't provide details via ExplainMatchResult().
+    *os << "Expected: ";
+    matcher_.DescribeTo(os);
+    *os << "  Actual: " << testing::PrintToString(all_bookmark_nodes);
+  } else {
+    *os << result_listener.str();
+  }
+  return matches;
 }
 
 BookmarksTitleChecker::BookmarksTitleChecker(int profile_index,
                                              const std::string& title,
                                              int expected_count)
-    : SingleClientStatusChangeChecker(
-          sync_datatype_helper::test()->GetSyncService(profile_index)),
+    : SingleBookmarkModelStatusChangeChecker(profile_index),
       profile_index_(profile_index),
       title_(title),
       expected_count_(expected_count) {
   DCHECK_GE(expected_count, 0) << "expected_count must be non-negative.";
 }
 
-bool BookmarksTitleChecker::IsExitConditionSatisfied() {
-  int actual_count = bookmarks_helper::CountBookmarksWithTitlesMatching(
-      profile_index_, title_);
+bool BookmarksTitleChecker::IsExitConditionSatisfied(std::ostream* os) {
+  *os << "Waiting for bookmark count to match";
+  int actual_count = CountBookmarksWithTitlesMatching(profile_index_, title_);
   return expected_count_ == actual_count;
 }
 
-std::string BookmarksTitleChecker::GetDebugMessage() const {
-  return "Waiting for bookmark count to match";
-}
-
 ServerBookmarksEqualityChecker::ServerBookmarksEqualityChecker(
-    browser_sync::ProfileSyncService* service,
+    syncer::ProfileSyncService* service,
     fake_server::FakeServer* fake_server,
     const std::vector<ExpectedBookmark>& expected_bookmarks,
     syncer::Cryptographer* cryptographer)
@@ -1024,7 +1230,10 @@ ServerBookmarksEqualityChecker::ServerBookmarksEqualityChecker(
       cryptographer_(cryptographer),
       expected_bookmarks_(expected_bookmarks) {}
 
-bool ServerBookmarksEqualityChecker::IsExitConditionSatisfied() {
+bool ServerBookmarksEqualityChecker::IsExitConditionSatisfied(
+    std::ostream* os) {
+  *os << "Waiting for server-side bookmarks to match expected.";
+
   std::vector<sync_pb::SyncEntity> entities =
       fake_server_->GetSyncEntitiesByModelType(syncer::BOOKMARKS);
   if (expected_bookmarks_.size() != entities.size()) {
@@ -1034,17 +1243,23 @@ bool ServerBookmarksEqualityChecker::IsExitConditionSatisfied() {
   // Make a copy so we can remove bookmarks that were found.
   std::vector<ExpectedBookmark> expected = expected_bookmarks_;
   for (const sync_pb::SyncEntity& entity : entities) {
-    // If the cryptographer was provided, we expect the specifics to have
-    // encrypted data.
-    EXPECT_EQ(entity.specifics().has_encrypted(), cryptographer_ != nullptr);
-
     sync_pb::BookmarkSpecifics actual_specifics;
     if (entity.specifics().has_encrypted()) {
+      // If no cryptographer was provided, we expect the specifics to have
+      // unencrypted data.
+      if (!cryptographer_) {
+        return false;
+      }
       sync_pb::EntitySpecifics entity_specifics;
       EXPECT_TRUE(cryptographer_->Decrypt(entity.specifics().encrypted(),
                                           &entity_specifics));
       actual_specifics = entity_specifics.bookmark();
     } else {
+      // If the cryptographer was provided, we expect the specifics to have
+      // encrypted data.
+      if (cryptographer_) {
+        return false;
+      }
       actual_specifics = entity.specifics().bookmark();
     }
 
@@ -1066,34 +1281,31 @@ bool ServerBookmarksEqualityChecker::IsExitConditionSatisfied() {
   return true;
 }
 
-std::string ServerBookmarksEqualityChecker::GetDebugMessage() const {
-  return "Waiting for server-side bookmarks to match expected.";
-}
-
 ServerBookmarksEqualityChecker::~ServerBookmarksEqualityChecker() {}
-
-namespace {
-
-bool BookmarkCountsByUrlMatch(int profile,
-                              const GURL& url,
-                              int expected_count) {
-  int actual_count =
-      bookmarks_helper::CountBookmarksWithUrlsMatching(profile, url);
-  if (expected_count != actual_count) {
-    DVLOG(1) << base::StringPrintf("Expected %d URL(s), but there were %d.",
-                                   expected_count, actual_count);
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
 
 BookmarksUrlChecker::BookmarksUrlChecker(int profile,
                                          const GURL& url,
                                          int expected_count)
-    : AwaitMatchStatusChangeChecker(base::Bind(BookmarkCountsByUrlMatch,
-                                               profile,
-                                               base::ConstRef(url),
-                                               expected_count),
-                                    "Bookmark URL counts match.") {}
+    : SingleBookmarkModelStatusChangeChecker(profile),
+      url_(url),
+      expected_count_(expected_count) {}
+
+bool BookmarksUrlChecker::IsExitConditionSatisfied(std::ostream* os) {
+  int actual_count = CountBookmarksWithUrlsMatching(profile_index(), url_);
+  *os << "Expected " << expected_count_ << " bookmarks with URL " << url_
+      << " but found " << actual_count;
+  if (TimedOut()) {
+    *os << " in "
+        << testing::PrintToString(
+               GetAllBookmarkNodes(GetBookmarkModel(profile_index())));
+  }
+  return expected_count_ == actual_count;
+}
+
+BookmarksGUIDChecker::BookmarksGUIDChecker(int profile, const std::string& guid)
+    : SingleBookmarksModelMatcherChecker(profile,
+                                         testing::Contains(HasGuid(guid))) {}
+
+BookmarksGUIDChecker::~BookmarksGUIDChecker() {}
+
+}  // namespace bookmarks_helper

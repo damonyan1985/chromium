@@ -6,8 +6,22 @@ import atexit
 import os
 import socket
 import subprocess
+import threading
 import time
 import urllib2
+
+def terminate_process(proc):
+  """Terminates the process.
+
+  If an error occurs ignore it, just print out a message.
+
+  Args:
+    proc: A subprocess.
+  """
+  try:
+    proc.terminate()
+  except OSError as ex:
+    print 'Error while killing a process: %s' % ex
 
 
 class Server(object):
@@ -33,6 +47,8 @@ class Server(object):
     chromedriver_args = [exe_path, '--port=%d' % port]
     if log_path:
       chromedriver_args.extend(['--log-path=%s' % log_path])
+      chromedriver_args.extend(['--append-log'])
+      chromedriver_args.extend(['--readable-timestamp'])
       if verbose:
         chromedriver_args.extend(['--verbose',
                                   '--vmodule=*/chrome/test/chromedriver/*=3'])
@@ -43,14 +59,21 @@ class Server(object):
       chromedriver_args.extend(['--devtools-replay=%s' % devtools_replay_path])
 
     self._process = subprocess.Popen(chromedriver_args)
-    self._url = 'http://127.0.0.1:%d' % port
+    self._host = '127.0.0.1'
     self._port = port
+    self._url = 'http://%s:%d' % (self._host, port)
     if self._process is None:
       raise RuntimeError('ChromeDriver server cannot be started')
 
-    max_time = time.time() + 10
+    max_time = time.time() + 20
     while not self.IsRunning():
       if time.time() > max_time:
+        self._process.poll()
+        if self._process.returncode is None:
+          print 'ChromeDriver process still running, but not responding'
+        else:
+          print ('ChromeDriver process exited with return code %d'
+                 % self._process.returncode)
         self._process.terminate()
         raise RuntimeError('ChromeDriver server did not start')
       time.sleep(0.1)
@@ -67,6 +90,9 @@ class Server(object):
 
   def GetUrl(self):
     return self._url
+
+  def GetHost(self):
+    return self._host
 
   def GetPort(self):
     return self._port
@@ -88,5 +114,8 @@ class Server(object):
       urllib2.urlopen(self.GetUrl() + '/shutdown', timeout=10).close()
     except:
       self._process.terminate()
+    timer = threading.Timer(5, terminate_process, [self._process])
+    timer.start()
     self._process.wait()
+    timer.cancel()
     self._process = None

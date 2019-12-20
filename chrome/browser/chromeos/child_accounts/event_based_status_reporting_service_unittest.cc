@@ -9,20 +9,25 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service.h"
-#include "chrome/browser/chromeos/child_accounts/consumer_status_reporting_service_factory.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
+#include "chrome/browser/chromeos/child_accounts/child_status_reporting_service.h"
+#include "chrome/browser/chromeos/child_accounts/child_status_reporting_service_factory.h"
+#include "chrome/browser/chromeos/child_accounts/screen_time_controller.h"
+#include "chrome/browser/chromeos/child_accounts/screen_time_controller_factory.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power/fake_power_manager_client.h"
+#include "chromeos/dbus/system_clock/system_clock_client.h"
 #include "components/account_id/account_id.h"
-#include "components/arc/common/app.mojom.h"
+#include "components/arc/mojom/app.mojom.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/session_manager/core/session_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "net/base/mock_network_change_notifier.h"
+#include "content/public/test/browser_task_environment.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -30,14 +35,18 @@ namespace chromeos {
 namespace {
 
 class TestingConsumerStatusReportingService
-    : public ConsumerStatusReportingService {
+    : public ChildStatusReportingService {
  public:
   explicit TestingConsumerStatusReportingService(
       content::BrowserContext* context)
-      : ConsumerStatusReportingService(context) {}
+      : ChildStatusReportingService(context) {}
   ~TestingConsumerStatusReportingService() override = default;
 
-  void RequestImmediateStatusReport() override { performed_status_reports_++; }
+  bool RequestImmediateStatusReport() override {
+    performed_status_reports_++;
+    return true;
+  }
+
   int performed_status_reports() const { return performed_status_reports_; }
 
  private:
@@ -46,10 +55,30 @@ class TestingConsumerStatusReportingService
   DISALLOW_COPY_AND_ASSIGN(TestingConsumerStatusReportingService);
 };
 
+class TestingScreenTimeController : public ScreenTimeController {
+ public:
+  explicit TestingScreenTimeController(content::BrowserContext* context)
+      : ScreenTimeController(context) {}
+  ~TestingScreenTimeController() override = default;
+
+  // Override this method so that it doesn't call the StatusUploader instance in
+  // ConsumerStatusReportingService, which doesn't exist in these tests.
+  base::TimeDelta GetScreenTimeDuration() override { return base::TimeDelta(); }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestingScreenTimeController);
+};
+
 std::unique_ptr<KeyedService> CreateTestingConsumerStatusReportingService(
     content::BrowserContext* browser_context) {
   return std::unique_ptr<KeyedService>(
       new TestingConsumerStatusReportingService(browser_context));
+}
+
+std::unique_ptr<KeyedService> CreateTestingScreenTimeController(
+    content::BrowserContext* browser_context) {
+  return std::unique_ptr<KeyedService>(
+      new TestingScreenTimeController(browser_context));
 }
 
 }  // namespace
@@ -60,10 +89,15 @@ class EventBasedStatusReportingServiceTest : public testing::Test {
   ~EventBasedStatusReportingServiceTest() override = default;
 
   void SetUp() override {
-    DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
-        std::make_unique<FakePowerManagerClient>());
+    PowerManagerClient::InitializeFake();
+    SystemClockClient::InitializeFake();
 
-    profile_.SetSupervisedUserId(supervised_users::kChildAccountSUID);
+    // TODO(agawronska): To enable this we need LoginScreenClient, but it causes
+    // test crashes on network connection change.
+    scoped_feature_list_.InitAndDisableFeature(features::kParentAccessCode);
+
+    profile_ = std::make_unique<TestingProfile>();
+    profile_.get()->SetSupervisedUserId(supervised_users::kChildAccountSUID);
     arc_test_.SetUp(profile());
 
     session_manager_.CreateSession(
@@ -74,38 +108,52 @@ class EventBasedStatusReportingServiceTest : public testing::Test {
     session_manager_.SetSessionState(
         session_manager::SessionState::LOGIN_PRIMARY);
 
-    ConsumerStatusReportingServiceFactory::GetInstance()->SetTestingFactory(
+    ChildStatusReportingServiceFactory::GetInstance()->SetTestingFactory(
         profile(),
         base::BindRepeating(&CreateTestingConsumerStatusReportingService));
-    ConsumerStatusReportingService* consumer_status_reporting_service =
-        ConsumerStatusReportingServiceFactory::GetForBrowserContext(profile());
+    ChildStatusReportingService* consumer_status_reporting_service =
+        ChildStatusReportingServiceFactory::GetForBrowserContext(profile());
     test_consumer_status_reporting_service_ =
         static_cast<TestingConsumerStatusReportingService*>(
             consumer_status_reporting_service);
+
+    ScreenTimeControllerFactory::GetInstance()->SetTestingFactory(
+        profile(), base::BindRepeating(&CreateTestingScreenTimeController));
+    ScreenTimeController* screen_time_controller =
+        ScreenTimeControllerFactory::GetForBrowserContext(profile());
+    test_screen_time_controller_ =
+        static_cast<TestingScreenTimeController*>(screen_time_controller);
+    service_ =
+        std::make_unique<EventBasedStatusReportingService>(profile_.get());
   }
 
   void TearDown() override {
+    service_->Shutdown();
     arc_test_.TearDown();
-    DBusThreadManager::Shutdown();
+    profile_.reset();
+    SystemClockClient::Shutdown();
+    PowerManagerClient::Shutdown();
   }
 
-  void SetConnectionType(net::NetworkChangeNotifier::ConnectionType type) {
-    notifier_.SetConnectionType(type);
-    notifier_.NotifyObserversOfNetworkChangeForTests(
-        notifier_.GetConnectionType());
-    thread_bundle_.RunUntilIdle();
+  void SetConnectionType(network::mojom::ConnectionType type) {
+    network::TestNetworkConnectionTracker::GetInstance()->SetConnectionType(
+        type);
+    task_environment_.RunUntilIdle();
   }
 
   arc::mojom::AppHost* app_host() { return arc_test_.arc_app_list_prefs(); }
-  Profile* profile() { return &profile_; }
+  Profile* profile() { return profile_.get(); }
   FakePowerManagerClient* power_manager_client() {
-    return static_cast<FakePowerManagerClient*>(
-        DBusThreadManager::Get()->GetPowerManagerClient());
+    return FakePowerManagerClient::Get();
   }
 
   TestingConsumerStatusReportingService*
   test_consumer_status_reporting_service() {
     return test_consumer_status_reporting_service_;
+  }
+
+  TestingScreenTimeController* test_screen_time_controller() {
+    return test_screen_time_controller_;
   }
 
   session_manager::SessionManager* session_manager() {
@@ -121,20 +169,20 @@ class EventBasedStatusReportingServiceTest : public testing::Test {
   base::HistogramTester histogram_tester_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   ArcAppTest arc_test_;
-  TestingProfile profile_;
+  std::unique_ptr<TestingProfile> profile_;
   TestingConsumerStatusReportingService*
       test_consumer_status_reporting_service_;
+  TestingScreenTimeController* test_screen_time_controller_;
   session_manager::SessionManager session_manager_;
-  net::test::MockNetworkChangeNotifier notifier_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+  std::unique_ptr<EventBasedStatusReportingService> service_;
 
   DISALLOW_COPY_AND_ASSIGN(EventBasedStatusReportingServiceTest);
 };
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenAppInstall) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   app_host()->OnPackageAdded(arc::mojom::ArcPackageInfo::New());
@@ -149,8 +197,6 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenAppInstall) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenAppUpdate) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   app_host()->OnPackageModified(arc::mojom::ArcPackageInfo::New());
@@ -165,8 +211,6 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenAppUpdate) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, DoNotReportWhenUserJustSignIn) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
@@ -178,8 +222,6 @@ TEST_F(EventBasedStatusReportingServiceTest, DoNotReportWhenUserJustSignIn) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSessionIsLocked) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
@@ -197,8 +239,6 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSessionIsLocked) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSessionIsActive) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
@@ -222,14 +262,11 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSessionIsActive) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenDeviceGoesOnline) {
-  EventBasedStatusReportingService service(profile());
-  SetConnectionType(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_NONE);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
 
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
-  SetConnectionType(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_ETHERNET);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_ETHERNET);
   EXPECT_EQ(
       1, test_consumer_status_reporting_service()->performed_status_reports());
 
@@ -241,8 +278,6 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenDeviceGoesOnline) {
 }
 
 TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSuspendIsDone) {
-  EventBasedStatusReportingService service(profile());
-
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
   power_manager_client()->SendSuspendDone();
@@ -256,10 +291,24 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportWhenSuspendIsDone) {
       EventBasedStatusReportingService::kUMAStatusReportEvent, 1);
 }
 
+TEST_F(EventBasedStatusReportingServiceTest, ReportOnUsageTimeLimitWarning) {
+  ASSERT_EQ(
+      0, test_consumer_status_reporting_service()->performed_status_reports());
+  test_screen_time_controller()->NotifyUsageTimeLimitWarningForTesting();
+  EXPECT_EQ(
+      1, test_consumer_status_reporting_service()->performed_status_reports());
+
+  histogram_tester_.ExpectBucketCount(
+      EventBasedStatusReportingService::kUMAStatusReportEvent,
+      EventBasedStatusReportingService::StatusReportEvent::
+          kUsageTimeLimitWarning,
+      1);
+  histogram_tester_.ExpectTotalCount(
+      EventBasedStatusReportingService::kUMAStatusReportEvent, 1);
+}
+
 TEST_F(EventBasedStatusReportingServiceTest, ReportForMultipleEvents) {
-  EventBasedStatusReportingService service(profile());
-  SetConnectionType(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_NONE);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_NONE);
 
   ASSERT_EQ(
       0, test_consumer_status_reporting_service()->performed_status_reports());
@@ -272,8 +321,7 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportForMultipleEvents) {
   session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
   EXPECT_EQ(
       2, test_consumer_status_reporting_service()->performed_status_reports());
-  SetConnectionType(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI);
+  SetConnectionType(network::mojom::ConnectionType::CONNECTION_WIFI);
   EXPECT_EQ(
       3, test_consumer_status_reporting_service()->performed_status_reports());
   app_host()->OnPackageAdded(arc::mojom::ArcPackageInfo::New());
@@ -285,6 +333,9 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportForMultipleEvents) {
   power_manager_client()->SendSuspendDone();
   EXPECT_EQ(
       6, test_consumer_status_reporting_service()->performed_status_reports());
+  test_screen_time_controller()->NotifyUsageTimeLimitWarningForTesting();
+  EXPECT_EQ(
+      7, test_consumer_status_reporting_service()->performed_status_reports());
 
   histogram_tester_.ExpectBucketCount(
       EventBasedStatusReportingService::kUMAStatusReportEvent,
@@ -304,8 +355,13 @@ TEST_F(EventBasedStatusReportingServiceTest, ReportForMultipleEvents) {
   histogram_tester_.ExpectBucketCount(
       EventBasedStatusReportingService::kUMAStatusReportEvent,
       EventBasedStatusReportingService::StatusReportEvent::kSuspendDone, 1);
+  histogram_tester_.ExpectBucketCount(
+      EventBasedStatusReportingService::kUMAStatusReportEvent,
+      EventBasedStatusReportingService::StatusReportEvent::
+          kUsageTimeLimitWarning,
+      1);
   histogram_tester_.ExpectTotalCount(
-      EventBasedStatusReportingService::kUMAStatusReportEvent, 6);
+      EventBasedStatusReportingService::kUMAStatusReportEvent, 7);
 }
 
 }  // namespace chromeos

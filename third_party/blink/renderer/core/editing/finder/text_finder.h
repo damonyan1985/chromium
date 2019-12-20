@@ -32,7 +32,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_TEXT_FINDER_H_
 
 #include "base/macros.h"
-#include "third_party/blink/public/mojom/frame/find_in_page.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame/find_in_page.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
@@ -51,11 +51,8 @@ struct WebFloatPoint;
 struct WebFloatRect;
 struct WebRect;
 
-class CORE_EXPORT TextFinder final
-    : public GarbageCollectedFinalized<TextFinder> {
+class CORE_EXPORT TextFinder final : public GarbageCollected<TextFinder> {
  public:
-  static TextFinder* Create(WebLocalFrameImpl& owner_frame);
-
   bool Find(int identifier,
             const WebString& search_text,
             const mojom::blink::FindOptions& options,
@@ -122,7 +119,6 @@ class CORE_EXPORT TextFinder final
                      bool finished_whole_request);
 
   explicit TextFinder(WebLocalFrameImpl& owner_frame);
-  ~TextFinder();
 
   class FindMatch {
     DISALLOW_NEW();
@@ -130,7 +126,7 @@ class CORE_EXPORT TextFinder final
    public:
     FindMatch(Range*, int ordinal);
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
     Member<Range> range_;
 
@@ -142,7 +138,7 @@ class CORE_EXPORT TextFinder final
     FloatRect rect_;
   };
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   // Notifies the delegate about a new selection rect.
@@ -151,6 +147,7 @@ class CORE_EXPORT TextFinder final
                                  int identifier);
 
   void ReportFindInPageResultToAccessibility(int identifier);
+  void ReportFindInPageTerminationToAccessibility();
 
   // Clear the find-in-page matches cache forcing rects to be fully
   // calculated again next time updateFindMatchRects is called.
@@ -240,10 +237,6 @@ class CORE_EXPORT TextFinder final
   // Keeps track of whether there is an scoping effort ongoing in the frame.
   bool scoping_in_progress_;
 
-  // Keeps track of whether the last find request completed its scoping effort
-  // without finding any matches in this frame.
-  bool last_find_request_completed_with_no_matches_;
-
   // Determines if the rects in the find-in-page matches cache of this frame
   // are invalid and should be recomputed.
   bool find_match_rects_are_valid_;
@@ -253,6 +246,6 @@ class CORE_EXPORT TextFinder final
 
 }  // namespace blink
 
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::TextFinder::FindMatch);
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::TextFinder::FindMatch)
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_TEXT_FINDER_H_

@@ -26,7 +26,7 @@ const char* ProtoEnumToString(
     ENUM_CASE(sync_pb::AppListSpecifics, TYPE_APP);
     ENUM_CASE(sync_pb::AppListSpecifics, TYPE_REMOVE_DEFAULT_APP);
     ENUM_CASE(sync_pb::AppListSpecifics, TYPE_FOLDER);
-    ENUM_CASE(sync_pb::AppListSpecifics, TYPE_URL);
+    ENUM_CASE(sync_pb::AppListSpecifics, TYPE_OBSOLETE_URL);
     ENUM_CASE(sync_pb::AppListSpecifics, TYPE_PAGE_BREAK);
   }
   NOTREACHED();
@@ -48,12 +48,13 @@ const char* ProtoEnumToString(sync_pb::AppSpecifics::LaunchType launch_type) {
 const char* ProtoEnumToString(
     sync_pb::AutofillWalletSpecifics::WalletInfoType wallet_info_type) {
   ASSERT_ENUM_BOUNDS(sync_pb::AutofillWalletSpecifics, WalletInfoType, UNKNOWN,
-                     CUSTOMER_DATA);
+                     CREDIT_CARD_CLOUD_TOKEN_DATA);
   switch (wallet_info_type) {
     ENUM_CASE(sync_pb::AutofillWalletSpecifics, UNKNOWN);
     ENUM_CASE(sync_pb::AutofillWalletSpecifics, MASKED_CREDIT_CARD);
     ENUM_CASE(sync_pb::AutofillWalletSpecifics, POSTAL_ADDRESS);
     ENUM_CASE(sync_pb::AutofillWalletSpecifics, CUSTOMER_DATA);
+    ENUM_CASE(sync_pb::AutofillWalletSpecifics, CREDIT_CARD_CLOUD_TOKEN_DATA);
   }
   NOTREACHED();
   return "";
@@ -100,13 +101,14 @@ const char* ProtoEnumToString(
 
 const char* ProtoEnumToString(sync_pb::NigoriSpecifics::PassphraseType type) {
   ASSERT_ENUM_BOUNDS(sync_pb::NigoriSpecifics, PassphraseType, UNKNOWN,
-                     CUSTOM_PASSPHRASE);
+                     TRUSTED_VAULT_PASSPHRASE);
   switch (type) {
     ENUM_CASE(sync_pb::NigoriSpecifics, UNKNOWN);
     ENUM_CASE(sync_pb::NigoriSpecifics, IMPLICIT_PASSPHRASE);
     ENUM_CASE(sync_pb::NigoriSpecifics, KEYSTORE_PASSPHRASE);
     ENUM_CASE(sync_pb::NigoriSpecifics, FROZEN_IMPLICIT_PASSPHRASE);
     ENUM_CASE(sync_pb::NigoriSpecifics, CUSTOM_PASSPHRASE);
+    ENUM_CASE(sync_pb::NigoriSpecifics, TRUSTED_VAULT_PASSPHRASE);
   }
   NOTREACHED();
   return "";
@@ -151,10 +153,10 @@ const char* ProtoEnumToString(sync_pb::SyncEnums::Action action) {
                      UNKNOWN_ACTION);
   switch (action) {
     ENUM_CASE(sync_pb::SyncEnums, UPGRADE_CLIENT);
-    ENUM_CASE(sync_pb::SyncEnums, CLEAR_USER_DATA_AND_RESYNC);
-    ENUM_CASE(sync_pb::SyncEnums, ENABLE_SYNC_ON_ACCOUNT);
-    ENUM_CASE(sync_pb::SyncEnums, STOP_AND_RESTART_SYNC);
-    ENUM_CASE(sync_pb::SyncEnums, DISABLE_SYNC_ON_CLIENT);
+    ENUM_CASE(sync_pb::SyncEnums, DEPRECATED_CLEAR_USER_DATA_AND_RESYNC);
+    ENUM_CASE(sync_pb::SyncEnums, DEPRECATED_ENABLE_SYNC_ON_ACCOUNT);
+    ENUM_CASE(sync_pb::SyncEnums, DEPRECATED_STOP_AND_RESTART_SYNC);
+    ENUM_CASE(sync_pb::SyncEnums, DEPRECATED_DISABLE_SYNC_ON_CLIENT);
     ENUM_CASE(sync_pb::SyncEnums, UNKNOWN_ACTION);
   }
   NOTREACHED();
@@ -254,7 +256,7 @@ const char* ProtoEnumToString(
 const char* ProtoEnumToString(
     sync_pb::SyncEnums::SingletonDebugEventType type) {
   ASSERT_ENUM_BOUNDS(sync_pb::SyncEnums, SingletonDebugEventType,
-                     CONNECTION_STATUS_CHANGE, BOOTSTRAP_TOKEN_UPDATED);
+                     CONNECTION_STATUS_CHANGE, TRUSTED_VAULT_KEY_ACCEPTED);
   switch (type) {
     ENUM_CASE(sync_pb::SyncEnums, CONNECTION_STATUS_CHANGE);
     ENUM_CASE(sync_pb::SyncEnums, UPDATED_TOKEN);
@@ -269,6 +271,8 @@ const char* ProtoEnumToString(
     ENUM_CASE(sync_pb::SyncEnums, KEYSTORE_TOKEN_UPDATED);
     ENUM_CASE(sync_pb::SyncEnums, CONFIGURE_COMPLETE);
     ENUM_CASE(sync_pb::SyncEnums, BOOTSTRAP_TOKEN_UPDATED);
+    ENUM_CASE(sync_pb::SyncEnums, TRUSTED_VAULT_KEY_REQUIRED);
+    ENUM_CASE(sync_pb::SyncEnums, TRUSTED_VAULT_KEY_ACCEPTED);
   }
   NOTREACHED();
   return "";
@@ -367,53 +371,45 @@ const char* ProtoEnumToString(
 }
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseDetected::
-        SafeBrowsingStatus::ReportingPopulation
-            safe_browsing_reporting_population) {
-  ASSERT_ENUM_BOUNDS(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                         PasswordReuseDetected::SafeBrowsingStatus,
-                     ReportingPopulation, REPORTING_POPULATION_UNSPECIFIED,
-                     SCOUT);
+    sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus::
+        ReportingPopulation safe_browsing_reporting_population) {
+  ASSERT_ENUM_BOUNDS(
+      sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus,
+      ReportingPopulation, REPORTING_POPULATION_UNSPECIFIED, SCOUT);
   switch (safe_browsing_reporting_population) {
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDetected::SafeBrowsingStatus,
-              REPORTING_POPULATION_UNSPECIFIED);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDetected::SafeBrowsingStatus,
-              NONE);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDetected::SafeBrowsingStatus,
-              EXTENDED_REPORTING);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDetected::SafeBrowsingStatus,
-              SCOUT);
+    ENUM_CASE(
+        sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus,
+        REPORTING_POPULATION_UNSPECIFIED);
+    ENUM_CASE(
+        sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus,
+        NONE);
+    ENUM_CASE(
+        sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus,
+        EXTENDED_REPORTING);
+    ENUM_CASE(
+        sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus,
+        SCOUT);
   }
   NOTREACHED();
   return "";
 }
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-        PasswordReuseDialogInteraction::InteractionResult interaction_result) {
-  ASSERT_ENUM_BOUNDS(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                         PasswordReuseDialogInteraction,
+    sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction::
+        InteractionResult interaction_result) {
+  ASSERT_ENUM_BOUNDS(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
                      InteractionResult, UNSPECIFIED,
                      WARNING_ACTION_TAKEN_ON_SETTINGS);
   switch (interaction_result) {
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDialogInteraction,
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
               UNSPECIFIED);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDialogInteraction,
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
               WARNING_ACTION_TAKEN);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDialogInteraction,
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
               WARNING_ACTION_IGNORED);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDialogInteraction,
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
               WARNING_UI_IGNORED);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                  PasswordReuseDialogInteraction,
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction,
               WARNING_ACTION_TAKEN_ON_SETTINGS);
   }
   NOTREACHED();
@@ -421,78 +417,51 @@ const char* ProtoEnumToString(
 }
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        LookupResult lookup_result) {
-  ASSERT_ENUM_BOUNDS(
-      sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-      LookupResult, UNSPECIFIED, TURNED_OFF_BY_POLICY);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::LookupResult
+        lookup_result) {
+  ASSERT_ENUM_BOUNDS(sync_pb::GaiaPasswordReuse::PasswordReuseLookup,
+                     LookupResult, UNSPECIFIED, TURNED_OFF_BY_POLICY);
   switch (lookup_result) {
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        UNSPECIFIED);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        WHITELIST_HIT);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        CACHE_HIT);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        REQUEST_SUCCESS);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        REQUEST_FAILURE);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        URL_UNSUPPORTED);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        ENTERPRISE_WHITELIST_HIT);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        TURNED_OFF_BY_POLICY);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, UNSPECIFIED);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, WHITELIST_HIT);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, CACHE_HIT);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, REQUEST_SUCCESS);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, REQUEST_FAILURE);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, URL_UNSUPPORTED);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup,
+              ENTERPRISE_WHITELIST_HIT);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup,
+              TURNED_OFF_BY_POLICY);
   }
   NOTREACHED();
   return "";
 }
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        ReputationVerdict verdict) {
-  ASSERT_ENUM_BOUNDS(
-      sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-      ReputationVerdict, VERDICT_UNSPECIFIED, PHISHING);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::ReputationVerdict
+        verdict) {
+  ASSERT_ENUM_BOUNDS(sync_pb::GaiaPasswordReuse::PasswordReuseLookup,
+                     ReputationVerdict, VERDICT_UNSPECIFIED, PHISHING);
   switch (verdict) {
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        VERDICT_UNSPECIFIED);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        SAFE);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        LOW_REPUTATION);
-    ENUM_CASE(
-        sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup,
-        PHISHING);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup,
+              VERDICT_UNSPECIFIED);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, SAFE);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, LOW_REPUTATION);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordReuseLookup, PHISHING);
   }
   NOTREACHED();
   return "";
 }
 
 // TODO(markusheintz): Remove.
-const char* ProtoEnumToString(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                                  PasswordCaptured::EventTrigger trigger) {
-  ASSERT_ENUM_BOUNDS(
-      sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordCaptured,
-      EventTrigger, UNSPECIFIED, EXPIRED_28D_TIMER);
+const char* ProtoEnumToString(
+    sync_pb::GaiaPasswordReuse::PasswordCaptured::EventTrigger trigger) {
+  ASSERT_ENUM_BOUNDS(sync_pb::GaiaPasswordReuse::PasswordCaptured, EventTrigger,
+                     UNSPECIFIED, EXPIRED_28D_TIMER);
   switch (trigger) {
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordCaptured,
-              UNSPECIFIED);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordCaptured,
-              USER_LOGGED_IN);
-    ENUM_CASE(sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordCaptured,
-              EXPIRED_28D_TIMER);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordCaptured, UNSPECIFIED);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordCaptured, USER_LOGGED_IN);
+    ENUM_CASE(sync_pb::GaiaPasswordReuse::PasswordCaptured, EXPIRED_28D_TIMER);
   }
   NOTREACHED();
   return "";
@@ -572,14 +541,97 @@ const char* ProtoEnumToString(
 }
 
 const char* ProtoEnumToString(
-    sync_pb::WifiCredentialSpecifics::SecurityClass security_class) {
-  ASSERT_ENUM_BOUNDS(sync_pb::WifiCredentialSpecifics, SecurityClass,
-                     SECURITY_CLASS_INVALID, SECURITY_CLASS_PSK);
-  switch (security_class) {
-    ENUM_CASE(sync_pb::WifiCredentialSpecifics, SECURITY_CLASS_INVALID);
-    ENUM_CASE(sync_pb::WifiCredentialSpecifics, SECURITY_CLASS_NONE);
-    ENUM_CASE(sync_pb::WifiCredentialSpecifics, SECURITY_CLASS_WEP);
-    ENUM_CASE(sync_pb::WifiCredentialSpecifics, SECURITY_CLASS_PSK);
+    sync_pb::WebAppSpecifics::UserDisplayMode user_display_mode) {
+  ASSERT_ENUM_BOUNDS(sync_pb::WebAppSpecifics, UserDisplayMode, BROWSER,
+                     STANDALONE);
+  switch (user_display_mode) {
+    ENUM_CASE(sync_pb::WebAppSpecifics, BROWSER);
+    ENUM_CASE(sync_pb::WebAppSpecifics, STANDALONE);
+  }
+  NOTREACHED();
+  return "";
+}
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::SecurityType security_type) {
+  ASSERT_ENUM_BOUNDS(sync_pb::WifiConfigurationSpecificsData, SecurityType,
+                     SECURITY_TYPE_UNSPECIFIED, SECURITY_TYPE_PSK);
+  switch (security_type) {
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              SECURITY_TYPE_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, SECURITY_TYPE_NONE);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, SECURITY_TYPE_WEP);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, SECURITY_TYPE_PSK);
+  }
+  NOTREACHED();
+  return "";
+}
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::AutomaticallyConnectOption
+        automatically_connect_option) {
+  ASSERT_ENUM_BOUNDS(
+      sync_pb::WifiConfigurationSpecificsData, AutomaticallyConnectOption,
+      AUTOMATICALLY_CONNECT_UNSPECIFIED, AUTOMATICALLY_CONNECT_ENABLED);
+  switch (automatically_connect_option) {
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              AUTOMATICALLY_CONNECT_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              AUTOMATICALLY_CONNECT_DISABLED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              AUTOMATICALLY_CONNECT_ENABLED);
+  }
+  NOTREACHED();
+  return "";
+}
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::IsPreferredOption
+        is_preferred_option) {
+  ASSERT_ENUM_BOUNDS(sync_pb::WifiConfigurationSpecificsData, IsPreferredOption,
+                     IS_PREFERRED_UNSPECIFIED, IS_PREFERRED_ENABLED);
+  switch (is_preferred_option) {
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              IS_PREFERRED_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, IS_PREFERRED_DISABLED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, IS_PREFERRED_ENABLED);
+  }
+  NOTREACHED();
+  return "";
+}
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::MeteredOption metered_option) {
+  ASSERT_ENUM_BOUNDS(sync_pb::WifiConfigurationSpecificsData, MeteredOption,
+                     METERED_OPTION_UNSPECIFIED, METERED_OPTION_AUTO);
+  switch (metered_option) {
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData,
+              METERED_OPTION_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, METERED_OPTION_NO);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, METERED_OPTION_YES);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData, METERED_OPTION_AUTO);
+  }
+  NOTREACHED();
+  return "";
+}
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration::ProxyOption
+        proxy_option) {
+  ASSERT_ENUM_BOUNDS(
+      sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration, ProxyOption,
+      PROXY_OPTION_UNSPECIFIED, PROXY_OPTION_MANUAL);
+  switch (proxy_option) {
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration,
+              PROXY_OPTION_UNSPECIFIED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration,
+              PROXY_OPTION_DISABLED);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration,
+              PROXY_OPTION_AUTOMATIC);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration,
+              PROXY_OPTION_AUTODISCOVERY);
+    ENUM_CASE(sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration,
+              PROXY_OPTION_MANUAL);
   }
   NOTREACHED();
   return "";

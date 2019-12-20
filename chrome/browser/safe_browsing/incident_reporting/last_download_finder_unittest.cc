@@ -45,7 +45,7 @@
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/proto/csd.pb.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -100,8 +100,8 @@ static const base::FilePath::CharType kBinaryFileName[] =
     FILE_PATH_LITERAL("spam.exe");
 #endif
 
-static const base::FilePath::CharType kPDFFileName[] =
-    FILE_PATH_LITERAL("download.pdf");
+static const base::FilePath::CharType kTxtFileName[] =
+    FILE_PATH_LITERAL("download.txt");
 
 }  // namespace
 
@@ -166,7 +166,7 @@ class LastDownloadFinderTest : public testing::Test {
 
   TestingProfile* CreateProfile(SafeBrowsingDisposition safe_browsing_opt_in) {
     std::string profile_name("profile");
-    profile_name.append(base::IntToString(++profile_number_));
+    profile_name.append(base::NumberToString(++profile_number_));
 
     // Set up keyed service factories.
     TestingProfile::TestingFactories factories;
@@ -286,7 +286,7 @@ class LastDownloadFinderTest : public testing::Test {
     callback.Run(std::unique_ptr<ClientIncidentReport_DownloadDetails>());
   }
 
-  content::TestBrowserThreadBundle browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfileManager> profile_manager_;
   int profile_number_;
 
@@ -345,7 +345,7 @@ TEST_F(LastDownloadFinderTest, SimpleEndToEnd) {
 
   // Add a binary and non-binary download.
   AddDownload(profile, CreateTestDownloadRow(kBinaryFileName));
-  AddDownload(profile, CreateTestDownloadRow(kPDFFileName));
+  AddDownload(profile, CreateTestDownloadRow(kTxtFileName));
 
   std::unique_ptr<ClientIncidentReport_DownloadDetails> last_binary_download;
   std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>
@@ -361,7 +361,7 @@ TEST_F(LastDownloadFinderTest, NonBinaryOnly) {
   TestingProfile* profile = CreateProfile(SAFE_BROWSING_AND_EXTENDED_REPORTING);
 
   // Add a non-binary download.
-  AddDownload(profile, CreateTestDownloadRow(kPDFFileName));
+  AddDownload(profile, CreateTestDownloadRow(kTxtFileName));
 
   std::unique_ptr<ClientIncidentReport_DownloadDetails> last_binary_download;
   std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>

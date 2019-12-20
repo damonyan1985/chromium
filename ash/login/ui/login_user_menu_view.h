@@ -45,17 +45,20 @@ class ASH_EXPORT LoginUserMenuView : public LoginBaseBubbleView,
 
   ~LoginUserMenuView() override;
 
+  // Resets the user menu to the state where Remove User has not been pressed.
+  void ResetState();
+
   // LoginBaseBubbleView:
   LoginButton* GetBubbleOpener() const override;
+  gfx::Point CalculatePosition() override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
   // views::View:
   void RequestFocus() override;
-  void AddedToWidget() override;
+  bool HasFocus() const override;
   const char* GetClassName() const override;
-  gfx::Size CalculatePreferredSize() const override;
 
  private:
   LoginButton* bubble_opener_ = nullptr;
@@ -65,6 +68,8 @@ class ASH_EXPORT LoginUserMenuView : public LoginBaseBubbleView,
   views::Label* remove_user_label_ = nullptr;
   RemoveUserButton* remove_user_button_ = nullptr;
   views::Label* username_label_ = nullptr;
+
+  base::string16 warning_message_;
 
   DISALLOW_COPY_AND_ASSIGN(LoginUserMenuView);
 };

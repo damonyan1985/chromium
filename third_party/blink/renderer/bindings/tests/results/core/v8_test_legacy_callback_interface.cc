@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_node.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
+#include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 
 namespace blink {
 
@@ -83,7 +84,7 @@ const char* V8TestLegacyCallbackInterface::NameInHeapSnapshot() const {
   return "V8TestLegacyCallbackInterface";
 }
 
-v8::Maybe<uint16_t> V8TestLegacyCallbackInterface::acceptNode(ScriptWrappable* callback_this_value, Node* node) {
+v8::Maybe<uint16_t> V8TestLegacyCallbackInterface::acceptNode(bindings::V8ValueOrScriptWrappableAdapter callback_this_value, Node* node) {
   ScriptState* callback_relevant_script_state =
       CallbackRelevantScriptStateOrThrowException(
           "TestLegacyCallbackInterface",
@@ -116,6 +117,11 @@ v8::Maybe<uint16_t> V8TestLegacyCallbackInterface::acceptNode(ScriptWrappable* c
   // step: Prepare to run a callback with stored settings.
   v8::Context::BackupIncumbentScope backup_incumbent_scope(
       IncumbentScriptState()->GetContext());
+
+  if (UNLIKELY(ScriptForbiddenScope::IsScriptForbidden())) {
+    ScriptForbiddenScope::ThrowScriptForbiddenException(GetIsolate());
+    return v8::Nothing<uint16_t>();
+  }
 
   v8::Local<v8::Function> function;
   if (IsCallbackObjectCallable()) {
@@ -153,11 +159,11 @@ v8::Maybe<uint16_t> V8TestLegacyCallbackInterface::acceptNode(ScriptWrappable* c
     //   interface, or if !IsCallable(O) is false, set thisArg to O (overriding
     //   the provided value).
     this_arg = CallbackObject();
-  } else if (!callback_this_value) {
+  } else if (callback_this_value.IsEmpty()) {
     // step 2. If thisArg was not given, let thisArg be undefined.
     this_arg = v8::Undefined(GetIsolate());
   } else {
-    this_arg = ToV8(callback_this_value, callback_relevant_script_state);
+    this_arg = callback_this_value.V8Value(callback_relevant_script_state);
   }
 
   // step: Let esArgs be the result of converting args to an ECMAScript
@@ -201,11 +207,6 @@ v8::Maybe<uint16_t> V8TestLegacyCallbackInterface::acceptNode(ScriptWrappable* c
     else
       return v8::Just<uint16_t>(native_result);
   }
-}
-
-v8::Maybe<uint16_t> V8PersistentCallbackInterface<V8TestLegacyCallbackInterface>::acceptNode(ScriptWrappable* callback_this_value, Node* node) {
-  return Proxy()->acceptNode(
-      callback_this_value, node);
 }
 
 }  // namespace blink

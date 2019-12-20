@@ -11,10 +11,10 @@
 #include "chrome/browser/sync_file_system/local/sync_file_system_backend.h"
 #include "chrome/browser/sync_file_system/logger.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
-#include "storage/browser/fileapi/file_system_context.h"
-#include "storage/browser/fileapi/file_system_url.h"
-#include "storage/browser/fileapi/sandbox_file_system_backend_delegate.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/browser/file_system/file_system_context.h"
+#include "storage/browser/file_system/file_system_url.h"
+#include "storage/browser/file_system/sandbox_file_system_backend_delegate.h"
+#include "storage/common/file_system/file_system_util.h"
 
 namespace sync_file_system {
 
@@ -29,7 +29,8 @@ void ResetFileChangeTracker(storage::FileSystemContext* file_system_context,
       SyncFileSystemBackend::GetBackend(file_system_context);
   DCHECK(backend);
   DCHECK(backend->change_tracker());
-  backend->change_tracker()->ResetForFileSystem(url.origin(), url.type());
+  backend->change_tracker()->ResetForFileSystem(url.origin().GetURL(),
+                                                url.type());
 }
 
 }  // namespace
@@ -42,8 +43,7 @@ RootDeleteHelper::RootDeleteHelper(
     : file_system_context_(file_system_context),
       url_(url),
       callback_(callback),
-      sync_status_(sync_status),
-      weak_factory_(this) {
+      sync_status_(sync_status) {
   DCHECK(file_system_context_.get());
   DCHECK(url_.is_valid());
   DCHECK(!callback_.is_null());
@@ -61,7 +61,7 @@ void RootDeleteHelper::Run() {
             "%s", url_.DebugString().c_str());
 
   file_system_context_->DeleteFileSystem(
-      url_.origin(), url_.type(),
+      url_.origin().GetURL(), url_.type(),
       base::Bind(&RootDeleteHelper::DidDeleteFileSystem,
                  weak_factory_.GetWeakPtr()));
 }
@@ -90,8 +90,7 @@ void RootDeleteHelper::DidResetFileChangeTracker() {
 
   // Reopening the filesystem.
   file_system_context_->sandbox_delegate()->OpenFileSystem(
-      url_.origin(),
-      url_.type(),
+      url_.origin().GetURL(), url_.type(),
       storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
       base::Bind(&RootDeleteHelper::DidOpenFileSystem,
                  weak_factory_.GetWeakPtr()),

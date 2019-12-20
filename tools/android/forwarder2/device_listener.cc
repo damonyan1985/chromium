@@ -23,7 +23,7 @@ namespace forwarder2 {
 std::unique_ptr<DeviceListener> DeviceListener::Create(
     std::unique_ptr<Socket> host_socket,
     int listener_port,
-    const ErrorCallback& error_callback) {
+    ErrorCallback error_callback) {
   std::unique_ptr<Socket> listener_socket(new Socket());
   std::unique_ptr<DeviceListener> device_listener;
   if (!listener_socket->BindTcp("", listener_port)) {
@@ -36,9 +36,9 @@ std::unique_ptr<DeviceListener> DeviceListener::Create(
   // currently (non-zero) allocated port for this socket.
   listener_port = listener_socket->GetPort();
   SendCommand(command::BIND_SUCCESS, listener_port, host_socket.get());
-  device_listener.reset(new DeviceListener(std::move(listener_socket),
-                                           std::move(host_socket),
-                                           listener_port, error_callback));
+  device_listener.reset(
+      new DeviceListener(std::move(listener_socket), std::move(host_socket),
+                         listener_port, std::move(error_callback)));
   return device_listener;
 }
 
@@ -55,15 +55,15 @@ void DeviceListener::Start() {
 void DeviceListener::SetAdbDataSocket(std::unique_ptr<Socket> adb_data_socket) {
   thread_.task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&DeviceListener::OnAdbDataSocketReceivedOnInternalThread,
-                 base::Unretained(this), base::Passed(&adb_data_socket)));
+      base::BindOnce(&DeviceListener::OnAdbDataSocketReceivedOnInternalThread,
+                     base::Unretained(this), std::move(adb_data_socket)));
 }
 
 DeviceListener::DeviceListener(std::unique_ptr<Socket> listener_socket,
                                std::unique_ptr<Socket> host_socket,
                                int port,
-                               const ErrorCallback& error_callback)
-    : self_deleter_helper_(this, error_callback),
+                               ErrorCallback error_callback)
+    : self_deleter_helper_(this, std::move(error_callback)),
       listener_socket_(std::move(listener_socket)),
       host_socket_(std::move(host_socket)),
       listener_port_(port),
@@ -77,9 +77,8 @@ DeviceListener::DeviceListener(std::unique_ptr<Socket> listener_socket,
 
 void DeviceListener::AcceptNextClientSoon() {
   thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&DeviceListener::AcceptClientOnInternalThread,
-                 base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&DeviceListener::AcceptClientOnInternalThread,
+                                base::Unretained(this)));
 }
 
 void DeviceListener::AcceptClientOnInternalThread() {

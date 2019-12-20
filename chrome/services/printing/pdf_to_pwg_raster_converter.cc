@@ -68,6 +68,22 @@ base::ReadOnlySharedMemoryRegion RenderPdfPagesToPwgRaster(
                                   ? pwg_encoder::PwgHeaderInfo::SRGB
                                   : pwg_encoder::PwgHeaderInfo::SGRAY;
 
+    switch (bitmap_settings.duplex_mode) {
+      case DuplexMode::UNKNOWN_DUPLEX_MODE:
+        NOTREACHED();
+        break;
+      case DuplexMode::SIMPLEX:
+        // Already defaults to false/false.
+        break;
+      case DuplexMode::LONG_EDGE:
+        header_info.duplex = true;
+        break;
+      case DuplexMode::SHORT_EDGE:
+        header_info.duplex = true;
+        header_info.tumble = true;
+        break;
+    }
+
     // Transform odd pages.
     if (page_number % 2) {
       switch (bitmap_settings.odd_page_transform) {
@@ -110,9 +126,7 @@ base::ReadOnlySharedMemoryRegion RenderPdfPagesToPwgRaster(
 
 }  // namespace
 
-PdfToPwgRasterConverter::PdfToPwgRasterConverter(
-    std::unique_ptr<service_manager::ServiceContextRef> service_ref)
-    : service_ref_(std::move(service_ref)) {}
+PdfToPwgRasterConverter::PdfToPwgRasterConverter() = default;
 
 PdfToPwgRasterConverter::~PdfToPwgRasterConverter() {}
 

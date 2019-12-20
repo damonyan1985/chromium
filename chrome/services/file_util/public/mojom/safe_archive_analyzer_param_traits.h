@@ -3,16 +3,19 @@
 // found in the LICENSE file.
 
 // Multiply-included param traits file, so no include guard.
-
-#if !defined(FULL_SAFE_BROWSING)
-#error FULL_SAFE_BROWSING should be defined.
-#endif
+// Disabling the presubmit warning with:
+//   no-include-guard-because-multiply-included
 
 #include "build/build_config.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
 #include "chrome/common/safe_browsing/ipc_protobuf_message_macros.h"
+#include "components/safe_browsing/buildflags.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_message_protobuf_utils.h"
+
+#if !BUILDFLAG(FULL_SAFE_BROWSING)
+#error BUILDFLAG(FULL_SAFE_BROWSING) should be set.
+#endif
 
 IPC_ENUM_TRAITS_VALIDATE(
     safe_browsing::ClientDownloadRequest_DownloadType,
@@ -103,4 +106,6 @@ IPC_STRUCT_TRAITS_BEGIN(safe_browsing::ArchiveAnalyzerResults)
   IPC_STRUCT_TRAITS_MEMBER(signature_blob)
   IPC_STRUCT_TRAITS_MEMBER(detached_code_signatures)
 #endif  // OS_MACOSX
+  IPC_STRUCT_TRAITS_MEMBER(file_count)
+  IPC_STRUCT_TRAITS_MEMBER(directory_count)
 IPC_STRUCT_TRAITS_END()

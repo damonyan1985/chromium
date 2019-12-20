@@ -32,7 +32,7 @@ struct UserShare;
 class SyncBackendRegistrar : public SyncManager::ChangeDelegate {
  public:
   using ModelSafeWorkerFactory =
-      base::Callback<scoped_refptr<ModelSafeWorker>(ModelSafeGroup)>;
+      base::RepeatingCallback<scoped_refptr<ModelSafeWorker>(ModelSafeGroup)>;
 
   // |name| is used for debugging. Must be created on the UI thread.
   SyncBackendRegistrar(const std::string& name,
@@ -43,7 +43,7 @@ class SyncBackendRegistrar : public SyncManager::ChangeDelegate {
   // UI thread:
   //
   //   1) Call SyncBackendRegistrar::RequestWorkerStopOnUIThread().
-  //   2) Post a SyncBackendHostCore::DoShutdown() task to the sync thread. This
+  //   2) Post a SyncEngineBackend::DoShutdown() task to the sync thread. This
   //      task destroys SyncManager which holds a SyncBackendRegistrar pointer.
   //   3) Take ownership of the sync thread.
   //   4) Post a task to delete the SyncBackendRegistrar on the sync thread.

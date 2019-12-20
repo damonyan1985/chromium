@@ -72,10 +72,9 @@ void LayoutTableCol::StyleDidChange(StyleDifference diff,
 
 void LayoutTableCol::UpdateFromElement() {
   unsigned old_span = span_;
-  Node* n = GetNode();
-  if (IsHTMLTableColElement(n)) {
-    HTMLTableColElement& tc = ToHTMLTableColElement(*n);
-    span_ = tc.span();
+
+  if (auto* tc = DynamicTo<HTMLTableColElement>(GetNode())) {
+    span_ = tc->span();
   } else {
     span_ = 1;
   }
@@ -124,7 +123,7 @@ LayoutTable* LayoutTableCol::Table() const {
   LayoutObject* table = Parent();
   if (table && !table->IsTable())
     table = table->Parent();
-  return table && table->IsTable() ? ToLayoutTable(table) : nullptr;
+  return table && table->IsTable() ? To<LayoutTable>(table) : nullptr;
 }
 
 LayoutTableCol* LayoutTableCol::EnclosingColumnGroup() const {

@@ -160,6 +160,11 @@ class DISPLAY_EXPORT Display final {
   int RotationAsDegree() const;
   void SetRotationAsDegree(int rotation);
 
+  // Panel's native rotation. This is same as |rotation()| in normal case.
+  Rotation panel_rotation() const { return panel_rotation_; }
+  void set_panel_rotation(Rotation rotation) { panel_rotation_ = rotation; }
+  int PanelRotationAsDegree() const;
+
   TouchSupport touch_support() const { return touch_support_; }
   void set_touch_support(TouchSupport support) { touch_support_ = support; }
 
@@ -193,9 +198,7 @@ class DISPLAY_EXPORT Display final {
 
   // Returns the display's size in pixel coordinates.
   gfx::Size GetSizeInPixel() const;
-#if defined(OS_ANDROID)
   void set_size_in_pixels(const gfx::Size& size) { size_in_pixels_ = size; }
-#endif  // defined(OS_ANDROID)
 
   // Returns a string representation of the display;
   std::string ToString() const;
@@ -228,9 +231,23 @@ class DISPLAY_EXPORT Display final {
     color_space_ = color_space;
   }
 
-  // Set the color space of the display and reset the color depth and depth per
-  // component based on whether or not the color space is HDR.
-  void SetColorSpaceAndDepth(const gfx::ColorSpace& color_space);
+  // SDR white level used to scale HDR color spaces.
+  float sdr_white_level() const { return sdr_white_level_; }
+
+  // Set the color space and SDR white level of the display, and reset the color
+  // depth and depth per component based on whether the color space is HDR.
+  void SetColorSpaceAndDepth(
+      const gfx::ColorSpace& color_space,
+      float sdr_white_level = gfx::ColorSpace::kDefaultSDRWhiteLevel);
+
+  // Default values for color_depth and depth_per_component.
+  static constexpr int kDefaultBitsPerPixel = 24;
+  static constexpr int kDefaultBitsPerComponent = 8;
+
+  // The following values are abused by media query APIs to detect HDR
+  // capability.
+  static constexpr int kHDR10BitsPerPixel = 30;
+  static constexpr int kHDR10BitsPerComponent = 10;
 
   // The number of bits per pixel. Used by media query APIs.
   int color_depth() const { return color_depth_; }
@@ -245,10 +262,16 @@ class DISPLAY_EXPORT Display final {
     depth_per_component_ = depth_per_component;
   }
 
-  // True if this is a monochrome display (e.g, for accessiblity). Used by media
-  // query APIs.
+  // True if this is a monochrome display (e.g, for accessibility). Used by
+  // media query APIs.
   bool is_monochrome() const { return is_monochrome_; }
   void set_is_monochrome(bool is_monochrome) { is_monochrome_ = is_monochrome; }
+
+  // The display frequency of the monitor.
+  int display_frequency() const { return display_frequency_; }
+  void set_display_frequency(int display_frequency) {
+    display_frequency_ = display_frequency;
+  }
 
   bool operator==(const Display& rhs) const;
   bool operator!=(const Display& rhs) const { return !(*this == rhs); }
@@ -256,7 +279,10 @@ class DISPLAY_EXPORT Display final {
  private:
   friend struct mojo::StructTraits<mojom::DisplayDataView, Display>;
 
-  int64_t id_;
+  static constexpr int kSCRGBLinearBitsPerPixel = 48;
+  static constexpr int kSCRGBLinearBitsPerComponent = 16;
+
+  int64_t id_ = kInvalidDisplayId;
   gfx::Rect bounds_;
   // If non-empty, then should be same size as |bounds_|. Used to avoid rounding
   // errors.
@@ -264,15 +290,18 @@ class DISPLAY_EXPORT Display final {
   gfx::Rect work_area_;
   float device_scale_factor_;
   Rotation rotation_ = ROTATE_0;
+  Rotation panel_rotation_ = ROTATE_0;
   TouchSupport touch_support_ = TouchSupport::UNKNOWN;
   AccelerometerSupport accelerometer_support_ = AccelerometerSupport::UNKNOWN;
   gfx::Size maximum_cursor_size_;
   // NOTE: this is not currently written to the mojom as it is not used in
   // aura.
   gfx::ColorSpace color_space_;
+  float sdr_white_level_;
   int color_depth_;
   int depth_per_component_;
   bool is_monochrome_ = false;
+  int display_frequency_ = 0;
 };
 
 }  // namespace display

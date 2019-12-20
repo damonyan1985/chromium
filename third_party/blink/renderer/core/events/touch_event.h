@@ -27,8 +27,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_TOUCH_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_TOUCH_EVENT_H_
 
+#include "third_party/blink/public/common/input/web_touch_event.h"
 #include "third_party/blink/public/platform/web_coalesced_input_event.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/touch_event_init.h"
 #include "third_party/blink/renderer/core/events/ui_event_with_key_state.h"
@@ -91,8 +91,6 @@ class CORE_EXPORT TouchEvent final : public UIEventWithKeyState {
 
   void preventDefault() override;
 
-  void DoneDispatchingEventAtCurrentTarget() override;
-
   const WebCoalescedInputEvent* NativeEvent() const {
     return native_event_.get();
   }
@@ -107,8 +105,6 @@ class CORE_EXPORT TouchEvent final : public UIEventWithKeyState {
   Member<TouchList> touches_;
   Member<TouchList> target_touches_;
   Member<TouchList> changed_touches_;
-
-  bool default_prevented_before_current_target_;
 
   // The current effective touch action computed before each
   // touchstart event is generated. It is used for UMA histograms.

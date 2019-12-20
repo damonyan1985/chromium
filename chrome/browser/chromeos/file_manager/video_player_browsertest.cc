@@ -16,13 +16,6 @@ class VideoPlayerBrowserTestBase : public FileManagerBrowserTestBase {
   VideoPlayerBrowserTestBase() = default;
 
  protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(
-        chromeos::switches::kEnableVideoPlayerChromecastSupport);
-
-    FileManagerBrowserTestBase::SetUpCommandLine(command_line);
-  }
-
   GuestMode GetGuestMode() const override { return MODE; }
 
   const char* GetTestCaseName() const override {
@@ -65,13 +58,23 @@ IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenSingleVideoOnDrive) {
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, CheckInitialElements) {
-  set_test_case_name("checkInitialElements");
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenVideoWithSubtitle) {
+  set_test_case_name("openVideoWithSubtitle");
   StartTest();
 }
 
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, ClickControlButtons) {
-  set_test_case_name("clickControlButtons");
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenVideoWithoutSubtitle) {
+  set_test_case_name("openVideoWithoutSubtitle");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenMultipleVideosOnDownloads) {
+  set_test_case_name("openMultipleVideosOnDownloads");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, CheckInitialElements) {
+  set_test_case_name("checkInitialElements");
   StartTest();
 }
 

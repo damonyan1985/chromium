@@ -5,7 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_SSL_CAPTIVE_PORTAL_DETECTOR_TAB_HELPER_H_
 #define IOS_CHROME_BROWSER_SSL_CAPTIVE_PORTAL_DETECTOR_TAB_HELPER_H_
 
-#import "ios/web/public/web_state/web_state_user_data.h"
+#import "ios/web/public/web_state_user_data.h"
 
 @protocol CaptivePortalDetectorTabHelperDelegate;
 
@@ -43,6 +43,8 @@ class CaptivePortalDetectorTabHelper
   void DisplayCaptivePortalLoginPage(GURL landing_url);
 
  private:
+  friend class web::WebStateUserData<CaptivePortalDetectorTabHelper>;
+
   CaptivePortalDetectorTabHelper(
       web::WebState* web_state,
       id<CaptivePortalDetectorTabHelperDelegate> delegate,
@@ -53,6 +55,8 @@ class CaptivePortalDetectorTabHelper
   __weak id<CaptivePortalDetectorTabHelperDelegate> delegate_;
   // The underlying CaptivePortalDetector.
   std::unique_ptr<captive_portal::CaptivePortalDetector> detector_;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(CaptivePortalDetectorTabHelper);
 };

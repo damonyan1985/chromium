@@ -14,7 +14,6 @@
 #include "components/navigation_interception/intercept_navigation_throttle.h"
 #include "components/navigation_interception/navigation_params.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/guest_mode.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
@@ -38,8 +37,8 @@ bool LaunchAppWithUrl(const scoped_refptr<const Extension> app,
 
   // Redirect top-level navigations only. This excludes iframes and webviews
   // in particular.
-  if (content::GuestMode::IsCrossProcessFrameGuest(source)) {
-    DVLOG(1) << "Cancel redirection: source is a inner WebContents";
+  if (source->IsInnerWebContentsForGuest()) {
+    DVLOG(1) << "Cancel redirection: source is a guest inner WebContents";
     return false;
   }
 
@@ -89,12 +88,12 @@ PlatformAppNavigationRedirector::MaybeCreateThrottleFor(
     return nullptr;
   }
 
-  // Never redirect URLs to apps in incognito. Technically, apps are not
-  // supported in incognito, but that may change in future.
+  // Redirect URLs to apps only in regular mode. Technically, apps are not
+  // supported in incognito and guest modes, but that may change in future.
   // See crbug.com/240879, which tracks incognito support for v2 apps.
   Profile* profile = Profile::FromBrowserContext(browser_context);
-  if (profile->GetProfileType() == Profile::INCOGNITO_PROFILE) {
-    DVLOG(1) << "Skip redirection: unsupported in incognito";
+  if (!profile->IsRegularProfile()) {
+    DVLOG(1) << "Skip redirection: unsupported in incognito and guest modes";
     return nullptr;
   }
 
@@ -115,7 +114,8 @@ PlatformAppNavigationRedirector::MaybeCreateThrottleFor(
                << "):" << handler->id;
       return std::make_unique<
           navigation_interception::InterceptNavigationThrottle>(
-          handle, base::Bind(&LaunchAppWithUrl, extension_ref, handler->id));
+          handle, base::Bind(&LaunchAppWithUrl, extension_ref, handler->id),
+          navigation_interception::SynchronyMode::kSync);
     }
   }
 

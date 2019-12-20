@@ -11,7 +11,6 @@
 #include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/ui/commands/show_signin_command.h"
 #include "ios/chrome/browser/ui/settings/sync/utils/sync_error_infobar_delegate.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
@@ -32,6 +31,8 @@ enum ErrorState {
   SYNC_SERVICE_UNAVAILABLE,
   SYNC_NEEDS_PASSPHRASE,
   SYNC_UNRECOVERABLE_ERROR,
+  SYNC_SYNC_SETTINGS_NOT_CONFIRMED,
+  SYNC_NEEDS_TRUSTED_VAULT_KEY,
   SYNC_ERROR_COUNT
 };
 
@@ -49,6 +50,15 @@ NSString* GetSyncErrorDescriptionForSyncSetupService(
       return l10n_util::GetNSString(IDS_IOS_SYNC_LOGIN_INFO_OUT_OF_DATE);
     case SyncSetupService::kSyncServiceNeedsPassphrase:
       return l10n_util::GetNSString(IDS_IOS_SYNC_ENCRYPTION_DESCRIPTION);
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
+      if (syncSetupService->IsEncryptEverythingEnabled())
+        return l10n_util::GetNSString(IDS_IOS_SYNC_ERROR_DESCRIPTION);
+      // The encryption error affects passwords only as per
+      // syncer::AlwaysEncryptedUserTypes().
+      return l10n_util::GetNSString(IDS_IOS_SYNC_PASSWORDS_ERROR_DESCRIPTION);
+    case SyncSetupService::kSyncSettingsNotConfirmed:
+      return l10n_util::GetNSString(
+          IDS_IOS_SYNC_SETTINGS_NOT_CONFIRMED_DESCRIPTION);
     case SyncSetupService::kSyncServiceServiceUnavailable:
     case SyncSetupService::kSyncServiceCouldNotConnect:
     case SyncSetupService::kSyncServiceUnrecoverableError:
@@ -70,12 +80,16 @@ NSString* GetSyncErrorMessageForBrowserState(
       return l10n_util::GetNSString(IDS_IOS_SYNC_ERROR_INFO_OUT_OF_DATE);
     case SyncSetupService::kSyncServiceNeedsPassphrase:
       return l10n_util::GetNSString(IDS_IOS_SYNC_CONFIGURE_ENCRYPTION);
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
+      return GetSyncErrorDescriptionForSyncSetupService(syncSetupService);
     case SyncSetupService::kSyncServiceServiceUnavailable:
       return l10n_util::GetNSString(IDS_SYNC_SERVICE_UNAVAILABLE);
     case SyncSetupService::kSyncServiceCouldNotConnect:
       return l10n_util::GetNSString(IDS_IOS_SYNC_ERROR_COULD_NOT_CONNECT);
     case SyncSetupService::kSyncServiceUnrecoverableError:
       return l10n_util::GetNSString(IDS_IOS_SYNC_ERROR_UNRECOVERABLE);
+    case SyncSetupService::kSyncSettingsNotConfirmed:
+      return l10n_util::GetNSString(IDS_IOS_SYNC_SETTINGS_NOT_CONFIRMED);
   }
 }
 
@@ -91,9 +105,15 @@ NSString* GetSyncErrorButtonTitleForBrowserState(
       return l10n_util::GetNSString(IDS_IOS_SYNC_UPDATE_CREDENTIALS);
     case SyncSetupService::kSyncServiceNeedsPassphrase:
       return l10n_util::GetNSString(IDS_IOS_SYNC_ENTER_PASSPHRASE);
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
+      return l10n_util::GetNSString(IDS_IOS_SYNC_ENCRYPTION_FIX_NOW);
     case SyncSetupService::kSyncServiceUnrecoverableError:
       return l10n_util::GetNSString(IDS_IOS_SYNC_SIGN_IN_AGAIN);
-    default:
+    case SyncSetupService::kSyncSettingsNotConfirmed:
+      return l10n_util::GetNSString(IDS_IOS_SYNC_SETTINGS_NOT_CONFIRMED_ACTION);
+    case SyncSetupService::kNoSyncServiceError:
+    case SyncSetupService::kSyncServiceServiceUnavailable:
+    case SyncSetupService::kSyncServiceCouldNotConnect:
       return nil;
   }
 }
@@ -121,14 +141,17 @@ bool ShouldShowSyncSettings(SyncSetupService::SyncServiceState syncState) {
     case SyncSetupService::kSyncServiceServiceUnavailable:
     case SyncSetupService::kSyncServiceUnrecoverableError:
     case SyncSetupService::kNoSyncServiceError:
+    case SyncSetupService::kSyncSettingsNotConfirmed:
       return true;
-    default:
+    case SyncSetupService::kSyncServiceSignInNeedsUpdate:
+    case SyncSetupService::kSyncServiceNeedsPassphrase:
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
       return false;
   }
 }
 
 bool DisplaySyncErrors(ios::ChromeBrowserState* browser_state,
-                       Tab* tab,
+                       web::WebState* web_state,
                        id<SyncPresenter> presenter) {
   // Avoid displaying sync errors on incognito tabs.
   if (browser_state->IsOffTheRecord())
@@ -138,6 +161,14 @@ bool DisplaySyncErrors(ios::ChromeBrowserState* browser_state,
       SyncSetupServiceFactory::GetForBrowserState(browser_state);
   if (!syncSetupService)
     return false;
+
+  // Avoid showing the sync error inforbar when sync changes are still pending.
+  // This is particularely requires during first run when the advanced sign-in
+  // settings are being presented on the NTP before sync changes being
+  // committed.
+  if (syncSetupService->HasUncommittedChanges())
+    return false;
+
   SyncSetupService::SyncServiceState errorState =
       syncSetupService->GetSyncServiceState();
   if (IsTransientSyncError(errorState))
@@ -157,16 +188,22 @@ bool DisplaySyncErrors(ios::ChromeBrowserState* browser_state,
     case SyncSetupService::kSyncServiceNeedsPassphrase:
       loggedErrorState = SYNC_NEEDS_PASSPHRASE;
       break;
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
+      loggedErrorState = SYNC_NEEDS_TRUSTED_VAULT_KEY;
+      break;
     case SyncSetupService::kSyncServiceUnrecoverableError:
       loggedErrorState = SYNC_UNRECOVERABLE_ERROR;
+      break;
+    case SyncSetupService::kSyncSettingsNotConfirmed:
+      loggedErrorState = SYNC_SYNC_SETTINGS_NOT_CONFIRMED;
       break;
   }
   UMA_HISTOGRAM_ENUMERATION("Sync.SyncErrorInfobarDisplayed", loggedErrorState,
                             SYNC_ERROR_COUNT);
 
-  DCHECK(tab.webState);
+  DCHECK(web_state);
   infobars::InfoBarManager* infoBarManager =
-      InfoBarManagerImpl::FromWebState(tab.webState);
+      InfoBarManagerImpl::FromWebState(web_state);
   DCHECK(infoBarManager);
   return SyncErrorInfoBarDelegate::Create(infoBarManager, browser_state,
                                           presenter);
@@ -180,7 +217,9 @@ bool IsTransientSyncError(SyncSetupService::SyncServiceState errorState) {
       return true;
     case SyncSetupService::kSyncServiceSignInNeedsUpdate:
     case SyncSetupService::kSyncServiceNeedsPassphrase:
+    case SyncSetupService::kSyncServiceNeedsTrustedVaultKey:
     case SyncSetupService::kSyncServiceUnrecoverableError:
+    case SyncSetupService::kSyncSettingsNotConfirmed:
       return false;
   }
 }

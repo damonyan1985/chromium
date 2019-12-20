@@ -24,7 +24,7 @@
 #include "build/build_config.h"
 #include "content/browser/bad_message.h"
 #include "content/common/frame_messages.h"
-#include "content/public/browser/resource_dispatcher_host_delegate.h"
+#include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -231,18 +231,112 @@ class ShowWidgetMessageFilter : public content::BrowserMessageFilter {
   DISALLOW_COPY_AND_ASSIGN(ShowWidgetMessageFilter);
 };
 
-// A BrowserMessageFilter that drops SwapOut ACK messages.
-class SwapoutACKMessageFilter : public BrowserMessageFilter {
+// A BrowserMessageFilter that drops a blacklisted message.
+class DropMessageFilter : public BrowserMessageFilter {
  public:
-  SwapoutACKMessageFilter();
+  DropMessageFilter(uint32_t message_class, uint32_t drop_message_id);
 
  protected:
-  ~SwapoutACKMessageFilter() override;
+  ~DropMessageFilter() override;
 
  private:
   // BrowserMessageFilter:
   bool OnMessageReceived(const IPC::Message& message) override;
-  DISALLOW_COPY_AND_ASSIGN(SwapoutACKMessageFilter);
+
+  const uint32_t drop_message_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(DropMessageFilter);
+};
+
+// A BrowserMessageFilter that observes a message without handling it, and
+// reports when it was seen.
+class ObserveMessageFilter : public BrowserMessageFilter {
+ public:
+  ObserveMessageFilter(uint32_t message_class, uint32_t watch_message_id);
+
+  bool has_received_message() { return received_; }
+
+  // Spins a RunLoop until the message is observed.
+  void Wait();
+
+ protected:
+  ~ObserveMessageFilter() override;
+
+  // BrowserMessageFilter:
+  bool OnMessageReceived(const IPC::Message& message) override;
+
+ private:
+  void QuitWait();
+
+  const uint32_t watch_message_id_;
+  bool received_ = false;
+  base::OnceClosure quit_closure_;
+
+  DISALLOW_COPY_AND_ASSIGN(ObserveMessageFilter);
+};
+
+// This observer waits until WebContentsObserver::OnRendererUnresponsive
+// notification.
+class UnresponsiveRendererObserver : public WebContentsObserver {
+ public:
+  explicit UnresponsiveRendererObserver(WebContents* web_contents);
+  ~UnresponsiveRendererObserver() override;
+
+  RenderProcessHost* Wait(base::TimeDelta timeout = base::TimeDelta::Max());
+
+ private:
+  // WebContentsObserver:
+  void OnRendererUnresponsive(RenderProcessHost* render_process_host) override;
+
+  RenderProcessHost* captured_render_process_host_ = nullptr;
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(UnresponsiveRendererObserver);
+};
+
+// Helper class that overrides the JavaScriptDialogManager of a WebContents
+// to endlessly block on beforeunload.
+class BeforeUnloadBlockingDelegate : public JavaScriptDialogManager,
+                                     public WebContentsDelegate {
+ public:
+  explicit BeforeUnloadBlockingDelegate(WebContentsImpl* web_contents);
+  ~BeforeUnloadBlockingDelegate() override;
+  void Wait();
+
+  // WebContentsDelegate
+
+  JavaScriptDialogManager* GetJavaScriptDialogManager(
+      WebContents* source) override;
+
+  // JavaScriptDialogManager
+
+  void RunJavaScriptDialog(WebContents* web_contents,
+                           RenderFrameHost* render_frame_host,
+                           JavaScriptDialogType dialog_type,
+                           const base::string16& message_text,
+                           const base::string16& default_prompt_text,
+                           DialogClosedCallback callback,
+                           bool* did_suppress_message) override;
+
+  void RunBeforeUnloadDialog(WebContents* web_contents,
+                             RenderFrameHost* render_frame_host,
+                             bool is_reload,
+                             DialogClosedCallback callback) override;
+
+  bool HandleJavaScriptDialog(WebContents* web_contents,
+                              bool accept,
+                              const base::string16* prompt_override) override;
+
+  void CancelDialogs(WebContents* web_contents, bool reset_state) override {}
+
+ private:
+  WebContentsImpl* web_contents_;
+
+  DialogClosedCallback callback_;
+
+  std::unique_ptr<base::RunLoop> run_loop_ = std::make_unique<base::RunLoop>();
+
+  DISALLOW_COPY_AND_ASSIGN(BeforeUnloadBlockingDelegate);
 };
 
 }  // namespace content

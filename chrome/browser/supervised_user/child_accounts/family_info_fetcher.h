@@ -12,16 +12,17 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "services/identity/public/cpp/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 namespace base {
 class DictionaryValue;
 class ListValue;
 }
 
-namespace identity {
-class AccessTokenFetcher;
-}
+namespace signin {
+struct AccessTokenInfo;
+class PrimaryAccountAccessTokenFetcher;
+}  // namespace signin
 
 namespace network {
 class SimpleURLLoader;
@@ -31,7 +32,7 @@ class SharedURLLoaderFactory;
 // Fetches information about the family of the signed-in user. It can get
 // information about the family itself (e.g. a name), as well as a list of
 // family members and their properties.
-class FamilyInfoFetcher : public identity::IdentityManager::Observer {
+class FamilyInfoFetcher {
  public:
   enum ErrorCode {
     TOKEN_ERROR,    // Failed to get OAuth2 token.
@@ -84,9 +85,9 @@ class FamilyInfoFetcher : public identity::IdentityManager::Observer {
   // methods below. |consumer| must outlive us.
   FamilyInfoFetcher(
       Consumer* consumer,
-      identity::IdentityManager* identity_manager,
+      signin::IdentityManager* identity_manager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
-  ~FamilyInfoFetcher() override;
+  ~FamilyInfoFetcher();
 
   // Public so tests can use them.
   static std::string RoleToString(FamilyMemberRole role);
@@ -103,15 +104,8 @@ class FamilyInfoFetcher : public identity::IdentityManager::Observer {
                                       const std::string& response_body);
 
  private:
-  // IdentityManager::Observer implementation:
-  void OnRefreshTokenUpdatedForAccount(
-      const AccountInfo& account_info) override;
-  void OnRefreshTokensLoaded() override;
-
-  void OnAccessTokenFetchCompleteForAccount(
-      std::string account_id,
-      GoogleServiceAuthError error,
-      identity::AccessTokenInfo access_token_info);
+  void OnAccessTokenFetchComplete(GoogleServiceAuthError error,
+                                  signin::AccessTokenInfo access_token_info);
 
   void OnSimpleLoaderComplete(std::unique_ptr<std::string> response_body);
 
@@ -128,12 +122,13 @@ class FamilyInfoFetcher : public identity::IdentityManager::Observer {
   void FamilyMembersFetched(const std::string& response);
 
   Consumer* consumer_;
-  const std::string primary_account_id_;
-  identity::IdentityManager* identity_manager_;
+  const CoreAccountId primary_account_id_;
+  signin::IdentityManager* identity_manager_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   std::string request_path_;
-  std::unique_ptr<identity::AccessTokenFetcher> access_token_fetcher_;
+  std::unique_ptr<signin::PrimaryAccountAccessTokenFetcher>
+      access_token_fetcher_;
   std::string access_token_;
   bool access_token_expired_;
   std::unique_ptr<network::SimpleURLLoader> simple_url_loader_;

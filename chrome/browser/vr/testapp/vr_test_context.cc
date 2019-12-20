@@ -525,7 +525,6 @@ void VrTestContext::ToggleSplashScreen() {
     webvr_frames_received_ = false;
     UiInitialState state;
     state.in_web_vr = true;
-    state.web_vr_autopresentation_expected = true;
     ui_instance_->ReinitializeForTest(state);
   } else {
     ui_instance_->ReinitializeForTest(UiInitialState());
@@ -570,7 +569,7 @@ void VrTestContext::ExitFullscreen() {
 }
 
 void VrTestContext::Navigate(GURL gurl, NavigationMethod method) {
-  LocationBarState state(gurl, security_state::SecurityLevel::HTTP_SHOW_WARNING,
+  LocationBarState state(gurl, security_state::SecurityLevel::WARNING,
                          &omnibox::kHttpIcon, true, false);
   ui_->GetBrowserUiWeakPtr()->SetLocationBarState(state);
   page_load_start_ = base::TimeTicks::Now();
@@ -637,7 +636,7 @@ void VrTestContext::OnExitVrPromptResult(vr::ExitVrPromptChoice choice,
 void VrTestContext::OnContentScreenBoundsChanged(const gfx::SizeF& bounds) {}
 
 void VrTestContext::StartAutocomplete(const AutocompleteRequest& request) {
-  auto result = std::make_unique<OmniboxSuggestions>();
+  std::vector<OmniboxSuggestion> result;
   auto browser_ui = ui_->GetBrowserUiWeakPtr();
 
   if (request.text.empty()) {
@@ -649,40 +648,39 @@ void VrTestContext::StartAutocomplete(const AutocompleteRequest& request) {
   base::string16 full_string = base::UTF8ToUTF16("wikipedia.org");
   if (!request.prevent_inline_autocomplete && request.text.size() >= 2 &&
       full_string.find(request.text) == 0) {
-    result->suggestions.emplace_back(OmniboxSuggestion(
-        full_string, base::string16(), ACMatchClassifications(),
-        ACMatchClassifications(), &vector_icons::kSearchIcon, GURL(),
-        request.text, full_string.substr(request.text.size())));
+    result.emplace_back(full_string, base::string16(), ACMatchClassifications(),
+                        ACMatchClassifications(), &vector_icons::kSearchIcon,
+                        GURL(), request.text,
+                        full_string.substr(request.text.size()));
   }
 
   // Supply a verbatim search match.
-  result->suggestions.emplace_back(OmniboxSuggestion(
-      request.text, base::string16(), ACMatchClassifications(),
-      ACMatchClassifications(), &vector_icons::kSearchIcon, GURL(),
-      base::string16(), base::string16()));
+  result.emplace_back(request.text, base::string16(), ACMatchClassifications(),
+                      ACMatchClassifications(), &vector_icons::kSearchIcon,
+                      GURL(), base::string16(), base::string16());
 
   // Add a suggestion to exercise classification text styling.
-  result->suggestions.emplace_back(OmniboxSuggestion(
+  result.emplace_back(
       base::UTF8ToUTF16("Suggestion with classification"),
       base::UTF8ToUTF16("none url match dim"), ACMatchClassifications(),
-      {
+      ACMatchClassifications{
           ACMatchClassification(0, ACMatchClassification::NONE),
           ACMatchClassification(5, ACMatchClassification::URL),
           ACMatchClassification(9, ACMatchClassification::MATCH),
           ACMatchClassification(15, ACMatchClassification::DIM),
       },
       &vector_icons::kSearchIcon, GURL("http://www.test.com/"),
-      base::string16(), base::string16()));
+      base::string16(), base::string16());
 
-  while (result->suggestions.size() < 4) {
-    result->suggestions.emplace_back(OmniboxSuggestion(
+  while (result.size() < 4) {
+    result.emplace_back(
         base::UTF8ToUTF16("Suggestion"),
         base::UTF8ToUTF16(
             "Very lengthy description of the suggestion that would wrap "
             "if not truncated through some other means."),
         ACMatchClassifications(), ACMatchClassifications(),
         &vector_icons::kSearchIcon, GURL("http://www.test.com/"),
-        base::string16(), base::string16()));
+        base::string16(), base::string16());
   }
 
   browser_ui->SetOmniboxSuggestions(std::move(result));
@@ -690,7 +688,7 @@ void VrTestContext::StartAutocomplete(const AutocompleteRequest& request) {
 
 void VrTestContext::StopAutocomplete() {
   ui_->GetBrowserUiWeakPtr()->SetOmniboxSuggestions(
-      std::make_unique<OmniboxSuggestions>());
+      std::vector<OmniboxSuggestion>{});
 }
 
 void VrTestContext::ShowPageInfo() {
@@ -716,57 +714,54 @@ void VrTestContext::CycleIndicators() {
 
 void VrTestContext::CycleOrigin() {
   const std::vector<LocationBarState> states = {
-      {GURL("http://domain.com"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+      {GURL("http://domain.com"), security_state::SecurityLevel::WARNING,
+       &omnibox::kHttpIcon, true, false},
       {GURL("https://www.domain.com/path/segment/directory/file.html"),
        security_state::SecurityLevel::SECURE, &omnibox::kHttpsValidIcon, true,
        false},
       {GURL("https://www.domain.com/path/segment/directory/file.html"),
-       security_state::SecurityLevel::DANGEROUS, &omnibox::kHttpsInvalidIcon,
-       true, false},
+       security_state::SecurityLevel::DANGEROUS,
+       &omnibox::kNotSecureWarningIcon, true, false},
       // Do not show URL
-      {GURL(), security_state::SecurityLevel::HTTP_SHOW_WARNING,
-       &omnibox::kHttpIcon, false, false},
+      {GURL(), security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon,
+       false, false},
       {GURL(), security_state::SecurityLevel::SECURE, &omnibox::kHttpsValidIcon,
        true, false},
       {GURL("file://very-very-very-long-file-hostname/path/path/path/path"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("file:///path/path/path/path/path/path/path/path/path"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       // Elision-related cases.
       {GURL("http://domaaaaaaaaaaain.com"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://domaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaain.com"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
-      {GURL("http://domain.com/a/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
+      {GURL("http://domain.com/a/"), security_state::SecurityLevel::WARNING,
+       &omnibox::kHttpIcon, true, false},
       {GURL("http://domain.com/aaaaaaa/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://domain.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://domaaaaaaaaaaaaaaaaain.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://domaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaain.com/aaaaaaaaaa/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://www.domain.com/path/segment/directory/file.html"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
       {GURL("http://subdomain.domain.com/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
-      {GURL("http://中央大学.ಠ_ಠ.tw/"),
-       security_state::SecurityLevel::HTTP_SHOW_WARNING, &omnibox::kHttpIcon,
-       true, false},
+       security_state::SecurityLevel::WARNING, &omnibox::kHttpIcon, true,
+       false},
+      {GURL("http://中央大学.ಠ_ಠ.tw/"), security_state::SecurityLevel::WARNING,
+       &omnibox::kHttpIcon, true, false},
   };
 
   static int state = 0;

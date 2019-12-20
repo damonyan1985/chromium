@@ -15,8 +15,11 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -46,16 +49,13 @@ public class ScreenshotMonitorTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         mTestScreenshotMonitorDelegate = new TestScreenshotMonitorDelegate();
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mTestScreenshotMonitor = new ScreenshotMonitor(mTestScreenshotMonitorDelegate);
-                mContentObserver = mTestScreenshotMonitor.getContentObserver();
-                mTestScreenshotMonitor.setSkipOsCallsForUnitTesting();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mTestScreenshotMonitor = new ScreenshotMonitor(mTestScreenshotMonitorDelegate);
+            mContentObserver = mTestScreenshotMonitor.getContentObserver();
+            mTestScreenshotMonitor.setSkipOsCallsForUnitTesting();
         });
     }
 
@@ -66,7 +66,7 @@ public class ScreenshotMonitorTest {
     @Test
     @SmallTest
     @Feature({"FeatureEngagement", "Screenshot"})
-    public void testDelegateCalledOnEvent() throws Throwable {
+    public void testDelegateCalledOnEvent() {
         startMonitoringOnUiThreadBlocking();
         Assert.assertEquals(0, mTestScreenshotMonitorDelegate.screenshotShowUiCount.get());
 
@@ -82,7 +82,7 @@ public class ScreenshotMonitorTest {
     @Test
     @SmallTest
     @Feature({"FeatureEngagement", "Screenshot"})
-    public void testRestartShouldTriggerDelegate() throws Throwable {
+    public void testRestartShouldTriggerDelegate() {
         startMonitoringOnUiThreadBlocking();
         Assert.assertEquals(0, mTestScreenshotMonitorDelegate.screenshotShowUiCount.get());
 
@@ -105,7 +105,7 @@ public class ScreenshotMonitorTest {
     @Test
     @SmallTest
     @Feature({"FeatureEngagement", "Screenshot"})
-    public void testStopMonitoringShouldNotTriggerDelegate() throws Throwable {
+    public void testStopMonitoringShouldNotTriggerDelegate() {
         startMonitoringOnUiThreadBlocking();
         Assert.assertEquals(0, mTestScreenshotMonitorDelegate.screenshotShowUiCount.get());
 
@@ -121,7 +121,7 @@ public class ScreenshotMonitorTest {
     @Test
     @SmallTest
     @Feature({"FeatureEngagement", "Screenshot"})
-    public void testNoMonitoringShouldNotTriggerDelegate() throws Throwable {
+    public void testNoMonitoringShouldNotTriggerDelegate() {
         Assert.assertEquals(0, mTestScreenshotMonitorDelegate.screenshotShowUiCount.get());
 
         mContentObserver.onChange(true, TEST_URI);
@@ -132,7 +132,7 @@ public class ScreenshotMonitorTest {
     private void startMonitoringOnUiThreadBlocking() {
         final Semaphore semaphore = new Semaphore(0);
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 mTestScreenshotMonitor.startMonitoring();
@@ -150,7 +150,7 @@ public class ScreenshotMonitorTest {
     private void stopMonitoringOnUiThreadBlocking() {
         final Semaphore semaphore = new Semaphore(0);
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 mTestScreenshotMonitor.stopMonitoring();
@@ -169,7 +169,7 @@ public class ScreenshotMonitorTest {
     private void assertScreenshotShowUiCountOnUiThreadBlocking(int expectedCount) {
         final Semaphore semaphore = new Semaphore(0);
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 semaphore.release();

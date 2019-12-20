@@ -74,9 +74,7 @@ class POLICY_EXPORT CloudPolicyRefreshScheduler
 
   // Whether the invalidations service is available and receiving notifications
   // of policy updates.
-  bool invalidations_available() {
-    return invalidations_available_;
-  }
+  bool invalidations_available() const { return invalidations_available_; }
 
   // CloudPolicyClient::Observer:
   void OnPolicyFetched(CloudPolicyClient* client) override;
@@ -163,7 +161,7 @@ class POLICY_EXPORT CloudPolicyRefreshScheduler
   // its initial status.
   base::Time creation_time_;
 
-  base::WeakPtrFactory<CloudPolicyRefreshScheduler> weak_factory_;
+  base::WeakPtrFactory<CloudPolicyRefreshScheduler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyRefreshScheduler);
 };

@@ -32,13 +32,12 @@ class MediaCustomControlsFullscreenDetectorTest
 
  protected:
   void SetUp() override {
-
-    page_holder_ = DummyPageHolder::Create();
-    new_page_holder_ = DummyPageHolder::Create();
+    page_holder_ = std::make_unique<DummyPageHolder>();
+    new_page_holder_ = std::make_unique<DummyPageHolder>();
   }
 
   HTMLVideoElement* VideoElement() const {
-    return ToHTMLVideoElement(GetDocument().QuerySelector("video"));
+    return To<HTMLVideoElement>(GetDocument().QuerySelector("video"));
   }
 
   static MediaCustomControlsFullscreenDetector* FullscreenDetectorFor(
@@ -112,8 +111,8 @@ TEST_F(MediaCustomControlsFullscreenDetectorTest, computeIsDominantVideo) {
 
 TEST_F(MediaCustomControlsFullscreenDetectorTest,
        hasNoListenersBeforeAddingToDocument) {
-  auto* video =
-      ToHTMLVideoElement(GetDocument().CreateRawElement(html_names::kVideoTag));
+  auto* video = To<HTMLVideoElement>(
+      GetDocument().CreateRawElement(html_names::kVideoTag));
 
   EXPECT_FALSE(CheckEventListenerRegistered(GetDocument(),
                                             event_type_names::kFullscreenchange,
@@ -127,8 +126,8 @@ TEST_F(MediaCustomControlsFullscreenDetectorTest,
 
 TEST_F(MediaCustomControlsFullscreenDetectorTest,
        hasListenersAfterAddToDocumentByScript) {
-  auto* video =
-      ToHTMLVideoElement(GetDocument().CreateRawElement(html_names::kVideoTag));
+  auto* video = To<HTMLVideoElement>(
+      GetDocument().CreateRawElement(html_names::kVideoTag));
   GetDocument().body()->AppendChild(video);
 
   EXPECT_TRUE(CheckEventListenerRegistered(GetDocument(),
@@ -159,8 +158,8 @@ TEST_F(MediaCustomControlsFullscreenDetectorTest,
 
 TEST_F(MediaCustomControlsFullscreenDetectorTest,
        hasListenersAfterDocumentMove) {
-  auto* video =
-      ToHTMLVideoElement(GetDocument().CreateRawElement(html_names::kVideoTag));
+  auto* video = To<HTMLVideoElement>(
+      GetDocument().CreateRawElement(html_names::kVideoTag));
   GetDocument().body()->AppendChild(video);
 
   NewDocument().body()->AppendChild(VideoElement());

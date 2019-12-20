@@ -5,13 +5,10 @@
 package org.chromium.chrome.browser.partnercustomizations;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
-import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Build;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
-import android.support.v7.widget.SwitchCompat;
+import android.support.v7.preference.PreferenceFragmentCompat;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -22,8 +19,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
@@ -31,9 +26,10 @@ import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.preferences.HomepageEditor;
-import org.chromium.chrome.browser.preferences.HomepagePreferences;
-import org.chromium.chrome.browser.preferences.Preferences;
+import org.chromium.chrome.browser.settings.ChromeSwitchPreference;
+import org.chromium.chrome.browser.settings.SettingsActivity;
+import org.chromium.chrome.browser.settings.homepage.HomepageEditor;
+import org.chromium.chrome.browser.settings.homepage.HomepageSettings;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabList;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -42,11 +38,11 @@ import org.chromium.chrome.test.partnercustomizations.TestPartnerBrowserCustomiz
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.content_public.browser.test.util.Criteria;
 import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.browser.test.util.TouchCommon;
 import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
-import java.util.concurrent.Callable;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -62,17 +58,7 @@ public class PartnerHomepageIntegrationTest {
     private static final String TEST_PAGE = "/chrome/test/data/android/about.html";
 
     @Before
-    public void setUp() throws InterruptedException {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable(){
-            @Override
-            public void run() {
-                // TODO(newt): Remove this once SharedPreferences is cleared automatically at the
-                // beginning of every test. http://crbug.com/441859
-                SharedPreferences sp = ContextUtils.getAppSharedPreferences();
-                sp.edit().clear().apply();
-            }
-        });
-
+    public void setUp() {
         mActivityTestRule.startMainActivityFromLauncher();
     }
 
@@ -129,63 +115,26 @@ public class PartnerHomepageIntegrationTest {
     @Test
     @MediumTest
     @Feature({"Homepage"})
-    @RetryOnFailure
     public void testHomepageButtonEnableDisable() {
         // Disable homepage.
-        Preferences homepagePreferenceActivity =
-                mActivityTestRule.startPreferences(HomepagePreferences.class.getName());
-        SwitchCompat homepageSwitch =
-                (SwitchCompat) homepagePreferenceActivity.findViewById(R.id.switch_widget);
-        Assert.assertNotNull(homepageSwitch);
-        TouchCommon.singleClickView(homepageSwitch);
-        waitForCheckedState(homepagePreferenceActivity, false);
-        homepagePreferenceActivity.finish();
+        toggleHomepageSwitchPreference(false);
 
         // Assert no homepage button.
         Assert.assertFalse(HomepageManager.isHomepageEnabled());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Assert.assertEquals("Homepage button is shown", View.GONE,
-                        mActivityTestRule.getActivity()
-                                .findViewById(R.id.home_button)
-                                .getVisibility());
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals("Homepage button is shown", View.GONE,
+                    mActivityTestRule.getActivity().findViewById(R.id.home_button).getVisibility());
         });
 
         // Enable homepage.
-        homepagePreferenceActivity =
-                mActivityTestRule.startPreferences(HomepagePreferences.class.getName());
-        homepageSwitch = (SwitchCompat) homepagePreferenceActivity.findViewById(R.id.switch_widget);
-        Assert.assertNotNull(homepageSwitch);
-        TouchCommon.singleClickView(homepageSwitch);
-        waitForCheckedState(homepagePreferenceActivity, true);
-        homepagePreferenceActivity.finish();
+        toggleHomepageSwitchPreference(true);
 
         // Assert homepage button.
         Assert.assertTrue(HomepageManager.isHomepageEnabled());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Assert.assertEquals("Homepage button is shown", View.VISIBLE,
-                        mActivityTestRule.getActivity()
-                                .findViewById(R.id.home_button)
-                                .getVisibility());
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Assert.assertEquals("Homepage button is shown", View.VISIBLE,
+                    mActivityTestRule.getActivity().findViewById(R.id.home_button).getVisibility());
         });
-    }
-
-    private void waitForCheckedState(final Preferences preferenceActivity, boolean isChecked) {
-        CriteriaHelper.pollUiThread(Criteria.equals(isChecked, new Callable<Boolean>() {
-            @Override
-            public Boolean call() {
-                // The underlying switch view in the preference can change, so we need to fetch
-                // it each time to ensure we are checking the activity view.
-                SwitchCompat homepageSwitch =
-                        (SwitchCompat) preferenceActivity.findViewById(R.id.switch_widget);
-                return homepageSwitch.isChecked();
-            }
-        }));
     }
 
     /**
@@ -195,13 +144,12 @@ public class PartnerHomepageIntegrationTest {
     @Test
     @MediumTest
     @Feature({"Homepage"})
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     @RetryOnFailure
-    public void testPreferenceCustomUriFixup() throws InterruptedException {
+    public void testPreferenceCustomUriFixup() {
         // Change home page custom URI on hompage edit screen.
-        final Preferences editHomepagePreferenceActivity =
-                mActivityTestRule.startPreferences(HomepageEditor.class.getName());
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+        final SettingsActivity editHomepagePreferenceActivity =
+                mActivityTestRule.startSettingsActivity(HomepageEditor.class.getName());
+        TestThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             // TODO(crbug.com/635567): Fix this properly.
             @SuppressLint("SetTextI18n")
@@ -230,9 +178,8 @@ public class PartnerHomepageIntegrationTest {
     @Test
     @MediumTest
     @Feature({"Homepage"})
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
     @RetryOnFailure
-    public void testLastTabClosed() throws InterruptedException {
+    public void testLastTabClosed() {
         ChromeTabUtils.closeCurrentTab(InstrumentationRegistry.getInstrumentation(),
                 (ChromeTabbedActivity) mActivityTestRule.getActivity());
         Assert.assertTrue("Activity was not closed.",
@@ -246,8 +193,7 @@ public class PartnerHomepageIntegrationTest {
     @Test
     @MediumTest
     @Feature({"Homepage"})
-    @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
-    public void testCloseAllTabs() throws InterruptedException {
+    public void testCloseAllTabs() {
         final CallbackHelper tabClosed = new CallbackHelper();
         final TabModel tabModel = mActivityTestRule.getActivity().getCurrentTabModel();
         mActivityTestRule.getActivity().getCurrentTabModel().addObserver(
@@ -281,5 +227,30 @@ public class PartnerHomepageIntegrationTest {
         Assert.assertTrue("Activity was not closed.",
                 mActivityTestRule.getActivity().isFinishing()
                         || mActivityTestRule.getActivity().isDestroyed());
+    }
+
+    /**
+     * Toggle the state of the homepage switch preference in settings by performing a click on it.
+     *
+     * @param expected Expected checked state of the preference switch after clicking.
+     */
+    private void toggleHomepageSwitchPreference(boolean expected) {
+        // Launch preference activity with Homepage settings fragment.
+        SettingsActivity homepagePreferenceActivity =
+                mActivityTestRule.startSettingsActivity(HomepageSettings.class.getName());
+        PreferenceFragmentCompat fragment =
+                (PreferenceFragmentCompat) homepagePreferenceActivity.getSupportFragmentManager()
+                        .findFragmentById(android.R.id.content);
+        ChromeSwitchPreference preference = (ChromeSwitchPreference) fragment.findPreference(
+                HomepageSettings.PREF_HOMEPAGE_SWITCH);
+        Assert.assertNotNull(preference);
+
+        // Click toggle and verify that checked state matches expectation.
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            preference.performClick();
+            Assert.assertEquals(preference.isChecked(), expected);
+        });
+
+        homepagePreferenceActivity.finish();
     }
 }

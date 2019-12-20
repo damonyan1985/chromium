@@ -399,8 +399,8 @@ void CleanupJob(const ComPtr<IBackgroundCopyJob>& job) {
 BackgroundDownloader::BackgroundDownloader(
     std::unique_ptr<CrxDownloader> successor)
     : CrxDownloader(std::move(successor)),
-      com_task_runner_(base::CreateCOMSTATaskRunnerWithTraits(
-          kTaskTraitsBackgroundDownloader)),
+      com_task_runner_(
+          base::CreateCOMSTATaskRunner(kTaskTraitsBackgroundDownloader)),
       git_cookie_bits_manager_(0),
       git_cookie_job_(0) {}
 
@@ -441,6 +441,8 @@ void BackgroundDownloader::BeginDownload(const GURL& url) {
     EndDownload(hr);
     return;
   }
+
+  VLOG(1) << "Starting BITS download for: " << url.spec();
 
   ResetInterfacePointers();
   main_task_runner()->PostTask(FROM_HERE,

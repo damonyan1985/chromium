@@ -17,11 +17,10 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/safe_browsing/archive_analyzer_results.h"
 #include "chrome/services/file_util/file_util_service.h"
-#include "chrome/services/file_util/public/mojom/constants.mojom.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "crypto/sha2.h"
-#include "services/service_manager/public/cpp/test/test_connector_factory.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -48,35 +47,33 @@ class SandboxedZipAnalyzerTest : public ::testing::Test {
   // store a copy of an analyzer's results and then run a closure.
   class ResultsGetter {
    public:
-    ResultsGetter(const base::Closure& quit_closure,
+    ResultsGetter(base::OnceClosure quit_closure,
                   safe_browsing::ArchiveAnalyzerResults* results)
-        : quit_closure_(quit_closure), results_(results) {
+        : quit_closure_(std::move(quit_closure)), results_(results) {
       DCHECK(results);
       results->success = false;
     }
 
     SandboxedZipAnalyzer::ResultCallback GetCallback() {
-      return base::Bind(&ResultsGetter::OnZipAnalyzerResults,
-                        base::Unretained(this));
+      return base::BindOnce(&ResultsGetter::OnZipAnalyzerResults,
+                            base::Unretained(this));
     }
 
    private:
     void OnZipAnalyzerResults(
         const safe_browsing::ArchiveAnalyzerResults& results) {
       *results_ = results;
-      quit_closure_.Run();
+      std::move(quit_closure_).Run();
     }
 
-    base::Closure quit_closure_;
+    base::OnceClosure quit_closure_;
     safe_browsing::ArchiveAnalyzerResults* results_;
 
     DISALLOW_COPY_AND_ASSIGN(ResultsGetter);
   };
 
   SandboxedZipAnalyzerTest()
-      : browser_thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-        file_util_service_(test_connector_factory_.RegisterInstance(
-            chrome::mojom::kFileUtilServiceName)) {}
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP) {}
 
   void SetUp() override {
     ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &dir_test_data_));
@@ -88,11 +85,12 @@ class SandboxedZipAnalyzerTest : public ::testing::Test {
   void RunAnalyzer(const base::FilePath& file_path,
                    safe_browsing::ArchiveAnalyzerResults* results) {
     DCHECK(results);
+    mojo::PendingRemote<chrome::mojom::FileUtilService> remote;
+    FileUtilService service(remote.InitWithNewPipeAndPassReceiver());
     base::RunLoop run_loop;
     ResultsGetter results_getter(run_loop.QuitClosure(), results);
     scoped_refptr<SandboxedZipAnalyzer> analyzer(new SandboxedZipAnalyzer(
-        file_path, results_getter.GetCallback(),
-        test_connector_factory_.GetDefaultConnector()));
+        file_path, results_getter.GetCallback(), std::move(remote)));
     analyzer->Start();
     run_loop.Run();
   }
@@ -184,10 +182,7 @@ class SandboxedZipAnalyzerTest : public ::testing::Test {
 #endif  // OS_MACOSX
 
   base::FilePath dir_test_data_;
-  content::TestBrowserThreadBundle browser_thread_bundle_;
-  content::InProcessUtilityThreadHelper utility_thread_helper_;
-  service_manager::TestConnectorFactory test_connector_factory_;
-  FileUtilService file_util_service_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 // static
@@ -385,8 +380,24 @@ TEST_F(SandboxedZipAnalyzerTest, ZippedAppWithUnsignedAndSignedExecutable) {
   EXPECT_TRUE(results.success);
   EXPECT_TRUE(results.has_executable);
   EXPECT_FALSE(results.has_archive);
-  ASSERT_EQ(2, results.archived_binary.size());
-  ExpectBinary(kUnsignedMachO, results.archived_binary.Get(0));
-  ExpectBinary(kSignedMachO, results.archived_binary.Get(1));
+
+  // Many of the files within the app have no extension, and are therefore
+  // flagged by Safe Browsing. So search for the two executables.
+  bool found_unsigned = false;
+  bool found_signed = false;
+  for (const auto& binary : results.archived_binary) {
+    if (kSignedMachO.file_basename == binary.file_basename()) {
+      found_signed = true;
+      ExpectBinary(kSignedMachO, binary);
+    }
+
+    if (kUnsignedMachO.file_basename == binary.file_basename()) {
+      found_unsigned = true;
+      ExpectBinary(kUnsignedMachO, binary);
+    }
+  }
+
+  EXPECT_TRUE(found_unsigned);
+  EXPECT_TRUE(found_signed);
 }
 #endif  // OS_MACOSX

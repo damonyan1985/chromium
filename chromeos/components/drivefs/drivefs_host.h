@@ -13,13 +13,14 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/time/clock.h"
 #include "base/timer/timer.h"
 #include "chromeos/components/drivefs/drivefs_auth.h"
+#include "chromeos/components/drivefs/drivefs_session.h"
 #include "chromeos/components/drivefs/mojom/drivefs.mojom.h"
 #include "chromeos/disks/disk_mount_manager.h"
 #include "components/account_id/account_id.h"
-#include "services/identity/public/mojom/identity_manager.mojom.h"
 
 namespace drive {
 class DriveNotificationManager;
@@ -31,6 +32,10 @@ class DiskMountManager;
 }
 }  // namespace chromeos
 
+namespace network {
+class NetworkConnectionTracker;
+}
+
 namespace drivefs {
 
 class DriveFsBootstrapListener;
@@ -41,27 +46,7 @@ class DriveFsHostObserver;
 // file manager.
 class COMPONENT_EXPORT(DRIVEFS) DriveFsHost {
  public:
-  class MountObserver {
-   public:
-    enum class MountFailure {
-      kUnknown,
-      kNeedsRestart,
-      kIpcDisconnect,
-      kInvocation,
-      kTimeout,
-    };
-
-    MountObserver() = default;
-    virtual ~MountObserver() = default;
-    virtual void OnMounted(const base::FilePath& mount_path) = 0;
-    virtual void OnUnmounted(base::Optional<base::TimeDelta> remount_delay) = 0;
-    virtual void OnMountFailed(
-        MountFailure failure,
-        base::Optional<base::TimeDelta> remount_delay) = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(MountObserver);
-  };
+  using MountObserver = DriveFsSession::MountObserver;
 
   class Delegate : public DriveFsAuth::Delegate {
    public:
@@ -70,6 +55,8 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsHost {
 
     virtual drive::DriveNotificationManager& GetDriveNotificationManager() = 0;
     virtual std::unique_ptr<DriveFsBootstrapListener> CreateMojoListener();
+    virtual base::FilePath GetMyFilesPath() = 0;
+    virtual std::string GetLostAndFoundDirectoryName() = 0;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Delegate);
@@ -78,6 +65,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsHost {
   DriveFsHost(const base::FilePath& profile_path,
               Delegate* delegate,
               MountObserver* mount_observer,
+              network::NetworkConnectionTracker* network_connection_tracker,
               const base::Clock* clock,
               chromeos::disks::DiskMountManager* disk_mount_manager,
               std::unique_ptr<base::OneShotTimer> timer);
@@ -113,6 +101,8 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsHost {
   class AccountTokenDelegate;
   class MountState;
 
+  std::string GetDefaultMountDirName() const;
+
   SEQUENCE_CHECKER(sequence_checker_);
 
   // The path to the user's profile.
@@ -120,6 +110,7 @@ class COMPONENT_EXPORT(DRIVEFS) DriveFsHost {
 
   Delegate* const delegate_;
   MountObserver* const mount_observer_;
+  network::NetworkConnectionTracker* const network_connection_tracker_;
   const base::Clock* const clock_;
   chromeos::disks::DiskMountManager* const disk_mount_manager_;
   std::unique_ptr<base::OneShotTimer> timer_;

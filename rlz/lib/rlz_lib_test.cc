@@ -19,16 +19,16 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "net/url_request/test_url_fetcher_factory.h"
 #include "rlz/lib/financial_ping.h"
 #include "rlz/lib/lib_values.h"
 #include "rlz/lib/net_response_check.h"
 #include "rlz/lib/rlz_lib.h"
+#include "rlz/lib/rlz_lib_clear.h"
 #include "rlz/lib/rlz_value_store.h"
 #include "rlz/test/rlz_test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -53,7 +53,7 @@
 #include "base/files/important_file_writer.h"
 #include "base/stl_util.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/fake_debug_daemon_client.h"
+#include "chromeos/dbus/debug_daemon/fake_debug_daemon_client.h"
 #include "rlz/chromeos/lib/rlz_value_store_chromeos.h"
 #endif
 
@@ -108,7 +108,7 @@ class RlzLibTest : public RlzLibTestBase {
     url_loader_factory->AddResponse(url, kGoodPingResponses);
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 };
 
 TEST_F(RlzLibTest, RecordProductEvent) {
@@ -579,12 +579,9 @@ TEST_F(RlzLibTest, SendFinancialPing) {
 #endif
 
   network::TestURLLoaderFactory test_url_loader_factory;
-  scoped_refptr<network::SharedURLLoaderFactory>
-      test_shared_url_loader_factory =
-          base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-              &test_url_loader_factory);
 
-  URLLoaderFactoryRAII set_factory(test_shared_url_loader_factory.get());
+  URLLoaderFactoryRAII set_factory(
+      test_url_loader_factory.GetSafeWeakWrapper().get());
 #endif
 
   MachineDealCodeHelper::Clear();
@@ -633,17 +630,14 @@ TEST_F(RlzLibTest, SendFinancialPingDuringShutdown) {
 #endif
 
   base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  options.message_pump_type = base::MessagePumpType::IO;
 
   base::Thread io_thread("rlz_unittest_io_thread");
   ASSERT_TRUE(io_thread.StartWithOptions(options));
 
   network::TestURLLoaderFactory test_url_loader_factory;
-  scoped_refptr<network::SharedURLLoaderFactory>
-      test_shared_url_loader_factory =
-          base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
-              &test_url_loader_factory);
-  URLLoaderFactoryRAII set_factory(test_shared_url_loader_factory.get());
+  URLLoaderFactoryRAII set_factory(
+      test_url_loader_factory.GetSafeWeakWrapper().get());
 
   rlz_lib::AccessPoint points[] =
     {rlz_lib::IETB_SEARCH_BOX, rlz_lib::NO_ACCESS_POINT,

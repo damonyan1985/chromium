@@ -5,8 +5,15 @@
 chrome.test.runTests([
   function testAnnotationsDisabled() {
     const toolbar = document.body.querySelector('#toolbar');
-    chrome.test.assertFalse(toolbar.pdfAnnotationsEnabled);
-    chrome.test.assertEq(null, toolbar.shadowRoot.querySelector('#annotate'));
+    if (toolbar.pdfAnnotationsEnabled) {
+      chrome.test.assertTrue(!!toolbar.shadowRoot.querySelector('#annotate'));
+    } else {
+      chrome.test.assertFalse(!!toolbar.shadowRoot.querySelector('#annotate'));
+    }
+    chrome.test.succeed();
+  },
+  function testPromiseNotCreated() {
+    chrome.test.assertEq(null, viewer.loaded);
     chrome.test.succeed();
   },
 ]);

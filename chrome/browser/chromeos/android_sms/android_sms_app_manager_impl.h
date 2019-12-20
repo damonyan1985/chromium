@@ -11,11 +11,16 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/chromeos/android_sms/android_sms_app_manager.h"
-#include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "url/gurl.h"
+
+class PrefRegistrySimple;
+class PrefService;
+class Profile;
 
 namespace app_list {
 class AppListSyncableService;
@@ -30,21 +35,19 @@ namespace chromeos {
 namespace android_sms {
 
 class AndroidSmsAppSetupController;
+enum class PwaDomain;
 
-// TODO(https://crbug.com/874605): Consider retrying failed installation
-// attempts. Currently, we make one attempt to install the app when
-// SetUpAndroidSmsApp() or SetUpAndLaunchAndroidSmsApp() is called, then do not
-// retry if that attempt fails. Since PWA installation requires Internet
-// connectivity, it is expected that some portion of installs should fail.
 class AndroidSmsAppManagerImpl : public AndroidSmsAppManager {
  public:
   AndroidSmsAppManagerImpl(
       Profile* profile,
       AndroidSmsAppSetupController* setup_controller,
+      PrefService* pref_service,
       app_list::AppListSyncableService* app_list_syncable_service,
       scoped_refptr<base::TaskRunner> task_runner =
           base::ThreadTaskRunnerHandle::Get());
   ~AndroidSmsAppManagerImpl() override;
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
  private:
   friend class AndroidSmsAppManagerImplTest;
@@ -54,7 +57,8 @@ class AndroidSmsAppManagerImpl : public AndroidSmsAppManager {
    public:
     PwaDelegate();
     virtual ~PwaDelegate();
-    virtual content::WebContents* OpenApp(const AppLaunchParams& params);
+    virtual content::WebContents* OpenApp(Profile* profile,
+                                          const apps::AppLaunchParams& params);
     virtual bool TransferItemAttributes(
         const std::string& from_app_id,
         const std::string& to_app_id,
@@ -62,17 +66,22 @@ class AndroidSmsAppManagerImpl : public AndroidSmsAppManager {
   };
 
   // AndroidSmsAppManager:
-  base::Optional<GURL> GetInstalledAppUrl() override;
+  base::Optional<GURL> GetCurrentAppUrl() override;
 
   // AndroidSmsAppHelperDelegate:
   void SetUpAndroidSmsApp() override;
   void SetUpAndLaunchAndroidSmsApp() override;
   void TearDownAndroidSmsApp() override;
+  bool HasAppBeenManuallyUninstalledByUser() override;
 
+  base::Optional<PwaDomain> GetInstalledPwaDomain();
   void CompleteAsyncInitialization();
   void NotifyInstalledAppUrlChangedIfNecessary();
-  void OnSetUpNewAppResult(bool success);
-  void OnRemoveOldAppResult(bool success);
+  void OnSetUpNewAppResult(const base::Optional<PwaDomain>& migrating_from,
+                           const GURL& install_url,
+                           bool success);
+  void OnRemoveOldAppResult(const base::Optional<PwaDomain>& migrating_from,
+                            bool success);
   void HandleAppSetupFinished();
 
   void SetPwaDelegateForTesting(std::unique_ptr<PwaDelegate> test_pwa_delegate);
@@ -80,6 +89,7 @@ class AndroidSmsAppManagerImpl : public AndroidSmsAppManager {
   Profile* profile_;
   AndroidSmsAppSetupController* setup_controller_;
   app_list::AppListSyncableService* app_list_syncable_service_;
+  PrefService* pref_service_;
 
   // True if installation is in currently in progress.
   bool is_new_app_setup_in_progress_ = false;
@@ -93,7 +103,7 @@ class AndroidSmsAppManagerImpl : public AndroidSmsAppManager {
   base::Optional<GURL> installed_url_at_last_notify_;
 
   std::unique_ptr<PwaDelegate> pwa_delegate_;
-  base::WeakPtrFactory<AndroidSmsAppManagerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<AndroidSmsAppManagerImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AndroidSmsAppManagerImpl);
 };

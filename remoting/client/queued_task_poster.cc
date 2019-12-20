@@ -13,8 +13,7 @@ namespace remoting {
 
 QueuedTaskPoster::QueuedTaskPoster(
     scoped_refptr<base::SingleThreadTaskRunner> target_task_runner)
-    : target_task_runner_(target_task_runner),
-      weak_factory_(this) {}
+    : target_task_runner_(target_task_runner) {}
 
 QueuedTaskPoster::~QueuedTaskPoster() {
   if (source_task_runner_) {
@@ -30,8 +29,8 @@ void QueuedTaskPoster::AddTask(const base::Closure& closure) {
   task_queue_.push(closure);
   if (!transfer_task_scheduled_) {
     source_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&QueuedTaskPoster::TransferTaskQueue,
-                              weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&QueuedTaskPoster::TransferTaskQueue,
+                                  weak_factory_.GetWeakPtr()));
     transfer_task_scheduled_ = true;
   }
 }
@@ -50,7 +49,8 @@ void QueuedTaskPoster::TransferTaskQueue() {
       new base::queue<base::Closure>();
   queue_to_transfer->swap(task_queue_);
   target_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&ConsumeTaskQueue, base::Owned(queue_to_transfer)));
+      FROM_HERE,
+      base::BindOnce(&ConsumeTaskQueue, base::Owned(queue_to_transfer)));
 }
 
 }  // namespace remoting

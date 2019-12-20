@@ -45,8 +45,7 @@ WebDatabaseService::WebDatabaseService(
     : base::RefCountedDeleteOnSequence<WebDatabaseService>(ui_task_runner),
       path_(path),
       db_loaded_(false),
-      db_task_runner_(db_task_runner),
-      weak_ptr_factory_(this) {
+      db_task_runner_(db_task_runner) {
   DCHECK(ui_task_runner->RunsTasksInCurrentSequence());
   DCHECK(db_task_runner_);
 }
@@ -91,18 +90,19 @@ scoped_refptr<WebDatabaseBackend> WebDatabaseService::GetBackend() const {
 }
 
 void WebDatabaseService::ScheduleDBTask(const base::Location& from_here,
-                                        const WriteTask& task) {
+                                        WriteTask task) {
   DCHECK(web_db_backend_);
   std::unique_ptr<WebDataRequest> request =
       web_db_backend_->request_manager()->NewRequest(nullptr);
   db_task_runner_->PostTask(
-      from_here, BindOnce(&WebDatabaseBackend::DBWriteTaskWrapper,
-                          web_db_backend_, task, std::move(request)));
+      from_here,
+      BindOnce(&WebDatabaseBackend::DBWriteTaskWrapper, web_db_backend_,
+               std::move(task), std::move(request)));
 }
 
 WebDataServiceBase::Handle WebDatabaseService::ScheduleDBTaskWithResult(
     const base::Location& from_here,
-    const ReadTask& task,
+    ReadTask task,
     WebDataServiceConsumer* consumer) {
   DCHECK(consumer);
   DCHECK(web_db_backend_);
@@ -110,8 +110,9 @@ WebDataServiceBase::Handle WebDatabaseService::ScheduleDBTaskWithResult(
       web_db_backend_->request_manager()->NewRequest(consumer);
   WebDataServiceBase::Handle handle = request->GetHandle();
   db_task_runner_->PostTask(
-      from_here, BindOnce(&WebDatabaseBackend::DBReadTaskWrapper,
-                          web_db_backend_, task, std::move(request)));
+      from_here,
+      BindOnce(&WebDatabaseBackend::DBReadTaskWrapper, web_db_backend_,
+               std::move(task), std::move(request)));
   return handle;
 }
 
@@ -121,14 +122,12 @@ void WebDatabaseService::CancelRequest(WebDataServiceBase::Handle h) {
   web_db_backend_->request_manager()->CancelRequest(h);
 }
 
-void WebDatabaseService::RegisterDBLoadedCallback(
-    const DBLoadedCallback& callback) {
-  loaded_callbacks_.push_back(callback);
+void WebDatabaseService::RegisterDBLoadedCallback(DBLoadedCallback callback) {
+  loaded_callbacks_.push_back(std::move(callback));
 }
 
-void WebDatabaseService::RegisterDBErrorCallback(
-    const DBLoadErrorCallback& callback) {
-  error_callbacks_.push_back(callback);
+void WebDatabaseService::RegisterDBErrorCallback(DBLoadErrorCallback callback) {
+  error_callbacks_.push_back(std::move(callback));
 }
 
 void WebDatabaseService::OnDatabaseLoadDone(sql::InitStatus status,
@@ -143,10 +142,10 @@ void WebDatabaseService::OnDatabaseLoadDone(sql::InitStatus status,
       // (posted from WebDatabaseBackend::Delegate::DBLoaded()). We need to make
       // sure that after the callback running the message box returns, it checks
       // |error_callbacks_| before it accesses it.
-      DBLoadErrorCallback error_callback = error_callbacks_.back();
+      DBLoadErrorCallback error_callback = std::move(error_callbacks_.back());
       error_callbacks_.pop_back();
-      if (!error_callback.is_null())
-        error_callback.Run(status, diagnostics);
+      if (error_callback)
+        std::move(error_callback).Run(status, diagnostics);
     }
   }
 
@@ -154,10 +153,10 @@ void WebDatabaseService::OnDatabaseLoadDone(sql::InitStatus status,
     db_loaded_ = true;
 
     while (!loaded_callbacks_.empty()) {
-      DBLoadedCallback loaded_callback = loaded_callbacks_.back();
+      DBLoadedCallback loaded_callback = std::move(loaded_callbacks_.back());
       loaded_callbacks_.pop_back();
-      if (!loaded_callback.is_null())
-        loaded_callback.Run();
+      if (loaded_callback)
+        std::move(loaded_callback).Run();
     }
   }
 }

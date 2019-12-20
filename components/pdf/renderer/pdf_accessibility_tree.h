@@ -5,11 +5,17 @@
 #ifndef COMPONENTS_PDF_RENDERER_PDF_ACCESSIBILITY_TREE_H_
 #define COMPONENTS_PDF_RENDERER_PDF_ACCESSIBILITY_TREE_H_
 
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "base/optional.h"
+#include "content/public/renderer/plugin_ax_tree_source.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/private/ppb_pdf.h"
+#include "ppapi/c/private/ppp_pdf.h"
+#include "ppapi/shared_impl/pdf_accessibility_shared.h"
 #include "ui/accessibility/ax_node.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_source.h"
@@ -23,18 +29,30 @@ class RendererPpapiHost;
 
 namespace gfx {
 class Transform;
-};
+}
 
 namespace pdf {
 
-class PdfAccessibilityTree
-    : public ui::AXTreeSource<const ui::AXNode*,
-                              ui::AXNodeData,
-                              ui::AXTreeData> {
+class PdfAccessibilityTree : public content::PluginAXTreeSource {
  public:
   PdfAccessibilityTree(content::RendererPpapiHost* host,
                        PP_Instance instance);
   ~PdfAccessibilityTree() override;
+
+  static bool IsDataFromPluginValid(
+      const std::vector<ppapi::PdfAccessibilityTextRunInfo>& text_runs,
+      const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+      const ppapi::PdfAccessibilityPageObjects& page_objects);
+
+  // Stores the page index and annotation index in the page.
+  struct AnnotationInfo {
+    AnnotationInfo(uint32_t page_index, uint32_t annotation_index);
+    AnnotationInfo(const AnnotationInfo& other);
+    ~AnnotationInfo();
+
+    uint32_t page_index;
+    uint32_t annotation_index;
+  };
 
   void SetAccessibilityViewportInfo(
       const PP_PrivateAccessibilityViewportInfo& viewport_info);
@@ -42,10 +60,14 @@ class PdfAccessibilityTree
       const PP_PrivateAccessibilityDocInfo& doc_info);
   void SetAccessibilityPageInfo(
       const PP_PrivateAccessibilityPageInfo& page_info,
-      const std::vector<PP_PrivateAccessibilityTextRunInfo>& text_runs,
-      const std::vector<PP_PrivateAccessibilityCharInfo>& chars);
+      const std::vector<ppapi::PdfAccessibilityTextRunInfo>& text_runs,
+      const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+      const ppapi::PdfAccessibilityPageObjects& page_objects);
+  void HandleAction(const PP_PdfAccessibilityActionData& action_data);
+  base::Optional<AnnotationInfo> GetPdfAnnotationInfoFromAXNode(
+      int32_t ax_node_id) const;
 
-  // AXTreeSource implementation.
+  // PluginAXTreeSource implementation.
   bool GetTreeData(ui::AXTreeData* tree_data) const override;
   ui::AXNode* GetRoot() const override;
   ui::AXNode* GetFromId(int32_t id) const override;
@@ -53,11 +75,14 @@ class PdfAccessibilityTree
   void GetChildren(const ui::AXNode* node,
                    std::vector<const ui::AXNode*>* out_children) const override;
   ui::AXNode* GetParent(const ui::AXNode* node) const override;
+  bool IsIgnored(const ui::AXNode* node) const override;
   bool IsValid(const ui::AXNode* node) const override;
   bool IsEqual(const ui::AXNode* node1, const ui::AXNode* node2) const override;
   const ui::AXNode* GetNull() const override;
   void SerializeNode(const ui::AXNode* node, ui::AXNodeData* out_data)
       const override;
+  std::unique_ptr<ui::AXActionTarget> CreateActionTarget(
+      const ui::AXNode& target_node) override;
 
  private:
   // Update the AXTreeData when the selected range changed.
@@ -77,21 +102,55 @@ class PdfAccessibilityTree
   // onto the host tree.
   void Finish();
 
-  void ComputeParagraphAndHeadingThresholds(
-      const std::vector<PP_PrivateAccessibilityTextRunInfo>& text_runs,
-      double* out_heading_font_size_threshold,
-      double* out_line_spacing_threshold);
+  void AddPageContent(
+      ui::AXNodeData* page_node,
+      const gfx::RectF& page_bounds,
+      uint32_t page_index,
+      const std::vector<ppapi::PdfAccessibilityTextRunInfo>& text_runs,
+      const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+      const ppapi::PdfAccessibilityPageObjects& page_objects);
+  void AddRemainingAnnotations(
+      ui::AXNodeData* page_node,
+      const gfx::RectF& page_bounds,
+      uint32_t page_index,
+      base::span<const ppapi::PdfAccessibilityLinkInfo> links,
+      base::span<const ppapi::PdfAccessibilityImageInfo> images,
+      ui::AXNodeData* para_node);
+
   std::string GetTextRunCharsAsUTF8(
-      const PP_PrivateAccessibilityTextRunInfo& text_run,
+      const ppapi::PdfAccessibilityTextRunInfo& text_run,
       const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
       int char_index);
   std::vector<int32_t> GetTextRunCharOffsets(
-      const PP_PrivateAccessibilityTextRunInfo& text_run,
+      const ppapi::PdfAccessibilityTextRunInfo& text_run,
       const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
       int char_index);
   gfx::Vector2dF ToVector2dF(const PP_Point& p);
   gfx::RectF ToRectF(const PP_Rect& r);
   ui::AXNodeData* CreateNode(ax::mojom::Role role);
+  ui::AXNodeData* CreateParagraphNode(float font_size,
+                                      float heading_font_size_threshold);
+  ui::AXNodeData* CreateStaticTextNode(uint32_t char_index);
+  ui::AXNodeData* CreateInlineTextBoxNode(
+      const ppapi::PdfAccessibilityTextRunInfo& text_run,
+      const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+      uint32_t char_index,
+      const gfx::RectF& page_bounds);
+  ui::AXNodeData* CreateLinkNode(const ppapi::PdfAccessibilityLinkInfo& link,
+                                 uint32_t page_index);
+  ui::AXNodeData* CreateImageNode(
+      const ppapi::PdfAccessibilityImageInfo& image);
+  ui::AXNodeData* CreateHighlightNode(
+      const ppapi::PdfAccessibilityHighlightInfo& highlight);
+  void AddTextToAXNode(
+      uint32_t start_text_run_index,
+      uint32_t end_text_run_index,
+      const std::vector<ppapi::PdfAccessibilityTextRunInfo>& text_runs,
+      const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+      const gfx::RectF& page_bounds,
+      const std::vector<uint32_t>& text_run_start_indices,
+      ui::AXNodeData* ax_node,
+      ui::AXNodeData** previous_on_line_node);
   float GetDeviceScaleFactor() const;
   content::RenderAccessibility* GetRenderAccessibility();
   gfx::Transform* MakeTransformFromViewInfo();
@@ -101,7 +160,18 @@ class PdfAccessibilityTree
   ui::AXTree tree_;
   content::RendererPpapiHost* host_;
   PP_Instance instance_;
-  double zoom_;
+  // |zoom_| signifies the zoom level set in for the browser content.
+  // |scale_| signifies the scale level set by user. Scale is applied
+  // by the OS while zoom is applied by the application. Higher scale
+  // values are usually set to increase the size of everything on screen.
+  // Preferred by people with blurry/low vision. |zoom_| and |scale_|
+  // both help us increase/descrease the size of content on screen.
+  // From PDF plugin we receive all the data in logical pixels. Which is
+  // without the zoom and scale factor applied. We apply the |zoom_| and
+  // |scale_| to generate the final bounding boxes of elements in accessibility
+  // tree.
+  double zoom_ = 1.0;
+  double scale_ = 1.0;
   gfx::Vector2dF scroll_;
   gfx::Vector2dF offset_;
   uint32_t selection_start_page_index_ = 0;
@@ -115,8 +185,12 @@ class PdfAccessibilityTree
   // character within its page. Used to find the node associated with
   // the start or end of a selection.
   std::map<int32_t, uint32_t> node_id_to_char_index_in_page_;
+  // Map between AXNode id to annotation object. Used to find the annotation
+  // object to which an action can be passed.
+  std::map<int32_t, AnnotationInfo> node_id_to_annotation_info_;
+  bool invalid_plugin_message_received_ = false;
 };
 
-}  // namespace pdf;
+}  // namespace pdf
 
 #endif  // COMPONENTS_PDF_RENDERER_PDF_ACCESSIBILITY_TREE_H_

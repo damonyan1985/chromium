@@ -5,9 +5,9 @@
 #include "chrome/browser/page_load_metrics/observers/foreground_duration_ukm_observer.h"
 
 #include "base/time/time.h"
-#include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
-#include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "chrome/common/page_load_metrics/page_load_timing.h"
+#include "components/page_load_metrics/browser/page_load_metrics_observer.h"
+#include "components/page_load_metrics/browser/page_load_metrics_util.h"
+#include "components/page_load_metrics/common/page_load_timing.h"
 #include "content/public/browser/navigation_handle.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -39,17 +39,15 @@ ForegroundDurationUKMObserver::OnCommit(
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 ForegroundDurationUKMObserver::FlushMetricsOnAppEnterBackground(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
-  RecordUkmIfInForeground();
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  RecordUkmIfInForeground(base::TimeTicks::Now());
   return CONTINUE_OBSERVING;
 }
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 ForegroundDurationUKMObserver::OnHidden(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
-  RecordUkmIfInForeground();
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  RecordUkmIfInForeground(base::TimeTicks::Now());
   return CONTINUE_OBSERVING;
 }
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
@@ -62,16 +60,23 @@ ForegroundDurationUKMObserver::OnShown() {
 }
 
 void ForegroundDurationUKMObserver::OnComplete(
-    const page_load_metrics::mojom::PageLoadTiming& timing,
-    const page_load_metrics::PageLoadExtraInfo& info) {
-  RecordUkmIfInForeground();
+    const page_load_metrics::mojom::PageLoadTiming& timing) {
+  // If we have a page_end_time, use it as our end time, else fall back to the
+  // current time. Note that we expect page_end_time.has_value() to always be
+  // true in OnComplete (the PageLoadTracker destructor is supposed to guarantee
+  // it), but we use Now() as a graceful fallback just in case.
+  base::TimeTicks end_time = GetDelegate().GetPageEndTime().has_value()
+                                 ? GetDelegate().GetNavigationStart() +
+                                       GetDelegate().GetPageEndTime().value()
+                                 : base::TimeTicks::Now();
+  RecordUkmIfInForeground(end_time);
 }
 
-void ForegroundDurationUKMObserver::RecordUkmIfInForeground() {
+void ForegroundDurationUKMObserver::RecordUkmIfInForeground(
+    base::TimeTicks end_time) {
   if (!currently_in_foreground_)
     return;
-  base::TimeDelta foreground_duration =
-      base::TimeTicks::Now() - last_time_shown_;
+  base::TimeDelta foreground_duration = end_time - last_time_shown_;
   ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
   ukm::builders::PageForegroundSession(source_id_)
       .SetForegroundDuration(foreground_duration.InMilliseconds())

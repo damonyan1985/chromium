@@ -25,7 +25,7 @@
 #include "components/password_manager/core/browser/password_list_sorter.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/test_password_store.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/test_event_router.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -147,7 +147,7 @@ class PasswordsPrivateDelegateImplTest : public testing::Test {
   void SetUpRouters();
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
   extensions::TestEventRouter* event_router_ = nullptr;
 
@@ -237,7 +237,7 @@ TEST_F(PasswordsPrivateDelegateImplTest, ChangeSavedPassword) {
         got_passwords = true;
         ASSERT_EQ(1u, password_list.size());
         EXPECT_EQ(sample_form.username_value,
-                  base::UTF8ToUTF16(password_list[0].login_pair.username));
+                  base::UTF8ToUTF16(password_list[0].username));
         EXPECT_EQ(sample_form.password_value.size(),
                   size_t{password_list[0].num_characters_in_password});
       }));
@@ -259,7 +259,7 @@ TEST_F(PasswordsPrivateDelegateImplTest, ChangeSavedPassword) {
         got_passwords = true;
         ASSERT_EQ(1u, password_list.size());
         EXPECT_EQ(base::ASCIIToUTF16("new_user"),
-                  base::UTF8ToUTF16(password_list[0].login_pair.username));
+                  base::UTF8ToUTF16(password_list[0].username));
         EXPECT_EQ(base::ASCIIToUTF16("new_pass").size(),
                   size_t{password_list[0].num_characters_in_password});
       }));

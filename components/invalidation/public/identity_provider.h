@@ -11,7 +11,10 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "google_apis/gaia/oauth2_token_service.h"
+#include "base/values.h"
+#include "google_apis/gaia/core_account_id.h"
+#include "google_apis/gaia/google_service_auth_error.h"
+#include "google_apis/gaia/oauth2_access_token_manager.h"
 
 namespace invalidation {
 
@@ -63,41 +66,45 @@ class IdentityProvider {
   virtual ~IdentityProvider();
 
   // Gets the active account's account ID.
-  virtual std::string GetActiveAccountId() = 0;
+  virtual CoreAccountId GetActiveAccountId() = 0;
 
   // Returns true iff (1) there is an active account and (2) that account has
   // a refresh token.
-  virtual bool IsActiveAccountAvailable() = 0;
+  virtual bool IsActiveAccountWithRefreshToken() = 0;
 
   // Starts an access token request for |oauth_consumer_name| and |scopes|. When
   // the request completes, |callback| will be invoked with the access token
   // or error. To cancel the request, destroy the returned TokenFetcher.
   virtual std::unique_ptr<ActiveAccountAccessTokenFetcher> FetchAccessToken(
       const std::string& oauth_consumer_name,
-      const OAuth2TokenService::ScopeSet& scopes,
+      const OAuth2AccessTokenManager::ScopeSet& scopes,
       ActiveAccountAccessTokenCallback callback) = 0;
 
   // Marks an OAuth2 |access_token| issued for the active account and |scopes|
   // as invalid.
-  virtual void InvalidateAccessToken(const OAuth2TokenService::ScopeSet& scopes,
-                                     const std::string& access_token) = 0;
+  virtual void InvalidateAccessToken(
+      const OAuth2AccessTokenManager::ScopeSet& scopes,
+      const std::string& access_token) = 0;
 
   // Set the account id that should be registered for invalidations.
-  virtual void SetActiveAccountId(const std::string& account_id) = 0;
+  virtual void SetActiveAccountId(const CoreAccountId& account_id) = 0;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
+
+  void RequestDetailedStatus(
+      base::RepeatingCallback<void(const base::DictionaryValue&)> caller) const;
 
  protected:
   IdentityProvider();
 
   // Processes a refresh token update, firing the observer callback if
   // |account_id| is the active account.
-  void ProcessRefreshTokenUpdateForAccount(const std::string& account_id);
+  void ProcessRefreshTokenUpdateForAccount(const CoreAccountId& account_id);
 
   // Processes a refresh token removal, firing the observer callback if
   // |account_id| is the active account.
-  void ProcessRefreshTokenRemovalForAccount(const std::string& account_id);
+  void ProcessRefreshTokenRemovalForAccount(const CoreAccountId& account_id);
 
   // Fires an OnActiveAccountLogin notification.
   void FireOnActiveAccountLogin();
@@ -106,6 +113,18 @@ class IdentityProvider {
   void FireOnActiveAccountLogout();
 
  private:
+  struct Diagnostics {
+    Diagnostics();
+
+    // Collect all the internal variables in a single readable dictionary.
+    base::DictionaryValue CollectDebugData() const;
+
+    int token_removal_for_not_active_account_count = 0;
+    int token_update_for_not_active_account_count = 0;
+    base::Time account_token_updated;
+  };
+
+  Diagnostics diagnostic_info_;
   base::ObserverList<Observer, true>::Unchecked observers_;
 
   DISALLOW_COPY_AND_ASSIGN(IdentityProvider);

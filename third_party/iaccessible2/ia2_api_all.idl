@@ -1026,7 +1026,36 @@ enum IA2Role {
   IA2_ROLE_CONTENT_INSERTION,
 
   /// A section of content that is quoted from another source.
-  IA2_ROLE_BLOCK_QUOTE
+  IA2_ROLE_BLOCK_QUOTE,
+
+  /** A run of content that is marked or highlighted, such as for reference
+   purposes, or to call it out as having a special purpose that is clear from
+   context. If the mark is used in conjuction with a related content section
+   in the document, then IA2_RELATION_DETAILS should be used to link the
+   related content (and the reverse relation IA2_RELATION_DETAILS_FOR should
+   link back to the IA2_ROLE_MARK object). If the mark has related information
+   in a tooltip, or as hidden text, then accDescription should be used to
+   provide this information.
+  */
+  IA2_ROLE_MARK,
+
+  /** A grouping for content that is called out as a proposed change from the
+   current version of the document, such as by a reviewer of the content.
+   Should include as children one or both of:
+   IA2_ROLE_CONTENT_DELETION and IA2_ROLE_CONTENT_INSERTION, in any order,
+   to indicate what the actual change is.
+   If the suggestion is accepted, the implementation should change the role to
+   a generic one such as IA2_ROLE_SECTION or IA2_ROLE_TEXT_FRAME.
+  */
+  IA2_ROLE_SUGGESTION,
+
+  /** A single comment, typically user-generated content. Supports reply
+  hierarchies via descendant structure, e.g. a child comment is a reply
+  to the parent comment. Supports groupPosition() method to determine
+  reply level (top comment is 1), as well as set size and position in set
+  within that level.
+  */
+  IA2_ROLE_COMMENT
 };
 /*************************************************************************
  *
@@ -1296,6 +1325,7 @@ IA2_STATE_PINNED =					0x80000
   IAccessible2\n
   IAccessible2_2\n
   IAccessible2_3\n
+  IAccessible2_4\n
   IAccessibleAction\n
   IAccessibleApplication\n
   IAccessibleComponent\n
@@ -2104,6 +2134,36 @@ interface IAccessible2_3 : IAccessible2_2
       [out, retval] long *nRanges
     );
 }
+
+/**
+ * @brief This interface is an extension of IAccessible2_3 which exposes a
+ * single method for setting the current selection given a number of selection
+ * ranges.
+ *
+ * This interface is preliminary as it has not been adopted by any standard yet.
+ */
+[object, uuid(610a7bec-91bb-444d-a336-a0daf13c4c29)]
+interface IAccessible2_4 : IAccessible2_3
+{
+  /**
+   * @brief Sets the current selection to the provided ranges. The provided
+   * ranges don't need to be contained within this accessible.
+   * @param [in] nRanges
+   *     The length of the array containing the selection ranges.
+   * @param [in] ranges
+   *     The array of selection ranges, allocated by the client with
+   *     CoTaskMemAlloc and freed by the client with CoTaskMemFree.
+   * @retval S_OK Returned if the selection was made successfully.
+   * @retval S_FALSE Returned if the selection could not be made.
+   * @retval E_INVALIDARG Returned if any of the input arguments are invalid.
+   */
+  HRESULT setSelectionRanges
+  (
+      [in] long nRanges,
+      [in, size_is(nRanges)] IA2Range* ranges
+      );
+}
+
 /*************************************************************************
  *
  *  File Name (AccessibleComponent.idl)
@@ -5282,8 +5342,13 @@ enum IA2EventID {
     of an accessible object.  This includes for example most of the
     attributes available via the IAccessibleComponent interface.
   */
-  IA2_EVENT_VISIBLE_DATA_CHANGED
+  IA2_EVENT_VISIBLE_DATA_CHANGED,
 
+  /** The role changed. This should only be used if the interfaces supported by the object
+   did not also change. If the interfaces need to change, the object should be destroyed
+   and a new object created.
+  */
+  IA2_EVENT_ROLE_CHANGED
 };
 /*************************************************************************
  *

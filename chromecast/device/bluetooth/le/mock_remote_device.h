@@ -21,14 +21,10 @@ class MockRemoteDevice : public RemoteDevice {
   MOCK_METHOD0(Connect, bool());
   void Connect(StatusCallback cb) override { std::move(cb).Run(Connect()); }
 
-  MOCK_METHOD0(ConnectSync, bool());
-
   MOCK_METHOD0(Disconnect, bool());
   void Disconnect(StatusCallback cb) override {
     std::move(cb).Run(Disconnect());
   }
-
-  MOCK_METHOD0(DisconnectSync, bool());
 
   MOCK_METHOD0(CreateBond, bool());
   void CreateBond(StatusCallback cb) override {
@@ -92,6 +88,8 @@ class MockRemoteDevice : public RemoteDevice {
   const bluetooth_v2_shlib::Addr addr_;
 
  private:
+  friend testing::StrictMock<MockRemoteDevice>;
+
   ~MockRemoteDevice();
 };
 

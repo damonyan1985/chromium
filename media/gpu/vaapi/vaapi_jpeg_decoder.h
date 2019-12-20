@@ -7,39 +7,44 @@
 
 #include <stdint.h>
 
-// These data types are defined in va/va.h using typedef, reproduced here.
-// TODO(andrescj): revisit this once VaSurfaceFormatToImageFormat() and
-// VaSurfaceFormatForJpeg() are moved to the anonymous namespace in the .cc
-// file.
-using VAImageFormat = struct _VAImageFormat;
-using VASurfaceID = unsigned int;
+#include <memory>
+
+#include "base/macros.h"
+#include "media/gpu/vaapi/vaapi_image_decoder.h"
 
 namespace media {
 
 struct JpegFrameHeader;
-struct JpegParseResult;
-class VaapiWrapper;
+class ScopedVAImage;
 
-// Convert the specified surface format to the associated output image format.
-bool VaSurfaceFormatToImageFormat(uint32_t va_rt_format,
-                                  VAImageFormat* va_image_format);
-
+// Returns the internal format required for a JPEG image given its parsed
+// |frame_header|. If the image's subsampling format is not one of 4:2:0, 4:2:2,
+// or 4:4:4, returns kInvalidVaRtFormat.
 unsigned int VaSurfaceFormatForJpeg(const JpegFrameHeader& frame_header);
 
-class VaapiJpegDecoder {
+class VaapiJpegDecoder : public VaapiImageDecoder {
  public:
-  VaapiJpegDecoder() = default;
-  virtual ~VaapiJpegDecoder() = default;
+  VaapiJpegDecoder();
+  ~VaapiJpegDecoder() override;
 
-  // Decodes a JPEG picture. It will fill VA-API parameters and call
-  // corresponding VA-API methods according to the JPEG |parse_result|. Decoded
-  // data will be outputted to the given |va_surface|. Returns false on failure.
-  // |vaapi_wrapper| should be initialized in kDecode mode with
-  // VAProfileJPEGBaseline profile. |va_surface| should be created with size at
-  // least as large as the picture size.
-  static bool DoDecode(VaapiWrapper* vaapi_wrapper,
-                       const JpegParseResult& parse_result,
-                       VASurfaceID va_surface);
+  // VaapiImageDecoder implementation.
+  gpu::ImageDecodeAcceleratorType GetType() const override;
+  SkYUVColorSpace GetYUVColorSpace() const override;
+
+  // Get the decoded data from the last Decode() call as a ScopedVAImage. The
+  // VAImage's format will be either |preferred_image_fourcc| if the conversion
+  // from the internal format is supported or a fallback FOURCC (see
+  // VaapiWrapper::GetJpegDecodeSuitableImageFourCC() for details). Returns
+  // nullptr on failure and sets *|status| to the reason for failure.
+  std::unique_ptr<ScopedVAImage> GetImage(uint32_t preferred_image_fourcc,
+                                          VaapiImageDecodeStatus* status);
+
+ private:
+  // VaapiImageDecoder implementation.
+  VaapiImageDecodeStatus AllocateVASurfaceAndSubmitVABuffers(
+      base::span<const uint8_t> encoded_image) override;
+
+  DISALLOW_COPY_AND_ASSIGN(VaapiJpegDecoder);
 };
 
 }  // namespace media

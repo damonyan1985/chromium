@@ -35,7 +35,7 @@ void SpellCheckerTest::ForceLayout() {
   frame_rect.SetWidth(frame_rect.Width() + 1);
   frame_rect.SetHeight(frame_rect.Height() + 1);
   Page().GetFrameView().SetFrameRect(frame_rect);
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  GetDocument().UpdateStyleAndLayout();
 }
 
 TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithEmptyInputNoCrash) {
@@ -80,8 +80,7 @@ TEST_F(SpellCheckerTest, AdvancedToNextMisspellingWrapSearchNoCrash) {
 
 TEST_F(SpellCheckerTest, SpellCheckDoesNotCauseUpdateLayout) {
   SetBodyContent("<input>");
-  HTMLInputElement* input =
-      ToHTMLInputElement(GetDocument().QuerySelector("input"));
+  auto* input = To<HTMLInputElement>(GetDocument().QuerySelector("input"));
   input->focus();
   input->setValue("Hello, input field");
   GetDocument().UpdateStyleAndLayout();
@@ -123,9 +122,9 @@ TEST_F(SpellCheckerTest, MarkAndReplaceForHandlesMultipleReplacements) {
 
   // The Spelling marker's description should be a newline-separated list of the
   // suggested replacements
-  EXPECT_EQ(
-      "spellcheck\nspillchuck",
-      ToSpellCheckMarker(GetDocument().Markers().Markers()[0])->Description());
+  EXPECT_EQ("spellcheck\nspillchuck",
+            To<SpellCheckMarker>(GetDocument().Markers().Markers()[0].Get())
+                ->Description());
 }
 
 TEST_F(SpellCheckerTest, GetSpellCheckMarkerUnderSelection_FirstCharSelected) {

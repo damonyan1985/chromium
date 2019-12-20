@@ -13,7 +13,7 @@
 #include "base/json/json_reader.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -121,7 +121,8 @@ void NativeMessagingReader::Core::ReadMessage() {
       return;
     }
 
-    std::unique_ptr<base::Value> message = base::JSONReader::Read(message_json);
+    std::unique_ptr<base::Value> message =
+        base::JSONReader::ReadDeprecated(message_json);
     if (!message) {
       LOG(ERROR) << "Failed to parse JSON message: " << message.get();
       NotifyEof();
@@ -130,8 +131,8 @@ void NativeMessagingReader::Core::ReadMessage() {
 
     // Notify callback of new message.
     caller_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&NativeMessagingReader::InvokeMessageCallback,
-                              reader_, base::Passed(&message)));
+        FROM_HERE, base::BindOnce(&NativeMessagingReader::InvokeMessageCallback,
+                                  reader_, std::move(message)));
   }
 }
 
@@ -139,14 +140,13 @@ void NativeMessagingReader::Core::NotifyEof() {
   DCHECK(read_task_runner_->RunsTasksInCurrentSequence());
   caller_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NativeMessagingReader::InvokeEofCallback, reader_));
+      base::BindOnce(&NativeMessagingReader::InvokeEofCallback, reader_));
 }
 
 NativeMessagingReader::NativeMessagingReader(base::File file)
-    : reader_thread_("Reader"),
-      weak_factory_(this) {
+    : reader_thread_("Reader") {
   reader_thread_.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, /*size=*/0));
+      base::Thread::Options(base::MessagePumpType::IO, /*size=*/0));
 
   read_task_runner_ = reader_thread_.task_runner();
   core_.reset(new Core(std::move(file), base::ThreadTaskRunnerHandle::Get(),
@@ -188,8 +188,8 @@ void NativeMessagingReader::Start(MessageCallback message_callback,
   // base::Unretained is safe since |core_| is only deleted via the
   // DeleteSoon task which is posted from this class's dtor.
   read_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&NativeMessagingReader::Core::ReadMessage,
-                            base::Unretained(core_.get())));
+      FROM_HERE, base::BindOnce(&NativeMessagingReader::Core::ReadMessage,
+                                base::Unretained(core_.get())));
 }
 
 void NativeMessagingReader::InvokeMessageCallback(

@@ -7,12 +7,13 @@ package org.chromium.ui.base;
 import android.content.res.Configuration;
 import android.view.View;
 
-import org.chromium.base.ApiCompatibilityUtils;
+import androidx.annotation.VisibleForTesting;
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.LocaleUtils;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.NativeMethods;
 
 import java.util.Locale;
 
@@ -55,8 +56,8 @@ public class LocalizationUtils {
         if (sIsLayoutRtl == null) {
             Configuration configuration =
                     ContextUtils.getApplicationContext().getResources().getConfiguration();
-            sIsLayoutRtl = Boolean.valueOf(ApiCompatibilityUtils.getLayoutDirection(configuration)
-                    == View.LAYOUT_DIRECTION_RTL);
+            sIsLayoutRtl = Boolean.valueOf(
+                    configuration.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL);
         }
 
         return sIsLayoutRtl.booleanValue();
@@ -74,41 +75,11 @@ public class LocalizationUtils {
      */
     public static int getFirstStrongCharacterDirection(String string) {
         assert string != null;
-        return nativeGetFirstStrongCharacterDirection(string);
+        return LocalizationUtilsJni.get().getFirstStrongCharacterDirection(string);
     }
 
     public static String substituteLocalePlaceholder(String str) {
         return str.replace("$LOCALE", LocaleUtils.getDefaultLocaleString().replace('-', '_'));
-    }
-
-    /**
-     * @return the current Chromium locale used to display UI elements.
-     *
-     * This matches what the Android framework resolves localized string resources to, using the
-     * system locale and the application's resources. For example, if the system uses a locale
-     * that is not supported by Chromium resources (e.g. 'fur-rIT'), Android will likely fallback
-     * to 'en-rUS' strings when Resources.getString() is called, and this method will return the
-     * matching Chromium name (i.e. 'en-US').
-     *
-     * Using this value is only necessary to ensure that the strings accessed from the locale .pak
-     * files from C++ match the resources displayed by the Java-based UI views.
-     */
-    public static String getUiLocaleStringForCompressedPak() {
-        String uiLocale = ContextUtils.getApplicationContext().getResources().getString(
-                org.chromium.ui.R.string.current_detected_ui_locale_name);
-        return uiLocale;
-    }
-
-    /**
-     * @return the language of the current Chromium locale used to display UI elements.
-     */
-    public static String getUiLanguageStringForCompressedPak() {
-        String uiLocale = getUiLocaleStringForCompressedPak();
-        int pos = uiLocale.indexOf('-');
-        if (pos > 0) {
-            return uiLocale.substring(0, pos);
-        }
-        return uiLocale;
     }
 
     /**
@@ -139,34 +110,6 @@ public class LocalizationUtils {
     }
 
     /**
-     * Return one default locale-specific PAK file name associated with a given language.
-     *
-     * @param language Language name (e.g. "en").
-     * @return A Chromium-specific locale name (e.g. "en-US") matching the input language
-     *         that can be used to access compressed locale pak files.
-     */
-    public static String getDefaultCompressedPakLocaleForLanguage(String language) {
-        // IMPORTANT: Keep in sync with the mapping found in:
-        // //build/android/gyp/resource_utils.py
-
-        // NOTE: All languages provide locale files named '<language>.pak', except
-        //       for a few exceptions listed below. E.g. for the English language,
-        //       the 'en-US.pak' and 'en-GB.pak' files are provided, and there is
-        //       no 'en.pak' file.
-        switch (language) {
-            case "en":
-                return "en-US";
-            case "pt":
-                return "pt-PT";
-            case "zh":
-                return "zh-CN";
-            default:
-                // NOTE: for Spanish (es), both es.pak and es-419.pak are used. Hence this works.
-                return language;
-        }
-    }
-
-    /**
      * Return true iff a locale string matches a specific language string.
      *
      * @param locale Chromium locale name (e.g. "fil", or "en-US").
@@ -176,12 +119,11 @@ public class LocalizationUtils {
      *         but true for ("en-US", "en") (USA locale + English language).
      */
     public static boolean chromiumLocaleMatchesLanguage(String locale, String lang) {
-        int pos = locale.indexOf('-');
-        if (pos > 0) {
-            return locale.substring(0, pos).equals(lang);
-        }
-        return locale.equals(lang);
+        return LocaleUtils.toLanguage(locale).equals(lang);
     }
 
-    private static native int nativeGetFirstStrongCharacterDirection(String string);
+    @NativeMethods
+    interface Natives {
+        int getFirstStrongCharacterDirection(String string);
+    }
 }

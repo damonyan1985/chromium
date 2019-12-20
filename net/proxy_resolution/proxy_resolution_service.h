@@ -41,10 +41,10 @@ namespace net {
 
 class DhcpPacFileFetcher;
 class NetLog;
+class PacFileFetcher;
 class ProxyDelegate;
 class ProxyResolverFactory;
-class PacFileData;
-class PacFileFetcher;
+struct PacFileDataWithSource;
 
 // This class can be used to resolve the proxy server to use when loading a
 // HTTP(S) URL.  It uses the given ProxyResolver to handle the actual proxy
@@ -54,25 +54,6 @@ class NET_EXPORT ProxyResolutionService
       public NetworkChangeNotifier::DNSObserver,
       public ProxyConfigService::Observer {
  public:
-  // Enumerates the policy to use when sanitizing URLs for proxy resolution
-  // (before passing them off to PAC scripts).
-  enum class SanitizeUrlPolicy {
-    // Do a basic level of sanitization for URLs:
-    //   - strip embedded identities (ex: "username:password@")
-    //   - strip the fragment (ex: "#blah")
-    //
-    // This is considered "unsafe" because it does not do any additional
-    // stripping for https:// URLs.
-    UNSAFE,
-
-    // SAFE does the same sanitization as UNSAFE, but additionally strips
-    // everything but the (scheme,host,port) from cryptographic URL schemes
-    // (https:// and wss://).
-    //
-    // In other words, it strips the path and query portion of https:// URLs.
-    SAFE,
-  };
-
   // This interface defines the set of policies for when to poll the PAC
   // script for changes.
   //
@@ -159,6 +140,7 @@ class NET_EXPORT ProxyResolutionService
   // Profiling information for the request is saved to |net_log| if non-NULL.
   int ResolveProxy(const GURL& url,
                    const std::string& method,
+                   const NetworkIsolationKey& network_isolation_key,
                    ProxyInfo* results,
                    CompletionOnceCallback callback,
                    std::unique_ptr<Request>* request,
@@ -205,13 +187,6 @@ class NET_EXPORT ProxyResolutionService
   // ProxyResolutionService was created with is torn down, if it's torn down
   // before th ProxyResolutionService itself.
   void OnShutdown();
-
-  // Tells this ProxyResolutionService to start using a new ProxyConfigService
-  // to retrieve its ProxyConfig from. The new ProxyConfigService will
-  // immediately be queried for new config info which will be used for all
-  // subsequent ResolveProxy calls.
-  void ResetConfigService(
-      std::unique_ptr<ProxyConfigService> new_proxy_config_service);
 
   // Returns the last configuration fetched from ProxyConfigService.
   const base::Optional<ProxyConfigWithAnnotation>& fetched_config() const {
@@ -270,6 +245,13 @@ class NET_EXPORT ProxyResolutionService
       const std::string& pac_string,
       const NetworkTrafficAnnotationTag& traffic_annotation);
 
+  // Same as CreateFixedFromPacResult(), except the resulting ProxyInfo from
+  // resolutions will be tagged as having been auto-detected.
+  static std::unique_ptr<ProxyResolutionService>
+  CreateFixedFromAutoDetectedPacResult(
+      const std::string& pac_string,
+      const NetworkTrafficAnnotationTag& traffic_annotation);
+
   // Creates a config service appropriate for this platform that fetches the
   // system proxy settings. |main_task_runner| is the thread where the consumer
   // of the ProxyConfigService will live.
@@ -298,13 +280,6 @@ class NET_EXPORT ProxyResolutionService
     quick_check_enabled_ = value;
   }
   bool quick_check_enabled_for_testing() const { return quick_check_enabled_; }
-
-  void set_sanitize_url_policy(SanitizeUrlPolicy policy) {
-    sanitize_url_policy_ = policy;
-  }
-  SanitizeUrlPolicy sanitize_url_policy_for_testing() const {
-    return sanitize_url_policy_;
-  }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ProxyResolutionServiceTest,
@@ -374,7 +349,7 @@ class NET_EXPORT ProxyResolutionService
   // Start the initialization skipping past the "decision" phase.
   void InitializeUsingDecidedConfig(
       int decider_result,
-      PacFileData* script_data,
+      const PacFileDataWithSource& script_data,
       const ProxyConfigWithAnnotation& effective_config);
 
   // NetworkChangeNotifier::IPAddressObserver
@@ -398,6 +373,8 @@ class NET_EXPORT ProxyResolutionService
 
   std::unique_ptr<ProxyConfigService> config_service_;
   std::unique_ptr<ProxyResolverFactory> resolver_factory_;
+
+  // If non-null, the initialized ProxyResolver to use for requests.
   std::unique_ptr<ProxyResolver> resolver_;
 
   // We store the proxy configuration that was last fetched from the
@@ -458,16 +435,13 @@ class NET_EXPORT ProxyResolutionService
   // Whether child PacFileDeciders should use QuickCheck
   bool quick_check_enabled_;
 
-  // The method to use for sanitizing URLs seen by the proxy resolver.
-  SanitizeUrlPolicy sanitize_url_policy_;
-
   THREAD_CHECKER(thread_checker_);
 
   ProxyDelegate* proxy_delegate_ = nullptr;
 
   // Flag used by |SetReady()| to check if |this| has been deleted by a
   // synchronous callback.
-  base::WeakPtrFactory<ProxyResolutionService> weak_ptr_factory_;
+  base::WeakPtrFactory<ProxyResolutionService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ProxyResolutionService);
 };

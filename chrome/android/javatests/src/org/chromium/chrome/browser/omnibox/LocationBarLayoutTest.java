@@ -4,9 +4,15 @@
 
 package org.chromium.chrome.browser.omnibox;
 
+import static android.support.test.espresso.Espresso.onView;
+import static android.support.test.espresso.matcher.ViewMatchers.withId;
+import static android.view.View.GONE;
+import static android.view.View.VISIBLE;
+
 import android.support.test.filters.SmallTest;
 import android.view.View;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -15,20 +21,23 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.FlakyTest;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ChromeSwitches;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.LocationBarModel;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.test.util.UiRestriction;
 
 import java.util.concurrent.Callable;
@@ -44,17 +53,15 @@ public class LocationBarLayoutTest {
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
 
-    private static final int SEARCH_ICON_RESOURCE = R.drawable.omnibox_search;
-
     private static final String SEARCH_TERMS = "machine learning";
     private static final String SEARCH_TERMS_URL = "testing.com";
     private static final String GOOGLE_SRP_URL = "https://www.google.com/search?q=machine+learning";
-    private static final String GOOGLE_SRP_URL_LIKE_URL =
-            "https://www.google.com/search?q=" + SEARCH_TERMS_URL;
-    private static final String BING_SRP_URL = "https://www.bing.com/search?q=machine+learning";
 
     private static final String VERBOSE_URL = "https://www.suchwowveryyes.edu";
     private static final String TRIMMED_URL = "suchwowveryyes.edu";
+
+    private static final String GOOGLE_URL = "https://www.google.com";
+    private static final String YAHOO_URL = "https://www.yahoo.com";
 
     private TestLocationBarModel mTestLocationBarModel;
 
@@ -113,20 +120,25 @@ public class LocationBarLayoutTest {
     @Before
     public void setUp() throws InterruptedException {
         mActivityTestRule.startMainActivityOnBlankPage();
-        mTestLocationBarModel = new TestLocationBarModel();
-        mTestLocationBarModel.setTab(mActivityTestRule.getActivity().getActivityTab(), false);
+        setupModelsForCurrentTab();
+    }
 
-        ThreadUtils.runOnUiThreadBlocking(
+    private void setupModelsForCurrentTab() {
+        mTestLocationBarModel = new TestLocationBarModel();
+        Tab tab = mActivityTestRule.getActivity().getActivityTab();
+        mTestLocationBarModel.setTab(tab, tab.isIncognito());
+
+        TestThreadUtils.runOnUiThreadBlocking(
                 () -> getLocationBar().setToolbarDataProvider(mTestLocationBarModel));
     }
 
     private void setUrlToPageUrl(LocationBarLayout locationBar) {
-        ThreadUtils.runOnUiThreadBlocking(() -> { getLocationBar().updateLoadingState(true); });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { getLocationBar().updateLoadingState(true); });
     }
 
     private String getUrlText(UrlBar urlBar) {
         try {
-            return ThreadUtils.runOnUiThreadBlocking(() -> urlBar.getText().toString());
+            return TestThreadUtils.runOnUiThreadBlocking(() -> urlBar.getText().toString());
         } catch (ExecutionException ex) {
             throw new RuntimeException(ex);
         }
@@ -152,9 +164,8 @@ public class LocationBarLayoutTest {
         return mActivityTestRule.getActivity().findViewById(R.id.security_button);
     }
 
-    private void setUrlBarTextAndFocus(String text)
-            throws ExecutionException, InterruptedException {
-        ThreadUtils.runOnUiThreadBlocking(new Callable<Void>() {
+    private void setUrlBarTextAndFocus(String text) throws ExecutionException {
+        TestThreadUtils.runOnUiThreadBlocking(new Callable<Void>() {
             @Override
             public Void call() throws InterruptedException {
                 getLocationBar().onUrlFocusChange(true);
@@ -166,54 +177,23 @@ public class LocationBarLayoutTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(ChromeFeatureList.OMNIBOX_VOICE_SEARCH_ALWAYS_VISIBLE)
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
-    @Feature({"OmniboxVoiceSearchAlwaysVisible"})
-    public void testNotShowingVoiceSearchButtonIfUrlBarContainsTextAndFlagIsDisabled()
-            throws ExecutionException, InterruptedException {
+    public void testNotShowingVoiceSearchButtonIfUrlBarContainsText() throws ExecutionException {
         setUrlBarTextAndFocus("testing");
 
-        Assert.assertEquals(getDeleteButton().getVisibility(), View.VISIBLE);
-        Assert.assertNotEquals(getMicButton().getVisibility(), View.VISIBLE);
+        Assert.assertEquals(getDeleteButton().getVisibility(), VISIBLE);
+        Assert.assertNotEquals(getMicButton().getVisibility(), VISIBLE);
     }
 
     @Test
     @SmallTest
-    @DisableFeatures(ChromeFeatureList.OMNIBOX_VOICE_SEARCH_ALWAYS_VISIBLE)
+    @FlakyTest(message = "https://crbug.com/1020381")
     @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
-    @Feature({"OmniboxVoiceSearchAlwaysVisible"})
-    public void testShowingVoiceSearchButtonIfUrlBarIsEmptyAndFlagIsDisabled()
-            throws ExecutionException, InterruptedException {
+    public void testShowingVoiceSearchButtonIfUrlBarIsEmpty() throws ExecutionException {
         setUrlBarTextAndFocus("");
 
-        Assert.assertNotEquals(getDeleteButton().getVisibility(), View.VISIBLE);
-        Assert.assertEquals(getMicButton().getVisibility(), View.VISIBLE);
-    }
-
-    @Test
-    @SmallTest
-    @EnableFeatures(ChromeFeatureList.OMNIBOX_VOICE_SEARCH_ALWAYS_VISIBLE)
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
-    @Feature({"OmniboxVoiceSearchAlwaysVisible"})
-    public void testShowingVoiceAndDeleteButtonsShowingIfUrlBarContainsText()
-            throws ExecutionException, InterruptedException {
-        setUrlBarTextAndFocus("testing");
-
-        Assert.assertEquals(getDeleteButton().getVisibility(), View.VISIBLE);
-        Assert.assertEquals(getMicButton().getVisibility(), View.VISIBLE);
-    }
-
-    @Test
-    @SmallTest
-    @EnableFeatures(ChromeFeatureList.OMNIBOX_VOICE_SEARCH_ALWAYS_VISIBLE)
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
-    @Feature({"OmniboxVoiceSearchAlwaysVisible"})
-    public void testShowingOnlyVoiceButtonIfUrlBarIsEmpty()
-            throws ExecutionException, InterruptedException {
-        setUrlBarTextAndFocus("");
-
-        Assert.assertNotEquals(getDeleteButton().getVisibility(), View.VISIBLE);
-        Assert.assertEquals(getMicButton().getVisibility(), View.VISIBLE);
+        Assert.assertNotEquals(getDeleteButton().getVisibility(), VISIBLE);
+        Assert.assertEquals(getMicButton().getVisibility(), VISIBLE);
     }
 
     @Test
@@ -237,7 +217,6 @@ public class LocationBarLayoutTest {
 
     @Test
     @SmallTest
-    @DisableFeatures(ChromeFeatureList.SEARCH_READY_OMNIBOX)
     public void testEditingTextShownOnFocus() {
         final UrlBar urlBar = getUrlBar();
         final LocationBarLayout locationBar = getLocationBar();
@@ -250,13 +229,253 @@ public class LocationBarLayoutTest {
 
         Assert.assertEquals(TRIMMED_URL, getUrlText(urlBar));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> { urlBar.requestFocus(); });
+        TestThreadUtils.runOnUiThreadBlocking(() -> { urlBar.requestFocus(); });
 
         Assert.assertEquals(VERBOSE_URL, getUrlText(urlBar));
 
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             Assert.assertEquals(0, urlBar.getSelectionStart());
             Assert.assertEquals(VERBOSE_URL.length(), urlBar.getSelectionEnd());
         });
+    }
+
+    @Test
+    @SmallTest
+    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @EnableFeatures(ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO)
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_unfocusedOnNTP_whenIncognito() {
+        final LocationBarLayout locationBar = getLocationBar();
+        final View iconView = locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        loadUrlInNewTabAndUpdateModels(UrlConstants.NTP_URL, true);
+
+        onView(withId(R.id.location_bar_status))
+                .check((view, e) -> Assert.assertEquals(iconView.getVisibility(), GONE));
+    }
+
+    @Test
+    @SmallTest
+    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @EnableFeatures(ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO)
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_unfocusedOnNTP() {
+        final LocationBarLayout locationBar = getLocationBar();
+        final View iconView = locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        loadUrlInNewTabAndUpdateModels(UrlConstants.NTP_URL, false);
+        TestThreadUtils.runOnUiThreadBlocking(() -> { locationBar.updateVisualsForState(); });
+
+        onView(withId(R.id.location_bar_status))
+                .check((view, e) -> Assert.assertEquals(GONE, iconView.getVisibility()));
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO)
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_focusedOnNTP() throws ExecutionException {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        loadUrlInNewTabAndUpdateModels(UrlConstants.NTP_URL, false);
+        setUrlBarTextAndFocus("");
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(VISIBLE, iconView.getVisibility());
+            Assert.assertEquals(R.drawable.ic_logo_googleg_20dp,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO)
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_focusedOnNTP_nonGoogleEngine()
+            throws ExecutionException {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithYahoo(locationBar);
+        loadUrlInNewTabAndUpdateModels(UrlConstants.NTP_URL, false);
+        setUrlBarTextAndFocus("");
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(VISIBLE, iconView.getVisibility());
+            Assert.assertEquals(R.drawable.ic_search,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures({ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO})
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_unfocusedOnSRP_withQIO() {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+
+        mTestLocationBarModel.setCurrentUrl(GOOGLE_SRP_URL);
+        mTestLocationBarModel.setSecurityLevel(ConnectionSecurityLevel.SECURE);
+        mTestLocationBarModel.setDisplaySearchTerms(SEARCH_TERMS);
+        setUrlToPageUrl(locationBar);
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(iconView.getVisibility(), VISIBLE);
+            Assert.assertEquals(R.drawable.ic_logo_googleg_20dp,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures({ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO})
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_unfocusedOnSRP() {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        mTestLocationBarModel.setCurrentUrl(GOOGLE_SRP_URL);
+        mTestLocationBarModel.setSecurityLevel(ConnectionSecurityLevel.SECURE);
+        setUrlToPageUrl(locationBar);
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(iconView.getVisibility(), VISIBLE);
+            Assert.assertEquals(R.drawable.omnibox_https_valid,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures(
+            {ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO, ChromeFeatureList.QUERY_IN_OMNIBOX})
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void
+    testOmniboxSearchEngineLogo_focusedOnSRP() throws ExecutionException {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        mTestLocationBarModel.setCurrentUrl(GOOGLE_SRP_URL);
+        mTestLocationBarModel.setSecurityLevel(ConnectionSecurityLevel.SECURE);
+        mTestLocationBarModel.setDisplaySearchTerms(null);
+        setUrlToPageUrl(locationBar);
+        setUrlBarTextAndFocus("");
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(iconView.getVisibility(), VISIBLE);
+            Assert.assertEquals(R.drawable.ic_logo_googleg_20dp,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures({ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO})
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_unfocusedOnChromeVersion() throws ExecutionException {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        mTestLocationBarModel.setCurrentUrl("chrome://version");
+        mTestLocationBarModel.setSecurityLevel(ConnectionSecurityLevel.NONE);
+        mTestLocationBarModel.setDisplaySearchTerms(null);
+        setUrlToPageUrl(locationBar);
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(iconView.getVisibility(), VISIBLE);
+            Assert.assertEquals(R.drawable.omnibox_info,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    @EnableFeatures({ChromeFeatureList.OMNIBOX_SEARCH_ENGINE_LOGO})
+    @Feature({"OmniboxSearchEngineLogo"})
+    public void testOmniboxSearchEngineLogo_focusedOnChromeVersion() throws ExecutionException {
+        final LocationBarLayout locationBar = getLocationBar();
+        final ImageView iconView = (ImageView) locationBar.getSecurityIconView();
+        updateSearchEngineLogoWithGoogle(locationBar);
+        mTestLocationBarModel.setCurrentUrl("chrome://version");
+        mTestLocationBarModel.setSecurityLevel(ConnectionSecurityLevel.NONE);
+        mTestLocationBarModel.setDisplaySearchTerms(null);
+        setUrlToPageUrl(locationBar);
+        setUrlBarTextAndFocus("");
+
+        onView(withId(R.id.location_bar_status)).check((view, e) -> {
+            Assert.assertEquals(iconView.getVisibility(), VISIBLE);
+            Assert.assertEquals(R.drawable.ic_logo_googleg_20dp,
+                    locationBar.getStatusViewCoordinatorForTesting()
+                            .getSecurityIconResourceIdForTesting());
+        });
+    }
+
+    @Test
+    @SmallTest
+    public void testSetUrlBarFocus() {
+        final LocationBarLayout locationBar = getLocationBar();
+
+        Assert.assertEquals(
+                0, RecordHistogram.getHistogramTotalCountForTesting("Android.OmniboxFocusReason"));
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            locationBar.setUrlBarFocus(
+                    true, SEARCH_TERMS_URL, LocationBar.OmniboxFocusReason.FAKE_BOX_LONG_PRESS);
+        });
+        Assert.assertTrue(locationBar.isUrlBarFocused());
+        Assert.assertTrue(locationBar.didFocusUrlFromFakebox());
+        Assert.assertEquals(SEARCH_TERMS_URL, getUrlText(getUrlBar()));
+        Assert.assertEquals(
+                1, RecordHistogram.getHistogramTotalCountForTesting("Android.OmniboxFocusReason"));
+
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            locationBar.setUrlBarFocus(
+                    true, SEARCH_TERMS, LocationBar.OmniboxFocusReason.SEARCH_QUERY);
+        });
+        Assert.assertTrue(locationBar.isUrlBarFocused());
+        Assert.assertTrue(locationBar.didFocusUrlFromFakebox());
+        Assert.assertEquals(SEARCH_TERMS, getUrlText(getUrlBar()));
+        Assert.assertEquals(
+                1, RecordHistogram.getHistogramTotalCountForTesting("Android.OmniboxFocusReason"));
+
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            locationBar.setUrlBarFocus(false, null, LocationBar.OmniboxFocusReason.UNFOCUS);
+        });
+        Assert.assertFalse(locationBar.isUrlBarFocused());
+        Assert.assertFalse(locationBar.didFocusUrlFromFakebox());
+        Assert.assertEquals(
+                1, RecordHistogram.getHistogramTotalCountForTesting("Android.OmniboxFocusReason"));
+
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            locationBar.setUrlBarFocus(true, null, LocationBar.OmniboxFocusReason.OMNIBOX_TAP);
+        });
+        Assert.assertTrue(locationBar.isUrlBarFocused());
+        Assert.assertFalse(locationBar.didFocusUrlFromFakebox());
+        Assert.assertEquals(
+                2, RecordHistogram.getHistogramTotalCountForTesting("Android.OmniboxFocusReason"));
+    }
+
+    private void loadUrlInNewTabAndUpdateModels(String url, boolean incognito) {
+        mActivityTestRule.loadUrlInNewTab(url, incognito);
+        setupModelsForCurrentTab();
+    }
+
+    /** Performs an update on {@link LocationBar} to show the Google logo. */
+    private void updateSearchEngineLogoWithGoogle(LocationBar locationBar) {
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { locationBar.updateSearchEngineStatusIcon(true, true, GOOGLE_URL); });
+    }
+
+    /** Performs an update on {@link LocationBar} to show the Yahoo logo. */
+    private void updateSearchEngineLogoWithYahoo(LocationBar locationBar) {
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> { locationBar.updateSearchEngineStatusIcon(true, false, YAHOO_URL); });
     }
 }

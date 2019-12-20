@@ -5,7 +5,7 @@
 #include "third_party/blink/renderer/core/input/mouse_wheel_event_manager.h"
 
 #include "build/build_config.h"
-#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/wheel_event.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -116,10 +116,11 @@ Node* MouseWheelEventManager::FindTargetNode(const WebMouseWheelEvent& event,
                                              const Document* doc,
                                              const LocalFrameView* view) {
   DCHECK(doc && doc->GetLayoutView() && view);
-  LayoutPoint v_point =
-      view->ConvertFromRootFrame(FlooredIntPoint(event.PositionInRootFrame()));
+  PhysicalOffset v_point(
+      view->ConvertFromRootFrame(FlooredIntPoint(event.PositionInRootFrame())));
 
-  HitTestRequest request(HitTestRequest::kReadOnly);
+  HitTestRequest request(HitTestRequest::kReadOnly |
+                         HitTestRequest::kRetargetForInert);
   HitTestLocation location(v_point);
   HitTestResult result(request, location);
   doc->GetLayoutView()->HitTest(location, result);

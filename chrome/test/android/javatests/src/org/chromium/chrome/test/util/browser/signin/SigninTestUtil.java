@@ -6,18 +6,19 @@ package org.chromium.chrome.test.util.browser.signin;
 
 import android.accounts.Account;
 import android.annotation.SuppressLint;
-import android.support.annotation.WorkerThread;
+
+import androidx.annotation.WorkerThread;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.signin.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.SigninHelper;
 import org.chromium.components.signin.AccountIdProvider;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
-import org.chromium.components.signin.OAuth2TokenService;
+import org.chromium.components.signin.identitymanager.ProfileOAuth2TokenServiceDelegate;
 import org.chromium.components.signin.test.util.AccountHolder;
 import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -86,7 +87,7 @@ public final class SigninTestUtil {
         AccountHolder accountHolder = AccountHolder.builder(account).alwaysAccept(true).build();
         sAccountManager.addAccountHolderBlocking(accountHolder);
         sAddedAccounts.add(accountHolder);
-        ThreadUtils.runOnUiThreadBlocking(SigninTestUtil::seedAccounts);
+        TestThreadUtils.runOnUiThreadBlocking(SigninTestUtil::seedAccounts);
         return account;
     }
 
@@ -95,7 +96,7 @@ public final class SigninTestUtil {
      */
     public static Account addAndSignInTestAccount() {
         Account account = addTestAccount();
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             ChromeSigninController.get().setSignedInAccountName(DEFAULT_ACCOUNT);
             seedAccounts();
         });
@@ -111,16 +112,16 @@ public final class SigninTestUtil {
             accountNames[i] = accounts[i].name;
             accountIds[i] = accountIdProvider.getAccountId(accounts[i].name);
         }
-        IdentityServicesProvider.getAccountTrackerService().syncForceRefreshForTest(
+        IdentityServicesProvider.get().getAccountTrackerService().syncForceRefreshForTest(
                 accountIds, accountNames);
     }
 
     private static void overrideAccountIdProvider() {
-        ThreadUtils.runOnUiThreadBlocking(() -> {
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
             AccountIdProvider.setInstanceForTest(new AccountIdProvider() {
                 @Override
                 public String getAccountId(String accountName) {
-                    return "gaia-id-" + accountName;
+                    return "gaia-id-" + accountName.replace("@", "_at_");
                 }
 
                 @Override
@@ -140,7 +141,8 @@ public final class SigninTestUtil {
         ChromeSigninController.get().setSignedInAccountName(null);
         ContextUtils.getAppSharedPreferences()
                 .edit()
-                .putStringSet(OAuth2TokenService.STORED_ACCOUNTS_KEY, new HashSet<>())
+                .putStringSet(
+                        ProfileOAuth2TokenServiceDelegate.STORED_ACCOUNTS_KEY, new HashSet<>())
                 .apply();
     }
 

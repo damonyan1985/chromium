@@ -30,7 +30,7 @@
 #include "components/history/core/browser/url_database.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_result.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -85,6 +85,24 @@ struct TestUrlInfo {
     ASCIIToUTF16("Test - site - just a test"), 28,
     ASCIIToUTF16("just a test"), 2, 0,
     AutocompleteActionPredictor::ACTION_NONE }
+};
+
+// List of urls sorted by the confidence score in ascending order.
+TestUrlInfo test_url_confidence_db[] = {
+    {GURL("http://www.testsite.com/g.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 0, 2, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/f.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 1, 2, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/e.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 2, 2, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/d.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 3, 3, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/c.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 3, 2, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/b.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 3, 0, AutocompleteActionPredictor::ACTION_NONE},
+    {GURL("http://www.testsite.com/a.html"), ASCIIToUTF16("Test"), 1,
+     ASCIIToUTF16("test"), 5, 0, AutocompleteActionPredictor::ACTION_NONE},
 };
 
 GURL GenerateTestURL(size_t size) {
@@ -231,7 +249,7 @@ class AutocompleteActionPredictorTest : public testing::Test {
     for (size_t i = 0; i < base::size(test_url_db); ++i) {
       DBCacheKey key = {test_url_db[i].user_text, test_url_db[i].url};
 
-      bool deleted = !base::ContainsValue(expected, i);
+      bool deleted = !base::Contains(expected, i);
       EXPECT_EQ(deleted, db_cache()->find(key) == db_cache()->end());
       EXPECT_EQ(deleted, db_id_cache()->find(key) == db_id_cache()->end());
     }
@@ -260,6 +278,12 @@ class AutocompleteActionPredictorTest : public testing::Test {
     predictor_->DeleteOldIdsFromCaches(url_db, id_list);
   }
 
+  void DeleteLowestConfidenceRowsFromCaches(
+      size_t count,
+      std::vector<AutocompleteActionPredictorTable::Row::Id>* id_list) {
+    predictor_->DeleteLowestConfidenceRowsFromCaches(count, id_list);
+  }
+
   AutocompleteActionPredictor* predictor() { return predictor_.get(); }
 
   DBCacheMap* db_cache() { return &predictor_->db_cache_; }
@@ -282,7 +306,7 @@ class AutocompleteActionPredictorTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<AutocompleteActionPredictor> predictor_;
 };
@@ -382,7 +406,7 @@ TEST_F(AutocompleteActionPredictorTest, DeleteRowsFromCaches) {
     bool deleted = (i < 2);
     EXPECT_EQ(deleted, db_cache()->find(key) == db_cache()->end());
     EXPECT_EQ(deleted, db_id_cache()->find(key) == db_id_cache()->end());
-    EXPECT_EQ(deleted, base::ContainsValue(id_list, all_ids[i]));
+    EXPECT_EQ(deleted, base::Contains(id_list, all_ids[i]));
   }
 }
 
@@ -412,9 +436,56 @@ TEST_F(AutocompleteActionPredictorTest, DeleteOldIdsFromCaches) {
   EXPECT_EQ(all_ids.size() - expected.size(), db_id_cache()->size());
 
   for (auto it = all_ids.begin(); it != all_ids.end(); ++it) {
-    bool in_expected = base::ContainsValue(expected, *it);
-    bool in_list = base::ContainsValue(id_list, *it);
+    bool in_expected = base::Contains(expected, *it);
+    bool in_list = base::Contains(id_list, *it);
     EXPECT_EQ(in_expected, in_list);
+  }
+}
+
+TEST_F(AutocompleteActionPredictorTest,
+       DeleteLowestConfidenceRowsFromCaches_OneByOne) {
+  std::vector<AutocompleteActionPredictorTable::Row::Id> test_url_ids;
+  for (const auto& info : test_url_confidence_db)
+    test_url_ids.push_back(AddRow(info));
+
+  std::vector<AutocompleteActionPredictorTable::Row::Id> id_list;
+  std::vector<AutocompleteActionPredictorTable::Row::Id> expected;
+
+  for (size_t i = 0; i < base::size(test_url_confidence_db); ++i) {
+    DeleteLowestConfidenceRowsFromCaches(1, &id_list);
+    expected.push_back(test_url_ids[i]);
+    EXPECT_THAT(id_list, ::testing::UnorderedElementsAreArray(expected));
+
+    DBCacheKey deleted_key = {test_url_confidence_db[i].user_text,
+                              test_url_confidence_db[i].url};
+    EXPECT_FALSE(base::Contains(*db_cache(), deleted_key));
+    EXPECT_FALSE(base::Contains(*db_id_cache(), deleted_key));
+  }
+}
+
+TEST_F(AutocompleteActionPredictorTest,
+       DeleteLowestConfidenceRowsFromCaches_Bulk) {
+  std::vector<AutocompleteActionPredictorTable::Row::Id> test_url_ids;
+  for (const auto& info : test_url_confidence_db)
+    test_url_ids.push_back(AddRow(info));
+
+  std::vector<AutocompleteActionPredictorTable::Row::Id> id_list;
+  std::vector<AutocompleteActionPredictorTable::Row::Id> expected;
+
+  const size_t count_to_remove = 4;
+  CHECK_LT(count_to_remove, base::size(test_url_confidence_db));
+
+  for (size_t i = 0; i < count_to_remove; ++i)
+    expected.push_back(test_url_ids[i]);
+
+  DeleteLowestConfidenceRowsFromCaches(count_to_remove, &id_list);
+  ASSERT_THAT(id_list, ::testing::UnorderedElementsAreArray(expected));
+
+  for (size_t i = 0; i < count_to_remove; ++i) {
+    DBCacheKey deleted_key = {test_url_confidence_db[i].user_text,
+                              test_url_confidence_db[i].url};
+    EXPECT_FALSE(base::Contains(*db_cache(), deleted_key));
+    EXPECT_FALSE(base::Contains(*db_id_cache(), deleted_key));
   }
 }
 
@@ -470,7 +541,7 @@ TEST_F(AutocompleteActionPredictorTest,
   auto test = [this](const base::string16& user_text,
                      bool should_be_registered) {
     predictor()->RegisterTransitionalMatches(user_text, AutocompleteResult());
-    bool registered = base::ContainsValue(*transitional_matches(), user_text);
+    bool registered = base::Contains(*transitional_matches(), user_text);
     EXPECT_EQ(registered, should_be_registered);
   };
 

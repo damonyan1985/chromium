@@ -9,6 +9,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/task/post_task.h"
 #include "base/task_runner.h"
+#include "chrome/browser/extensions/chrome_extension_cookies.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "chrome/browser/profiles/profile.h"
@@ -26,7 +27,6 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/app_isolation_info.h"
-#include "net/cookies/cookie_store.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 
@@ -38,15 +38,6 @@ using content::StoragePartition;
 namespace extensions {
 
 namespace {
-
-void ClearCookiesOnIOThread(base::OnceCallback<net::CookieStore*()> getter,
-                            const GURL& origin) {
-  net::CookieStore* cookie_store = std::move(getter).Run();
-  net::CookieDeletionInfo delete_info;
-  delete_info.host = origin.host();
-  cookie_store->DeleteAllMatchingInfoAsync(std::move(delete_info),
-                                           net::CookieStore::DeleteCallback());
-}
 
 // Helper function that deletes data of a given |storage_origin| in a given
 // |partition|.
@@ -74,11 +65,7 @@ void DeleteOrigin(Profile* profile,
 
     // Delete cookies separately from other data so that the request context
     // for extensions doesn't need to be passed into the StoragePartition.
-    // TODO(rdsmith): Mojoify this call and get rid of the thread hopping.
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&ClearCookiesOnIOThread,
-                       profile->GetExtensionsCookieStoreGetter(), origin));
+    extensions::ChromeExtensionCookies::Get(profile)->ClearCookies(origin);
   } else {
     // We don't need to worry about the media request context because that
     // shares the same cookie store as the main request context.
@@ -102,7 +89,7 @@ void DataDeleter::StartDeleting(Profile* profile, const Extension* extension) {
 
   if (AppIsolationInfo::HasIsolatedStorage(extension)) {
     BrowserContext::AsyncObliterateStoragePartition(
-        profile, util::GetSiteForExtensionId(extension->id(), profile),
+        profile, util::GetPartitionDomainForExtension(extension),
         base::Bind(
             &OnNeedsToGarbageCollectIsolatedStorage,
             ExtensionSystem::Get(profile)->extension_service()->AsWeakPtr()));
@@ -110,9 +97,8 @@ void DataDeleter::StartDeleting(Profile* profile, const Extension* extension) {
     GURL launch_web_url_origin(
         AppLaunchInfo::GetLaunchWebURL(extension).GetOrigin());
 
-    StoragePartition* partition = BrowserContext::GetStoragePartitionForSite(
-        profile,
-        Extension::GetBaseURLFromExtensionId(extension->id()));
+    StoragePartition* partition =
+        util::GetStoragePartitionForExtensionId(extension->id(), profile);
 
     ExtensionSpecialStoragePolicy* storage_policy =
         profile->GetExtensionSpecialStoragePolicy();

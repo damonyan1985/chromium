@@ -2,6 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// clang-format off
+// #import {down, up, pressAndReleaseKeyOn} from 'chrome://resources/polymer/v3_0/iron-test-helpers/mock-interactions.js'
+// #import {eventToPromise, waitAfterNextRender} from 'chrome://test/test_util.m.js';
+// #import {FocusRowBehavior} from 'chrome://resources/js/cr/ui/focus_row_behavior.m.js';
+// #import {getDeepActiveElement} from 'chrome://resources/js/util.m.js';
+// #import {Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+// clang-format on
+
 suite('cr-focus-row-behavior-test', function() {
   /** @type {FocusableIronListItemElement} */ let testElement;
 
@@ -44,32 +52,46 @@ suite('cr-focus-row-behavior-test', function() {
     Polymer({
       is: 'focus-row-element',
       behaviors: [cr.ui.FocusRowBehavior],
+      focusCallCount: 0,
+
+      focus: function() {
+        this.focusCallCount++;
+      },
     });
   });
 
-  /**
-   * @param {!HTMLElement} element
-   * @return {!Promise} Promise that resolves when an afterNextRender()
-   *     callback on |element| is run.
-   */
-  function afterNextRender(element) {
-    return new Promise(resolve => {
-      Polymer.RenderStatus.afterNextRender(element, resolve);
-    });
-  }
-
-  setup(function() {
+  setup(async function() {
     PolymerTest.clearBody();
 
     testElement = document.createElement('focus-row-element');
     document.body.appendChild(testElement);
 
     // Block so that FocusRowBehavior.attached can run.
-    return afterNextRender(testElement).then(() => {
-      // Wait one more time to ensure that async setup in FocusRowBehavior has
-      // executed.
-      return afterNextRender(testElement);
-    });
+    await test_util.waitAfterNextRender(testElement);
+    // Wait one more time to ensure that async setup in FocusRowBehavior has
+    // executed.
+    await test_util.waitAfterNextRender(testElement);
+  });
+
+  test('ID is not overriden when index is set', function() {
+    assertFalse(testElement.hasAttribute('id'));
+    assertFalse(testElement.hasAttribute('aria-rowindex'));
+    testElement.id = 'test-id';
+    assertTrue(testElement.hasAttribute('id'));
+    assertEquals('test-id', testElement.id);
+    assertFalse(testElement.hasAttribute('aria-rowindex'));
+    testElement.focusRowIndex = 5;  // Arbitrary index.
+    assertTrue(testElement.hasAttribute('id'));
+    assertEquals('test-id', testElement.id);
+    assertTrue(testElement.hasAttribute('aria-rowindex'));
+  });
+
+  test('ID and aria-rowindex are only set when index is set', function() {
+    assertFalse(testElement.hasAttribute('id'));
+    assertFalse(testElement.hasAttribute('aria-rowindex'));
+    testElement.focusRowIndex = 5;  // Arbitrary index.
+    assertTrue(testElement.hasAttribute('id'));
+    assertTrue(testElement.hasAttribute('aria-rowindex'));
   });
 
   test('item passes focus to first focusable child', function() {
@@ -119,5 +141,27 @@ suite('cr-focus-row-behavior-test', function() {
       const button = getDeepActiveElement();
       assertEquals('fake button three', button.textContent.trim());
     });
+  });
+
+  test('when shift+tab pressed on first control, focus on container', () => {
+    const first = testElement.$.control;
+    const second = testElement.$.controlTwo;
+    MockInteractions.pressAndReleaseKeyOn(first, '', 'shift', 'Tab');
+    assertEquals(1, testElement.focusCallCount);
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(1, testElement.focusCallCount);
+
+    // Simulate updating a row with same first control.
+    testElement.fire('dom-change');
+    MockInteractions.pressAndReleaseKeyOn(first, '', 'shift', 'Tab');
+    assertEquals(2, testElement.focusCallCount);
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(2, testElement.focusCallCount);
+
+    // Simulate updating row with different first control.
+    first.remove();
+    testElement.fire('dom-change');
+    MockInteractions.pressAndReleaseKeyOn(second, '', 'shift', 'Tab');
+    assertEquals(3, testElement.focusCallCount);
   });
 });

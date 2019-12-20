@@ -7,10 +7,7 @@
 
 #import "ios/chrome/browser/ui/coordinators/chrome_coordinator.h"
 
-@class CommandDispatcher;
 @protocol PageInfoPresentation;
-@class TabModel;
-@protocol UrlLoader;
 
 // Notification sent when the page info is shown.
 extern NSString* const kPageInfoWillShowNotification;
@@ -24,19 +21,15 @@ extern NSString* const kPageInfoWillHideNotification;
 // before |-stop| is called.
 @interface PageInfoLegacyCoordinator : ChromeCoordinator
 
-// The dispatcher for this coordinator. When |dispatcher| is set, the
-// coordinator will register itself as the target for PageInfoCommands.
-@property(nonatomic, weak) CommandDispatcher* dispatcher;
-
-// The UrlLoader to be used by this coordinator.
-@property(nonatomic, weak) id<UrlLoader> loader;
+// Use -initWithBaseViewController:browser:
+- (instancetype)initWithBaseViewController:(UIViewController*)viewController
+                              browserState:
+                                  (ios::ChromeBrowserState*)browserState
+    NS_UNAVAILABLE;
 
 // |presentationProvider| provides information and runs tasks necessary to
 // present Page Info.
 @property(nonatomic, weak) id<PageInfoPresentation> presentationProvider;
-
-// The active TabModel to be used to display Page Info.
-@property(nonatomic, weak) TabModel* tabModel;
 
 @end
 

@@ -32,8 +32,7 @@ MultiBufferReader::MultiBufferReader(
       preload_pos_(-1),
       loading_(true),
       current_wait_size_(0),
-      progress_callback_(progress_callback),
-      weak_factory_(this) {
+      progress_callback_(progress_callback) {
   DCHECK_GE(start, 0);
   DCHECK_GE(end_, 0);
 }
@@ -114,7 +113,7 @@ int64_t MultiBufferReader::TryRead(uint8_t* data, int64_t len) {
   return bytes_read;
 }
 
-int MultiBufferReader::Wait(int64_t len, const base::Closure& cb) {
+int MultiBufferReader::Wait(int64_t len, base::OnceClosure cb) {
   DCHECK_LE(pos_ + len, end_);
   DCHECK_NE(Available(), -1);
   DCHECK_LE(len, max_buffer_forward_);
@@ -126,7 +125,7 @@ int MultiBufferReader::Wait(int64_t len, const base::Closure& cb) {
   if (Available() >= current_wait_size_) {
     return net::OK;
   } else {
-    cb_ = cb;
+    cb_ = std::move(cb);
     return net::ERR_IO_PENDING;
   }
 }
@@ -156,8 +155,8 @@ void MultiBufferReader::CheckWait() {
   }
 }
 
-void MultiBufferReader::Call(const base::Closure& cb) const {
-  cb.Run();
+void MultiBufferReader::Call(base::OnceClosure cb) const {
+  std::move(cb).Run();
 }
 
 void MultiBufferReader::UpdateEnd(MultiBufferBlockId p) {
@@ -181,11 +180,12 @@ void MultiBufferReader::NotifyAvailableRange(
   if (!progress_callback_.is_null()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(progress_callback_, static_cast<int64_t>(range.begin)
-                                           << multibuffer_->block_size_shift(),
-                   (static_cast<int64_t>(range.end)
-                    << multibuffer_->block_size_shift()) +
-                       multibuffer_->UncommittedBytesAt(range.end)));
+        base::BindOnce(progress_callback_,
+                       static_cast<int64_t>(range.begin)
+                           << multibuffer_->block_size_shift(),
+                       (static_cast<int64_t>(range.end)
+                        << multibuffer_->block_size_shift()) +
+                           multibuffer_->UncommittedBytesAt(range.end)));
   }
 }
 

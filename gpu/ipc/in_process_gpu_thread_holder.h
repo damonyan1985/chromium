@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/threading/thread.h"
+#include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_preferences.h"
 
@@ -41,20 +42,26 @@ class COMPONENT_EXPORT(GPU_THREAD_HOLDER) InProcessGpuThreadHolder
 
   // Returns a task executor that runs commands on the GPU thread. The task
   // executor will be created the first time this is called.
-  scoped_refptr<CommandBufferTaskExecutor> GetTaskExecutor();
+  CommandBufferTaskExecutor* GetTaskExecutor();
 
  private:
   void InitializeOnGpuThread(base::WaitableEvent* completion);
   void DeleteOnGpuThread();
+  scoped_refptr<SharedContextState> GetSharedContextState();
 
   GpuPreferences gpu_preferences_;
   GpuFeatureInfo gpu_feature_info_;
+
+  scoped_refptr<gl::GLShareGroup> share_group_;
+  scoped_refptr<gl::GLSurface> surface_;
+  scoped_refptr<gl::GLContext> context_;
+  scoped_refptr<SharedContextState> context_state_;
 
   std::unique_ptr<SyncPointManager> sync_point_manager_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<MailboxManager> mailbox_manager_;
   std::unique_ptr<SharedImageManager> shared_image_manager_;
-  scoped_refptr<CommandBufferTaskExecutor> task_executor_;
+  std::unique_ptr<CommandBufferTaskExecutor> task_executor_;
 
   DISALLOW_COPY_AND_ASSIGN(InProcessGpuThreadHolder);
 };

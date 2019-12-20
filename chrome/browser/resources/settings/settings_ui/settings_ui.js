@@ -33,10 +33,19 @@ Polymer({
     prefs: Object,
 
     /** @private */
-    advancedOpened_: {
+    advancedOpenedInMain_: {
       type: Boolean,
       value: false,
       notify: true,
+      observer: 'onAdvancedOpenedInMainChanged_',
+    },
+
+    /** @private */
+    advancedOpenedInMenu_: {
+      type: Boolean,
+      value: false,
+      notify: true,
+      observer: 'onAdvancedOpenedInMenuChanged_',
     },
 
     /** @private {boolean} */
@@ -45,19 +54,16 @@ Polymer({
       value: false,
     },
 
+    /** @private */
+    narrow_: {
+      type: Boolean,
+      observer: 'onNarrowChanged_',
+    },
+
     /**
-     * @private {!GuestModePageVisibility}
+     * @private {!PageVisibility}
      */
     pageVisibility_: {type: Object, value: settings.pageVisibility},
-
-    /** @private */
-    showAndroidApps_: Boolean,
-
-    /** @private */
-    showCrostini_: Boolean,
-
-    /** @private */
-    havePlayStoreApp_: Boolean,
 
     /** @private */
     lastSearchQuery_: {
@@ -104,42 +110,16 @@ Polymer({
       // <if expr="chromeos">
       controlledSettingShared:
           loadTimeData.getString('controlledSettingShared'),
-      controlledSettingOwner: loadTimeData.getString('controlledSettingOwner'),
+      controlledSettingWithOwner:
+          loadTimeData.getString('controlledSettingWithOwner'),
+      controlledSettingNoOwner:
+          loadTimeData.getString('controlledSettingNoOwner'),
+      controlledSettingParent:
+          loadTimeData.getString('controlledSettingParent'),
+      controlledSettingChildRestriction:
+          loadTimeData.getString('controlledSettingChildRestriction'),
       // </if>
     };
-
-    // <if expr="chromeos">
-    CrOncStrings = {
-      OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
-      OncTypeEthernet: loadTimeData.getString('OncTypeEthernet'),
-      OncTypeTether: loadTimeData.getString('OncTypeTether'),
-      OncTypeVPN: loadTimeData.getString('OncTypeVPN'),
-      OncTypeWiFi: loadTimeData.getString('OncTypeWiFi'),
-      OncTypeWiMAX: loadTimeData.getString('OncTypeWiMAX'),
-      networkListItemConnected:
-          loadTimeData.getString('networkListItemConnected'),
-      networkListItemConnecting:
-          loadTimeData.getString('networkListItemConnecting'),
-      networkListItemConnectingTo:
-          loadTimeData.getString('networkListItemConnectingTo'),
-      networkListItemInitializing:
-          loadTimeData.getString('networkListItemInitializing'),
-      networkListItemScanning:
-          loadTimeData.getString('networkListItemScanning'),
-      networkListItemNotConnected:
-          loadTimeData.getString('networkListItemNotConnected'),
-      networkListItemNoNetwork:
-          loadTimeData.getString('networkListItemNoNetwork'),
-      vpnNameTemplate: loadTimeData.getString('vpnNameTemplate'),
-    };
-    // </if>
-
-    this.showAndroidApps_ = loadTimeData.valueExists('androidAppsVisible') &&
-        loadTimeData.getBoolean('androidAppsVisible');
-    this.showCrostini_ = loadTimeData.valueExists('showCrostini') &&
-        loadTimeData.getBoolean('showCrostini');
-    this.havePlayStoreApp_ = loadTimeData.valueExists('havePlayStoreApp') &&
-        loadTimeData.getBoolean('havePlayStoreApp');
 
     this.addEventListener('show-container', () => {
       this.$.container.style.visibility = 'visible';
@@ -165,7 +145,17 @@ Polymer({
     settings.setGlobalScrollTarget(this.$.container);
 
     const scrollToTop = top => new Promise(resolve => {
-      this.$.container.scrollTo({top, behavior: 'smooth'});
+      if (this.$.container.scrollTop === top) {
+        resolve();
+        return;
+      }
+
+      // When transitioning  back to main page from a subpage on ChromeOS, using
+      // 'smooth' scroll here results in the scroll changing to whatever is last
+      // value of |top|. This happens even after setting the scroll position the
+      // UI or programmatically.
+      const behavior = cr.isChromeOS ? 'auto' : 'smooth';
+      this.$.container.scrollTo({top: top, behavior: behavior});
       const onScroll = () => {
         this.debounce('scrollEnd', () => {
           this.$.container.removeEventListener('scroll', onScroll);
@@ -240,15 +230,7 @@ Polymer({
    * @private
    */
   onSearchChanged_: function(e) {
-    // Trim leading whitespace only, to prevent searching for empty string. This
-    // still allows the user to search for 'foo bar', while taking a long pause
-    // after typing 'foo '.
-    const query = e.detail.replace(/^\s+/, '');
-    // Prevent duplicate history entries.
-    if (query == this.lastSearchQuery_) {
-      return;
-    }
-
+    const query = e.detail;
     settings.navigateTo(
         settings.routes.BASIC,
         query.length > 0 ?
@@ -292,5 +274,26 @@ Polymer({
     listenOnce(this.$.container, ['blur', 'pointerdown'], () => {
       this.$.container.removeAttribute('tabindex');
     });
+  },
+
+  /** @private */
+  onAdvancedOpenedInMainChanged_: function() {
+    if (this.advancedOpenedInMain_) {
+      this.advancedOpenedInMenu_ = true;
+    }
+  },
+
+  /** @private */
+  onAdvancedOpenedInMenuChanged_: function() {
+    if (this.advancedOpenedInMenu_) {
+      this.advancedOpenedInMain_ = true;
+    }
+  },
+
+  /** @private */
+  onNarrowChanged_: function() {
+    if (this.$.drawer.open && !this.narrow_) {
+      this.$.drawer.close();
+    }
   },
 });

@@ -39,7 +39,7 @@ class View;
 using AuraAXTreeSerializer = ui::
     AXTreeSerializer<views::AXAuraObjWrapper*, ui::AXNodeData, ui::AXTreeData>;
 
-// Manages a tree of automation nodes.
+// Manages a tree of automation nodes backed by aura constructs.
 class AutomationManagerAura : public ui::AXActionHandler,
                               public views::AXAuraObjCache::Delegate,
                               public views::AXEventObserver {
@@ -56,6 +56,7 @@ class AutomationManagerAura : public ui::AXActionHandler,
   // Handle an event fired upon the root view.
   void HandleEvent(ax::mojom::Event event_type);
 
+  // Handles a textual alert.
   void HandleAlert(const std::string& text);
 
   // AXActionHandler implementation.
@@ -73,6 +74,11 @@ class AutomationManagerAura : public ui::AXActionHandler,
     event_bundle_sink_ = sink;
   }
 
+  void set_ax_aura_obj_cache_for_testing(
+      std::unique_ptr<views::AXAuraObjCache> cache) {
+    cache_ = std::move(cache);
+  }
+
  private:
   friend class base::NoDestructor<AutomationManagerAura>;
 
@@ -81,19 +87,22 @@ class AutomationManagerAura : public ui::AXActionHandler,
   AutomationManagerAura();
   ~AutomationManagerAura() override;
 
-  void SendEventOnObjectById(int32_t id, ax::mojom::Event event_type);
-
   // Reset state in this manager. If |reset_serializer| is true, reset the
   // serializer to save memory.
   void Reset(bool reset_serializer);
 
-  void SendEvent(views::AXAuraObjWrapper* aura_obj,
-                 ax::mojom::Event event_type);
+  void PostEvent(int32_t id, ax::mojom::Event event_type);
+
+  void SendPendingEvents();
 
   void PerformHitTest(const ui::AXActionData& data);
 
+  // Logs an error with details about a serialization failure.
+  void OnSerializeFailure(ax::mojom::Event event_type,
+                          const ui::AXTreeUpdate& update);
+
   // Whether automation support for views is enabled.
-  bool enabled_;
+  bool enabled_ = false;
 
   // Root object representing the entire desktop. Must outlive |current_tree_|.
   std::unique_ptr<AXRootObjWrapper> desktop_root_;
@@ -107,16 +116,17 @@ class AutomationManagerAura : public ui::AXActionHandler,
   // |current_tree_|.
   std::unique_ptr<AuraAXTreeSerializer> current_tree_serializer_;
 
-  bool processing_events_;
+  bool processing_posted_ = false;
 
-  std::vector<std::pair<views::AXAuraObjWrapper*, ax::mojom::Event>>
-      pending_events_;
+  std::vector<std::pair<int32_t, ax::mojom::Event>> pending_events_;
 
   // The handler for AXEvents (e.g. the extensions subsystem in production, or
   // a fake for tests).
   ui::AXEventBundleSink* event_bundle_sink_ = nullptr;
 
   std::unique_ptr<views::AccessibilityAlertWindow> alert_window_;
+
+  std::unique_ptr<views::AXAuraObjCache> cache_;
 
   DISALLOW_COPY_AND_ASSIGN(AutomationManagerAura);
 };

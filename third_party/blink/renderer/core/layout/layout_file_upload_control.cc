@@ -21,6 +21,7 @@
 #include "third_party/blink/renderer/core/layout/layout_file_upload_control.h"
 
 #include <math.h>
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/position_with_affinity.h"
 #include "third_party/blink/renderer/core/fileapi/file_list.h"
@@ -44,7 +45,7 @@ LayoutFileUploadControl::LayoutFileUploadControl(HTMLInputElement* input)
 LayoutFileUploadControl::~LayoutFileUploadControl() = default;
 
 void LayoutFileUploadControl::UpdateFromElement() {
-  HTMLInputElement* input = ToHTMLInputElement(GetNode());
+  auto* input = To<HTMLInputElement>(GetNode());
   DCHECK_EQ(input->type(), input_type_names::kFile);
 
   if (HTMLInputElement* button = UploadButton()) {
@@ -74,7 +75,7 @@ int LayoutFileUploadControl::MaxFilenameWidth() const {
 
 void LayoutFileUploadControl::PaintObject(
     const PaintInfo& paint_info,
-    const LayoutPoint& paint_offset) const {
+    const PhysicalOffset& paint_offset) const {
   FileUploadControlPainter(*this).PaintObject(paint_info, paint_offset);
 }
 
@@ -91,8 +92,8 @@ void LayoutFileUploadControl::ComputeIntrinsicLogicalWidths(
       font.Width(ConstructTextRun(font, character_as_string, StyleRef(),
                                   TextRun::kAllowTrailingExpansion));
 
-  const String label = ToHTMLInputElement(GetNode())->GetLocale().QueryString(
-      WebLocalizedString::kFileButtonNoFileSelectedLabel);
+  const String label = To<HTMLInputElement>(GetNode())->GetLocale().QueryString(
+      IDS_FORM_FILE_NO_FILE_LABEL);
   float default_label_width = font.Width(ConstructTextRun(
       font, label, StyleRef(), TextRun::kAllowTrailingExpansion));
   if (HTMLInputElement* button = UploadButton()) {
@@ -153,15 +154,16 @@ void LayoutFileUploadControl::ComputePreferredLogicalWidths() {
 }
 
 PositionWithAffinity LayoutFileUploadControl::PositionForPoint(
-    const LayoutPoint&) const {
+    const PhysicalOffset&) const {
   return PositionWithAffinity();
 }
 
 HTMLInputElement* LayoutFileUploadControl::UploadButton() const {
   // FIXME: This should be on HTMLInputElement as an API like
   // innerButtonElement().
-  HTMLInputElement* input = ToHTMLInputElement(GetNode());
-  return ToHTMLInputElementOrNull(input->UserAgentShadowRoot()->firstChild());
+  auto* input = To<HTMLInputElement>(GetNode());
+  return DynamicTo<HTMLInputElement>(
+      input->UserAgentShadowRoot()->firstChild());
 }
 
 String LayoutFileUploadControl::ButtonValue() {
@@ -172,25 +174,26 @@ String LayoutFileUploadControl::ButtonValue() {
 }
 
 String LayoutFileUploadControl::FileTextValue() const {
-  HTMLInputElement* input = ToHTMLInputElement(GetNode());
+  auto* input = To<HTMLInputElement>(GetNode());
   DCHECK(input->files());
   return LayoutTheme::GetTheme().FileListNameForWidth(
       input->GetLocale(), input->files(), StyleRef().GetFont(),
       MaxFilenameWidth());
 }
 
-LayoutRect LayoutFileUploadControl::ControlClipRect(
-    const LayoutPoint& additional_offset) const {
-  LayoutRect rect(additional_offset, Size());
+PhysicalRect LayoutFileUploadControl::ControlClipRect(
+    const PhysicalOffset& additional_offset) const {
+  PhysicalRect rect(additional_offset, Size());
   rect.Expand(BorderInsets());
-  rect.Expand(LayoutUnit(), LayoutUnit(kButtonShadowHeight));
+  rect.offset.top -= LayoutUnit(kButtonShadowHeight);
+  rect.size.height += LayoutUnit(kButtonShadowHeight) * 2;
   return rect;
 }
 
 // Override to allow effective ControlClipRect to be bigger than the padding
 // box because of kButtonShadowHeight.
-LayoutRect LayoutFileUploadControl::OverflowClipRect(
-    const LayoutPoint& additional_offset,
+PhysicalRect LayoutFileUploadControl::OverflowClipRect(
+    const PhysicalOffset& additional_offset,
     OverlayScrollbarClipBehavior) const {
   return ControlClipRect(additional_offset);
 }

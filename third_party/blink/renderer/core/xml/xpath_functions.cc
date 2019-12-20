@@ -382,11 +382,11 @@ static inline String ExpandedNameLocalPart(Node* node) {
   // But note that Blink does not support namespace nodes.
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      return ToElement(node)->localName();
+      return To<Element>(node)->localName();
     case Node::kAttributeNode:
-      return ToAttr(node)->localName();
+      return To<Attr>(node)->localName();
     case Node::kProcessingInstructionNode:
-      return ToProcessingInstruction(node)->target();
+      return To<ProcessingInstruction>(node)->target();
     default:
       return String();
   }
@@ -395,9 +395,9 @@ static inline String ExpandedNameLocalPart(Node* node) {
 static inline String ExpandedNamespaceURI(Node* node) {
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      return ToElement(node)->namespaceURI();
+      return To<Element>(node)->namespaceURI();
     case Node::kAttributeNode:
-      return ToAttr(node)->namespaceURI();
+      return To<Attr>(node)->namespaceURI();
     default:
       return String();
   }
@@ -408,10 +408,10 @@ static inline String ExpandedName(Node* node) {
 
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      prefix = ToElement(node)->prefix();
+      prefix = To<Element>(node)->prefix();
       break;
     case Node::kAttributeNode:
-      prefix = ToAttr(node)->prefix();
+      prefix = To<Attr>(node)->prefix();
       break;
     default:
       break;
@@ -583,13 +583,11 @@ Value FunStringLength::Evaluate(EvaluationContext& context) const {
 }
 
 Value FunNormalizeSpace::Evaluate(EvaluationContext& context) const {
-  if (!ArgCount()) {
-    String s = Value(context.node.Get()).ToString();
-    return s.SimplifyWhiteSpace();
-  }
-
-  String s = Arg(0)->Evaluate(context).ToString();
-  return s.SimplifyWhiteSpace();
+  // https://www.w3.org/TR/1999/REC-xpath-19991116/#function-normalize-space
+  String s =
+      (ArgCount() == 0 ? Value(context.node.Get()) : Arg(0)->Evaluate(context))
+          .ToString();
+  return s.SimplifyWhiteSpace(IsXMLSpace);
 }
 
 Value FunTranslate::Evaluate(EvaluationContext& context) const {
@@ -629,10 +627,9 @@ Value FunLang::Evaluate(EvaluationContext& context) const {
   const Attribute* language_attribute = nullptr;
   Node* node = context.node.Get();
   while (node) {
-    if (node->IsElementNode()) {
-      Element* element = ToElement(node);
+    if (auto* element = DynamicTo<Element>(node))
       language_attribute = element->Attributes().Find(xml_names::kLangAttr);
-    }
+
     if (language_attribute)
       break;
     node = node->parentNode();

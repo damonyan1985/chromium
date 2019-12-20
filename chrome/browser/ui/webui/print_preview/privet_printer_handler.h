@@ -40,16 +40,12 @@ class PrivetPrinterHandler
 
   // PrinterHandler implementation:
   void Reset() override;
-  void StartGetPrinters(const AddedPrintersCallback& added_printers_callback,
+  void StartGetPrinters(AddedPrintersCallback added_printers_callback,
                         GetPrintersDoneCallback done_callback) override;
   void StartGetCapability(const std::string& destination_id,
                           GetCapabilityCallback calback) override;
-  // TODO(tbarzic): It might make sense to have the strings in a single struct.
-  void StartPrint(const std::string& destination_id,
-                  const std::string& capability,
-                  const base::string16& job_title,
+  void StartPrint(const base::string16& job_title,
                   base::Value ticket,
-                  const gfx::Size& page_size,
                   scoped_refptr<base::RefCountedMemory> print_data,
                   PrintCallback callback) override;
 
@@ -70,8 +66,7 @@ class PrivetPrinterHandler
 
  private:
   void StartLister(
-      const scoped_refptr<local_discovery::ServiceDiscoverySharedClient>&
-          client);
+      scoped_refptr<local_discovery::ServiceDiscoverySharedClient> client);
   void StopLister();
   void CapabilitiesUpdateClient(
       std::unique_ptr<cloud_print::PrivetHTTPClient> http_client);
@@ -111,7 +106,7 @@ class PrivetPrinterHandler
   PrintCallback print_callback_;
   GetCapabilityCallback capabilities_callback_;
 
-  base::WeakPtrFactory<PrivetPrinterHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<PrivetPrinterHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrivetPrinterHandler);
 };

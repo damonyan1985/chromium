@@ -6,9 +6,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_DOCUMENT_ANIMATION_H_
 
 #include "third_party/blink/renderer/core/animation/animation.h"
-#include "third_party/blink/renderer/core/animation/document_timeline.h"
+#include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -21,7 +21,7 @@ class DocumentAnimation {
   }
 
   static HeapVector<Member<Animation>> getAnimations(Document& document) {
-    return document.Timeline().getAnimations();
+    return document.GetDocumentAnimations().getAnimations();
   }
 };
 

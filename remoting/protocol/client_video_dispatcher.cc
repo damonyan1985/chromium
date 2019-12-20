@@ -34,8 +34,7 @@ ClientVideoDispatcher::ClientVideoDispatcher(VideoStub* video_stub,
                                              ClientStub* client_stub)
     : ChannelDispatcherBase(kVideoChannelName),
       video_stub_(video_stub),
-      client_stub_(client_stub),
-      weak_factory_(this) {}
+      client_stub_(client_stub) {}
 
 ClientVideoDispatcher::~ClientVideoDispatcher() = default;
 
@@ -95,8 +94,8 @@ void ClientVideoDispatcher::OnIncomingMessage(
 
   video_stub_->ProcessVideoPacket(
       std::move(video_packet),
-      base::Bind(&ClientVideoDispatcher::OnPacketDone,
-                 weak_factory_.GetWeakPtr(), pending_frame));
+      base::BindOnce(&ClientVideoDispatcher::OnPacketDone,
+                     weak_factory_.GetWeakPtr(), pending_frame));
 }
 
 void ClientVideoDispatcher::OnPacketDone(

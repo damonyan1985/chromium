@@ -12,11 +12,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/test_reg_util_win.h"
+#include "base/win/wincrypt_shim.h"
 #include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_util_win.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper.h"
@@ -25,10 +25,11 @@
 #include "chrome/credential_provider/common/gcp_strings.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "components/os_crypt/os_crypt.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/primary_account_mutator.h"
 
 namespace {
 
@@ -109,7 +110,7 @@ class SigninUtilWinBrowserTest
     }
 
     if (!GetParam().refresh_token.empty())
-      WriteRrefreshToken(&key, GetParam().refresh_token);
+      WriteRefreshToken(&key, GetParam().refresh_token);
 
     if (GetParam().expect_is_started) {
       signin_util::SetDiceTurnSyncOnHelperDelegateForTesting(
@@ -131,16 +132,26 @@ class SigninUtilWinBrowserTest
     }
   }
 
-  void WriteRrefreshToken(base::win::RegKey* key,
-                          const std::string& refresh_token) {
+  void WriteRefreshToken(base::win::RegKey* key,
+                         const std::string& refresh_token) {
     EXPECT_TRUE(key->Valid());
-    std::string ciphertext;
-    EXPECT_TRUE(OSCrypt::EncryptString(refresh_token, &ciphertext));
+    DATA_BLOB plaintext;
+    plaintext.pbData =
+        reinterpret_cast<BYTE*>(const_cast<char*>(refresh_token.c_str()));
+    plaintext.cbData = static_cast<DWORD>(refresh_token.length());
+
+    DATA_BLOB ciphertext;
+    ASSERT_TRUE(::CryptProtectData(&plaintext, L"Gaia refresh token", nullptr,
+                                   nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+                                   &ciphertext));
+    std::string encrypted_data(reinterpret_cast<char*>(ciphertext.pbData),
+                               ciphertext.cbData);
     EXPECT_EQ(
         ERROR_SUCCESS,
         key->WriteValue(
             base::ASCIIToUTF16(credential_provider::kKeyRefreshToken).c_str(),
-            ciphertext.c_str(), ciphertext.length(), REG_BINARY));
+            encrypted_data.c_str(), encrypted_data.length(), REG_BINARY));
+    LocalFree(ciphertext.pbData);
   }
 
   void ExpectRefreshTokenExists(bool exists) {
@@ -204,13 +215,17 @@ IN_PROC_BROWSER_TEST_P(SigninUtilWinBrowserTest, NoReauthAfterSignout) {
     // Write a new refresh token.
     base::win::RegKey key;
     CreateRegKey(&key);
-    WriteRrefreshToken(&key, "lst-new");
+    WriteRefreshToken(&key, "lst-new");
     ASSERT_FALSE(signin_util::ReauthWithCredentialProviderIfPossible(profile));
 
     // Sign user out of browser.
-    SigninManager* manager = SigninManagerFactory::GetForProfile(profile);
-    manager->SignOut(signin_metrics::ProfileSignout::SIGNOUT_TEST,
-                     signin_metrics::SignoutDelete::DELETED);
+    auto* primary_account_mutator =
+        IdentityManagerFactory::GetForProfile(profile)
+            ->GetPrimaryAccountMutator();
+    primary_account_mutator->ClearPrimaryAccount(
+        signin::PrimaryAccountMutator::ClearAccountsAction::kDefault,
+        signin_metrics::FORCE_SIGNOUT_ALWAYS_ALLOWED_FOR_TEST,
+        signin_metrics::SignoutDelete::DELETED);
 
     // Even with a refresh token available, no reauth happens if the profile
     // is signed out.
@@ -229,16 +244,13 @@ IN_PROC_BROWSER_TEST_P(SigninUtilWinBrowserTest, FixReauth) {
     // Write a new refresh token. This time reauth should work.
     base::win::RegKey key;
     CreateRegKey(&key);
-    WriteRrefreshToken(&key, "lst-new");
+    WriteRefreshToken(&key, "lst-new");
     ASSERT_FALSE(signin_util::ReauthWithCredentialProviderIfPossible(profile));
 
     // Make sure the profile stays signed in, but in an auth error state.
-    ProfileOAuth2TokenService* token_service =
-        ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
-    OAuth2TokenServiceDelegate* delegate = token_service->GetDelegate();
-    SigninManager* manager = SigninManagerFactory::GetForProfile(profile);
-    delegate->UpdateAuthError(
-        manager->GetAuthenticatedAccountId(),
+    auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
+    signin::UpdatePersistentErrorOfRefreshTokenForAccount(
+        identity_manager, identity_manager->GetPrimaryAccountId(),
         GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
             GoogleServiceAuthError::InvalidGaiaCredentialsReason::
                 CREDENTIALS_REJECTED_BY_SERVER));
@@ -249,47 +261,47 @@ IN_PROC_BROWSER_TEST_P(SigninUtilWinBrowserTest, FixReauth) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(SigninUtilWinBrowserTest1,
-                        SigninUtilWinBrowserTest,
-                        testing::Values(SigninUtilWinBrowserTestParams(
-                            /*is_first_run=*/false,
-                            /*gaia_id=*/base::string16(),
-                            /*email=*/base::string16(),
-                            /*refresh_token=*/std::string(),
-                            /*expect_is_started=*/false)));
+INSTANTIATE_TEST_SUITE_P(SigninUtilWinBrowserTest1,
+                         SigninUtilWinBrowserTest,
+                         testing::Values(SigninUtilWinBrowserTestParams(
+                             /*is_first_run=*/false,
+                             /*gaia_id=*/base::string16(),
+                             /*email=*/base::string16(),
+                             /*refresh_token=*/std::string(),
+                             /*expect_is_started=*/false)));
 
-INSTANTIATE_TEST_CASE_P(SigninUtilWinBrowserTest2,
-                        SigninUtilWinBrowserTest,
-                        testing::Values(SigninUtilWinBrowserTestParams(
-                            /*is_first_run=*/true,
-                            /*gaia_id=*/base::string16(),
-                            /*email=*/base::string16(),
-                            /*refresh_token=*/std::string(),
-                            /*expect_is_started=*/false)));
+INSTANTIATE_TEST_SUITE_P(SigninUtilWinBrowserTest2,
+                         SigninUtilWinBrowserTest,
+                         testing::Values(SigninUtilWinBrowserTestParams(
+                             /*is_first_run=*/true,
+                             /*gaia_id=*/base::string16(),
+                             /*email=*/base::string16(),
+                             /*refresh_token=*/std::string(),
+                             /*expect_is_started=*/false)));
 
-INSTANTIATE_TEST_CASE_P(SigninUtilWinBrowserTest3,
-                        SigninUtilWinBrowserTest,
-                        testing::Values(SigninUtilWinBrowserTestParams(
-                            /*is_first_run=*/true,
-                            /*gaia_id=*/L"gaia-123456",
-                            /*email=*/base::string16(),
-                            /*refresh_token=*/std::string(),
-                            /*expect_is_started=*/false)));
+INSTANTIATE_TEST_SUITE_P(SigninUtilWinBrowserTest3,
+                         SigninUtilWinBrowserTest,
+                         testing::Values(SigninUtilWinBrowserTestParams(
+                             /*is_first_run=*/true,
+                             /*gaia_id=*/L"gaia-123456",
+                             /*email=*/base::string16(),
+                             /*refresh_token=*/std::string(),
+                             /*expect_is_started=*/false)));
 
-INSTANTIATE_TEST_CASE_P(SigninUtilWinBrowserTest4,
-                        SigninUtilWinBrowserTest,
-                        testing::Values(SigninUtilWinBrowserTestParams(
-                            /*is_first_run=*/true,
-                            /*gaia_id=*/L"gaia-123456",
-                            /*email=*/L"foo@gmail.com",
-                            /*refresh_token=*/std::string(),
-                            /*expect_is_started=*/false)));
+INSTANTIATE_TEST_SUITE_P(SigninUtilWinBrowserTest4,
+                         SigninUtilWinBrowserTest,
+                         testing::Values(SigninUtilWinBrowserTestParams(
+                             /*is_first_run=*/true,
+                             /*gaia_id=*/L"gaia-123456",
+                             /*email=*/L"foo@gmail.com",
+                             /*refresh_token=*/std::string(),
+                             /*expect_is_started=*/false)));
 
-INSTANTIATE_TEST_CASE_P(SigninUtilWinBrowserTest5,
-                        SigninUtilWinBrowserTest,
-                        testing::Values(SigninUtilWinBrowserTestParams(
-                            /*is_first_run=*/true,
-                            /*gaia_id=*/L"gaia-123456",
-                            /*email=*/L"foo@gmail.com",
-                            /*refresh_token=*/"lst-123456",
-                            /*expect_is_started=*/true)));
+INSTANTIATE_TEST_SUITE_P(SigninUtilWinBrowserTest5,
+                         SigninUtilWinBrowserTest,
+                         testing::Values(SigninUtilWinBrowserTestParams(
+                             /*is_first_run=*/true,
+                             /*gaia_id=*/L"gaia-123456",
+                             /*email=*/L"foo@gmail.com",
+                             /*refresh_token=*/"lst-123456",
+                             /*expect_is_started=*/true)));

@@ -15,55 +15,74 @@ var cca = cca || {};
 cca.views = cca.views || {};
 
 /**
+ * import {assertString} from '../chrome_util.js';
+ */
+var assertString = assertString || {};
+
+/**
+ * import {assertInstanceof, assertString, assertBoolean}
+ * from '../chrome_util.js';
+ */
+var {assertInstanceof, assertString, assertBoolean} = {
+  assertInstanceof,
+  assertString,
+  assertBoolean,
+};
+
+/**
  * Creates the Dialog view controller.
- * @extends {cca.views.View}
- * @constructor
  */
-cca.views.Dialog = function() {
-  cca.views.View.call(this, '#dialog', true);
+cca.views.Dialog = class extends cca.views.View {
+  /**
+   * @param {string} viewId Root element id of dialog view.
+   */
+  constructor(viewId) {
+    super(viewId, true);
+
+    /**
+     * @type {!HTMLButtonElement}
+     * @private
+     */
+    this.positiveButton_ = assertInstanceof(
+        document.querySelector(`${viewId} .dialog-positive-button`),
+        HTMLButtonElement);
+
+    /**
+     * @type {!HTMLButtonElement}
+     * @private
+     */
+    this.negativeButton_ = assertInstanceof(
+        document.querySelector(`${viewId} .dialog-negative-button`),
+        HTMLButtonElement);
+
+    /**
+     * @type {!HTMLElement}
+     * @private
+     */
+    this.messageHolder_ = assertInstanceof(
+        document.querySelector(`${viewId} .dialog-msg-holder`), HTMLElement);
+
+    this.positiveButton_.addEventListener('click', () => this.leave(true));
+    if (this.negativeButton_) {
+      this.negativeButton_.addEventListener('click', () => this.leave());
+    }
+  }
 
   /**
-   * @type {HTMLButtonElement}
-   * @private
+   * @override
    */
-  this.positiveButton_ = document.querySelector('#dialog-positive-button');
+  entering({message, cancellable = false} = {}) {
+    message = assertString(message);
+    this.messageHolder_.textContent = message;
+    if (this.negativeButton_) {
+      this.negativeButton_.hidden = !cancellable;
+    }
+  }
 
   /**
-   * @type {HTMLButtonElement}
-   * @private
+   * @override
    */
-  this.negativeButton_ = document.querySelector('#dialog-negative-button');
-
-  /**
-   * @type {HTMLElement}
-   * @private
-   */
-  this.messageElement_ = document.querySelector('#dialog-msg');
-
-  // End of properties, seal the object.
-  Object.seal(this);
-
-  this.positiveButton_.addEventListener('click', () => this.leave(true));
-  this.negativeButton_.addEventListener('click', () => this.leave());
-};
-
-cca.views.Dialog.prototype = {
-  __proto__: cca.views.View.prototype,
-};
-
-/**
- * @param {string} message Message of the dialog.
- * @param {boolean} cancellable Whether the dialog is cancellable.
- * @override
- */
-cca.views.Dialog.prototype.entering = function(message, cancellable) {
-  this.messageElement_.textContent = message;
-  this.negativeButton_.hidden = !cancellable;
-};
-
-/**
- * @override
- */
-cca.views.Dialog.prototype.focus = function() {
-  this.positiveButton_.focus();
+  focus() {
+    this.positiveButton_.focus();
+  }
 };

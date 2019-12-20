@@ -5,6 +5,7 @@
 #ifndef CHROME_SERVICES_APP_SERVICE_PUBLIC_CPP_APP_UPDATE_H_
 #define CHROME_SERVICES_APP_SERVICE_PUBLIC_CPP_APP_UPDATE_H_
 
+#include <string>
 #include <vector>
 
 #include "base/macros.h"
@@ -63,6 +64,24 @@ class AppUpdate {
   const std::string& Name() const;
   bool NameChanged() const;
 
+  const std::string& ShortName() const;
+  bool ShortNameChanged() const;
+
+  // The publisher-specific ID for this app, e.g. for Android apps, this field
+  // contains the Android package name. May be empty if AppId() should be
+  // considered as the canonical publisher ID.
+  const std::string& PublisherId() const;
+  bool PublisherIdChanged() const;
+
+  const std::string& Description() const;
+  bool DescriptionChanged() const;
+
+  const std::string& Version() const;
+  bool VersionChanged() const;
+
+  std::vector<std::string> AdditionalSearchTerms() const;
+  bool AdditionalSearchTermsChanged() const;
+
   apps::mojom::IconKeyPtr IconKey() const;
   bool IconKeyChanged() const;
 
@@ -75,14 +94,34 @@ class AppUpdate {
   std::vector<apps::mojom::PermissionPtr> Permissions() const;
   bool PermissionsChanged() const;
 
+  apps::mojom::InstallSource InstallSource() const;
+  bool InstallSourceChanged() const;
+
   apps::mojom::OptionalBool InstalledInternally() const;
-  bool InstalledInternallyChanged() const;
+
+  apps::mojom::OptionalBool IsPlatformApp() const;
+  bool IsPlatformAppChanged() const;
+
+  apps::mojom::OptionalBool Recommendable() const;
+  bool RecommendableChanged() const;
+
+  apps::mojom::OptionalBool Searchable() const;
+  bool SearchableChanged() const;
 
   apps::mojom::OptionalBool ShowInLauncher() const;
   bool ShowInLauncherChanged() const;
 
   apps::mojom::OptionalBool ShowInSearch() const;
   bool ShowInSearchChanged() const;
+
+  apps::mojom::OptionalBool ShowInManagement() const;
+  bool ShowInManagementChanged() const;
+
+  apps::mojom::OptionalBool Paused() const;
+  bool PausedChanged() const;
+
+  std::vector<apps::mojom::IntentFilterPtr> IntentFilters() const;
+  bool IntentFiltersChanged() const;
 
  private:
   const apps::mojom::App* state_;

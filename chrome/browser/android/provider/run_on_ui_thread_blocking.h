@@ -24,10 +24,10 @@ class RunOnUIThreadBlocking {
     base::WaitableEvent finished(
         base::WaitableEvent::ResetPolicy::AUTOMATIC,
         base::WaitableEvent::InitialState::NOT_SIGNALED);
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::UI},
-        base::Bind(&RunOnUIThreadBlocking::RunOnUIThread<Signature>, runnable,
-                   &finished));
+        base::BindOnce(&RunOnUIThreadBlocking::RunOnUIThread<Signature>,
+                       runnable, &finished));
     finished.Wait();
   }
 

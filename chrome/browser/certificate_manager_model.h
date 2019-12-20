@@ -48,21 +48,23 @@ class CertificateManagerModel {
     CertInfo(net::ScopedCERTCertificate cert,
              net::CertType type,
              base::string16 name,
-             bool read_only,
+             bool can_be_deleted,
              bool untrusted,
              Source source,
              bool web_trust_anchor,
-             bool hardware_backed);
+             bool hardware_backed,
+             bool device_wide);
     ~CertInfo();
 
     CERTCertificate* cert() const { return cert_.get(); }
     net::CertType type() const { return type_; }
     const base::string16& name() const { return name_; }
-    bool read_only() const { return read_only_; }
+    bool can_be_deleted() const { return can_be_deleted_; }
     bool untrusted() const { return untrusted_; }
     Source source() const { return source_; }
     bool web_trust_anchor() const { return web_trust_anchor_; }
     bool hardware_backed() const { return hardware_backed_; }
+    bool device_wide() const { return device_wide_; }
 
     // Clones a CertInfo, duplicating the contained NSS certificate.
     static std::unique_ptr<CertInfo> Clone(const CertInfo* cert_info);
@@ -78,9 +80,9 @@ class CertificateManagerModel {
     // A user readable certificate name.
     base::string16 name_;
 
-    // true if the certificate is stored on a read-only slot or provided by
-    // enterprise policy or an extension.
-    bool read_only_;
+    // false if the certificate is stored on a read-only slot or provided by
+    // enterprise policy or an extension, otherwise true.
+    bool can_be_deleted_;
 
     // true if the certificate is untrusted.
     bool untrusted_;
@@ -96,7 +98,23 @@ class CertificateManagerModel {
     // certificates are not regarded as hardware-backed.
     bool hardware_backed_;
 
+    // true if the certificate is device-wide.
+    // Note: can be true only on Chrome OS.
+    bool device_wide_;
+
     DISALLOW_COPY_AND_ASSIGN(CertInfo);
+
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest,
+                             CanDeleteCertificateCommonTest);
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest,
+                             CanDeleteUserCertificateTest);
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest,
+                             CanDeleteCACertificateTest);
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest,
+                             CanEditCertificateCommonTest);
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest,
+                             CanEditUserCertificateTest);
+    FRIEND_TEST_ALL_PREFIXES(CertificateHandlerTest, CanEditCACertificateTest);
   };
 
   class CertsSource;

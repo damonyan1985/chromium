@@ -24,7 +24,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/storage_monitor/test_storage_monitor.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,7 +56,7 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
                                 public testing::Test {
  public:
   GalleryWatchManagerTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP),
 #if defined(OS_CHROMEOS)
         test_user_manager_(std::make_unique<chromeos::ScopedTestUserManager>()),
 #endif
@@ -194,7 +194,7 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
   std::unique_ptr<GalleryWatchManager> manager_;
 
   // Needed for extension service & friends to work.
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   scoped_refptr<extensions::Extension> extension_;
 
@@ -216,7 +216,13 @@ class GalleryWatchManagerTest : public GalleryWatchManagerObserver,
   DISALLOW_COPY_AND_ASSIGN(GalleryWatchManagerTest);
 };
 
-TEST_F(GalleryWatchManagerTest, Basic) {
+// TODO(crbug.com/936065): Flaky on ChromeOS.
+#if defined(OS_CHROMEOS)
+#define MAYBE_Basic DISABLED_Basic
+#else
+#define MAYBE_Basic Basic
+#endif
+TEST_F(GalleryWatchManagerTest, MAYBE_Basic) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   MediaGalleryPrefId id = AddGallery(temp_dir.GetPath());
@@ -258,22 +264,22 @@ TEST_F(GalleryWatchManagerTest, AddAndRemoveTwoWatches) {
   MediaGalleryPrefIdSet set1 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(1u, set1.size());
-  EXPECT_TRUE(base::ContainsKey(set1, id1));
+  EXPECT_TRUE(base::Contains(set1, id1));
 
   // Test that the second watch was added correctly too.
   AddAndConfirmWatch(id2);
   MediaGalleryPrefIdSet set2 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(2u, set2.size());
-  EXPECT_TRUE(base::ContainsKey(set2, id1));
-  EXPECT_TRUE(base::ContainsKey(set2, id2));
+  EXPECT_TRUE(base::Contains(set2, id1));
+  EXPECT_TRUE(base::Contains(set2, id2));
 
   // Remove first watch and test that the second is still in there.
   manager()->RemoveWatch(profile(), extension()->id(), id1);
   MediaGalleryPrefIdSet set3 =
       manager()->GetWatchSet(profile(), extension()->id());
   EXPECT_EQ(1u, set3.size());
-  EXPECT_TRUE(base::ContainsKey(set3, id2));
+  EXPECT_TRUE(base::Contains(set3, id2));
 
   // Try removing the first watch again and test that it has no effect.
   manager()->RemoveWatch(profile(), extension()->id(), id1);

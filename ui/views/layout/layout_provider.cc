@@ -143,26 +143,33 @@ gfx::Insets LayoutProvider::GetDialogInsetsForContentType(
 
 int LayoutProvider::GetCornerRadiusMetric(EmphasisMetric emphasis_metric,
                                           const gfx::Size& size) const {
-  const bool touch_ui = ui::MaterialDesignController::touch_ui();
   switch (emphasis_metric) {
     case views::EMPHASIS_NONE:
-      NOTREACHED();
       return 0;
     case EMPHASIS_LOW:
     case EMPHASIS_MEDIUM:
-      return touch_ui ? 4 : 2;
+      return 4;
     case EMPHASIS_HIGH:
-      return touch_ui ? 8 : 4;
+      return 8;
     case EMPHASIS_MAXIMUM:
-      return touch_ui ? std::min(size.width(), size.height()) / 2 : 4;
+      return std::min(size.width(), size.height()) / 2;
   }
 }
 
 int LayoutProvider::GetShadowElevationMetric(
     EmphasisMetric emphasis_metric) const {
-  // Return a value similar to the (deprecated) default shadow style for bubbles
-  // and dialogs.
-  return 3;
+  switch (emphasis_metric) {
+    case views::EMPHASIS_NONE:
+      return 0;
+    case views::EMPHASIS_LOW:
+      return 1;
+    case views::EMPHASIS_MEDIUM:
+      return 2;
+    case views::EMPHASIS_HIGH:
+      return 3;
+    case views::EMPHASIS_MAXIMUM:
+      return 16;
+  }
 }
 
 gfx::ShadowValues LayoutProvider::MakeShadowValues(int elevation,

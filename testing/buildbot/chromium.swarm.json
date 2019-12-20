@@ -29,6 +29,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -45,7 +46,8 @@
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_unittests",
+        "test_target": "//base:base_unittests"
       },
       {
         "args": [
@@ -73,6 +75,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -90,7 +93,8 @@
           ],
           "shards": 15
         },
-        "test": "chrome_public_test_apk"
+        "test": "chrome_public_test_apk",
+        "test_target": "//chrome/android:chrome_public_test_apk"
       },
       {
         "args": [
@@ -118,6 +122,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -135,7 +140,8 @@
           ],
           "shards": 10
         },
-        "test": "content_browsertests"
+        "test": "content_browsertests",
+        "test_target": "//content/test:content_browsertests"
       },
       {
         "args": [
@@ -163,6 +169,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -180,7 +187,8 @@
           ],
           "shards": 3
         },
-        "test": "content_shell_test_apk"
+        "test": "content_shell_test_apk",
+        "test_target": "//content/shell/android:content_shell_test_apk"
       },
       {
         "args": [
@@ -208,6 +216,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -225,7 +234,8 @@
           ],
           "shards": 3
         },
-        "test": "content_unittests"
+        "test": "content_unittests",
+        "test_target": "//content/test:content_unittests"
       },
       {
         "args": [
@@ -253,6 +263,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -270,7 +281,8 @@
           ],
           "shards": 4
         },
-        "test": "net_unittests"
+        "test": "net_unittests",
+        "test_target": "//net:net_unittests"
       },
       {
         "args": [
@@ -298,6 +310,7 @@
           "dimension_sets": [
             {
               "device_os": "KTU84P",
+              "device_os_type": "userdebug",
               "device_type": "hammerhead",
               "os": "Android"
             }
@@ -315,7 +328,8 @@
           ],
           "shards": 5
         },
-        "test": "unit_tests"
+        "test": "unit_tests",
+        "test_target": "//chrome/test:unit_tests"
       }
     ]
   },
@@ -347,6 +361,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -363,7 +378,8 @@
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_unittests",
+        "test_target": "//base:base_unittests"
       },
       {
         "args": [
@@ -392,6 +408,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -409,7 +426,8 @@
           ],
           "shards": 15
         },
-        "test": "chrome_public_test_apk"
+        "test": "chrome_public_test_apk",
+        "test_target": "//chrome/android:chrome_public_test_apk"
       },
       {
         "args": [
@@ -437,6 +455,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -454,7 +473,8 @@
           ],
           "shards": 10
         },
-        "test": "content_browsertests"
+        "test": "content_browsertests",
+        "test_target": "//content/test:content_browsertests"
       },
       {
         "args": [
@@ -482,6 +502,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -499,7 +520,8 @@
           ],
           "shards": 3
         },
-        "test": "content_shell_test_apk"
+        "test": "content_shell_test_apk",
+        "test_target": "//content/shell/android:content_shell_test_apk"
       },
       {
         "args": [
@@ -527,6 +549,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -544,7 +567,8 @@
           ],
           "shards": 3
         },
-        "test": "content_unittests"
+        "test": "content_unittests",
+        "test_target": "//content/test:content_unittests"
       },
       {
         "args": [
@@ -572,6 +596,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -589,7 +614,8 @@
           ],
           "shards": 4
         },
-        "test": "net_unittests"
+        "test": "net_unittests",
+        "test_target": "//net:net_unittests"
       },
       {
         "args": [
@@ -617,6 +643,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -634,7 +661,8 @@
           ],
           "shards": 8
         },
-        "test": "unit_tests"
+        "test": "unit_tests",
+        "test_target": "//chrome/test:unit_tests"
       },
       {
         "args": [
@@ -662,6 +690,7 @@
           "dimension_sets": [
             {
               "device_os": "MMB29Q",
+              "device_os_type": "userdebug",
               "device_type": "bullhead",
               "os": "Android"
             }
@@ -679,183 +708,296 @@
           ],
           "shards": 7
         },
-        "test": "webview_instrumentation_test_apk"
+        "test": "webview_instrumentation_test_apk",
+        "test_target": "//android_webview/test:webview_instrumentation_test_apk"
       }
     ]
   },
   "Linux Swarm": {
     "gtest_tests": [
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "2"
+              "cores": "2",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "base_unittests"
+        "test": "base_unittests",
+        "test_target": "//base:base_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "8"
+              "cores": "8",
+              "os": "Ubuntu-16.04"
             }
           ],
           "shards": 2
         },
-        "test": "browser_tests"
+        "test": "browser_tests",
+        "test_target": "//chrome/test:browser_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "8"
+              "cores": "8",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "content_browsertests"
+        "test": "content_browsertests",
+        "test_target": "//content/test:content_browsertests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "2"
+              "cores": "2",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "content_unittests"
+        "test": "content_unittests",
+        "test_target": "//content/test:content_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "8"
+              "cores": "8",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "interactive_ui_tests"
+        "test": "interactive_ui_tests",
+        "test_target": "//chrome/test:interactive_ui_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "8"
+              "cores": "8",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "net_unittests"
+        "test": "net_unittests",
+        "test_target": "//net:net_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "cores": "2"
+              "cores": "2",
+              "os": "Ubuntu-16.04"
             }
           ]
         },
-        "test": "unit_tests"
+        "test": "unit_tests",
+        "test_target": "//chrome/test:unit_tests"
       }
     ]
   },
   "Mac Swarm": {
     "gtest_tests": [
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "base_unittests"
+        "test": "base_unittests",
+        "test_target": "//base:base_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "shards": 2
         },
-        "test": "browser_tests"
+        "test": "browser_tests",
+        "test_target": "//chrome/test:browser_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "content_browsertests"
+        "test": "content_browsertests",
+        "test_target": "//content/test:content_browsertests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "content_unittests"
+        "test": "content_unittests",
+        "test_target": "//content/test:content_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "interactive_ui_tests"
+        "test": "interactive_ui_tests",
+        "test_target": "//chrome/test:interactive_ui_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "net_unittests"
+        "test": "net_unittests",
+        "test_target": "//net:net_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "unit_tests"
+        "test": "unit_tests",
+        "test_target": "//chrome/test:unit_tests"
       }
     ]
   },
   "Windows Swarm": {
     "gtest_tests": [
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "base_unittests"
+        "test": "base_unittests",
+        "test_target": "//base:base_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true,
           "shards": 2
         },
-        "test": "browser_tests"
+        "test": "browser_tests",
+        "test_target": "//chrome/test:browser_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "content_browsertests"
+        "test": "content_browsertests",
+        "test_target": "//content/test:content_browsertests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "content_unittests"
+        "test": "content_unittests",
+        "test_target": "//content/test:content_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "interactive_ui_tests"
+        "test": "interactive_ui_tests",
+        "test_target": "//chrome/test:interactive_ui_tests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "net_unittests"
+        "test": "net_unittests",
+        "test_target": "//net:net_unittests"
       },
       {
+        "merge": {
+          "args": [],
+          "script": "//testing/merge_scripts/standard_gtest_merge.py"
+        },
         "swarming": {
           "can_use_on_swarming_builders": true
         },
-        "test": "unit_tests"
+        "test": "unit_tests",
+        "test_target": "//chrome/test:unit_tests"
       }
     ]
   }

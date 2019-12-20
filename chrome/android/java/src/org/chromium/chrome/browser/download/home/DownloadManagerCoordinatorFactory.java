@@ -7,10 +7,10 @@ package org.chromium.chrome.browser.download.home;
 import android.app.Activity;
 import android.content.ComponentName;
 
-import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.download.ui.DownloadManagerUi;
+import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 
 /** A helper class to build and return an {@link DownloadManagerCoordinator}. */
 public class DownloadManagerCoordinatorFactory {
@@ -20,17 +20,15 @@ public class DownloadManagerCoordinatorFactory {
      * @param config             A {@link DownloadManagerUiConfig} to provide configuration params.
      * @param parentComponent    The parent component.
      * @param snackbarManager    The {@link SnackbarManager} that should be used to show snackbars.
+     * @param modalDialogManager The {@link ModalDialogManager} that should be used to show dialog.
      * @return                   A new {@link DownloadManagerCoordinator} instance.
      */
     public static DownloadManagerCoordinator create(Activity activity,
             DownloadManagerUiConfig config, SnackbarManager snackbarManager,
-            ComponentName parentComponent) {
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOAD_HOME_V2)) {
-            return new DownloadManagerCoordinatorImpl(
-                    Profile.getLastUsedProfile(), activity, config, snackbarManager);
-        } else {
-            return new DownloadManagerUi(activity, config.isOffTheRecord, parentComponent,
-                    config.isSeparateActivity, snackbarManager);
-        }
+            ComponentName parentComponent, ModalDialogManager modalDialogManager) {
+        Profile profile = Profile.getLastUsedProfile();
+        return new DownloadManagerCoordinatorImpl(activity, config, snackbarManager,
+                modalDialogManager, TrackerFactory.getTrackerForProfile(profile),
+                new FaviconProviderImpl(profile));
     }
 }

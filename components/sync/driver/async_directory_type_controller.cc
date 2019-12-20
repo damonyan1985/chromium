@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/sync/base/bind_to_task_runner.h"
@@ -31,7 +32,7 @@ AsyncDirectoryTypeController::CreateSharedChangeProcessor() {
 
 AsyncDirectoryTypeController::AsyncDirectoryTypeController(
     ModelType type,
-    const base::Closure& dump_stack,
+    const base::RepeatingClosure& dump_stack,
     SyncService* sync_service,
     SyncClient* sync_client,
     ModelSafeGroup model_safe_group,
@@ -50,7 +51,7 @@ void AsyncDirectoryTypeController::LoadModels(
     const ConfigureContext& configure_context,
     const ModelLoadCallback& model_load_callback) {
   DCHECK(CalledOnValidThread());
-  DCHECK_EQ(configure_context.storage_option, STORAGE_ON_DISK)
+  DCHECK_EQ(configure_context.sync_mode, SyncMode::kFull)
       << " for type " << ModelTypeToString(type());
 
   model_load_callback_ = model_load_callback;
@@ -99,9 +100,9 @@ void AsyncDirectoryTypeController::StopModels() {
 
 bool AsyncDirectoryTypeController::PostTaskOnModelThread(
     const base::Location& from_here,
-    const base::Closure& task) {
+    base::OnceClosure task) {
   DCHECK(CalledOnValidThread());
-  return model_thread_->PostTask(from_here, task);
+  return model_thread_->PostTask(from_here, std::move(task));
 }
 
 void AsyncDirectoryTypeController::StartAssociating(
@@ -111,8 +112,6 @@ void AsyncDirectoryTypeController::StartAssociating(
   DCHECK_EQ(state_, MODEL_LOADED);
   state_ = ASSOCIATING;
 
-  // Store UserShare now while on UI thread to avoid potential race
-  // condition in StartAssociationWithSharedChangeProcessor.
   user_share_ = sync_service()->GetUserShare();
 
   start_callback_ = std::move(start_callback);
@@ -163,7 +162,7 @@ void AsyncDirectoryTypeController::SetGenericChangeProcessorFactoryForTest(
 
 AsyncDirectoryTypeController::AsyncDirectoryTypeController()
     : DirectoryDataTypeController(UNSPECIFIED,
-                                  base::Closure(),
+                                  base::NullCallback(),
                                   nullptr,
                                   GROUP_PASSIVE),
       sync_client_(nullptr) {}
@@ -211,15 +210,8 @@ void AsyncDirectoryTypeController::StartDone(
 
 void AsyncDirectoryTypeController::RecordStartFailure(ConfigureResult result) {
   DCHECK(CalledOnValidThread());
-  // TODO(wychen): enum uma should be strongly typed. crbug.com/661401
   UMA_HISTOGRAM_ENUMERATION("Sync.DataTypeStartFailures2",
-                            ModelTypeToHistogramInt(type()),
-                            static_cast<int>(MODEL_TYPE_COUNT));
-#define PER_DATA_TYPE_MACRO(type_str)                                    \
-  UMA_HISTOGRAM_ENUMERATION("Sync." type_str "ConfigureFailure", result, \
-                            MAX_CONFIGURE_RESULT);
-  SYNC_DATA_TYPE_HISTOGRAM(type());
-#undef PER_DATA_TYPE_MACRO
+                            ModelTypeHistogramValue(type()));
 }
 
 void AsyncDirectoryTypeController::DisableImpl(const SyncError& error) {
@@ -234,12 +226,12 @@ bool AsyncDirectoryTypeController::StartAssociationAsync() {
   DCHECK_EQ(state(), ASSOCIATING);
   return PostTaskOnModelThread(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &SharedChangeProcessor::StartAssociation, shared_change_processor_,
-          BindToCurrentSequence(base::Bind(
+          BindToCurrentSequence(base::BindOnce(
               &AsyncDirectoryTypeController::StartDone, base::AsWeakPtr(this))),
           sync_client_, processor_factory_.get(), user_share_,
-          base::Passed(CreateErrorHandler())));
+          CreateErrorHandler()));
 }
 
 ChangeProcessor* AsyncDirectoryTypeController::GetChangeProcessor() const {
@@ -260,9 +252,9 @@ void AsyncDirectoryTypeController::DisconnectSharedChangeProcessor() {
 void AsyncDirectoryTypeController::StopSyncableService() {
   DCHECK(CalledOnValidThread());
   if (shared_change_processor_) {
-    PostTaskOnModelThread(FROM_HERE,
-                          base::Bind(&SharedChangeProcessor::StopLocalService,
-                                     shared_change_processor_));
+    PostTaskOnModelThread(
+        FROM_HERE, base::BindOnce(&SharedChangeProcessor::StopLocalService,
+                                  shared_change_processor_));
   }
 }
 
@@ -271,8 +263,8 @@ AsyncDirectoryTypeController::CreateErrorHandler() {
   DCHECK(CalledOnValidThread());
   return std::make_unique<DataTypeErrorHandlerImpl>(
       base::SequencedTaskRunnerHandle::Get(), dump_stack_,
-      base::Bind(&AsyncDirectoryTypeController::DisableImpl,
-                 base::AsWeakPtr(this)));
+      base::BindRepeating(&AsyncDirectoryTypeController::DisableImpl,
+                          base::AsWeakPtr(this)));
 }
 
 }  // namespace syncer

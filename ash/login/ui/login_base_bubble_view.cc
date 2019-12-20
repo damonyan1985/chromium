@@ -4,14 +4,20 @@
 
 #include "ash/login/ui/login_base_bubble_view.h"
 
+#include <memory>
+
+#include "ash/login/ui/views_utils.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
 #include "base/scoped_observer.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/events/event_handler.h"
+#include "ui/gfx/geometry/point.h"
+#include "ui/views/background.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/wm/core/coordinate_conversion.h"
 
@@ -30,6 +36,9 @@ constexpr int kBubbleTopMarginDp = 13;
 // Bottom margin of the bubble view.
 constexpr int kBubbleBottomMarginDp = 18;
 
+// Spacing between the child view inside the bubble view.
+constexpr int kBubbleBetweenChildSpacingDp = 6;
+
 // The amount of time for bubble show/hide animation.
 constexpr base::TimeDelta kBubbleAnimationDuration =
     base::TimeDelta::FromMilliseconds(300);
@@ -38,13 +47,10 @@ constexpr base::TimeDelta kBubbleAnimationDuration =
 
 // This class handles keyboard, mouse, and focus events, and dismisses the
 // associated bubble in response.
-class LoginBubbleHandler : public ui::EventHandler,
-                           public aura::client::FocusChangeObserver {
+class LoginBubbleHandler : public ui::EventHandler {
  public:
   LoginBubbleHandler(LoginBaseBubbleView* bubble) : bubble_(bubble) {
     Shell::Get()->AddPreTargetHandler(this);
-    focus_observer_.Add(
-        aura::client::GetFocusClient(Shell::GetPrimaryRootWindow()));
   }
 
   ~LoginBubbleHandler() override { Shell::Get()->RemovePreTargetHandler(this); }
@@ -68,29 +74,14 @@ class LoginBubbleHandler : public ui::EventHandler,
       return;
     }
 
-    if (!bubble_->IsVisible())
+    if (!bubble_->GetVisible())
       return;
 
     if (bubble_->GetBubbleOpener() && bubble_->GetBubbleOpener()->HasFocus())
       return;
 
-    if (bubble_->GetWidget()->IsActive())
+    if (login_views_utils::HasFocusInAnyChildView(bubble_))
       return;
-
-    if (!bubble_->IsPersistent())
-      bubble_->Hide();
-  }
-
-  // aura::client::FocusChangeObserver:
-  void OnWindowFocused(aura::Window* gained_focus,
-                       aura::Window* lost_focus) override {
-    if (!bubble_->IsVisible())
-      return;
-
-    if (gained_focus &&
-        bubble_->GetWidget()->GetNativeView()->Contains(gained_focus)) {
-      return;
-    }
 
     if (!bubble_->IsPersistent())
       bubble_->Hide();
@@ -98,7 +89,7 @@ class LoginBubbleHandler : public ui::EventHandler,
 
  private:
   void ProcessPressedEvent(const ui::LocatedEvent* event) {
-    if (!bubble_->IsVisible())
+    if (!bubble_->GetVisible())
       return;
 
     gfx::Point screen_location = event->location();
@@ -122,9 +113,6 @@ class LoginBubbleHandler : public ui::EventHandler,
 
   LoginBaseBubbleView* bubble_;
 
-  ScopedObserver<aura::client::FocusClient, aura::client::FocusChangeObserver>
-      focus_observer_{this};
-
   DISALLOW_COPY_AND_ASSIGN(LoginBubbleHandler);
 };
 
@@ -133,36 +121,28 @@ LoginBaseBubbleView::LoginBaseBubbleView(views::View* anchor_view)
 
 LoginBaseBubbleView::LoginBaseBubbleView(views::View* anchor_view,
                                          aura::Window* parent_window)
-    : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::NONE),
+    : anchor_view_(anchor_view),
       bubble_handler_(std::make_unique<LoginBubbleHandler>(this)) {
-  set_margins(gfx::Insets(kBubbleTopMarginDp, kBubbleHorizontalMarginDp,
-                          kBubbleBottomMarginDp, kBubbleHorizontalMarginDp));
-  set_color(SK_ColorBLACK);
-  set_can_activate(false);
-  set_close_on_deactivate(false);
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical,
+      gfx::Insets(kBubbleTopMarginDp, kBubbleHorizontalMarginDp,
+                  kBubbleBottomMarginDp, kBubbleHorizontalMarginDp),
+      kBubbleBetweenChildSpacingDp));
+
+  SetVisible(false);
+  SetBackground(views::CreateSolidBackground(SK_ColorBLACK));
 
   // Layer rendering is needed for animation.
   SetPaintToLayer();
-  layer()->SetFillsBoundsOpaquely(false);
-
-  set_parent_window(parent_window);
 }
 
 LoginBaseBubbleView::~LoginBaseBubbleView() = default;
 
 void LoginBaseBubbleView::Show() {
-  views::Widget* widget = GetWidget();
-
-  if (!widget)
-    widget = views::BubbleDialogDelegateView::CreateBubble(this);
-
   layer()->GetAnimator()->RemoveObserver(this);
 
-  Layout();
-  SizeToContents();
-
-  widget->ShowInactive();
-  widget->StackAtTop();
+  SetSize(GetPreferredSize());
+  SetPosition(CalculatePosition());
 
   ScheduleAnimation(true /*visible*/);
 
@@ -172,12 +152,7 @@ void LoginBaseBubbleView::Show() {
 }
 
 void LoginBaseBubbleView::Hide() {
-  if (GetWidget())
-    ScheduleAnimation(false /*visible*/);
-}
-
-bool LoginBaseBubbleView::IsVisible() {
-  return GetWidget() && GetWidget()->IsVisible();
+  ScheduleAnimation(false /*visible*/);
 }
 
 LoginButton* LoginBaseBubbleView::GetBubbleOpener() const {
@@ -190,31 +165,25 @@ bool LoginBaseBubbleView::IsPersistent() const {
 
 void LoginBaseBubbleView::SetPersistent(bool persistent) {}
 
-void LoginBaseBubbleView::OnBeforeBubbleWidgetInit(
-    views::Widget::InitParams* params,
-    views::Widget* widget) const {
-  // This case only gets called if the bubble has no anchor and no parent
-  // container was specified. In this case, the parent container should default
-  // to MenuContainer, so that login bubbles are visible over the shelf and
-  // virtual keyboard. Shell may be null in tests.
-  if (!params->parent && Shell::HasInstance()) {
-    params->parent = Shell::GetContainer(Shell::GetPrimaryRootWindow(),
-                                         kShellWindowId_MenuContainer);
+gfx::Point LoginBaseBubbleView::CalculatePosition() {
+  if (GetAnchorView()) {
+    gfx::Point bottom_left = GetAnchorView()->bounds().bottom_left();
+    ConvertPointToTarget(GetAnchorView()->parent() /*source*/,
+                         parent() /*target*/, &bottom_left);
+    return bottom_left;
   }
-}
 
-int LoginBaseBubbleView::GetDialogButtons() const {
-  return ui::DIALOG_BUTTON_NONE;
+  return gfx::Point();
 }
 
 void LoginBaseBubbleView::SetAnchorView(views::View* anchor_view) {
-  views::BubbleDialogDelegateView::SetAnchorView(anchor_view);
+  anchor_view_ = anchor_view;
 }
 
 void LoginBaseBubbleView::OnLayerAnimationEnded(
     ui::LayerAnimationSequence* sequence) {
   layer()->GetAnimator()->RemoveObserver(this);
-  GetWidget()->Hide();
+  SetVisible(false);
 }
 
 gfx::Size LoginBaseBubbleView::CalculatePreferredSize() const {
@@ -224,15 +193,70 @@ gfx::Size LoginBaseBubbleView::CalculatePreferredSize() const {
   return size;
 }
 
-void LoginBaseBubbleView::OnWidgetVisibilityChanged(views::Widget* widget,
-                                                    bool visible) {
-  if (visible)
-    EnsureInScreen();
+void LoginBaseBubbleView::Layout() {
+  views::View::Layout();
+
+  // If a Layout() is called while the bubble is visible (i.e. due to Show()),
+  // its bounds may change because of the parent's LayoutManager. This allows
+  // the bubbles to always determine their own size and position.
+  if (GetVisible()) {
+    SetSize(GetPreferredSize());
+    SetPosition(CalculatePosition());
+  }
 }
 
-void LoginBaseBubbleView::OnWidgetBoundsChanged(views::Widget* widget,
-                                                const gfx::Rect& new_bounds) {
-  EnsureInScreen();
+void LoginBaseBubbleView::OnBlur() {
+  Hide();
+}
+
+gfx::Point LoginBaseBubbleView::CalculatePositionUsingDefaultStrategy(
+    PositioningStrategy strategy,
+    int horizontal_padding,
+    int vertical_padding) const {
+  if (!GetAnchorView())
+    return gfx::Point();
+
+  gfx::Point anchor_position = GetAnchorView()->bounds().origin();
+  ConvertPointToTarget(GetAnchorView()->parent() /*source*/,
+                       GetAnchorView()->GetWidget()->GetRootView() /*target*/,
+                       &anchor_position);
+  auto bounds = GetBoundsAvailableToShowBubble();
+  gfx::Size bubble_size(width() + 2 * horizontal_padding,
+                        height() + vertical_padding);
+  gfx::Point result = gfx::Point();
+  switch (strategy) {
+    case PositioningStrategy::kShowOnLeftSideOrRightSide:
+      result = login_views_utils::CalculateBubblePositionLeftRightStrategy(
+          {anchor_position, GetAnchorView()->size()}, bubble_size, bounds);
+      break;
+    case PositioningStrategy::kShowOnRightSideOrLeftSide:
+      result = login_views_utils::CalculateBubblePositionRightLeftStrategy(
+          {anchor_position, GetAnchorView()->size()}, bubble_size, bounds);
+      break;
+  }
+  // Get position of the bubble surrounded by paddings.
+  result.Offset(horizontal_padding, 0);
+  ConvertPointToTarget(GetAnchorView()->GetWidget()->GetRootView() /*source*/,
+                       parent() /*target*/, &result);
+  return result;
+}
+
+gfx::Rect LoginBaseBubbleView::GetBoundsAvailableToShowBubble() const {
+  auto bounds = GetRootViewBounds();
+  auto work_area = GetWorkArea();
+  // Get min means here to exclude either shelf or virtual keyaboard.
+  bounds.set_height(std::min(bounds.height(), work_area.height()));
+  return bounds;
+}
+
+gfx::Rect LoginBaseBubbleView::GetRootViewBounds() const {
+  return GetAnchorView()->GetWidget()->GetRootView()->GetLocalBounds();
+}
+
+gfx::Rect LoginBaseBubbleView::GetWorkArea() const {
+  return display::Screen::GetScreen()
+      ->GetDisplayNearestWindow(GetAnchorView()->GetWidget()->GetNativeWindow())
+      .work_area();
 }
 
 void LoginBaseBubbleView::ScheduleAnimation(bool visible) {
@@ -251,6 +275,8 @@ void LoginBaseBubbleView::ScheduleAnimation(bool visible) {
     std::swap(opacity_start, opacity_end);
     // We only need to handle animation ending if we're hiding the bubble.
     layer()->GetAnimator()->AddObserver(this);
+  } else {
+    SetVisible(true);
   }
 
   layer()->SetOpacity(opacity_start);
@@ -262,28 +288,6 @@ void LoginBaseBubbleView::ScheduleAnimation(bool visible) {
         ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
     layer()->SetOpacity(opacity_end);
   }
-}
-
-void LoginBaseBubbleView::EnsureInScreen() {
-  DCHECK(GetWidget());
-
-  const gfx::Rect view_bounds = GetBoundsInScreen();
-  const gfx::Rect work_area =
-      display::Screen::GetScreen()
-          ->GetDisplayNearestWindow(GetWidget()->GetNativeWindow())
-          .work_area();
-
-  int horizontal_offset = 0;
-
-  // If the widget extends past the right side of the screen, make it go to
-  // the left instead.
-  if (work_area.right() < view_bounds.right()) {
-    horizontal_offset = -view_bounds.width();
-  }
-
-  set_anchor_view_insets(
-      anchor_view_insets().Offset(gfx::Vector2d(horizontal_offset, 0)));
-  OnAnchorBoundsChanged();
 }
 
 }  // namespace ash

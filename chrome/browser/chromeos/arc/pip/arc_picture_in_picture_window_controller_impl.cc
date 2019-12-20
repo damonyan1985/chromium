@@ -14,17 +14,14 @@ ArcPictureInPictureWindowControllerImpl::
 
 ArcPictureInPictureWindowControllerImpl::
     ~ArcPictureInPictureWindowControllerImpl() {
-  Close(false, false);
+  Close(false);
 }
 
-gfx::Size ArcPictureInPictureWindowControllerImpl::Show() {
+void ArcPictureInPictureWindowControllerImpl::Show() {
   // Should be a no-op on ARC. This is managed on the Android side.
-  return gfx::Size();
 }
 
-void ArcPictureInPictureWindowControllerImpl::Close(
-    bool should_pause_video,
-    bool should_reset_pip_player) {
+void ArcPictureInPictureWindowControllerImpl::Close(bool should_pause_video) {
   // TODO(edcourtney): Currently, |should_pause_video| will always be false
   // here, but if that changes, we should pause the video on the Android side.
   arc_pip_bridge_->ClosePip();
@@ -35,17 +32,6 @@ void ArcPictureInPictureWindowControllerImpl::CloseAndFocusInitiator() {
 }
 
 void ArcPictureInPictureWindowControllerImpl::OnWindowDestroyed() {
-  // Should be a no-op on ARC. This is managed on the Android side.
-}
-
-void ArcPictureInPictureWindowControllerImpl::SetPictureInPictureCustomControls(
-    const std::vector<blink::PictureInPictureControlInfo>& info) {
-  // Should be a no-op on ARC. This is managed on the Android side.
-}
-
-void ArcPictureInPictureWindowControllerImpl::EmbedSurface(
-    const viz::SurfaceId& surface_id,
-    const gfx::Size& natural_size) {
   // Should be a no-op on ARC. This is managed on the Android side.
 }
 
@@ -81,17 +67,20 @@ bool ArcPictureInPictureWindowControllerImpl::TogglePlayPause() {
   return false;
 }
 
-void ArcPictureInPictureWindowControllerImpl::CustomControlPressed(
-    const std::string& control_id) {
-  // Should be a no-op on ARC. This is managed on the Android side.
-}
-
 void ArcPictureInPictureWindowControllerImpl::SetAlwaysHidePlayPauseButton(
     bool is_visible) {
   // Should be a no-op on ARC. This is managed on the Android side.
 }
 
 void ArcPictureInPictureWindowControllerImpl::SkipAd() {
+  // Should be a no-op on ARC. This is managed on the Android side.
+}
+
+void ArcPictureInPictureWindowControllerImpl::NextTrack() {
+  // Should be a no-op on ARC. This is managed on the Android side.
+}
+
+void ArcPictureInPictureWindowControllerImpl::PreviousTrack() {
   // Should be a no-op on ARC. This is managed on the Android side.
 }
 

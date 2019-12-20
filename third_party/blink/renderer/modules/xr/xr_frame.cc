@@ -4,126 +4,165 @@
 
 #include "third_party/blink/renderer/modules/xr/xr_frame.h"
 
-#include "third_party/blink/renderer/modules/xr/xr_input_pose.h"
+#include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/modules/xr/xr_hit_test_source.h"
 #include "third_party/blink/renderer/modules/xr/xr_input_source.h"
 #include "third_party/blink/renderer/modules/xr/xr_reference_space.h"
 #include "third_party/blink/renderer/modules/xr/xr_session.h"
+#include "third_party/blink/renderer/modules/xr/xr_transient_input_hit_test_source.h"
 #include "third_party/blink/renderer/modules/xr/xr_view.h"
 #include "third_party/blink/renderer/modules/xr/xr_viewer_pose.h"
+#include "third_party/blink/renderer/modules/xr/xr_world_information.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
 namespace blink {
 
-XRFrame::XRFrame(XRSession* session) : session_(session) {}
+namespace {
 
-XRViewerPose* XRFrame::getViewerPose(XRReferenceSpace* reference_space) const {
+const char kInactiveFrame[] =
+    "XRFrame access outside the callback that produced it is invalid.";
+
+const char kNonAnimationFrame[] =
+    "getViewerPose can only be called on XRFrame objects passed to "
+    "XRSession.requestAnimationFrame callbacks.";
+
+const char kSessionMismatch[] = "XRSpace and XRFrame sessions do not match.";
+
+const char kCannotReportPoses[] =
+    "Poses cannot be given out for the current state.";
+
+const char kHitTestSourceUnavailable[] =
+    "Unable to obtain hit test results for specified hit test source. Ensure "
+    "that it was not already canceled.";
+
+}  // namespace
+
+XRFrame::XRFrame(XRSession* session, XRWorldInformation* world_information)
+    : world_information_(world_information), session_(session) {}
+
+XRViewerPose* XRFrame::getViewerPose(XRReferenceSpace* reference_space,
+                                     ExceptionState& exception_state) const {
+  if (!is_active_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kInactiveFrame);
+    return nullptr;
+  }
+
+  if (!is_animation_frame_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kNonAnimationFrame);
+    return nullptr;
+  }
+
+  if (!reference_space) {
+    return nullptr;
+  }
+
+  // Must use a reference space created from the same session.
+  if (reference_space->session() != session_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kSessionMismatch);
+    return nullptr;
+  }
+
+  if (!session_->CanReportPoses()) {
+    exception_state.ThrowSecurityError(kCannotReportPoses);
+    return nullptr;
+  }
+
   session_->LogGetPose();
 
-  // If we don't have a valid base pose return null. Most common when tracking
-  // is lost.
-  if (!base_pose_matrix_ || !reference_space) {
-    return nullptr;
-  }
-
-  // Must use a coordinate system created from the same session.
-  if (reference_space->session() != session_) {
-    return nullptr;
-  }
-
-  std::unique_ptr<TransformationMatrix> pose =
-      reference_space->TransformBasePose(*base_pose_matrix_);
-
-  if (!pose) {
-    return nullptr;
-  }
+  std::unique_ptr<TransformationMatrix> offset_space_from_viewer =
+      reference_space->OffsetFromViewer();
 
   // Can only update an XRViewerPose's views with an invertible matrix.
-  if (!pose->IsInvertible()) {
+  if (!(offset_space_from_viewer && offset_space_from_viewer->IsInvertible())) {
     return nullptr;
   }
 
-  return MakeGarbageCollected<XRViewerPose>(session(), std::move(pose));
+  return MakeGarbageCollected<XRViewerPose>(session(),
+                                            *offset_space_from_viewer);
 }
 
-XRInputPose* XRFrame::getInputPose(XRInputSource* input_source,
-                                   XRReferenceSpace* reference_space) const {
-  if (!input_source || !reference_space) {
-    return nullptr;
-  }
-
-  // Must use an input source and coordinate system from the same session.
-  if (input_source->session() != session_ ||
-      reference_space->session() != session_) {
-    return nullptr;
-  }
-
-  switch (input_source->target_ray_mode_) {
-    case XRInputSource::kScreen: {
-      // If the pointer origin is the screen we need the head's base pose and
-      // the pointer transform matrix to continue. The pointer transform will
-      // represent the point the canvas was clicked as an offset from the view.
-      if (!base_pose_matrix_ || !input_source->pointer_transform_matrix_) {
-        return nullptr;
-      }
-
-      // Multiply the head pose and pointer transform to get the final pointer.
-      std::unique_ptr<TransformationMatrix> pointer_pose =
-          reference_space->TransformBasePose(*base_pose_matrix_);
-      pointer_pose->Multiply(*(input_source->pointer_transform_matrix_));
-
-      return MakeGarbageCollected<XRInputPose>(std::move(pointer_pose),
-                                               nullptr);
-    }
-    case XRInputSource::kGaze: {
-      // If the pointer origin is the users head, this is a gaze cursor and the
-      // returned pointer is based on the device pose. If we don't have a valid
-      // base pose (most common when tracking is lost) return null.
-      if (!base_pose_matrix_) {
-        return nullptr;
-      }
-
-      // Just return the head pose as the pointer pose.
-      std::unique_ptr<TransformationMatrix> pointer_pose =
-          reference_space->TransformBasePose(*base_pose_matrix_);
-
-      return MakeGarbageCollected<XRInputPose>(
-          std::move(pointer_pose), nullptr, input_source->emulatedPosition());
-    }
-    case XRInputSource::kTrackedPointer: {
-      // If the input source doesn't have a base pose return null;
-      if (!input_source->base_pose_matrix_) {
-        return nullptr;
-      }
-
-      std::unique_ptr<TransformationMatrix> grip_pose =
-          reference_space->TransformBaseInputPose(
-              *(input_source->base_pose_matrix_), *base_pose_matrix_);
-
-      if (!grip_pose) {
-        return nullptr;
-      }
-
-      std::unique_ptr<TransformationMatrix> pointer_pose(
-          TransformationMatrix::Create(*grip_pose));
-
-      if (input_source->pointer_transform_matrix_) {
-        pointer_pose->Multiply(*(input_source->pointer_transform_matrix_));
-      }
-
-      return MakeGarbageCollected<XRInputPose>(
-          std::move(pointer_pose), std::move(grip_pose),
-          input_source->emulatedPosition());
-    }
-  }
-
-  return nullptr;
+XRAnchorSet* XRFrame::trackedAnchors() const {
+  return session_->trackedAnchors();
 }
 
-void XRFrame::SetBasePoseMatrix(const TransformationMatrix& base_pose_matrix) {
-  base_pose_matrix_ = TransformationMatrix::Create(base_pose_matrix);
+// Return an XRPose that has a transform of basespace_from_space, while
+// accounting for the base pose matrix of this frame. If computing a transform
+// isn't possible, return nullptr.
+XRPose* XRFrame::getPose(XRSpace* space,
+                         XRSpace* basespace,
+                         ExceptionState& exception_state) {
+  if (!is_active_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kInactiveFrame);
+    return nullptr;
+  }
+
+  if (!space || !basespace) {
+    DVLOG(2) << __func__ << " : space or basespace is null, space =" << space
+             << ", basespace = " << basespace;
+    return nullptr;
+  }
+
+  if (space->session() != session_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kSessionMismatch);
+    return nullptr;
+  }
+
+  if (basespace->session() != session_) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kSessionMismatch);
+    return nullptr;
+  }
+
+  if (!session_->CanReportPoses()) {
+    exception_state.ThrowSecurityError(kCannotReportPoses);
+    return nullptr;
+  }
+
+  return space->getPose(basespace);
+}
+
+void XRFrame::Deactivate() {
+  is_active_ = false;
+  is_animation_frame_ = false;
+}
+
+HeapVector<Member<XRHitTestResult>> XRFrame::getHitTestResults(
+    XRHitTestSource* hit_test_source,
+    ExceptionState& exception_state) {
+  if (!hit_test_source ||
+      !session_->ValidateHitTestSourceExists(hit_test_source)) {
+    // This should only happen when hit test source was already canceled.
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kHitTestSourceUnavailable);
+    return {};
+  }
+
+  return hit_test_source->Results();
+}
+
+HeapVector<Member<XRTransientInputHitTestResult>>
+XRFrame::getHitTestResultsForTransientInput(
+    XRTransientInputHitTestSource* hit_test_source,
+    ExceptionState& exception_state) {
+  if (!hit_test_source ||
+      !session_->ValidateHitTestSourceExists(hit_test_source)) {
+    // This should only happen when hit test source was already canceled.
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      kHitTestSourceUnavailable);
+    return {};
+  }
+
+  return hit_test_source->Results();
 }
 
 void XRFrame::Trace(blink::Visitor* visitor) {
   visitor->Trace(session_);
+  visitor->Trace(world_information_);
   ScriptWrappable::Trace(visitor);
 }
 

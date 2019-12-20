@@ -6,10 +6,8 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/task/post_task.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/dns_probe_service.h"
+#include "chrome/browser/net/dns_probe_service_factory.h"
 #include "chrome/browser/net/net_error_diagnostics_dialog.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -24,6 +22,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "ipc/ipc_message_macros.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "net/base/net_errors.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "url/gurl.h"
@@ -48,28 +47,6 @@ namespace {
 static NetErrorTabHelper::TestingState testing_state_ =
     NetErrorTabHelper::TESTING_DEFAULT;
 
-void OnDnsProbeFinishedOnIOThread(
-    const base::Callback<void(DnsProbeStatus)>& callback,
-    DnsProbeStatus result) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(callback, result));
-}
-
-// Can only access g_browser_process->io_thread() from the browser thread,
-// so have to pass it in to the callback instead of dereferencing it here.
-void StartDnsProbeOnIOThread(
-    const base::Callback<void(DnsProbeStatus)>& callback,
-    IOThread* io_thread) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  DnsProbeService* probe_service =
-      io_thread->globals()->dns_probe_service.get();
-
-  probe_service->ProbeDns(base::Bind(&OnDnsProbeFinishedOnIOThread, callback));
-}
-
 }  // namespace
 
 NetErrorTabHelper::~NetErrorTabHelper() {
@@ -87,9 +64,10 @@ void NetErrorTabHelper::RenderFrameCreated(
   if (render_frame_host->GetParent())
     return;
 
-  chrome::mojom::NetworkDiagnosticsClientAssociatedPtr client;
+  mojo::AssociatedRemote<chrome::mojom::NetworkDiagnosticsClient> client;
   render_frame_host->GetRemoteAssociatedInterfaces()->GetInterface(&client);
-  client->SetCanShowNetworkDiagnosticsDialog(CanShowNetworkDiagnosticsDialog());
+  client->SetCanShowNetworkDiagnosticsDialog(
+      CanShowNetworkDiagnosticsDialog(web_contents()));
 }
 
 void NetErrorTabHelper::DidStartNavigation(
@@ -156,16 +134,15 @@ bool NetErrorTabHelper::OnMessageReceived(
 
 NetErrorTabHelper::NetErrorTabHelper(WebContents* contents)
     : WebContentsObserver(contents),
-      network_diagnostics_bindings_(contents, this),
-      network_easter_egg_bindings_(contents, this),
+      network_diagnostics_receivers_(contents, this),
+      network_easter_egg_receivers_(contents, this),
       is_error_page_(false),
       dns_error_active_(false),
       dns_error_page_committed_(false),
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES)
       is_showing_download_button_in_error_page_(false),
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
-      dns_probe_status_(error_page::DNS_PROBE_POSSIBLE),
-      weak_factory_(this) {
+      dns_probe_status_(error_page::DNS_PROBE_POSSIBLE) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // If this helper is under test, it won't have a WebContents.
@@ -192,12 +169,10 @@ void NetErrorTabHelper::StartDnsProbe() {
 
   DVLOG(1) << "Starting DNS probe.";
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(&StartDnsProbeOnIOThread,
-                     base::Bind(&NetErrorTabHelper::OnDnsProbeFinished,
-                                weak_factory_.GetWeakPtr()),
-                     g_browser_process->io_thread()));
+  DnsProbeService* probe_service = DnsProbeServiceFactory::GetForContext(
+      web_contents()->GetBrowserContext());
+  probe_service->ProbeDns(base::BindOnce(&NetErrorTabHelper::OnDnsProbeFinished,
+                                         weak_factory_.GetWeakPtr()));
 }
 
 void NetErrorTabHelper::OnDnsProbeFinished(DnsProbeStatus result) {
@@ -273,7 +248,7 @@ void NetErrorTabHelper::SendInfo() {
   DVLOG(1) << "Sending status " << DnsProbeStatusToString(dns_probe_status_);
   content::RenderFrameHost* rfh = web_contents()->GetMainFrame();
 
-  chrome::mojom::NetworkDiagnosticsClientAssociatedPtr client;
+  mojo::AssociatedRemote<chrome::mojom::NetworkDiagnosticsClient> client;
   rfh->GetRemoteAssociatedInterfaces()->GetInterface(&client);
   client->DNSProbeStatus(dns_probe_status_);
 
@@ -293,8 +268,13 @@ void NetErrorTabHelper::RunNetworkDiagnostics(const GURL& url) {
 
 void NetErrorTabHelper::RunNetworkDiagnosticsHelper(
     const std::string& sanitized_url) {
-  if (network_diagnostics_bindings_.GetCurrentTargetFrame()
-          != web_contents()->GetMainFrame()) {
+  // The button shouldn't even be shown in this case, but still best to be safe,
+  // since the renderer isn't trusted.
+  if (!CanShowNetworkDiagnosticsDialog(web_contents()))
+    return;
+
+  if (network_diagnostics_receivers_.GetCurrentTargetFrame() !=
+      web_contents()->GetMainFrame()) {
     return;
   }
 

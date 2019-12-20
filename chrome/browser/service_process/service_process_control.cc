@@ -30,6 +30,8 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_launcher_utils.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
 #include "mojo/public/cpp/system/isolated_connection.h"
 
@@ -46,7 +48,8 @@ constexpr base::TimeDelta kInitialConnectionRetryDelay =
     base::TimeDelta::FromMilliseconds(20);
 
 void ConnectAsyncWithBackoff(
-    service_manager::mojom::InterfaceProviderRequest interface_provider_request,
+    mojo::PendingReceiver<service_manager::mojom::InterfaceProvider>
+        interface_provider_receiver,
     mojo::NamedPlatformChannel::ServerName server_name,
     size_t num_retries_left,
     base::TimeDelta retry_delay,
@@ -60,10 +63,12 @@ void ConnectAsyncWithBackoff(
       response_task_runner->PostTask(
           FROM_HERE, base::BindOnce(std::move(response_callback), nullptr));
     } else {
-      base::PostDelayedTaskWithTraits(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::PostDelayedTask(
+          FROM_HERE,
+          {base::ThreadPool(), base::MayBlock(),
+           base::TaskPriority::BEST_EFFORT},
           base::BindOnce(
-              &ConnectAsyncWithBackoff, std::move(interface_provider_request),
+              &ConnectAsyncWithBackoff, std::move(interface_provider_receiver),
               server_name, num_retries_left - 1, retry_delay * 2,
               std::move(response_task_runner), std::move(response_callback)),
           retry_delay);
@@ -71,7 +76,7 @@ void ConnectAsyncWithBackoff(
   } else {
     auto mojo_connection = std::make_unique<mojo::IsolatedConnection>();
     mojo::FuseMessagePipes(mojo_connection->Connect(std::move(endpoint)),
-                           interface_provider_request.PassMessagePipe());
+                           interface_provider_receiver.PassPipe());
     response_task_runner->PostTask(FROM_HERE,
                                    base::BindOnce(std::move(response_callback),
                                                   std::move(mojo_connection)));
@@ -82,7 +87,7 @@ void ConnectAsyncWithBackoff(
 
 // ServiceProcessControl implementation.
 ServiceProcessControl::ServiceProcessControl()
-    : apply_changes_from_upgrade_observer_(false), weak_factory_(this) {
+    : apply_changes_from_upgrade_observer_(false) {
   UpgradeDetector::GetInstance()->AddObserver(this);
 }
 
@@ -101,13 +106,16 @@ void ServiceProcessControl::ConnectInternal() {
   // Actually going to connect.
   DVLOG(1) << "Connecting to Service Process IPC Server";
 
-  service_manager::mojom::InterfaceProviderPtr remote_interfaces;
-  auto interface_provider_request = mojo::MakeRequest(&remote_interfaces);
+  mojo::PendingRemote<service_manager::mojom::InterfaceProvider>
+      remote_interfaces;
+  auto interface_provider_receiver =
+      remote_interfaces.InitWithNewPipeAndPassReceiver();
   SetMojoHandle(std::move(remote_interfaces));
-  base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+  base::PostTask(
+      FROM_HERE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(
-          &ConnectAsyncWithBackoff, std::move(interface_provider_request),
+          &ConnectAsyncWithBackoff, std::move(interface_provider_receiver),
           GetServiceProcessServerName(), kMaxConnectionAttempts,
           kInitialConnectionRetryDelay, base::ThreadTaskRunnerHandle::Get(),
           base::BindOnce(&ServiceProcessControl::OnPeerConnectionComplete,
@@ -121,14 +129,15 @@ void ServiceProcessControl::OnPeerConnectionComplete(
 }
 
 void ServiceProcessControl::SetMojoHandle(
-    service_manager::mojom::InterfaceProviderPtr handle) {
+    mojo::PendingRemote<service_manager::mojom::InterfaceProvider> handle) {
   remote_interfaces_.Close();
   remote_interfaces_.Bind(std::move(handle));
   remote_interfaces_.SetConnectionLostClosure(base::Bind(
       &ServiceProcessControl::OnChannelError, base::Unretained(this)));
 
   // TODO(hclam): Handle error connecting to channel.
-  remote_interfaces_.GetInterface(&service_process_);
+  remote_interfaces_.GetInterface(
+      service_process_.BindNewPipeAndPassReceiver());
   service_process_->Hello(base::BindOnce(
       &ServiceProcessControl::OnChannelConnected, base::Unretained(this)));
 }
@@ -221,7 +230,7 @@ void ServiceProcessControl::OnProcessLaunched() {
   }
 
   // We don't need the launcher anymore.
-  launcher_ = NULL;
+  launcher_.reset();
 }
 
 void ServiceProcessControl::OnUpgradeRecommended() {
@@ -281,11 +290,6 @@ bool ServiceProcessControl::GetHistograms(
   DCHECK(!histograms_callback.is_null());
   histograms_callback_.Reset();
 
-#if defined(OS_MACOSX)
-  // TODO(vitalybuka): Investigate why it crashes MAC http://crbug.com/406227.
-  return false;
-#endif  // OS_MACOSX
-
   // If the service process is already running then connect to it.
   if (!CheckServiceProcessReady())
     return false;
@@ -304,9 +308,8 @@ bool ServiceProcessControl::GetHistograms(
   // Run timeout task to make sure |histograms_callback| is called.
   histograms_timeout_callback_.Reset(base::Bind(
       &ServiceProcessControl::RunHistogramsCallback, base::Unretained(this)));
-  base::PostDelayedTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                                  histograms_timeout_callback_.callback(),
-                                  timeout);
+  base::PostDelayedTask(FROM_HERE, {BrowserThread::UI},
+                        histograms_timeout_callback_.callback(), timeout);
 
   histograms_callback_ = histograms_callback;
   return true;
@@ -361,8 +364,8 @@ void ServiceProcessControl::Launcher::DoDetectLaunched() {
   if (launched_ || (retry_count_ >= kMaxLaunchDetectRetries) ||
       process_.WaitForExitWithTimeout(base::TimeDelta(), &exit_code)) {
     process_.Close();
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::Bind(&Launcher::Notify, this));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&Launcher::Notify, this));
     return;
   }
   retry_count_++;
@@ -370,7 +373,7 @@ void ServiceProcessControl::Launcher::DoDetectLaunched() {
   // If the service process is not launched yet then check again in 2 seconds.
   const base::TimeDelta kDetectLaunchRetry = base::TimeDelta::FromSeconds(2);
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&Launcher::DoDetectLaunched, this),
+      FROM_HERE, base::BindOnce(&Launcher::DoDetectLaunched, this),
       kDetectLaunchRetry);
 }
 
@@ -384,11 +387,11 @@ void ServiceProcessControl::Launcher::DoRun() {
   process_ = base::LaunchProcess(*cmd_line_, options);
   if (process_.IsValid()) {
     saved_pid_ = process_.Pid();
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
-                             base::Bind(&Launcher::DoDetectLaunched, this));
+    base::PostTask(FROM_HERE, {BrowserThread::IO},
+                   base::BindOnce(&Launcher::DoDetectLaunched, this));
   } else {
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::Bind(&Launcher::Notify, this));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&Launcher::Notify, this));
   }
 }
 #endif  // !OS_MACOSX

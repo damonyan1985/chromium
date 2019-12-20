@@ -27,18 +27,20 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import sys
 import unittest
 
 from blinkpy.common.host_mock import MockHost
 from blinkpy.common.system.system_host_mock import MockSystemHost
 from blinkpy.web_tests import run_web_tests
-from blinkpy.web_tests.controllers.web_test_runner import WebTestRunner, Sharder, TestRunInterruptedException
+from blinkpy.web_tests.controllers.web_test_runner import WebTestRunner, Worker, Sharder, TestRunInterruptedException
 from blinkpy.web_tests.models import test_expectations
 from blinkpy.web_tests.models import test_failures
 from blinkpy.web_tests.models.test_run_results import TestRunResults
 from blinkpy.web_tests.models.test_input import TestInput
 from blinkpy.web_tests.models.test_results import TestResult
 from blinkpy.web_tests.port.test import TestPort
+from blinkpy.web_tests.port.driver import DriverOutput
 
 
 TestExpectations = test_expectations.TestExpectations
@@ -79,10 +81,18 @@ class LockCheckingRunner(WebTestRunner):
         self._should_have_http_lock = http_lock
 
 
+# TODO(crbug.com/926841): Debug running this test on Swarming on Windows.
+# Ensure that all child processes are always cleaned up.
+@unittest.skipIf(sys.platform == 'win32', 'may not clean up child processes')
 class WebTestRunnerTests(unittest.TestCase):
 
-    # pylint: disable=protected-access
+    def setUp(self):
+        self._actual_output = DriverOutput(
+            text='', image=None, image_hash=None, audio=None)
+        self._expected_output = DriverOutput(
+            text='', image=None, image_hash=None, audio=None)
 
+    # pylint: disable=protected-access
     def _runner(self, port=None):
         # FIXME: we shouldn't have to use run_web_tests.py to get the options we need.
         options = run_web_tests.parse_args(['--platform', 'test-mac-mac10.11'])[0]
@@ -135,7 +145,11 @@ class WebTestRunnerTests(unittest.TestCase):
         runner._expectations = expectations
 
         run_results = TestRunResults(expectations, 1)
-        result = TestResult(test_name=test, failures=[test_failures.FailureReftestMismatchDidNotOccur()], reftest_type=['!='])
+        result = TestResult(
+            test_name=test, failures=[
+                test_failures.FailureReftestMismatchDidNotOccur(
+                    self._actual_output, self._expected_output)],
+            reftest_type=['!='])
         runner._update_summary_with_result(run_results, result)
         self.assertEqual(1, run_results.expected)
         self.assertEqual(0, run_results.unexpected)
@@ -197,10 +211,10 @@ class SharderTests(unittest.TestCase):
         self.assert_shards(unlocked,
                            [('virtual/threaded/dir', ['virtual/threaded/dir/test.html']),
                             ('virtual/threaded/fast/foo', ['virtual/threaded/fast/foo/test.html']),
-                               ('animations', ['animations/keyframes.html']),
-                               ('dom/html/level2/html', ['dom/html/level2/html/HTMLAnchorElement03.html',
-                                                         'dom/html/level2/html/HTMLAnchorElement06.html']),
-                               ('fast/css', ['fast/css/display-none-inline-style-change-crash.html'])])
+                            ('animations', ['animations/keyframes.html']),
+                            ('dom/html/level2/html', ['dom/html/level2/html/HTMLAnchorElement03.html',
+                                                      'dom/html/level2/html/HTMLAnchorElement06.html']),
+                            ('fast/css', ['fast/css/display-none-inline-style-change-crash.html'])])
 
     def test_shard_every_file(self):
         locked, unlocked = self.get_shards(num_workers=2, fully_parallel=True, max_locked_shards=2, run_singly=False)
@@ -209,16 +223,16 @@ class SharderTests(unittest.TestCase):
                              ['http/tests/websocket/tests/unicode.htm',
                               'http/tests/security/view-source-no-refresh.html',
                               'http/tests/websocket/tests/websocket-protocol-ignored.html']),
-                               ('locked_shard_2',
-                                ['http/tests/xmlhttprequest/supported-xml-content-types.html',
-                                 'perf/object-keys.html'])])
+                            ('locked_shard_2',
+                             ['http/tests/xmlhttprequest/supported-xml-content-types.html',
+                              'perf/object-keys.html'])])
         self.assert_shards(unlocked,
                            [('virtual/threaded/dir', ['virtual/threaded/dir/test.html']),
                             ('virtual/threaded/fast/foo', ['virtual/threaded/fast/foo/test.html']),
-                               ('.', ['animations/keyframes.html']),
-                               ('.', ['fast/css/display-none-inline-style-change-crash.html']),
-                               ('.', ['dom/html/level2/html/HTMLAnchorElement03.html']),
-                               ('.', ['dom/html/level2/html/HTMLAnchorElement06.html'])])
+                            ('.', ['animations/keyframes.html']),
+                            ('.', ['fast/css/display-none-inline-style-change-crash.html']),
+                            ('.', ['dom/html/level2/html/HTMLAnchorElement03.html']),
+                            ('.', ['dom/html/level2/html/HTMLAnchorElement06.html'])])
 
     def test_shard_in_two(self):
         locked, unlocked = self.get_shards(num_workers=1, fully_parallel=False, run_singly=False)
@@ -257,9 +271,9 @@ class SharderTests(unittest.TestCase):
                              ['http/tests/security/view-source-no-refresh.html',
                               'http/tests/websocket/tests/unicode.htm',
                               'http/tests/websocket/tests/websocket-protocol-ignored.html']),
-                               ('locked_shard_2',
-                                ['http/tests/xmlhttprequest/supported-xml-content-types.html',
-                                 'perf/object-keys.html'])])
+                            ('locked_shard_2',
+                             ['http/tests/xmlhttprequest/supported-xml-content-types.html',
+                              'perf/object-keys.html'])])
 
         locked, _ = self.get_shards(num_workers=4, fully_parallel=False, run_singly=False)
         self.assert_shards(locked,
@@ -284,3 +298,17 @@ class SharderTests(unittest.TestCase):
         self.assert_shards(unlocked,
                            [('.', ['virtual/foo/bar1.html']),
                             ('.', ['virtual/foo/bar2.html'])])
+
+
+class WorkerTests(unittest.TestCase):
+
+    class DummyCaller(object):
+        worker_number = 1
+        name = 'dummy_caller'
+
+    def test_worker_no_manifest_update(self):
+        # pylint: disable=protected-access
+        options = run_web_tests.parse_args(['--platform', 'test-mac-mac10.11'])[0]
+        worker = Worker(self.DummyCaller(), '/results', options)
+        self.assertTrue(options.manifest_update)
+        self.assertFalse(worker._options.manifest_update)

@@ -20,17 +20,51 @@
 #include "base/time/time.h"
 #include "chrome/browser/task_manager/providers/task_provider.h"
 #include "chrome/browser/task_manager/providers/task_provider_observer.h"
-#include "chrome/browser/task_manager/sampling/arc_shared_sampler.h"
 #include "chrome/browser/task_manager/sampling/task_group.h"
-#include "chrome/browser/task_manager/sampling/task_manager_io_thread_helper.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "gpu/ipc/common/memory_stats.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/global_memory_dump.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/task_manager/sampling/arc_shared_sampler.h"
+#endif  // defined(OS_CHROMEOS)
+
 namespace task_manager {
 
 class SharedSampler;
+
+// Identifies the initiator of a network request, by a (child_id,
+// route_id) tuple.
+// BytesTransferredKey supports hashing and may be used as an unordered_map key.
+struct BytesTransferredKey {
+  // The unique ID of the host of the child process requester.
+  int child_id;
+
+  // The ID of the IPC route for the URLRequest (this identifies the
+  // RenderView or like-thing in the renderer that the request gets routed
+  // to).
+  int route_id;
+
+  struct Hasher {
+    size_t operator()(const BytesTransferredKey& key) const;
+  };
+
+  bool operator==(const BytesTransferredKey& other) const;
+};
+
+// This is the entry of the unordered map that tracks bytes transfered by task.
+struct BytesTransferredParam {
+  // The number of bytes read.
+  int64_t byte_read_count = 0;
+
+  // The number of bytes sent.
+  int64_t byte_sent_count = 0;
+};
+
+using BytesTransferredMap = std::unordered_map<BytesTransferredKey,
+                                               BytesTransferredParam,
+                                               BytesTransferredKey::Hasher>;
 
 // Defines a concrete implementation of the TaskManagerInterface.
 class TaskManagerImpl : public TaskManagerInterface,
@@ -82,13 +116,13 @@ class TaskManagerImpl : public TaskManagerInterface,
   bool GetV8Memory(TaskId task_id,
                    int64_t* allocated,
                    int64_t* used) const override;
-  bool GetWebCacheStats(
-      TaskId task_id,
-      blink::WebCache::ResourceTypeStats* stats) const override;
+  bool GetWebCacheStats(TaskId task_id,
+                        blink::WebCacheResourceTypeStats* stats) const override;
   int GetKeepaliveCount(TaskId task_id) const override;
   const TaskIdList& GetTaskIdsList() const override;
   TaskIdList GetIdsOfTasksSharingSameProcess(TaskId task_id) const override;
   size_t GetNumberOfTasksOnSameProcess(TaskId task_id) const override;
+  bool IsRunningInVM(TaskId task_id) const override;
   TaskId GetTaskIdForWebContents(
       content::WebContents* web_contents) const override;
 
@@ -97,18 +131,15 @@ class TaskManagerImpl : public TaskManagerInterface,
   void TaskRemoved(Task* task) override;
   void TaskUnresponsive(Task* task) override;
 
-  // Used when Network Service is disabled.
-  // The notification method on the UI thread when multiple bytes are
-  // transferred from URLRequests. This will be called by the
-  // |io_thread_helper_|.
-  static void OnMultipleBytesTransferredUI(BytesTransferredMap params);
-
   // Used when Network Service is enabled.
   // Receives total network usages from |NetworkService|.
   void OnTotalNetworkUsages(
       std::vector<network::mojom::NetworkUsagePtr> total_network_usages);
 
  private:
+  using PidToTaskGroupMap =
+      std::map<base::ProcessId, std::unique_ptr<TaskGroup>>;
+
   friend struct base::LazyInstanceTraitsBase<TaskManagerImpl>;
 
   TaskManagerImpl();
@@ -135,6 +166,7 @@ class TaskManagerImpl : public TaskManagerInterface,
   bool UpdateTasksWithBytesTransferred(const BytesTransferredKey& key,
                                        const BytesTransferredParam& param);
 
+  PidToTaskGroupMap* GetVmPidToTaskGroupMap(Task::Type type);
   TaskGroup* GetTaskGroupByTaskId(TaskId task_id) const;
   Task* GetTaskByTaskId(TaskId task_id) const;
 
@@ -145,7 +177,12 @@ class TaskManagerImpl : public TaskManagerInterface,
   const base::Closure on_background_data_ready_callback_;
 
   // Map TaskGroups by the IDs of the processes they represent.
-  std::map<base::ProcessId, std::unique_ptr<TaskGroup>> task_groups_by_proc_id_;
+  PidToTaskGroupMap task_groups_by_proc_id_;
+
+  // Map ARC VM PidToTaskGroupMaps by the task type. This should be separate
+  // from the non-VM map |task_groups_by_proc_id_| as there can be conflicting
+  // PIDs.
+  PidToTaskGroupMap arc_vm_task_groups_by_proc_id_;
 
   // Map each task by its ID to the TaskGroup on which it resides.
   // Keys are unique but values will have duplicates (i.e. multiple tasks
@@ -154,12 +191,6 @@ class TaskManagerImpl : public TaskManagerInterface,
 
   // A cached sorted list of the task IDs.
   mutable std::vector<TaskId> sorted_task_ids_;
-
-  // Used when Network Service is disabled.
-  // The manager of the IO thread helper used to handle network bytes
-  // notifications on IO thread. The manager itself lives on the UI thread, but
-  // the IO thread helper lives entirely on the IO thread.
-  std::unique_ptr<IoThreadHelperManager> io_thread_helper_manager_;
 
   // Used when Network Service is enabled.
   // Stores the total network usages per |process_id, routing_id| from last
@@ -196,7 +227,7 @@ class TaskManagerImpl : public TaskManagerInterface,
   // memory_instrumentation.
   bool waiting_for_memory_dump_;
 
-  base::WeakPtrFactory<TaskManagerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<TaskManagerImpl> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(TaskManagerImpl);
 };
 

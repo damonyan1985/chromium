@@ -83,17 +83,18 @@ document.addEventListener('DOMContentLoaded', function(event) {
 });
 </script>
 
-[TOC]
+# ECMAScript Features in Chromium
 
-> **TBD:** Do we need to differentiate per-project?
-
-> **TBD:** Cross-platform build support? As in: transpilers?
+This doc extends the [style guide](web.md#JavaScript) by specifying which new
+features of ES2015 and beyond are allowed in Chromium.
 
 You can propose changing the status of a feature by sending an email to
 chromium-dev@chromium.org. Include a short blurb on what the feature is and why
 you think it should or should not be allowed, along with links to any relevant
 previous discussion. If the list arrives at some consensus, send a codereview
 to change this file accordingly, linking to your discussion thread.
+
+[TOC]
 
 # ES2015 Support In Chromium
 
@@ -562,6 +563,31 @@ const [one, ...rest] = [1, 2, 3];
 
 ---
 
+### Modules
+
+Support for exporting/importing values from/to modules without global
+namespace pollution.
+
+**Usage Example:**
+
+```js
+// lib/rect.js
+export function getArea() {...};
+export {width, height, unimportant};
+
+// app.js
+import {getArea, width, height} from './lib/rect.js';
+```
+
+**Documentation:** [link](https://developers.google.com/web/fundamentals/primers/modules)
+
+**Discussion Notes / Link to Thread:**
+Dynamic Import [link](https://v8.dev/features/dynamic-import) are not allowed
+yet, see separate entry in the [Features To Be Discussed](##es2015-support-in-chromium-features-to-be-discussed)
+section.
+
+---
+
 ## Banned Features
 
 The following features are banned for Chromium development.
@@ -729,12 +755,10 @@ result === 'yy' && re.lastIndex === 5;  // true
 
 **Discussion Notes / Link to Thread:**
 
----
+### Dynamic Import
 
-### Modules
-
-Support for exporting/importing values from/to modules without global
-namespace pollution.
+Dynamic import() introduces a new function-like form of import that returns a
+promise for the module namespace object of the requested module.
 
 **Usage Example:**
 
@@ -744,10 +768,14 @@ export function getArea() {...};
 export {width, height, unimportant};
 
 // app.js
-import {getArea, width, height} from './lib/rect.js';
+if (calculateArea) {
+  import('./lib/rect.js').then(rect => {
+    rect.getArea(...);
+  });
+}
 ```
 
-**Documentation:** [link](https://developers.google.com/web/fundamentals/primers/modules)
+**Documentation:** [link](https://v8.dev/features/dynamic-import)
 
 **Discussion Notes / Link to Thread:**
 

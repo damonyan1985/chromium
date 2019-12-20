@@ -9,7 +9,9 @@
 @protocol LocationBarConsumer
 
 // Notifies the consumer to update the location text.
-- (void)updateLocationText:(NSString*)string;
+// |clipTail| indicates whether the tail or the head should be clipped when the
+// location text is too long.
+- (void)updateLocationText:(NSString*)string clipTail:(BOOL)clipTail;
 // Notifies the consumer to update the location icon and security status text.
 - (void)updateLocationIcon:(UIImage*)icon
         securityStatusText:(NSString*)statusText;
@@ -25,6 +27,11 @@
 // Notifies the consumer to update after a navigation to NTP. Will be called
 // after -updateLocationText. Used for triggering NTP-specific location bar UI.
 - (void)updateAfterNavigatingToNTP;
+
+// Notifies the consumer to update after the search-by-image support status
+// changes. (This is usually when the default search engine changes).
+- (void)updateSearchByImageSupported:(BOOL)searchByImageSupported;
+
 
 @end
 

@@ -65,6 +65,8 @@ class EasyUnlockServiceRegular
   ~EasyUnlockServiceRegular() override;
 
  private:
+  friend class EasyUnlockServiceRegularTest;
+
   // Loads the RemoteDevice instances that will be supplied to
   // ProximityAuthSystem.
   void LoadRemoteDevices();
@@ -72,14 +74,17 @@ class EasyUnlockServiceRegular
   void UseLoadedRemoteDevices(
       const multidevice::RemoteDeviceRefList& remote_devices);
 
+  // Persists Smart Lock host and local device to prefs, and then informs
+  // the base class to potentially update Smart Lock host and local device
+  // stored in the TPM.
+  void SetStoredRemoteDevices(const base::ListValue& devices);
+
   // EasyUnlockService implementation:
   proximity_auth::ProximityAuthPrefManager* GetProximityAuthPrefManager()
       override;
   EasyUnlockService::Type GetType() const override;
   AccountId GetAccountId() const override;
-  void ClearPermitAccess() override;
   const base::ListValue* GetRemoteDevices() const override;
-  void SetRemoteDevices(const base::ListValue& devices) override;
   std::string GetChallenge() const override;
   std::string GetWrappedSecret() const override;
   void RecordEasySignInOutcome(const AccountId& account_id,
@@ -109,8 +114,6 @@ class EasyUnlockServiceRegular
       const std::set<std::string>& public_keys_before_sync,
       const std::set<std::string>& public_keys_after_sync);
 
-  void OnForceSyncCompleted(bool success);
-
   // proximity_auth::ScreenlockBridge::Observer implementation:
   void OnScreenDidLock(proximity_auth::ScreenlockBridge::LockHandler::ScreenType
                            screen_type) override;
@@ -118,16 +121,6 @@ class EasyUnlockServiceRegular
       proximity_auth::ScreenlockBridge::LockHandler::ScreenType screen_type)
       override;
   void OnFocusedUserChanged(const AccountId& account_id) override;
-
-  // Called after a cryptohome RemoveKey or RefreshKey operation to set the
-  // proper hardlock state if the operation is successful.
-  void SetHardlockAfterKeyOperation(
-      EasyUnlockScreenlockStateHandler::HardlockState state_on_success,
-      bool success);
-
-  // Refreshes the ChromeOS cryptohome keys if the user has reauthed recently.
-  // Otherwise, hardlock the device.
-  void RefreshCryptohomeKeysIfPossible();
 
   multidevice::RemoteDeviceRefList GetUnlockKeys();
 
@@ -145,7 +138,7 @@ class EasyUnlockServiceRegular
   // loading the RemoteDevice until the screen is unlocked. For security,
   // this deferment prevents the lock screen from being changed by a network
   // event.
-  bool deferring_device_load_;
+  bool deferring_device_load_ = false;
 
   // Responsible for showing all the notifications used for EasyUnlock.
   std::unique_ptr<EasyUnlockNotificationController> notification_controller_;
@@ -153,7 +146,7 @@ class EasyUnlockServiceRegular
   // Used to fetch local device and remote device data.
   device_sync::DeviceSyncClient* device_sync_client_;
 
-  // Used to determine the FeatureState of Smart Lock. See |feature_state_|.
+  // Used to determine the FeatureState of Smart Lock.
   multidevice_setup::MultiDeviceSetupClient* multidevice_setup_client_;
 
   // Stores the unlock keys for EasyUnlock before the current device sync, so we
@@ -161,21 +154,15 @@ class EasyUnlockServiceRegular
   std::vector<cryptauth::ExternalDeviceInfo> unlock_keys_before_sync_;
   multidevice::RemoteDeviceRefList remote_device_unlock_keys_before_sync_;
 
-  // Caches feature state of Smart Lock. This service should only actively be
-  // running if its value is kEnabledByUser. Populated by using
-  // |multidevice_setup_client_|.
-  multidevice_setup::mojom::FeatureState feature_state_ =
-      multidevice_setup::mojom::FeatureState::kUnavailableNoVerifiedHost;
-
   // True if the pairing changed notification was shown, so that the next time
   // the Chromebook is unlocked, we can show the subsequent 'pairing applied'
   // notification.
-  bool shown_pairing_changed_notification_;
+  bool shown_pairing_changed_notification_ = false;
 
   // Listens to pref changes.
   PrefChangeRegistrar registrar_;
 
-  base::WeakPtrFactory<EasyUnlockServiceRegular> weak_ptr_factory_;
+  base::WeakPtrFactory<EasyUnlockServiceRegular> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(EasyUnlockServiceRegular);
 };

@@ -7,12 +7,15 @@ inner_url_origin=https://127.0.0.1:8444
 # the fly.
 wpt_test_origin=https://web-platform.test:8444
 wpt_test_remote_origin=https://www1.web-platform.test:8444
+wpt_test_alt_origin=https://not-web-platform.test:8444
 cert_url_origin=$wpt_test_origin
 sxg_content_type='content-type: application/signed-exchange;v=b3'
+variants_header=variants-04
+variant_key_header=variant-key-04
 
 set -e
 
-for cmd in gen-signedexchange gen-certurl; do
+for cmd in gen-signedexchange gen-certurl dump-signedexchange; do
     if ! command -v $cmd > /dev/null 2>&1; then
         echo "$cmd is not installed. Please run:"
         echo "  go get -u github.com/WICG/webpackage/go/signedexchange/cmd/..."
@@ -24,6 +27,15 @@ tmpdir=$(mktemp -d)
 
 echo -n OCSP >$tmpdir/ocsp
 gen-certurl -pem $certfile -ocsp $tmpdir/ocsp > $certfile.cbor
+
+option="-w 0"
+if [ "$(uname -s)" = "Darwin" ]; then
+    option=""
+fi
+
+cert_base64=$(base64 ${option} ${certfile}.cbor)
+data_cert_url="data:application/cert-chain+cbor;base64,$cert_base64"
+
 
 # A valid Signed Exchange.
 gen-signedexchange \
@@ -38,6 +50,53 @@ gen-signedexchange \
   -date 2018-04-01T00:00:00Z \
   -expire 168h \
   -o sxg/sxg-location.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange for appcache test.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/appcache/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o ../appcache/resources/sxg/sxg-location.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange for appcache test
+# - appcache and the sxg inner resp both provide the content for the url
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/appcache/resources/appcached-url.html \
+  -status 200 \
+  -content ../appcache/resources/appcached-url-in-sxg.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o ../appcache/resources/sxg/sxg-appcached.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange. The origin of certUrl is the "alt" origin where NEL
+# policy is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $wpt_test_alt_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-location-cert-on-alt-origin.sxg \
   -miRecordSize 100
 
 # A signed exchange of unsupported version.
@@ -154,6 +213,38 @@ gen-signedexchange \
   -miRecordSize 100 \
   -ignoreErrors true
 
+# certUrl is 404 and the origin of certUrl is different from the "alt" origin
+# where NEL policy is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/not_found_certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-cert-not-found.sxg \
+  -miRecordSize 100
+
+# certUrl is 404 and the origin of certUrl is the "alt" origin where NEL policy
+# is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $wpt_test_alt_origin/signed-exchange/resources/not_found_certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-cert-not-found-on-alt-origin.sxg \
+  -miRecordSize 100
+
 # certUrl is 404 and fallback URL is another signed exchange.
 gen-signedexchange \
   -version $sxg_version \
@@ -169,6 +260,38 @@ gen-signedexchange \
   -o sxg/fallback-to-another-sxg.sxg \
   -miRecordSize 100 \
   -ignoreErrors true
+
+# certUrl is an invalid cert and the origin of certUrl is different from the
+# "alt" origin where NEL policy is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/invalid-cert-format.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-invalid-cert-format.sxg \
+  -miRecordSize 100
+
+# certUrl is an invalid cert and the origin of certUrl is the "alt" origin where
+# NEL policy is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $wpt_test_alt_origin/signed-exchange/resources/invalid-cert-format.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-invalid-cert-format-on-alt-origin.sxg \
+  -miRecordSize 100
 
 # Nested signed exchange.
 gen-signedexchange \
@@ -271,5 +394,186 @@ gen-signedexchange \
   -o sxg/sxg-hsts.sxg \
   -miRecordSize 100 \
   -ignoreErrors true
+
+# Signed Exchange with payload integrity error.
+echo 'garbage' | cat sxg/sxg-location.sxg - >sxg/sxg-merkle-integrity-error.sxg
+
+# An invalid signed exchange which integrity header is invalid.
+cat sxg/sxg-location.sxg |
+  sed 's/digest\/mi-sha256-03/digest\/mi-sha256-xx/' \
+    > sxg/sxg-invalid-integrity-header.sxg
+
+# An invalid signed exchange which cert-sha256 is invalid.
+dummy_sha256=`echo "dummy" | openssl dgst -binary -sha256 | base64`
+cat sxg/sxg-location.sxg |
+  sed "s/cert-sha256=\*[^*]*\*;/cert-sha256=*$dummy_sha256*;/" \
+    > sxg/sxg-invalid-cert-sha256.sxg
+cat sxg/sxg-location-cert-on-alt-origin.sxg |
+  sed "s/cert-sha256=\*[^*]*\*;/cert-sha256=*$dummy_sha256*;/" \
+    > sxg/sxg-invalid-cert-sha256-cert-on-alt-origin.sxg
+
+# An invalid signed exchange which validity period is too long.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 300h \
+  -o sxg/sxg-validity-period-too-long.sxg \
+  -miRecordSize 100 \
+  -ignoreErrors true
+
+# An invalid signed exchange which validity period is too long. The origin of
+# certUrl is the "alt" origin where NEL policy is installed in reporting tests.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $wpt_test_alt_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 300h \
+  -o sxg/sxg-validity-period-too-long-cert-on-alt-origin.sxg \
+  -miRecordSize 100 \
+  -ignoreErrors true
+
+# Signed Exchange with variants / variant-key that match any request.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -responseHeader "${variants_header}: accept-language;en" \
+  -responseHeader "${variant_key_header}: en" \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-variants-match.sxg \
+  -miRecordSize 100
+
+# Signed Exchange with variants / variant-key that never match any request.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -responseHeader "${variants_header}: accept-language;en" \
+  -responseHeader "${variant_key_header}: unknown" \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-variants-mismatch.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange that reports navigation timing.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-navigation-timing.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-navigation-timing.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange for testing service worker registration.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $wpt_test_origin/signed-exchange/resources/register-sw-from-sxg.html \
+  -status 200 \
+  -content register-sw.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $wpt_test_origin/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/register-sw-from-sxg.sxg \
+  -miRecordSize 100
+
+# An invalid Signed Exchange for testing service worker registration after
+# fallback.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $wpt_test_origin/signed-exchange/resources/register-sw-after-fallback.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/not_found_certfile.cbor \
+  -validityUrl $wpt_test_origin/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/register-sw-after-fallback.sxg \
+  -miRecordSize 100
+
+# A valid Signed Exchange using data URL for cert-url.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/inner-url.html \
+  -status 200 \
+  -content sxg-location.html \
+  -certificate $certfile \
+  -certUrl $data_cert_url \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2018-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-data-cert-url.sxg \
+  -miRecordSize 100
+
+# Generate the signed exchange file of sxg-subresource-script-inner.js.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/sxg-subresource-script.js \
+  -status 200 \
+  -content sxg-subresource-script-inner.js \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2030-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-subresource-script.sxg \
+  -miRecordSize 100
+
+# Get the header integrity hash value of sxg-subresource-script.sxg.
+header_integrity=$(dump-signedexchange -i sxg/sxg-subresource-script.sxg | \
+                   grep -o "header integrity: sha256-.*" | \
+                   grep -o "sha256-.*$")
+
+# Generate the signed exchange file of signed exchange subresource test.
+gen-signedexchange \
+  -version $sxg_version \
+  -uri $inner_url_origin/signed-exchange/resources/sxg-subresource-sxg.html \
+  -status 200 \
+  -content sxg-subresource-sxg-inner.html \
+  -certificate $certfile \
+  -certUrl $cert_url_origin/signed-exchange/resources/$certfile.cbor \
+  -validityUrl $inner_url_origin/signed-exchange/resources/resource.validity.msg \
+  -privateKey $keyfile \
+  -date 2030-04-01T00:00:00Z \
+  -expire 168h \
+  -o sxg/sxg-subresource.sxg \
+  -miRecordSize 100 \
+  -responseHeader "link:<$inner_url_origin/signed-exchange/resources/sxg-subresource-script.js>;rel=allowed-alt-sxg;header-integrity=\"$header_integrity\",<$inner_url_origin/signed-exchange/resources/sxg-subresource-script.js>;rel=preload;as=script"
 
 rm -fr $tmpdir

@@ -5,25 +5,32 @@
 #ifndef ASH_EVENTS_SPOKEN_FEEDBACK_EVENT_REWRITER_H_
 #define ASH_EVENTS_SPOKEN_FEEDBACK_EVENT_REWRITER_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "ash/public/interfaces/event_rewriter_controller.mojom.h"
 #include "base/macros.h"
 #include "ui/events/event_rewriter.h"
 
+namespace ui {
+class EventRewriterChromeOS;
+}
+
 namespace ash {
+
+class SpokenFeedbackEventRewriterDelegate;
 
 // SpokenFeedbackEventRewriter sends key events to ChromeVox (via the delegate)
 // when spoken feedback is enabled. Continues dispatch of unhandled key events.
 // TODO(http://crbug.com/839541): Avoid reposting unhandled events.
 class ASH_EXPORT SpokenFeedbackEventRewriter : public ui::EventRewriter {
  public:
-  SpokenFeedbackEventRewriter();
+  explicit SpokenFeedbackEventRewriter(
+      ui::EventRewriterChromeOS* event_rewriter_chromeos);
   ~SpokenFeedbackEventRewriter() override;
 
   // Set the delegate used to send key events to the ChromeVox extension.
-  void SetDelegate(mojom::SpokenFeedbackEventRewriterDelegatePtr delegate);
-  mojom::SpokenFeedbackEventRewriterDelegatePtr* get_delegate_for_testing() {
-    return &delegate_;
+  void set_delegate(SpokenFeedbackEventRewriterDelegate* delegate) {
+    delegate_ = delegate;
   }
 
   // Continue dispatch of events that were unhandled by the ChromeVox extension.
@@ -35,21 +42,24 @@ class ASH_EXPORT SpokenFeedbackEventRewriter : public ui::EventRewriter {
 
  private:
   // ui::EventRewriter:
-  ui::EventRewriteStatus RewriteEvent(
+  ui::EventDispatchDetails RewriteEvent(
       const ui::Event& event,
-      std::unique_ptr<ui::Event>* new_event) override;
-  ui::EventRewriteStatus NextDispatchEvent(
-      const ui::Event& last_event,
-      std::unique_ptr<ui::Event>* new_event) override;
+      const Continuation continuation) override;
+
+  // Continuation saved for OnUnhandledSpokenFeedbackEvent().
+  Continuation continuation_;
 
   // The delegate used to send key events to the ChromeVox extension.
-  mojom::SpokenFeedbackEventRewriterDelegatePtr delegate_;
+  SpokenFeedbackEventRewriterDelegate* delegate_ = nullptr;
 
   // Whether to send mouse events to the ChromeVox extension.
   bool send_mouse_events_ = false;
 
   // Whether to capture all keys.
   bool capture_all_keys_ = false;
+
+  // Weak.
+  ui::EventRewriterChromeOS* event_rewriter_chromeos_;
 
   DISALLOW_COPY_AND_ASSIGN(SpokenFeedbackEventRewriter);
 };

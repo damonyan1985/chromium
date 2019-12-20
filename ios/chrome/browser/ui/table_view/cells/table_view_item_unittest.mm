@@ -21,8 +21,8 @@ TEST_F(TableViewItemTest, ConfigureCellPortsAccessibilityProperties) {
   TableViewItem* item = [[TableViewItem alloc] initWithType:0];
   item.accessibilityIdentifier = @"test_identifier";
   item.accessibilityTraits = UIAccessibilityTraitButton;
-  UITableViewCell* cell = [[[item cellClass] alloc] init];
-  EXPECT_TRUE([cell isMemberOfClass:[UITableViewCell class]]);
+  TableViewCell* cell = [[[item cellClass] alloc] init];
+  EXPECT_TRUE([cell isMemberOfClass:[TableViewCell class]]);
   EXPECT_EQ(UIAccessibilityTraitNone, [cell accessibilityTraits]);
   EXPECT_FALSE([cell accessibilityIdentifier]);
 
@@ -34,11 +34,11 @@ TEST_F(TableViewItemTest, ConfigureCellPortsAccessibilityProperties) {
 
 TEST_F(TableViewItemTest, ConfigureCellWithStyler) {
   TableViewItem* item = [[TableViewItem alloc] initWithType:0];
-  UITableViewCell* cell = [[[item cellClass] alloc] init];
-  ASSERT_TRUE([cell isMemberOfClass:[UITableViewCell class]]);
+  TableViewCell* cell = [[[item cellClass] alloc] init];
+  ASSERT_TRUE([cell isMemberOfClass:[TableViewCell class]]);
 
   ChromeTableViewStyler* styler = [[ChromeTableViewStyler alloc] init];
-  UIColor* testColor = [UIColor redColor];
+  UIColor* testColor = UIColor.redColor;
   styler.tableViewBackgroundColor = testColor;
   [item configureCell:cell withStyler:styler];
   EXPECT_NSEQ(testColor, cell.backgroundColor);
@@ -46,15 +46,15 @@ TEST_F(TableViewItemTest, ConfigureCellWithStyler) {
 
 TEST_F(TableViewItemTest, NoBackgroundColorIfBackgroundViewIsPresent) {
   TableViewItem* item = [[TableViewItem alloc] initWithType:0];
-  UITableViewCell* cell = [[[item cellClass] alloc] init];
-  ASSERT_TRUE([cell isMemberOfClass:[UITableViewCell class]]);
+  TableViewCell* cell = [[[item cellClass] alloc] init];
+  ASSERT_TRUE([cell isMemberOfClass:[TableViewCell class]]);
 
   // If a background view is present on the cell, the styler's background color
   // should be ignored.
   cell.backgroundView = [[UIView alloc] init];
 
   ChromeTableViewStyler* styler = [[ChromeTableViewStyler alloc] init];
-  UIColor* testColor = [UIColor redColor];
+  UIColor* testColor = UIColor.redColor;
   styler.tableViewBackgroundColor = testColor;
   [item configureCell:cell withStyler:styler];
   EXPECT_FALSE([testColor isEqual:cell.backgroundColor]);

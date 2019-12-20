@@ -6,13 +6,15 @@
 
 #include <drm_fourcc.h>
 #include <xf86drm.h>
+#include <memory>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/numerics/safe_math.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkSurface.h"
-#include "ui/ozone/common/linux/drm_util_linux.h"
-#include "ui/ozone/common/linux/gbm_buffer.h"
+#include "ui/gfx/linux/drm_util_linux.h"
+#include "ui/gfx/linux/gbm_buffer.h"
 
 namespace ui {
 namespace {
@@ -37,7 +39,6 @@ class MockGbmBuffer final : public ui::GbmBuffer {
   uint32_t GetFormat() const override { return format_; }
   uint64_t GetFormatModifier() const override { return format_modifier_; }
   uint32_t GetFlags() const override { return flags_; }
-  size_t GetFdCount() const override { return 0; }
   gfx::Size GetSize() const override { return size_; }
   gfx::BufferFormat GetBufferFormat() const override {
     return ui::GetBufferFormatFromFourCCFormat(format_);
@@ -48,17 +49,17 @@ class MockGbmBuffer final : public ui::GbmBuffer {
     NOTREACHED();
     return -1;
   }
-  int GetPlaneStride(size_t plane) const override {
+  uint32_t GetPlaneStride(size_t plane) const override {
     DCHECK_LT(plane, planes_.size());
     return planes_[plane].stride;
   }
-  int GetPlaneOffset(size_t plane) const override {
+  size_t GetPlaneOffset(size_t plane) const override {
     DCHECK_LT(plane, planes_.size());
     return planes_[plane].offset;
   }
   size_t GetPlaneSize(size_t plane) const override {
     DCHECK_LT(plane, planes_.size());
-    return planes_[plane].size;
+    return static_cast<size_t>(planes_[plane].size);
   }
   uint32_t GetPlaneHandle(size_t plane) const override {
     DCHECK_LT(plane, planes_.size());
@@ -76,7 +77,6 @@ class MockGbmBuffer final : public ui::GbmBuffer {
   uint32_t format_ = 0;
   uint64_t format_modifier_ = 0;
   uint32_t flags_ = 0;
-  std::vector<base::ScopedFD> fds_;
   gfx::Size size_;
   std::vector<gfx::NativePixmapPlane> planes_;
   std::vector<uint32_t> handles_;
@@ -108,13 +108,16 @@ std::unique_ptr<GbmBuffer> MockGbmDevice::CreateBufferWithModifiers(
     const gfx::Size& size,
     uint32_t flags,
     const std::vector<uint64_t>& modifiers) {
+  if (should_fail_allocations_)
+    return nullptr;
+
   uint32_t bytes_per_pixel;
   switch (format) {
     case DRM_FORMAT_XRGB8888:
     case DRM_FORMAT_ARGB8888:
       bytes_per_pixel = 4;
       break;
-    case DRM_FORMAT_UYVY:
+    case DRM_FORMAT_NV12:
       bytes_per_pixel = 2;
       break;
     default:
@@ -144,7 +147,7 @@ std::unique_ptr<GbmBuffer> MockGbmDevice::CreateBufferWithModifiers(
 
   std::vector<gfx::NativePixmapPlane> planes;
   planes.push_back(gfx::NativePixmapPlane(plane_stride, plane_offset,
-                                          plane_size, format_modifier));
+                                          plane_size, base::ScopedFD()));
   std::vector<uint32_t> handles;
   handles.push_back(next_handle_++);
 
@@ -152,11 +155,10 @@ std::unique_ptr<GbmBuffer> MockGbmDevice::CreateBufferWithModifiers(
                                          std::move(planes), std::move(handles));
 }
 
-std::unique_ptr<GbmBuffer> MockGbmDevice::CreateBufferFromFds(
+std::unique_ptr<GbmBuffer> MockGbmDevice::CreateBufferFromHandle(
     uint32_t format,
     const gfx::Size& size,
-    std::vector<base::ScopedFD> fds,
-    const std::vector<gfx::NativePixmapPlane>& planes) {
+    gfx::NativePixmapHandle handle) {
   NOTREACHED();
   return nullptr;
 }

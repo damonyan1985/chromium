@@ -36,6 +36,9 @@ net::CertStatus MapToCertStatus(
     case chrome_browser_ssl::DynamicInterstitial::
         ERR_CERTIFICATE_TRANSPARENCY_REQUIRED:
       return net::CERT_STATUS_CERTIFICATE_TRANSPARENCY_REQUIRED;
+    case chrome_browser_ssl::DynamicInterstitial::
+        ERR_CERT_KNOWN_INTERCEPTION_BLOCKED:
+      return net::CERT_STATUS_KNOWN_INTERCEPTION_BLOCKED;
     case chrome_browser_ssl::DynamicInterstitial::ERR_CERT_SYMANTEC_LEGACY:
       return net::CERT_STATUS_SYMANTEC_LEGACY;
     case chrome_browser_ssl::DynamicInterstitial::ERR_CERT_REVOKED:
@@ -254,7 +257,7 @@ const std::string SSLErrorAssistant::MatchKnownMITMSoftware(
   // Ignore if the certificate doesn't have an issuer common name or an
   // organization name.
   if (cert->issuer().common_name.empty() &&
-      cert->issuer().organization_names.size() == 0) {
+      cert->issuer().organization_names.empty()) {
     return std::string();
   }
 
@@ -318,10 +321,8 @@ SSLErrorAssistant::GetErrorAssistantProtoFromResourceBundle() {
   auto proto = std::make_unique<chrome_browser_ssl::SSLErrorAssistantConfig>();
   DCHECK(proto);
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-  base::StringPiece data =
-      bundle.GetRawDataResource(IDR_SSL_ERROR_ASSISTANT_PB);
-  google::protobuf::io::ArrayInputStream stream(data.data(), data.size());
-  return proto->ParseFromZeroCopyStream(&stream) ? std::move(proto) : nullptr;
+  std::string data = bundle.LoadDataResourceString(IDR_SSL_ERROR_ASSISTANT_PB);
+  return proto->ParseFromString(data) ? std::move(proto) : nullptr;
 }
 
 void SSLErrorAssistant::SetErrorAssistantProto(

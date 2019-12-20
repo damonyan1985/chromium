@@ -15,12 +15,19 @@
 #include "base/process/launch.h"
 #include "build/build_config.h"
 #include "content/public/browser/child_process_launcher_utils.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "services/service_manager/embedder/result_codes.h"
 
 namespace content {
 
 using internal::ChildProcessLauncherHelper;
+
+#if defined(OS_ANDROID)
+bool ChildProcessLauncher::Client::CanUseWarmUpConnection() {
+  return true;
+}
+#endif
 
 ChildProcessLauncher::ChildProcessLauncher(
     std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
@@ -29,6 +36,7 @@ ChildProcessLauncher::ChildProcessLauncher(
     Client* client,
     mojo::OutgoingInvitation mojo_invitation,
     const mojo::ProcessErrorCallback& process_error_callback,
+    std::map<std::string, base::FilePath> files_to_preload,
     bool terminate_on_shutdown)
     : client_(client),
       starting_(true),
@@ -36,18 +44,21 @@ ChildProcessLauncher::ChildProcessLauncher(
 #if defined(ADDRESS_SANITIZER) || defined(LEAK_SANITIZER) ||  \
     defined(MEMORY_SANITIZER) || defined(THREAD_SANITIZER) || \
     defined(UNDEFINED_SANITIZER) || BUILDFLAG(CLANG_COVERAGE)
-      terminate_child_on_shutdown_(false),
+      terminate_child_on_shutdown_(false)
 #else
-      terminate_child_on_shutdown_(terminate_on_shutdown),
+      terminate_child_on_shutdown_(terminate_on_shutdown)
 #endif
-      weak_factory_(this) {
+{
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CHECK(BrowserThread::GetCurrentThreadIdentifier(&client_thread_id_));
 
-  helper_ = new ChildProcessLauncherHelper(
-      child_process_id, client_thread_id_, std::move(command_line),
-      std::move(delegate), weak_factory_.GetWeakPtr(), terminate_on_shutdown,
-      std::move(mojo_invitation), process_error_callback);
+  helper_ = base::MakeRefCounted<ChildProcessLauncherHelper>(
+      child_process_id, std::move(command_line), std::move(delegate),
+      weak_factory_.GetWeakPtr(), terminate_on_shutdown,
+#if defined(OS_ANDROID)
+      client_->CanUseWarmUpConnection(),
+#endif
+      std::move(mojo_invitation), process_error_callback,
+      std::move(files_to_preload));
   helper_->StartLaunchOnClientThread();
 }
 
@@ -147,18 +158,14 @@ bool ChildProcessLauncher::TerminateProcess(const base::Process& process,
   return ChildProcessLauncherHelper::TerminateProcess(process, exit_code);
 }
 
-// static
-void ChildProcessLauncher::SetRegisteredFilesForService(
-    const std::string& service_name,
-    std::map<std::string, base::FilePath> required_files) {
-  ChildProcessLauncherHelper::SetRegisteredFilesForService(
-      service_name, std::move(required_files));
+#if defined(OS_ANDROID)
+void ChildProcessLauncher::DumpProcessStack() {
+  base::Process to_pass = process_.process.Duplicate();
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&ChildProcessLauncherHelper::DumpProcessStack,
+                                helper_, std::move(to_pass)));
 }
-
-// static
-void ChildProcessLauncher::ResetRegisteredFilesForTesting() {
-  ChildProcessLauncherHelper::ResetRegisteredFilesForTesting();
-}
+#endif
 
 ChildProcessLauncher::Client* ChildProcessLauncher::ReplaceClientForTest(
     Client* client) {
@@ -167,14 +174,20 @@ ChildProcessLauncher::Client* ChildProcessLauncher::ReplaceClientForTest(
   return ret;
 }
 
+bool ChildProcessLauncherPriority::is_background() const {
+  if (boost_for_pending_views || has_foreground_service_worker ||
+      has_media_stream) {
+    return false;
+  }
+  return has_only_low_priority_frames || !visible;
+}
+
 bool ChildProcessLauncherPriority::operator==(
     const ChildProcessLauncherPriority& other) const {
-  // |should_boost_for_pending_views| is temporary and constant for all
-  // ChildProcessLauncherPriority throughout a session (experiment driven).
-  DCHECK_EQ(should_boost_for_pending_views,
-            other.should_boost_for_pending_views);
   return visible == other.visible &&
          has_media_stream == other.has_media_stream &&
+         has_foreground_service_worker == other.has_foreground_service_worker &&
+         has_only_low_priority_frames == other.has_only_low_priority_frames &&
          frame_depth == other.frame_depth &&
          intersects_viewport == other.intersects_viewport &&
          boost_for_pending_views == other.boost_for_pending_views

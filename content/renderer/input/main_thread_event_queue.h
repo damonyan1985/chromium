@@ -17,8 +17,8 @@
 #include "content/renderer/input/input_event_prediction.h"
 #include "content/renderer/input/main_thread_event_queue_task_list.h"
 #include "content/renderer/input/scoped_web_input_event_with_latency_info.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
-#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/events/blink/did_overscroll_params.h"
 #include "ui/events/blink/web_input_event_traits.h"
 #include "ui/latency/latency_info.h"
@@ -104,7 +104,7 @@ class CONTENT_EXPORT MainThreadEventQueue
   void SetNeedsLowLatency(bool low_latency);
   void SetNeedsUnbufferedInputForDebugger(bool unbuffered);
 
-  void HasPointerRawMoveEventHandlers(bool has_handlers);
+  void HasPointerRawUpdateEventHandlers(bool has_handlers);
 
   // Request unbuffered input events until next pointerup.
   void RequestUnbufferedInputEvents();
@@ -133,7 +133,7 @@ class CONTENT_EXPORT MainThreadEventQueue
                                const ui::LatencyInfo& latency,
                                HandledEventCallback handled_callback);
 
-  bool IsRawMoveEvent(
+  bool IsRawUpdateEvent(
       const std::unique_ptr<MainThreadEventQueueTask>& item) const;
   bool ShouldFlushQueue(
       const std::unique_ptr<MainThreadEventQueueTask>& item) const;
@@ -155,7 +155,7 @@ class CONTENT_EXPORT MainThreadEventQueue
   bool needs_unbuffered_input_for_debugger_;
   bool allow_raf_aligned_input_;
   bool needs_low_latency_until_pointer_up_ = false;
-  bool has_pointerrawmove_handlers_ = false;
+  bool has_pointerrawupdate_handlers_ = false;
 
   // Contains data to be shared between main thread and compositor thread.
   struct SharedState {

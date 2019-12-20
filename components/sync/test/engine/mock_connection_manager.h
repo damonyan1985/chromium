@@ -39,17 +39,17 @@ class MockConnectionManager : public ServerConnectionManager {
     virtual ~MidCommitObserver() {}
   };
 
-  MockConnectionManager(syncable::Directory*, CancelationSignal* signal);
+  explicit MockConnectionManager(syncable::Directory*);
   ~MockConnectionManager() override;
 
   // Overridden ServerConnectionManager functions.
   bool PostBufferToPath(PostBufferParams*,
                         const std::string& path,
-                        const std::string& auth_token) override;
+                        const std::string& access_token) override;
 
   // Control of commit response.
   // NOTE: Commit callback is invoked only once then reset.
-  void SetMidCommitCallback(const base::Closure& callback);
+  void SetMidCommitCallback(base::OnceClosure callback);
   void SetMidCommitObserver(MidCommitObserver* observer);
 
   // Set this if you want commit to perform commit time rename. Will request
@@ -158,7 +158,6 @@ class MockConnectionManager : public ServerConnectionManager {
   void SetLastUpdateClientTag(const std::string& tag);
   void SetLastUpdateOriginatorFields(const std::string& client_id,
                                      const std::string& entry_id);
-  void SetLastUpdatePosition(int64_t position_in_parent);
   void SetNewTimestamp(int ts);
   void SetChangesRemaining(int64_t count);
 
@@ -251,7 +250,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // requests.
   void UpdateConnectionStatus();
 
-  using ServerConnectionManager::SetServerStatus;
+  using ServerConnectionManager::SetServerResponse;
 
   // Return by copy to be thread-safe.
   const std::string store_birthday() {
@@ -268,7 +267,7 @@ class MockConnectionManager : public ServerConnectionManager {
   // Adds a new progress marker to the last update.
   sync_pb::DataTypeProgressMarker* AddUpdateProgressMarker();
 
-  void ResetAuthToken() { ClearAuthToken(); }
+  void ResetAccessToken() { ClearAccessToken(); }
 
  private:
   sync_pb::SyncEntity* AddUpdateFull(syncable::Id id,
@@ -366,16 +365,11 @@ class MockConnectionManager : public ServerConnectionManager {
 
   // The updates we'll return to the next request.
   std::list<sync_pb::GetUpdatesResponse> update_queue_;
-  base::Closure mid_commit_callback_;
+  base::OnceClosure mid_commit_callback_;
   MidCommitObserver* mid_commit_observer_;
 
   // The keystore key we return for a GetUpdates with need_encryption_key set.
   std::string keystore_key_;
-
-  // The AUTHENTICATE response we'll return for auth requests.
-  sync_pb::AuthenticateResponse auth_response_;
-  // What we use to determine if we should return SUCCESS or BAD_AUTH_TOKEN.
-  std::string valid_auth_token_;
 
   // Whether we are faking a server mandating clients to throttle requests.
   // Protected by |response_code_override_lock_|.

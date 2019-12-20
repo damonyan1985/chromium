@@ -71,7 +71,6 @@ class VrGLThread : public base::android::JavaHandlerThread,
   void SendRequestPresentReply(device::mojom::XRSessionPtr) override;
   void DialogSurfaceCreated(jobject surface,
                             gl::SurfaceTexture* texture) override;
-  void UpdateGamepadData(device::GvrGamepadData) override;
   void ToggleCardboardGamepad(bool enabled) override;
 
   // BrowserRendererBrowserInterface implementation (BrowserRenderer calling to
@@ -134,8 +133,7 @@ class VrGLThread : public base::android::JavaHandlerThread,
       bool has_or_can_request_record_audio) override;
   void SetRecognitionResult(const base::string16& result) override;
   void OnSpeechRecognitionStateChanged(int new_state) override;
-  void SetOmniboxSuggestions(
-      std::unique_ptr<OmniboxSuggestions> result) override;
+  void SetOmniboxSuggestions(std::vector<OmniboxSuggestion> result) override;
   void OnAssetsLoaded(AssetsLoadStatus status,
                       std::unique_ptr<Assets> assets,
                       const base::Version& component_version) override;

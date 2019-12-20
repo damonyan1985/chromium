@@ -162,7 +162,7 @@ IN_PROC_BROWSER_TEST_F(DurableStorageBrowserTest, FirstTabSeesResult) {
 
   EXPECT_TRUE(RequestPermission());
 
-  browser()->tab_strip_model()->ActivateTabAt(0, false);
+  browser()->tab_strip_model()->ActivateTabAt(0);
   EXPECT_TRUE(CheckPermission());
   EXPECT_EQ("granted", CheckPermissionUsingPermissionApi());
 }
@@ -180,7 +180,7 @@ IN_PROC_BROWSER_TEST_F(DurableStorageBrowserTest, Incognito) {
 
 IN_PROC_BROWSER_TEST_F(DurableStorageBrowserTest, SessionOnly) {
   HostContentSettingsMapFactory::GetForProfile(browser()->profile())
-      ->SetDefaultContentSetting(CONTENT_SETTINGS_TYPE_COOKIES,
+      ->SetDefaultContentSetting(ContentSettingsType::COOKIES,
                                  CONTENT_SETTING_SESSION_ONLY);
   Bookmark();
   ui_test_utils::NavigateToURL(browser(), url_);

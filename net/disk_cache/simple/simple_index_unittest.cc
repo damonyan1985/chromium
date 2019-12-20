@@ -11,12 +11,11 @@
 
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/pickle.h"
-#include "base/sha1.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner.h"
 #include "base/test/mock_entropy_provider.h"
@@ -29,7 +28,7 @@
 #include "net/disk_cache/simple/simple_index_file.h"
 #include "net/disk_cache/simple/simple_test_util.h"
 #include "net/disk_cache/simple/simple_util.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace disk_cache {
@@ -68,10 +67,7 @@ class MockSimpleIndexFile : public SimpleIndexFile,
                             public base::SupportsWeakPtr<MockSimpleIndexFile> {
  public:
   explicit MockSimpleIndexFile(net::CacheType cache_type)
-      : SimpleIndexFile(NULL, NULL, cache_type, base::FilePath()),
-        load_result_(NULL),
-        load_index_entries_calls_(0),
-        disk_writes_(0) {}
+      : SimpleIndexFile(nullptr, nullptr, cache_type, base::FilePath()) {}
 
   void LoadIndexEntries(base::Time cache_last_modified,
                         const base::Closure& callback,
@@ -103,18 +99,16 @@ class MockSimpleIndexFile : public SimpleIndexFile,
 
  private:
   base::Closure load_callback_;
-  SimpleIndexLoadResult* load_result_;
-  int load_index_entries_calls_;
-  int disk_writes_;
+  SimpleIndexLoadResult* load_result_ = nullptr;
+  int load_index_entries_calls_ = 0;
+  int disk_writes_ = 0;
   SimpleIndex::EntrySet disk_write_entry_set_;
 };
 
-class SimpleIndexTest : public net::TestWithScopedTaskEnvironment,
+class SimpleIndexTest : public net::TestWithTaskEnvironment,
                         public SimpleIndexDelegate {
  protected:
-  SimpleIndexTest()
-      : hashes_(base::Bind(&HashesInitializer)),
-        doom_entries_calls_(0) {}
+  SimpleIndexTest() : hashes_(base::BindRepeating(&HashesInitializer)) {}
 
   static uint64_t HashesInitializer(size_t hash_index) {
     return disk_cache::simple_util::GetEntryHashKey(
@@ -190,7 +184,7 @@ class SimpleIndexTest : public net::TestWithScopedTaskEnvironment,
   base::test::ScopedFeatureList scoped_feature_list_;
 
   std::vector<uint64_t> last_doom_entry_hashes_;
-  int doom_entries_calls_;
+  int doom_entries_calls_ = 0;
 };
 
 class SimpleIndexAppCacheTest : public SimpleIndexTest {

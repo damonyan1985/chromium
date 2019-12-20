@@ -13,7 +13,7 @@
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_key_manager.h"
 #include "chromeos/components/multidevice/logging/logging.h"
 #include "chromeos/cryptohome/cryptohome_util.h"
-#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/cryptohome/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/account_id/account_id.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -23,16 +23,13 @@ namespace chromeos {
 EasyUnlockGetKeysOperation::EasyUnlockGetKeysOperation(
     const UserContext& user_context,
     const GetKeysCallback& callback)
-    : user_context_(user_context),
-      callback_(callback),
-      key_index_(0),
-      weak_ptr_factory_(this) {}
+    : user_context_(user_context), callback_(callback), key_index_(0) {}
 
 EasyUnlockGetKeysOperation::~EasyUnlockGetKeysOperation() {}
 
 void EasyUnlockGetKeysOperation::Start() {
   // Register for asynchronous notification of cryptohome being ready.
-  DBusThreadManager::Get()->GetCryptohomeClient()->WaitForServiceToBeAvailable(
+  CryptohomeClient::Get()->WaitForServiceToBeAvailable(
       base::Bind(&EasyUnlockGetKeysOperation::OnCryptohomeAvailable,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -54,7 +51,7 @@ void EasyUnlockGetKeysOperation::GetKeyData() {
   cryptohome::GetKeyDataRequest request;
   request.mutable_key()->mutable_data()->set_label(
       EasyUnlockKeyManager::GetKeyLabel(key_index_));
-  DBusThreadManager::Get()->GetCryptohomeClient()->GetKeyDataEx(
+  CryptohomeClient::Get()->GetKeyDataEx(
       cryptohome::CreateAccountIdentifierFromAccountId(
           user_context_.GetAccountId()),
       cryptohome::AuthorizationRequest(), request,
@@ -106,20 +103,6 @@ void EasyUnlockGetKeysOperation::OnGetKeyData(
         device.bluetooth_address = *entry.bytes;
       else
         NOTREACHED();
-    } else if (entry.name == kEasyUnlockKeyMetaNameBluetoothType) {
-      if (entry.number) {
-        if (*entry.number >=
-            static_cast<int64_t>(
-                EasyUnlockDeviceKeyData::NUM_BLUETOOTH_TYPES)) {
-          PA_LOG(ERROR) << "Invalid Bluetooth type: " << *entry.number;
-        } else {
-          device.bluetooth_type =
-              static_cast<EasyUnlockDeviceKeyData::BluetoothType>(
-                  *entry.number);
-        }
-      } else {
-        NOTREACHED();
-      }
     } else if (entry.name == kEasyUnlockKeyMetaNamePubKey) {
       if (entry.bytes)
         device.public_key = *entry.bytes;

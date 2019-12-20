@@ -32,7 +32,6 @@
 
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_streamer_thread.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
 #include "third_party/blink/renderer/core/css/media_feature_names.h"
 #include "third_party/blink/renderer/core/css/media_query_evaluator.h"
@@ -46,12 +45,13 @@
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/html_tokenizer_names.h"
-#include "third_party/blink/renderer/core/input_mode_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
+#include "third_party/blink/renderer/core/keywords.h"
 #include "third_party/blink/renderer/core/mathml_names.h"
 #include "third_party/blink/renderer/core/media_type_names.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/svg_names.h"
+#include "third_party/blink/renderer/core/timezone/timezone_controller.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 #include "third_party/blink/renderer/core/xlink_names.h"
 #include "third_party/blink/renderer/core/xml_names.h"
@@ -101,7 +101,7 @@ void CoreInitializer::Initialize() {
       event_target_names::kNamesCount + event_type_names::kNamesCount +
       fetch_initiator_type_names::kNamesCount + font_family_names::kNamesCount +
       html_tokenizer_names::kNamesCount + http_names::kNamesCount +
-      input_mode_names::kNamesCount + input_type_names::kNamesCount +
+      input_type_names::kNamesCount + keywords::kNamesCount +
       media_feature_names::kNamesCount + media_type_names::kNamesCount +
       performance_entry_names::kNamesCount;
 
@@ -125,8 +125,8 @@ void CoreInitializer::Initialize() {
   font_family_names::Init();
   html_tokenizer_names::Init();
   http_names::Init();
-  input_mode_names::Init();
   input_type_names::Init();
+  keywords::Init();
   media_feature_names::Init();
   media_type_names::Init();
   performance_entry_names::Init();
@@ -147,7 +147,8 @@ void CoreInitializer::Initialize() {
   V8ThrowDOMException::Init();
 
   BindingSecurity::Init();
-  ScriptStreamerThread::Init();
+
+  TimeZoneController::Init();
 }
 
 }  // namespace blink

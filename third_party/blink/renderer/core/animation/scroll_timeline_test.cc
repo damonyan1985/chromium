@@ -5,6 +5,8 @@
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/core/animation/keyframe_effect.h"
+#include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -13,51 +15,12 @@
 
 namespace blink {
 
-using ScrollTimelineTest = RenderingTest;
-
-TEST_F(ScrollTimelineTest,
-       AttachingAndDetachingAnimationCausesCompositingUpdate) {
-  EnableCompositing();
-
-  SetBodyInnerHTML(R"HTML(
-    <style>#scroller { overflow: scroll; width: 100px; height: 100px; }</style>
-    <div id='scroller'></div>
-  )HTML");
-
-  LayoutBoxModelObject* scroller =
-      ToLayoutBoxModelObject(GetLayoutObjectByElementId("scroller"));
-  ASSERT_TRUE(scroller);
-
-  // Invariant: the scroller is not composited by default.
-  EXPECT_EQ(DocumentLifecycle::kPaintClean,
-            GetDocument().Lifecycle().GetState());
-  EXPECT_EQ(kNotComposited, scroller->Layer()->GetCompositingState());
-
-  // Create the ScrollTimeline. This shouldn't cause the scrollSource to need
-  // compositing, as it isn't attached to any animation yet.
-  ScrollTimelineOptions* options = ScrollTimelineOptions::Create();
-  DoubleOrScrollTimelineAutoKeyword time_range =
-      DoubleOrScrollTimelineAutoKeyword::FromDouble(100);
-  options->setTimeRange(time_range);
-  options->setScrollSource(GetElementById("scroller"));
-  ScrollTimeline* scroll_timeline =
-      ScrollTimeline::Create(GetDocument(), options, ASSERT_NO_EXCEPTION);
-  EXPECT_EQ(DocumentLifecycle::kPaintClean,
-            GetDocument().Lifecycle().GetState());
-  EXPECT_EQ(kNotComposited, scroller->Layer()->GetCompositingState());
-
-  // Now attach an animation. This should require a compositing update.
-  scroll_timeline->AttachAnimation();
-
-  UpdateAllLifecyclePhasesForTest();
-  EXPECT_NE(scroller->Layer()->GetCompositingState(), kNotComposited);
-
-  // Now detach an animation. This should again require a compositing update.
-  scroll_timeline->DetachAnimation();
-
-  UpdateAllLifecyclePhasesForTest();
-  EXPECT_EQ(scroller->Layer()->GetCompositingState(), kNotComposited);
-}
+class ScrollTimelineTest : public RenderingTest {
+  void SetUp() override {
+    EnableCompositing();
+    RenderingTest::SetUp();
+  }
+};
 
 TEST_F(ScrollTimelineTest, CurrentTimeIsNullIfScrollSourceIsNotScrollable) {
   SetBodyInnerHTML(R"HTML(
@@ -80,6 +43,7 @@ TEST_F(ScrollTimelineTest, CurrentTimeIsNullIfScrollSourceIsNotScrollable) {
   bool current_time_is_null = false;
   scroll_timeline->currentTime(current_time_is_null);
   EXPECT_TRUE(current_time_is_null);
+  EXPECT_FALSE(scroll_timeline->IsActive());
 }
 
 TEST_F(ScrollTimelineTest,
@@ -124,6 +88,7 @@ TEST_F(ScrollTimelineTest,
   scrollable_area->SetScrollOffset(ScrollOffset(0, 100), kProgrammaticScroll);
   scroll_timeline->currentTime(current_time_is_null);
   EXPECT_TRUE(current_time_is_null);
+  EXPECT_TRUE(scroll_timeline->IsActive());
 }
 
 TEST_F(ScrollTimelineTest,
@@ -158,6 +123,7 @@ TEST_F(ScrollTimelineTest,
   scrollable_area->SetScrollOffset(ScrollOffset(0, 50), kProgrammaticScroll);
   scroll_timeline->currentTime(current_time_is_null);
   EXPECT_TRUE(current_time_is_null);
+  EXPECT_TRUE(scroll_timeline->IsActive());
 }
 
 TEST_F(ScrollTimelineTest,
@@ -227,17 +193,31 @@ TEST_F(ScrollTimelineTest, AttachOrDetachAnimationWithNullScrollSource) {
   Element* scroll_source = nullptr;
   CSSPrimitiveValue* start_scroll_offset = nullptr;
   CSSPrimitiveValue* end_scroll_offset = nullptr;
-  ScrollTimeline* scroll_timeline = MakeGarbageCollected<ScrollTimeline>(
-      scroll_source, ScrollTimeline::Block, start_scroll_offset,
-      end_scroll_offset, 100);
+  Persistent<ScrollTimeline> scroll_timeline =
+      MakeGarbageCollected<ScrollTimeline>(
+          &GetDocument(), scroll_source, ScrollTimeline::Block,
+          start_scroll_offset, end_scroll_offset, 100, Timing::FillMode::NONE);
 
   // Sanity checks.
   ASSERT_EQ(scroll_timeline->scrollSource(), nullptr);
   ASSERT_EQ(scroll_timeline->ResolvedScrollSource(), nullptr);
 
-  // These calls should be no-ops in this mode, and shouldn't crash.
-  scroll_timeline->AttachAnimation();
-  scroll_timeline->DetachAnimation();
+  NonThrowableExceptionState exception_state;
+  Timing timing;
+  timing.iteration_duration = AnimationTimeDelta::FromSecondsD(30);
+  Animation* animation =
+      Animation::Create(MakeGarbageCollected<KeyframeEffect>(
+                            nullptr,
+                            MakeGarbageCollected<StringKeyframeEffectModel>(
+                                StringKeyframeVector()),
+                            timing),
+                        scroll_timeline, exception_state);
+  EXPECT_EQ(1u, scroll_timeline->GetAnimations().size());
+  EXPECT_TRUE(scroll_timeline->GetAnimations().Contains(animation));
+
+  animation = nullptr;
+  ThreadState::Current()->CollectAllGarbageForTesting();
+  EXPECT_EQ(0u, scroll_timeline->GetAnimations().size());
 }
 
 }  //  namespace blink

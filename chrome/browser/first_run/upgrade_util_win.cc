@@ -4,13 +4,16 @@
 
 #include "chrome/browser/first_run/upgrade_util.h"
 
+// Must be first.
 #include <windows.h>
+
 #include <objbase.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <ios>
 #include <string>
 
 #include "base/base_paths.h"
@@ -26,6 +29,7 @@
 #include "base/strings/string_util.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
+#include "build/branding_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/first_run/upgrade_util_win.h"
 #include "chrome/browser/shell_integration.h"
@@ -37,7 +41,7 @@
 #include "components/prefs/pref_service.h"
 #include "ui/base/ui_base_switches.h"
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #include "google_update/google_update_idl.h"
 #endif
 
@@ -51,33 +55,50 @@ bool GetNewerChromeFile(base::FilePath* path) {
 }
 
 bool InvokeGoogleUpdateForRename() {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   Microsoft::WRL::ComPtr<IProcessLauncher> ipl;
-  if (!FAILED(::CoCreateInstance(__uuidof(ProcessLauncherClass), nullptr,
-                                 CLSCTX_ALL, IID_PPV_ARGS(&ipl)))) {
-    ULONG_PTR phandle = NULL;
-    DWORD id = GetCurrentProcessId();
-    if (!FAILED(ipl->LaunchCmdElevated(install_static::GetAppGuid(),
-                                       google_update::kRegRenameCmdField, id,
-                                       &phandle))) {
-      HANDLE handle = HANDLE(phandle);
-      WaitForSingleObject(handle, INFINITE);
-      DWORD exit_code;
-      ::GetExitCodeProcess(handle, &exit_code);
-      ::CloseHandle(handle);
-      if (exit_code == installer::RENAME_SUCCESSFUL)
-        return true;
-    }
+  HRESULT hr = ::CoCreateInstance(__uuidof(ProcessLauncherClass), nullptr,
+                                  CLSCTX_ALL, IID_PPV_ARGS(&ipl));
+  if (FAILED(hr)) {
+    LOG(ERROR) << "CoCreate ProcessLauncherClass failed; hr = " << std::hex
+               << hr;
+    return false;
   }
-#endif  // GOOGLE_CHROME_BUILD
+
+  ULONG_PTR process_handle;
+  hr = ipl->LaunchCmdElevated(install_static::GetAppGuid(),
+                              google_update::kRegRenameCmdField,
+                              ::GetCurrentProcessId(), &process_handle);
+  if (FAILED(hr)) {
+    LOG(ERROR) << "IProcessLauncher::LaunchCmdElevated failed; hr = "
+               << std::hex << hr;
+    return false;
+  }
+
+  base::Process rename_process(
+      reinterpret_cast<base::ProcessHandle>(process_handle));
+  int exit_code;
+  if (!rename_process.WaitForExit(&exit_code)) {
+    PLOG(ERROR) << "WaitForExit of rename process failed";
+    return false;
+  }
+
+  if (exit_code != installer::RENAME_SUCCESSFUL) {
+    LOG(ERROR) << "Rename process failed with exit code " << exit_code;
+    return false;
+  }
+
+  return true;
+#else   // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return false;
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 
 }  // namespace
 
 namespace upgrade_util {
 
-bool RelaunchChromeBrowser(const base::CommandLine& command_line) {
+bool RelaunchChromeBrowserImpl(const base::CommandLine& command_line) {
   base::FilePath chrome_exe;
   if (!base::PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED();
@@ -118,25 +139,45 @@ bool SwapNewChromeExeIfPresent() {
   // If this is a user-level install, directly launch a process to rename Chrome
   // executables. Obtain the command to launch the process from the registry.
   base::win::RegKey key;
-  if (key.Open(HKEY_CURRENT_USER, install_static::GetClientsKeyPath().c_str(),
-               KEY_QUERY_VALUE | KEY_WOW64_32KEY) == ERROR_SUCCESS) {
-    std::wstring rename_cmd;
-    if (key.ReadValue(google_update::kRegRenameCmdField,
-                      &rename_cmd) == ERROR_SUCCESS) {
-      base::LaunchOptions options;
-      options.wait = true;
-      options.start_hidden = true;
-      base::Process process = base::LaunchProcess(rename_cmd, options);
-      if (process.IsValid()) {
-        DWORD exit_code;
-        ::GetExitCodeProcess(process.Handle(), &exit_code);
-        if (exit_code == installer::RENAME_SUCCESSFUL)
-          return true;
-      }
-    }
+  auto result =
+      key.Open(HKEY_CURRENT_USER, install_static::GetClientsKeyPath().c_str(),
+               KEY_QUERY_VALUE | KEY_WOW64_32KEY);
+  if (result != ERROR_SUCCESS) {
+    ::SetLastError(result);
+    PLOG(ERROR) << "Open Clients key failed";
+    return false;
   }
 
-  return false;
+  std::wstring rename_cmd;
+  result = key.ReadValue(google_update::kRegRenameCmdField, &rename_cmd);
+  if (result != ERROR_SUCCESS) {
+    ::SetLastError(result);
+    PLOG(ERROR) << "Read rename command failed";
+    return false;
+  }
+
+  base::LaunchOptions options;
+  options.wait = true;
+  options.start_hidden = true;
+  ::SetLastError(ERROR_SUCCESS);
+  base::Process process = base::LaunchProcess(rename_cmd, options);
+  if (!process.IsValid()) {
+    PLOG(ERROR) << "Launch rename process failed";
+    return false;
+  }
+
+  DWORD exit_code;
+  if (!::GetExitCodeProcess(process.Handle(), &exit_code)) {
+    PLOG(ERROR) << "GetExitCodeProcess of rename process failed";
+    return false;
+  }
+
+  if (exit_code != installer::RENAME_SUCCESSFUL) {
+    LOG(ERROR) << "Rename process failed with exit code " << exit_code;
+    return false;
+  }
+
+  return true;
 }
 
 bool IsRunningOldChrome() {

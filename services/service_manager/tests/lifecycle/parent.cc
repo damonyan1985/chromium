@@ -5,9 +5,10 @@
 #include <memory>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_executor.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
@@ -24,7 +25,7 @@ class Parent : public service_manager::Service,
   explicit Parent(service_manager::mojom::ServiceRequest request)
       : service_binding_(this, std::move(request)) {
     registry_.AddInterface<service_manager::test::mojom::Parent>(
-        base::Bind(&Parent::Create, base::Unretained(this)));
+        base::BindRepeating(&Parent::Create, base::Unretained(this)));
   }
 
   ~Parent() override = default;
@@ -43,9 +44,9 @@ class Parent : public service_manager::Service,
 
   // service_manager::test::mojom::Parent:
   void ConnectToChild(ConnectToChildCallback callback) override {
-    service_manager::test::mojom::LifecycleControlPtr lifecycle;
-    service_binding_.GetConnector()->BindInterface("lifecycle_unittest_app",
-                                                   &lifecycle);
+    mojo::Remote<service_manager::test::mojom::LifecycleControl> lifecycle;
+    service_binding_.GetConnector()->BindInterface(
+        "lifecycle_unittest_app", lifecycle.BindNewPipeAndPassReceiver());
 
     base::RunLoop loop(base::RunLoop::Type::kNestableTasksAllowed);
     lifecycle->Ping(loop.QuitClosure());
@@ -66,6 +67,6 @@ class Parent : public service_manager::Service,
 }  // namespace
 
 void ServiceMain(service_manager::mojom::ServiceRequest request) {
-  base::MessageLoop message_loop;
+  base::SingleThreadTaskExecutor main_task_executor;
   Parent(std::move(request)).RunUntilTermination();
 }

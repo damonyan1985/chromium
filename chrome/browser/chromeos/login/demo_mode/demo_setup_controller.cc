@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/containers/flat_map.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -26,7 +27,6 @@
 #include "chrome/browser/chromeos/policy/enrollment_config.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/system/statistics_provider.h"
 #include "chromeos/tpm/install_attributes.h"
@@ -127,6 +127,7 @@ DemoSetupController::DemoSetupError CreateFromClientStatus(
           ErrorCode::kTemporaryUnavailable, RecoveryMethod::kRetry,
           debug_message);
     case policy::DM_STATUS_HTTP_STATUS_ERROR:
+    case policy::DM_STATUS_REQUEST_TOO_LARGE:
       return DemoSetupController::DemoSetupError(
           ErrorCode::kResponseError, RecoveryMethod::kUnknown, debug_message);
     case policy::DM_STATUS_RESPONSE_DECODING_ERROR:
@@ -208,9 +209,6 @@ DemoSetupController::DemoSetupError CreateFromLockStatus(
 }  //  namespace
 
 // static
-constexpr char DemoSetupController::kDemoModeDomain[];
-
-// static
 DemoSetupController::DemoSetupError
 DemoSetupController::DemoSetupError::CreateFromEnrollmentStatus(
     const policy::EnrollmentStatus& status) {
@@ -265,9 +263,6 @@ DemoSetupController::DemoSetupError::CreateFromEnrollmentStatus(
     case policy::EnrollmentStatus::DM_TOKEN_STORE_FAILED:
       return DemoSetupError(ErrorCode::kDMTokenStoreError,
                             RecoveryMethod::kUnknown, debug_message);
-    case policy::EnrollmentStatus::LICENSE_REQUEST_FAILED:
-      return DemoSetupError(ErrorCode::kLicenseError, RecoveryMethod::kUnknown,
-                            debug_message);
     case policy::EnrollmentStatus::OFFLINE_POLICY_LOAD_FAILED:
     case policy::EnrollmentStatus::OFFLINE_POLICY_DECODING_FAILED:
       return DemoSetupError(ErrorCode::kOfflinePolicyError,
@@ -441,6 +436,10 @@ void DemoSetupController::ClearDemoRequisition(
     policy::DeviceCloudPolicyManagerChromeOS* policy_manager) {
   if (policy_manager->GetDeviceRequisition() == kDemoRequisition) {
     policy_manager->SetDeviceRequisition(std::string());
+    // If device requisition is |kDemoRequisition|, it means the sub
+    // organization was also set by the demo setup controller, so remove it as
+    // well.
+    policy_manager->SetSubOrganization(std::string());
   }
 }
 
@@ -451,7 +450,6 @@ bool DemoSetupController::IsDemoModeAllowed() {
 }
 
 // static
-// static
 bool DemoSetupController::IsOobeDemoSetupFlowInProgress() {
   const WizardController* const wizard_controller =
       WizardController::default_controller();
@@ -459,7 +457,18 @@ bool DemoSetupController::IsOobeDemoSetupFlowInProgress() {
          wizard_controller->demo_setup_controller() != nullptr;
 }
 
-DemoSetupController::DemoSetupController() : weak_ptr_factory_(this) {}
+// static
+std::string DemoSetupController::GetSubOrganizationEmail() {
+  const std::string country =
+      g_browser_process->local_state()->GetString(prefs::kDemoModeCountry);
+  const base::flat_set<std::string> kCountriesWithCustomization(
+      {"de", "dk", "fi", "fr", "jp", "nl", "no", "se"});
+  if (kCountriesWithCustomization.contains(country))
+    return "admin-" + country + "@" + policy::kDemoModeDomain;
+  return std::string();
+}
+
+DemoSetupController::DemoSetupController() {}
 
 DemoSetupController::~DemoSetupController() {
   if (device_local_account_policy_store_)
@@ -557,12 +566,13 @@ void DemoSetupController::OnDemoResourcesCrOSComponentLoaded() {
           ->GetDeviceCloudPolicyManager();
   DCHECK(policy_manager->GetDeviceRequisition().empty());
   policy_manager->SetDeviceRequisition(kDemoRequisition);
+  policy_manager->SetSubOrganization(GetSubOrganizationEmail());
   policy::EnrollmentConfig config;
   config.mode = policy::EnrollmentConfig::MODE_ATTESTATION;
-  config.management_domain = DemoSetupController::kDemoModeDomain;
+  config.management_domain = policy::kDemoModeDomain;
 
   enrollment_helper_ = EnterpriseEnrollmentHelper::Create(
-      this, nullptr, config, DemoSetupController::kDemoModeDomain);
+      this, nullptr, config, policy::kDemoModeDomain);
   enrollment_helper_->EnrollUsingAttestation();
 }
 
@@ -591,12 +601,11 @@ void DemoSetupController::EnrollOffline() {
   VLOG(1) << "Starting offline enrollment";
   policy::EnrollmentConfig config;
   config.mode = policy::EnrollmentConfig::MODE_OFFLINE_DEMO;
-  config.management_domain = DemoSetupController::kDemoModeDomain;
+  config.management_domain = policy::kDemoModeDomain;
   config.offline_policy_path =
       policy_dir.AppendASCII(kOfflineDevicePolicyFileName);
   enrollment_helper_ = EnterpriseEnrollmentHelper::Create(
-      this, nullptr /* ad_join_delegate */, config,
-      DemoSetupController::kDemoModeDomain);
+      this, nullptr /* ad_join_delegate */, config, policy::kDemoModeDomain);
   enrollment_helper_->EnrollForOfflineDemo();
 }
 
@@ -625,9 +634,10 @@ void DemoSetupController::OnDeviceEnrolled() {
         preinstalled_demo_resources_->GetAbsolutePath(
             base::FilePath(kOfflinePolicyDirectoryName)
                 .AppendASCII(kOfflineDeviceLocalAccountPolicyFileName));
-    base::PostTaskWithTraitsAndReplyWithResult(
+    base::PostTaskAndReplyWithResult(
         FROM_HERE,
-        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+        {base::ThreadPool(), base::MayBlock(),
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
         base::BindOnce(&ReadFileToOptionalString, file_path),
         base::BindOnce(&DemoSetupController::OnDeviceLocalAccountPolicyLoaded,
                        weak_ptr_factory_.GetWeakPtr()));
@@ -637,11 +647,6 @@ void DemoSetupController::OnDeviceEnrolled() {
   StartupUtils::MarkDeviceRegistered(
       base::BindOnce(&DemoSetupController::OnDeviceRegistered,
                      weak_ptr_factory_.GetWeakPtr()));
-}
-
-void DemoSetupController::OnMultipleLicensesAvailable(
-    const EnrollmentLicenseMap& licenses) {
-  NOTREACHED();
 }
 
 void DemoSetupController::OnDeviceAttributeUploadCompleted(bool success) {

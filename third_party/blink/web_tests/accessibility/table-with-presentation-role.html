@@ -15,7 +15,7 @@
 
 <script>
 test(() => {
-  var axTableContainer = accessibilityController.accessibleElementById('container');
+  var axTableContainer = accessibilityController.accessibleElementById('container').childAtIndex(0);
   assert_equals(axTableContainer.childrenCount, 4);
   var axTextContainer1 = axTableContainer.childAtIndex(0);
   assert_equals(axTextContainer1.role, "AXRole: AXGenericContainer");
@@ -29,6 +29,4 @@ test(() => {
   assert_equals(axText2.name, "B");
 }, "ARIA presentation role on table element has no rows or cells.");
 
-if (window.testRunner)
-    document.getElementById("container").style.display = "none";
 </script>

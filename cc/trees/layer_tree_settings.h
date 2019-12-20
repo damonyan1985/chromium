@@ -43,6 +43,7 @@ class CC_EXPORT LayerTreeSettings {
   bool enable_latency_recovery = true;
   bool can_use_lcd_text = true;
   bool gpu_rasterization_forced = false;
+  bool gpu_rasterization_disabled = false;
   int gpu_rasterization_msaa_sample_count = 0;
   float gpu_rasterization_skewport_target_time_in_seconds = 0.2f;
   bool create_low_res_tiling = false;
@@ -60,19 +61,22 @@ class CC_EXPORT LayerTreeSettings {
   bool scrollbar_flash_after_any_scroll_update = false;
   bool scrollbar_flash_when_mouse_enter = false;
   SkColor solid_color_scrollbar_color = SK_ColorWHITE;
+  base::TimeDelta scroll_animation_duration_for_testing;
   bool timeout_and_draw_when_animation_checkerboards = true;
-  bool layer_transforms_should_scale_layer_contents = false;
   bool layers_always_allowed_lcd_text = false;
   float minimum_contents_scale = 0.0625f;
   float low_res_contents_scale_factor = 0.25f;
   float top_controls_show_threshold = 0.5f;
   float top_controls_hide_threshold = 0.5f;
-  double background_animation_rate = 1.0;
   gfx::Size default_tile_size;
   gfx::Size max_untiled_layer_size;
   // If set, indicates the largest tile size we will use for GPU Raster. If not
   // set, no limit is enforced.
   gfx::Size max_gpu_raster_tile_size;
+  // Even for really wide viewports, at some point GPU raster should use
+  // less than 4 tiles to fill the viewport. This is set to 256 as a
+  // sane minimum for now, but we might want to tune this for low-end.
+  int min_height_for_gpu_raster_tile = 256;
   gfx::Size minimum_occlusion_tracking_size;
   // 3000 pixels should give sufficient area for prepainting.
   // Note this value is specified with an ideal contents scale in mind. That
@@ -96,8 +100,6 @@ class CC_EXPORT LayerTreeSettings {
   bool use_rgba_4444 = false;
   bool unpremultiply_and_dither_low_bit_depth_tiles = false;
 
-  bool enable_mask_tiling = true;
-
   // If set to true, the compositor may selectively defer image decodes to the
   // Image Decode Service and raster tiles without images until the decode is
   // ready.
@@ -111,10 +113,6 @@ class CC_EXPORT LayerTreeSettings {
   bool only_checker_images_with_gpu_raster = false;
 
   LayerTreeDebugState initial_debug_state;
-
-  // Indicates that the LayerTreeHost should defer commits unless it has a valid
-  // viz::LocalSurfaceId set.
-  bool enable_surface_synchronization = false;
 
   // Indicates the case when a sub-frame gets its own LayerTree because it's
   // rendered in a different process from its ancestor frames.
@@ -131,6 +129,13 @@ class CC_EXPORT LayerTreeSettings {
   // deadlines.
   bool wait_for_all_pipeline_stages_before_draw = false;
 
+  // Determines whether the zoom needs to be applied to the device scale factor.
+  bool use_zoom_for_dsf = false;
+
+  // Determines whether mouse interactions on composited scrollbars are handled
+  // on the compositor thread.
+  bool compositor_threaded_scrollbar_scrolling = false;
+
   // Whether layer tree commits should be made directly to the active
   // tree on the impl thread. If |false| LayerTreeHostImpl creates a
   // pending layer tree and produces that as the 'sync tree' with
@@ -145,17 +150,9 @@ class CC_EXPORT LayerTreeSettings {
   // Whether to use edge anti-aliasing for all layer types that supports it.
   bool enable_edge_anti_aliasing = true;
 
-  // Whether SetViewportSizeAndScale should update the painted scale factor or
+  // Whether SetViewportRectAndScale should update the painted scale factor or
   // the device scale factor.
   bool use_painted_device_scale_factor = false;
-
-  // Whether a HitTestRegionList should be built from the active layer tree when
-  // submitting a CompositorFrame.
-  bool build_hit_test_data = false;
-
-  // When false, sync tokens are expected to be present, and are verified,
-  // before transfering gpu resources to the display compositor.
-  bool delegated_sync_points_required = true;
 
   // When true, LayerTreeHostImplClient will be posting a task to call
   // DidReceiveCompositorFrameAck, used by the Compositor but not the
@@ -167,6 +164,23 @@ class CC_EXPORT LayerTreeSettings {
   // go away and CC should send Blink fractional values:
   // https://crbug.com/414283.
   bool commit_fractional_scroll_deltas = false;
+
+  // When false, we do not check for occlusion and all quads are drawn.
+  // Defaults to true.
+  bool enable_occlusion = true;
+
+  // Whether experimental de-jelly effect is allowed.
+  bool allow_de_jelly_effect = false;
+
+#if DCHECK_IS_ON()
+  // Whether to check if any double blur exists.
+  bool log_on_ui_double_background_blur = false;
+#endif
+};
+
+class CC_EXPORT LayerListSettings : public LayerTreeSettings {
+ public:
+  LayerListSettings() { use_layer_lists = true; }
 };
 
 }  // namespace cc

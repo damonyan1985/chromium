@@ -13,26 +13,15 @@ config("leveldb_config") {
     "src",
     "src/include",
   ]
-
-  if (is_win) {
-    # windows.h #defines DeleteFile to DeleteFileW on Unicode builds. This
-    # definition is in effect in a large part of Chromium's compilation units.
-    # leveldb::Env has a DeleteFile method, which becomes DeleteFileW when the
-    # definition is in effect.
-    #
-    # Define the macro everywhere, to avoid reasoning about which headers bring
-    # windows.h in.
-    defines += [ "DeleteFile=DeleteFileW" ]
-  }
 }
 
 leveldb_sources = [
   "env_chromium.cc",
   "env_chromium.h",
-  "leveldb_features.h",
-  "leveldb_features.cc",
   "leveldb_chrome.cc",
   "leveldb_chrome.h",
+  "leveldb_features.cc",
+  "leveldb_features.h",
   "port/port_chromium.cc",
   "port/port_chromium.h",
   "src/db/builder.cc",
@@ -209,8 +198,6 @@ if (!is_ios && !is_android) {
     sources = [
       "src/util/histogram.cc",
       "src/util/histogram.h",
-      "src/util/testharness.cc",
-      "src/util/testharness.h",
       "src/util/testutil.cc",
       "src/util/testutil.h",
     ]
@@ -220,6 +207,8 @@ if (!is_ios && !is_android) {
 
     public_deps = [
       ":leveldb_static",
+      "//third_party/googletest:gmock",
+      "//third_party/googletest:gtest",
     ]
     deps = [
       "//base",
@@ -289,7 +278,7 @@ if (!is_ios && !is_android) {
 
   test("leveldb_db_bench") {
     sources = [
-      "src/db/db_bench.cc",
+      "src/benchmarks/db_bench.cc",
     ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -460,7 +449,5 @@ fuzzer_test("leveldb_put_get_delete_fuzzer") {
   ]
   deps = [
     ":leveldatabase",
-    ":leveldb_testutil",
-    "//base/test:test_support",
   ]
 }

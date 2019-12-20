@@ -51,7 +51,7 @@ class IOSChromeUpdatePasswordInfoBarDelegate
 
   void set_selected_account(base::string16 account) {
     selected_account_ = account;
-  };
+  }
 
  private:
   IOSChromeUpdatePasswordInfoBarDelegate(
@@ -64,7 +64,8 @@ class IOSChromeUpdatePasswordInfoBarDelegate
   int GetButtons() const override;
   base::string16 GetButtonLabel(InfoBarButton button) const override;
   bool Accept() override;
-  bool Cancel() override;
+  void InfoBarDismissed() override;
+  base::string16 GetLinkText() const override;
 
   // The credential that should be displayed in the infobar, and for which the
   // password will be updated.

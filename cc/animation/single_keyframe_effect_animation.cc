@@ -62,7 +62,7 @@ scoped_refptr<Animation> SingleKeyframeEffectAnimation::CreateImplInstance()
 }
 
 ElementId SingleKeyframeEffectAnimation::element_id() const {
-  return element_id_of_keyframe_effect(GetKeyframeEffect()->id());
+  return GetKeyframeEffect()->element_id();
 }
 
 void SingleKeyframeEffectAnimation::AttachElement(ElementId element_id) {
@@ -95,13 +95,16 @@ void SingleKeyframeEffectAnimation::AbortKeyframeModel(int keyframe_model_id) {
                                       GetKeyframeEffect()->id());
 }
 
-bool SingleKeyframeEffectAnimation::NotifyKeyframeModelFinishedForTesting(
+void SingleKeyframeEffectAnimation::NotifyKeyframeModelFinishedForTesting(
+    int timeline_id,
+    int keyframe_model_id,
     TargetProperty::Type target_property,
     int group_id) {
-  AnimationEvent event(AnimationEvent::FINISHED,
-                       GetKeyframeEffect()->element_id(), group_id,
-                       target_property, base::TimeTicks());
-  return GetKeyframeEffect()->NotifyKeyframeModelFinished(event);
+  AnimationEvent event(
+      AnimationEvent::FINISHED,
+      {timeline_id, id(), GetKeyframeEffect()->id(), keyframe_model_id},
+      group_id, target_property, base::TimeTicks());
+  DispatchAndDelegateAnimationEvent(event);
 }
 
 KeyframeModel* SingleKeyframeEffectAnimation::GetKeyframeModel(

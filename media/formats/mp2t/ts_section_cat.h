@@ -7,21 +7,19 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "media/base/encryption_scheme.h"
 #include "media/formats/mp2t/ts_section_psi.h"
 
 namespace media {
-
-class EncryptionScheme;
-
 namespace mp2t {
 
 class TsSectionCat : public TsSectionPsi {
  public:
   // RegisterCencPidsCb::Run(int ca_pid, int pssh_pid);
-  using RegisterCencPidsCb = base::Callback<void(int, int)>;
-  // RegisterEncryptionScheme::Run(const EncryptionScheme& scheme);
+  using RegisterCencPidsCb = base::RepeatingCallback<void(int, int)>;
+  // RegisterEncryptionScheme::Run(EncryptionScheme scheme);
   using RegisterEncryptionSchemeCb =
-      base::Callback<void(const EncryptionScheme&)>;
+      base::RepeatingCallback<void(EncryptionScheme)>;
   TsSectionCat(const RegisterCencPidsCb& register_cenc_ids_cb,
                const RegisterEncryptionSchemeCb& register_encryption_scheme_cb);
   ~TsSectionCat() override;

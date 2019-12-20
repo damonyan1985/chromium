@@ -21,7 +21,6 @@ class TabletModeWindowManager;
 class TabletModeControllerTestApi {
  public:
   static constexpr float kDegreesToRadians = 3.1415926f / 180.0f;
-  static constexpr float kMeanGravity = 9.8066f;
 
   TabletModeControllerTestApi();
   ~TabletModeControllerTestApi();
@@ -31,9 +30,14 @@ class TabletModeControllerTestApi {
   void EnterTabletMode();
   void LeaveTabletMode();
 
-  // Called to attach an external mouse. If we're currently in tablet mode,
-  // tablet mode will be ended because of this.
+  // Called to attach an external mouse/touchpad. If we're currently in tablet
+  // mode, tablet mode will be ended because of this.
   void AttachExternalMouse();
+  void AttachExternalTouchpad();
+
+  // Called in association with the above to remove all mice/touchpads.
+  void DetachAllMice();
+  void DetachAllTouchpads();
 
   void TriggerLidUpdate(const gfx::Vector3dF& lid);
   void TriggerBaseAndLidUpdate(const gfx::Vector3dF& base,
@@ -44,6 +48,10 @@ class TabletModeControllerTestApi {
   void OpenLid();
   void CloseLid();
   void SetTabletMode(bool on);
+
+  // Called to simulate the device suspend and resume.
+  void SuspendImminent();
+  void SuspendDone(base::TimeDelta sleep_duration);
 
   // Sets the event blocker on the tablet mode controller.
   void set_event_blocker(
@@ -71,16 +79,20 @@ class TabletModeControllerTestApi {
     return tablet_mode_controller_->CanUseUnstableLidAngle();
   }
 
-  TabletModeController::UiMode force_ui_mode() const {
-    return tablet_mode_controller_->force_ui_mode_;
-  }
-
   bool IsTabletModeStarted() const {
-    return tablet_mode_controller_->IsTabletModeWindowManagerEnabled();
+    return tablet_mode_controller_->InTabletMode();
   }
 
   bool AreEventsBlocked() const {
     return tablet_mode_controller_->AreInternalInputDeviceEventsBlocked();
+  }
+
+  bool IsScreenshotShown() const {
+    return !!tablet_mode_controller_->screenshot_layer_;
+  }
+
+  bool IsInPhysicalTabletState() const {
+    return tablet_mode_controller_->is_in_tablet_physical_state();
   }
 
  private:

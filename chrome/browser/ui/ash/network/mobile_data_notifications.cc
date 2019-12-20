@@ -7,9 +7,9 @@
 #include <string>
 
 #include "ash/public/cpp/notification_utils.h"
-#include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "base/bind.h"
 #include "base/time/time.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/notifications/system_notification_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -20,6 +20,7 @@
 #include "chromeos/network/network_connection_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/network_type_pattern.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -27,6 +28,7 @@
 
 using chromeos::NetworkHandler;
 using chromeos::NetworkState;
+using chromeos::NetworkStateHandler;
 using session_manager::SessionManager;
 using user_manager::UserManager;
 
@@ -47,7 +49,7 @@ constexpr int kNotificationCheckDelayInSeconds = 2;
 ////////////////////////////////////////////////////////////////////////////////
 // MobileDataNotifications
 
-MobileDataNotifications::MobileDataNotifications() : weak_factory_(this) {
+MobileDataNotifications::MobileDataNotifications() {
   NetworkHandler::Get()->network_state_handler()->AddObserver(this, FROM_HERE);
   NetworkHandler::Get()->network_connection_handler()->AddObserver(this);
   UserManager::Get()->AddSessionStateObserver(this);
@@ -64,14 +66,11 @@ MobileDataNotifications::~MobileDataNotifications() {
   SessionManager::Get()->RemoveObserver(this);
 }
 
-void MobileDataNotifications::DefaultNetworkChanged(
-    const NetworkState* default_network) {
-  // No need to keep the timer running if we know default network is not
-  // cellular.
-  if (default_network && default_network->type() != shill::kTypeCellular) {
-    one_shot_notification_check_delay_.Stop();
-  }
-  ShowOptionalMobileDataNotification();
+void MobileDataNotifications::ActiveNetworksChanged(
+    const std::vector<const NetworkState*>& active_networks) {
+  if (SessionManager::Get()->IsUserSessionBlocked())
+    return;
+  ShowOptionalMobileDataNotificationImpl(active_networks);
 }
 
 void MobileDataNotifications::ConnectSucceeded(
@@ -89,7 +88,7 @@ void MobileDataNotifications::ConnectFailed(const std::string& service_path,
 }
 
 void MobileDataNotifications::ActiveUserChanged(
-    const user_manager::User* active_user) {
+    user_manager::User* active_user) {
   ShowOptionalMobileDataNotification();
 }
 
@@ -98,15 +97,26 @@ void MobileDataNotifications::OnSessionStateChanged() {
 }
 
 void MobileDataNotifications::ShowOptionalMobileDataNotification() {
-  const NetworkState* default_network =
-      NetworkHandler::Get()->network_state_handler()->DefaultNetwork();
-  if (!default_network || default_network->type() != shill::kTypeCellular)
-    return;
   if (SessionManager::Get()->IsUserSessionBlocked())
     return;
-  if (NetworkHandler::Get()
-          ->network_connection_handler()
-          ->HasPendingConnectRequest()) {
+
+  NetworkStateHandler::NetworkStateList active_networks;
+  NetworkHandler::Get()->network_state_handler()->GetActiveNetworkListByType(
+      chromeos::NetworkTypePattern::NonVirtual(), &active_networks);
+  ShowOptionalMobileDataNotificationImpl(active_networks);
+}
+
+void MobileDataNotifications::ShowOptionalMobileDataNotificationImpl(
+    const std::vector<const NetworkState*>& active_networks) {
+  const NetworkState* first_active_network = nullptr;
+  for (const auto* network : active_networks) {
+    if (network->IsConnectingState())
+      return;  // Don not show notification while connecting.
+    if (!first_active_network)
+      first_active_network = network;
+  }
+  if (!first_active_network ||
+      first_active_network->type() != shill::kTypeCellular) {
     return;
   }
 
@@ -133,8 +143,8 @@ void MobileDataNotifications::ShowOptionalMobileDataNotification() {
           message_center::RichNotificationData(),
           base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
               base::BindRepeating(&MobileDataNotificationClicked,
-                                  default_network->guid())),
-          ash::kNotificationMobileDataIcon,
+                                  first_active_network->guid())),
+          kNotificationMobileDataIcon,
           message_center::SystemNotificationWarningLevel::NORMAL);
 
   SystemNotificationHelper::GetInstance()->Display(*notification);

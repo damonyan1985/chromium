@@ -8,7 +8,6 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/platform_shared_memory_region.h"
-#include "base/memory/shared_memory_handle.h"
 #include "base/memory/shared_memory_mapping.h"
 
 namespace base {
@@ -39,13 +38,7 @@ class BASE_EXPORT UnsafeSharedMemoryRegion {
   // mojo/public/cpp/base/shared_memory_utils.h for creating a shared memory
   // region from a an unprivileged process where a broker must be used.
   static UnsafeSharedMemoryRegion Create(size_t size);
-
-  // Creates a new UnsafeSharedMemoryRegion from a SharedMemoryHandle. This
-  // consumes the handle, which should not be used again.
-  // TODO(crbug.com/795291): this should only be used while transitioning from
-  // the old shared memory API, and should be removed when done.
-  static UnsafeSharedMemoryRegion CreateFromHandle(
-      const base::SharedMemoryHandle& handle);
+  using CreateFunction = decltype(Create);
 
   // Returns an UnsafeSharedMemoryRegion built from a platform-specific handle
   // that was taken from another UnsafeSharedMemoryRegion instance. Returns an
@@ -108,19 +101,21 @@ class BASE_EXPORT UnsafeSharedMemoryRegion {
     return handle_.GetGUID();
   }
 
- private:
-  FRIEND_TEST_ALL_PREFIXES(DiscardableSharedMemoryTest,
-                           LockShouldFailIfPlatformLockPagesFails);
-  friend class DiscardableSharedMemory;
-
-  explicit UnsafeSharedMemoryRegion(subtle::PlatformSharedMemoryRegion handle);
-
   // Returns a platform shared memory handle. |this| remains the owner of the
   // handle.
   subtle::PlatformSharedMemoryRegion::PlatformHandle GetPlatformHandle() const {
     DCHECK(IsValid());
     return handle_.GetPlatformHandle();
   }
+
+ private:
+  friend class SharedMemoryHooks;
+
+  explicit UnsafeSharedMemoryRegion(subtle::PlatformSharedMemoryRegion handle);
+
+  static void set_create_hook(CreateFunction* hook) { create_hook_ = hook; }
+
+  static CreateFunction* create_hook_;
 
   subtle::PlatformSharedMemoryRegion handle_;
 

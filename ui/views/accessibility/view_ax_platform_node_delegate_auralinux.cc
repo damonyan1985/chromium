@@ -8,7 +8,6 @@
 #include <memory>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -16,15 +15,46 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate_base.h"
+#include "ui/aura/window.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/views/accessibility/views_utilities_aura.h"
 #include "ui/views/view.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
+#include "ui/wm/core/window_util.h"
 
 namespace views {
 
 namespace {
+
+// Return the widget of any parent window of |widget|, first checking for
+// transient parent windows.
+Widget* GetWidgetOfParentWindowIncludingTransient(Widget* widget) {
+  if (!widget)
+    return nullptr;
+
+  aura::Window* window = widget->GetNativeWindow();
+  if (!window)
+    return nullptr;
+
+  // Look for an ancestor window with a Widget, and if found, return
+  // the NativeViewAccessible for its RootView.
+  aura::Window* ancestor_window = GetWindowParentIncludingTransient(window);
+  if (!ancestor_window)
+    return nullptr;
+
+  return Widget::GetWidgetForNativeView(ancestor_window);
+}
+
+// Return the toplevel widget ancestor of |widget|, including widgets of
+// parents of transient windows.
+Widget* GetToplevelWidgetIncludingTransientWindows(Widget* widget) {
+  widget = widget = widget->GetTopLevelWidget();
+  if (Widget* parent_widget = GetWidgetOfParentWindowIncludingTransient(widget))
+    return GetToplevelWidgetIncludingTransientWindows(parent_widget);
+  return widget;
+}
 
 // ATK requires that we have a single root "application" object that's the
 // owner of all other windows. This is a simple class that implements the
@@ -33,8 +63,12 @@ namespace {
 // top-level widget to a vector so we can return the list of all top-level
 // windows as children of this application object.
 class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
-                             public WidgetObserver {
+                             public WidgetObserver,
+                             public aura::WindowObserver {
  public:
+  AuraLinuxApplication(const AuraLinuxApplication&) = delete;
+  AuraLinuxApplication& operator=(const AuraLinuxApplication&) = delete;
+
   // Get the single instance of this class.
   static AuraLinuxApplication* GetInstance() {
     return base::Singleton<AuraLinuxApplication>::get();
@@ -47,15 +81,20 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
     if (!widget)
       return;
 
-    widget = widget->GetTopLevelWidget();
-    if (base::ContainsValue(widgets_, widget))
+    widget = GetToplevelWidgetIncludingTransientWindows(widget);
+    if (base::Contains(widgets_, widget))
       return;
 
     widgets_.push_back(widget);
     widget->AddObserver(this);
+
+    aura::Window* window = widget->GetNativeWindow();
+    if (!window)
+      return;
+    window->AddObserver(this);
   }
 
-  gfx::NativeViewAccessible GetNativeViewAccessible() {
+  gfx::NativeViewAccessible GetNativeViewAccessible() override {
     return platform_node_->GetNativeViewAccessible();
   }
 
@@ -67,6 +106,20 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
     auto iter = std::find(widgets_.begin(), widgets_.end(), widget);
     if (iter != widgets_.end())
       widgets_.erase(iter);
+  }
+
+  void OnWindowVisibilityChanged(aura::Window* window, bool visible) override {
+    for (Widget* widget : widgets_) {
+      if (widget->GetNativeWindow() != window)
+        continue;
+
+      View* root_view = widget->GetRootView();
+      if (!root_view)
+        continue;
+
+      root_view->NotifyAccessibilityEvent(
+          ax::mojom::Event::kWindowVisibilityChanged, true);
+    }
   }
 
   // ui::AXPlatformNodeDelegate:
@@ -90,15 +143,11 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
   AuraLinuxApplication() {
     data_.role = ax::mojom::Role::kApplication;
     platform_node_ = ui::AXPlatformNode::Create(this);
-    if (ViewsDelegate::GetInstance()) {
-      data_.AddStringAttribute(
-          ax::mojom::StringAttribute::kName,
-          ViewsDelegate::GetInstance()->GetApplicationName());
-    }
+    data_.AddStringAttribute(
+        ax::mojom::StringAttribute::kName,
+        ViewsDelegate::GetInstance()->GetApplicationName());
     ui::AXPlatformNodeAuraLinux::SetApplication(platform_node_);
-    if (ViewsDelegate::GetInstance()) {
-      ui::AXPlatformNodeAuraLinux::StaticInitialize();
-    }
+    ui::AXPlatformNodeAuraLinux::StaticInitialize();
   }
 
   ~AuraLinuxApplication() override {
@@ -110,8 +159,6 @@ class AuraLinuxApplication : public ui::AXPlatformNodeDelegateBase,
   ui::AXNodeData data_;
   ui::AXUniqueId unique_id_;
   std::vector<Widget*> widgets_;
-
-  DISALLOW_COPY_AND_ASSIGN(AuraLinuxApplication);
 };
 
 }  // namespace
@@ -124,16 +171,33 @@ std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
 
 ViewAXPlatformNodeDelegateAuraLinux::ViewAXPlatformNodeDelegateAuraLinux(
     View* view)
-    : ViewAXPlatformNodeDelegate(view) {}
+    : ViewAXPlatformNodeDelegate(view) {
+  view->AddObserver(this);
+}
 
 ViewAXPlatformNodeDelegateAuraLinux::~ViewAXPlatformNodeDelegateAuraLinux() =
     default;
 
 gfx::NativeViewAccessible ViewAXPlatformNodeDelegateAuraLinux::GetParent() {
-  gfx::NativeViewAccessible parent = ViewAXPlatformNodeDelegate::GetParent();
-  if (!parent)
-    parent = AuraLinuxApplication::GetInstance()->GetNativeViewAccessible();
-  return parent;
+  if (gfx::NativeViewAccessible parent =
+          ViewAXPlatformNodeDelegate::GetParent())
+    return parent;
+
+  Widget* parent_widget =
+      GetWidgetOfParentWindowIncludingTransient(view()->GetWidget());
+  if (parent_widget)
+    return parent_widget->GetRootView()->GetNativeViewAccessible();
+
+  return AuraLinuxApplication::GetInstance()->GetNativeViewAccessible();
+}
+
+void ViewAXPlatformNodeDelegateAuraLinux::OnViewHierarchyChanged(
+    views::View* observed_view,
+    const views::ViewHierarchyChangedDetails& details) {
+  if (view() != details.child || !details.is_add)
+    return;
+  static_cast<ui::AXPlatformNodeAuraLinux*>(ax_platform_node())
+      ->OnParentChanged();
 }
 
 }  // namespace views

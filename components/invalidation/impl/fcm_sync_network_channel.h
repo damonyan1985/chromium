@@ -1,9 +1,6 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
-// Simple system resources class that uses the current thread for scheduling.
-// Assumes the current thread is already running tasks.
 
 #ifndef COMPONENTS_INVALIDATION_IMPL_FCM_SYNC_NETWORK_CHANNEL_H_
 #define COMPONENTS_INVALIDATION_IMPL_FCM_SYNC_NETWORK_CHANNEL_H_
@@ -11,8 +8,8 @@
 #include "base/callback.h"
 #include "base/observer_list.h"
 #include "base/values.h"
+#include "components/invalidation/impl/channels_states.h"
 #include "components/invalidation/impl/network_channel.h"
-#include "components/invalidation/public/invalidator_state.h"
 
 namespace syncer {
 
@@ -24,12 +21,15 @@ class FCMSyncNetworkChannel : public NetworkChannel {
  public:
   class Observer {
    public:
-    virtual void OnFCMSyncNetworkChannelStateChanged(
-        InvalidatorState invalidator_state) = 0;
+    virtual void OnFCMChannelStateChanged(
+        FcmChannelState invalidator_state) = 0;
   };
 
   FCMSyncNetworkChannel();
   ~FCMSyncNetworkChannel() override;
+
+  virtual void StartListening() = 0;
+  virtual void StopListening() = 0;
 
   void SetMessageReceiver(MessageCallback incoming_receiver) override;
   void SetTokenReceiver(TokenCallback token_receiver) override;
@@ -39,9 +39,13 @@ class FCMSyncNetworkChannel : public NetworkChannel {
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  // Get the count of how many valid received messages were received.
-  int GetReceivedMessagesCount() const;
+  // Subclass should implement RequestDetailedStatus to provide debugging
+  // information.
+  virtual void RequestDetailedStatus(
+      const base::RepeatingCallback<void(const base::DictionaryValue&)>&
+          callback) = 0;
 
+ protected:
   // Subclass should call NotifyNetworkStatusChange to notify about network
   // changes. This triggers cacheinvalidation to try resending failed message
   // ahead of schedule when client comes online or IP address changes.
@@ -51,23 +55,18 @@ class FCMSyncNetworkChannel : public NetworkChannel {
   // NotifyChannelStateChange. If communication doesn't work and it is possible
   // that invalidations from server will not reach this client then channel
   // should call this function with TRANSIENT_INVALIDATION_ERROR.
-  void NotifyChannelStateChange(InvalidatorState invalidator_state);
+  void NotifyChannelStateChange(FcmChannelState invalidator_state);
 
   // Subclass should call DeliverIncomingMessage for message to reach
   // invalidations library.
   bool DeliverIncomingMessage(const std::string& payload,
                               const std::string& private_topic,
                               const std::string& public_topic,
-                              const std::string& version);
+                              int64_t version);
 
   // Subclass should call DeliverToken for token to reach registration
   // manager.
   bool DeliverToken(const std::string& token);
-
-  // Subclass should implement RequestDetailedStatus to provide debugging
-  // information.
-  virtual void RequestDetailedStatus(
-      base::Callback<void(const base::DictionaryValue&)> callback);
 
  private:
   // Callbacks into invalidation library

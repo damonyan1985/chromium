@@ -17,7 +17,7 @@
 #include "content/browser/devtools/browser_devtools_agent_host.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/devtools_manager.h"
-#include "content/browser/frame_host/navigation_handle_impl.h"
+#include "content/browser/frame_host/navigation_request.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -28,7 +28,9 @@ namespace protocol {
 
 namespace {
 
-const char kNotAllowedError[] = "Not allowed.";
+static const char kNotAllowedError[] = "Not allowed";
+static const char kMethod[] = "method";
+static const char kResumeMethod[] = "Runtime.runIfWaitingForDebugger";
 
 static const char kInitializerScript[] = R"(
   (function() {
@@ -89,6 +91,10 @@ static std::string TerminationStatusToString(base::TerminationStatus status) {
       return "failed to launch";
     case base::TERMINATION_STATUS_OOM:
       return "oom";
+#if defined(OS_WIN)
+    case base::TERMINATION_STATUS_INTEGRITY_FAILURE:
+      return "integrity failure";
+#endif
     case base::TERMINATION_STATUS_MAX_ENUM:
       break;
   }
@@ -113,7 +119,7 @@ class BrowserToPageConnector {
       host->AttachClient(this);
     }
     void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                                 const std::string& message) override {
+                                 base::span<const uint8_t> message) override {
       connector_->DispatchProtocolMessage(agent_host, message);
     }
     void AgentHostClosed(DevToolsAgentHost* agent_host) override {
@@ -169,13 +175,17 @@ class BrowserToPageConnector {
     message.Set("params", std::move(params));
     std::string json_message;
     base::JSONWriter::Write(message, &json_message);
-    page_host_->DispatchProtocolMessage(page_host_client_.get(), json_message);
+    page_host_->DispatchProtocolMessage(
+        page_host_client_.get(), base::as_bytes(base::make_span(json_message)));
   }
 
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) {
+                               base::span<const uint8_t> message) {
+    base::StringPiece message_sp(reinterpret_cast<const char*>(message.data()),
+                                 message.size());
     if (agent_host == page_host_.get()) {
-      std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
+      std::unique_ptr<base::Value> value =
+          base::JSONReader::ReadDeprecated(message_sp);
       if (!value || !value->is_dict())
         return;
       // Make sure this is a binding call.
@@ -192,23 +202,25 @@ class BrowserToPageConnector {
       base::Value* payload = params->FindKey("payload");
       if (!payload || !payload->is_string())
         return;
-      browser_host_->DispatchProtocolMessage(browser_host_client_.get(),
-                                             payload->GetString());
+      const std::string& payload_str = payload->GetString();
+      browser_host_->DispatchProtocolMessage(
+          browser_host_client_.get(),
+          base::as_bytes(base::make_span(payload_str)));
       return;
     }
     DCHECK(agent_host == browser_host_.get());
 
     std::string encoded;
-    base::Base64Encode(message, &encoded);
-    std::string eval_code = "window." + binding_name_ + ".onmessage(atob(\"";
-    std::string eval_suffix = "\"))";
+    base::Base64Encode(message_sp, &encoded);
+    std::string eval_code =
+        "try { window." + binding_name_ + ".onmessage(atob(\"";
+    std::string eval_suffix = "\")); } catch(e) { console.error(e); }";
     eval_code.reserve(eval_code.size() + encoded.size() + eval_suffix.size());
     eval_code.append(encoded);
     eval_code.append(eval_suffix);
 
-    std::unique_ptr<base::DictionaryValue> params =
-        std::make_unique<base::DictionaryValue>();
-    params->SetString("expression", eval_code);
+    auto params = std::make_unique<base::DictionaryValue>();
+    params->SetString("expression", std::move(eval_code));
     SendProtocolMessageToPage("Runtime.evaluate", std::move(params));
   }
 
@@ -263,6 +275,11 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
                             bool waiting_for_debugger,
                             bool flatten_protocol) {
     std::string id = base::UnguessableToken::Create().ToString();
+    // We don't support or allow the non-flattened protocol when in binary mode.
+    // So, we coerce the setting to true, as the non-flattened mode is
+    // deprecated anyway.
+    if (handler->root_session_->client()->UsesBinaryProtocol())
+      flatten_protocol = true;
     Session* session = new Session(handler, agent_host, id, flatten_protocol);
     handler->attached_sessions_[id].reset(session);
     DevToolsAgentHostImpl* agent_host_impl =
@@ -311,11 +328,22 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
       throttle_->Clear();
   }
 
-  void SendMessageToAgentHost(const std::string& message) {
+  void SendMessageToAgentHost(base::span<const uint8_t> message) {
+    // This method is only used in the non-flat mode, it's the implementation
+    // for Target.SendMessageToTarget. And since the binary mode implies
+    // flatten_protocol_ (we force the flag to true), we can assume in this
+    // method that |message| is JSON.
+    DCHECK(!flatten_protocol_);
+
     if (throttle_) {
-      std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
-      if (DevToolsSession::IsRuntimeResumeCommand(value.get()))
-        ResumeIfThrottled();
+      base::Optional<base::Value> value =
+          base::JSONReader::Read(base::StringPiece(
+              reinterpret_cast<const char*>(message.data()), message.size()));
+      const std::string* method;
+      if (value.has_value() && (method = value->FindStringKey(kMethod)) &&
+          *method == kResumeMethod) {
+        throttle_->Clear();
+      }
     }
 
     agent_host_->DispatchProtocolMessage(this, message);
@@ -323,6 +351,11 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 
   bool IsAttachedTo(const std::string& target_id) {
     return agent_host_->GetId() == target_id;
+  }
+
+  bool UsesBinaryProtocol() override {
+    return flatten_protocol_ ||
+           handler_->root_session_->client()->UsesBinaryProtocol();
   }
 
  private:
@@ -339,14 +372,18 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 
   // DevToolsAgentHostClient implementation.
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               const std::string& message) override {
+                               base::span<const uint8_t> message) override {
     DCHECK(agent_host == agent_host_.get());
     if (flatten_protocol_) {
       handler_->root_session_->SendMessageFromChildSession(id_, message);
       return;
     }
-
-    handler_->frontend_->ReceivedMessageFromTarget(id_, message,
+    // TODO(johannes): For now, We need to copy here because
+    // ReceivedMessageFromTarget is generated code and we're using const
+    // std::string& for such parameters. Perhaps we should switch this to
+    // base::StringPiece?
+    std::string message_copy(message.begin(), message.end());
+    handler_->frontend_->ReceivedMessageFromTarget(id_, message_copy,
                                                    agent_host_->GetId());
   }
 
@@ -402,7 +439,7 @@ NavigationThrottle::ThrottleCheckResult TargetHandler::Throttle::MaybeAttach() {
   if (!target_handler_)
     return PROCEED;
   agent_host_ = target_handler_->auto_attacher_.AutoAttachToFrame(
-      static_cast<NavigationHandleImpl*>(navigation_handle()));
+      NavigationRequest::From(navigation_handle()));
   if (!agent_host_.get())
     return PROCEED;
   target_handler_->auto_attached_sessions_[agent_host_.get()]->SetThrottle(
@@ -435,8 +472,7 @@ TargetHandler::TargetHandler(AccessMode access_mode,
       discover_(false),
       access_mode_(access_mode),
       owner_target_id_(owner_target_id),
-      root_session_(root_session),
-      weak_factory_(this) {}
+      root_session_(root_session) {}
 
 TargetHandler::~TargetHandler() {
 }
@@ -458,7 +494,7 @@ void TargetHandler::SetRenderer(int process_host_id,
 }
 
 Response TargetHandler::Disable() {
-  SetAutoAttachInternal(false, false, false, base::DoNothing());
+  SetAutoAttachInternal(false, false, false, false, base::DoNothing());
   SetDiscoverTargets(false);
   auto_attached_sessions_.clear();
   attached_sessions_.clear();
@@ -473,8 +509,17 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
     NavigationHandle* navigation_handle) {
   if (!auto_attacher_.ShouldThrottleFramesNavigation())
     return nullptr;
+  FrameTreeNode* frame_tree_node =
+      NavigationRequest::From(navigation_handle)->frame_tree_node();
+  bool is_window_open = frame_tree_node->original_opener();
+  if (is_window_open && !attach_to_window_open_)
+    return nullptr;
   return std::make_unique<Throttle>(weak_factory_.GetWeakPtr(),
                                     navigation_handle);
+}
+
+void TargetHandler::UpdatePortals() {
+  auto_attacher_.UpdatePortals();
 }
 
 void TargetHandler::ClearThrottles() {
@@ -487,8 +532,10 @@ void TargetHandler::ClearThrottles() {
 void TargetHandler::SetAutoAttachInternal(bool auto_attach,
                                           bool wait_for_debugger_on_start,
                                           bool flatten,
+                                          bool window_open,
                                           base::OnceClosure callback) {
   flatten_auto_attach_ = flatten;
+  attach_to_window_open_ = window_open;
   auto_attacher_.SetAutoAttach(auto_attach, wait_for_debugger_on_start,
                                std::move(callback));
   if (!auto_attacher_.ShouldThrottleFramesNavigation())
@@ -556,9 +603,11 @@ void TargetHandler::SetAutoAttach(
     bool auto_attach,
     bool wait_for_debugger_on_start,
     Maybe<bool> flatten,
+    Maybe<bool> window_open,
     std::unique_ptr<SetAutoAttachCallback> callback) {
   SetAutoAttachInternal(
       auto_attach, wait_for_debugger_on_start, flatten.fromMaybe(false),
+      window_open.fromMaybe(false),
       base::BindOnce(&SetAutoAttachCallback::sendSuccess, std::move(callback)));
 }
 
@@ -618,7 +667,7 @@ Response TargetHandler::SendMessageToTarget(const std::string& message,
         "When using flat protocol, messages are routed to the target "
         "via the sessionId attribute.");
   }
-  session->SendMessageToAgentHost(message);
+  session->SendMessageToAgentHost(base::as_bytes(base::make_span(message)));
   return Response::OK();
 }
 
@@ -691,6 +740,8 @@ Response TargetHandler::CreateTarget(const std::string& url,
                                      Maybe<int> height,
                                      Maybe<std::string> context_id,
                                      Maybe<bool> enable_begin_frame_control,
+                                     Maybe<bool> new_window,
+                                     Maybe<bool> background,
                                      std::string* out_target_id) {
   if (access_mode_ == AccessMode::kAutoAttachOnly)
     return Response::Error(kNotAllowedError);
@@ -710,9 +761,9 @@ Response TargetHandler::GetTargets(
     std::unique_ptr<protocol::Array<Target::TargetInfo>>* target_infos) {
   if (access_mode_ == AccessMode::kAutoAttachOnly)
     return Response::Error(kNotAllowedError);
-  *target_infos = protocol::Array<Target::TargetInfo>::create();
+  *target_infos = std::make_unique<protocol::Array<Target::TargetInfo>>();
   for (const auto& host : DevToolsAgentHost::GetOrCreateAll())
-    (*target_infos)->addItem(CreateInfo(host.get()));
+    (*target_infos)->emplace_back(CreateInfo(host.get()));
   return Response::OK();
 }
 
@@ -795,7 +846,7 @@ protocol::Response TargetHandler::GetBrowserContexts(
       delegate->GetBrowserContexts();
   *browser_context_ids = std::make_unique<protocol::Array<protocol::String>>();
   for (auto* context : contexts)
-    (*browser_context_ids)->addItem(context->UniqueId());
+    (*browser_context_ids)->emplace_back(context->UniqueId());
   return Response::OK();
 }
 

@@ -71,6 +71,8 @@ const char kArcTosAutoAccept[] = "arcTosAutoAccept";
 // == Update screen:
 
 // Boolean value, indicating that all non-critical updates should be skipped.
+// This should be used only during rollback scenario, when Chrome version is
+// known not to have any critical issues.
 const char kUpdateSkipUpdate[] = "updateSkipNonCritical";
 
 // == Wizard controller:
@@ -91,10 +93,6 @@ const char kRestoreAfterRollback[] = "enrollmentRestoreAfterRollback";
 // String value containing an enrollment token that would be used during
 // enrollment to identify organization device is enrolled into.
 const char kEnrollmentToken[] = "enrollmentToken";
-
-// String value indicating which license type should automatically be used if
-// license selection is done on a client side.
-const char kEnrollmentLicenseType[] = "enrollmentLicenseType";
 
 // String value indicating what value would be propagated to Asset ID field
 // on Device Attributes step.
@@ -128,7 +126,7 @@ constexpr struct {
      ConfigurationHandlerSide::HANDLER_JS},
     {kEULAAutoAccept, ValueType::BOOLEAN, ConfigurationHandlerSide::HANDLER_JS},
     {kUpdateSkipUpdate, ValueType::BOOLEAN,
-     ConfigurationHandlerSide::HANDLER_JS},
+     ConfigurationHandlerSide::HANDLER_CPP},
     {kWizardAutoEnroll, ValueType::BOOLEAN,
      ConfigurationHandlerSide::HANDLER_CPP},
     {kRestoreAfterRollback, ValueType::BOOLEAN,
@@ -136,8 +134,6 @@ constexpr struct {
     {kDeviceRequisition, ValueType::STRING,
      ConfigurationHandlerSide::HANDLER_CPP},
     {kEnrollmentToken, ValueType::STRING,
-     ConfigurationHandlerSide::HANDLER_CPP},
-    {kEnrollmentLicenseType, ValueType::STRING,
      ConfigurationHandlerSide::HANDLER_CPP},
     {kEnrollmentLocation, ValueType::STRING,
      ConfigurationHandlerSide::HANDLER_CPP},

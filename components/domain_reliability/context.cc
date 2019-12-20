@@ -56,8 +56,7 @@ DomainReliabilityContext::DomainReliabilityContext(
       uploader_(uploader),
       uploading_beacons_size_(0),
       last_network_change_time_(last_network_change_time),
-      upload_allowed_callback_(upload_allowed_callback),
-      weak_factory_(this) {}
+      upload_allowed_callback_(upload_allowed_callback) {}
 
 DomainReliabilityContext::~DomainReliabilityContext() {
   ClearBeacons();
@@ -171,16 +170,8 @@ void DomainReliabilityContext::OnUploadComplete(
     CommitUpload();
   else
     RollbackUpload();
-  base::TimeTicks first_beacon_time = scheduler_.first_beacon_time();
   scheduler_.OnUploadComplete(result);
-  UMA_HISTOGRAM_BOOLEAN("DomainReliability.UploadSuccess",
-      result.is_success());
-  base::TimeTicks now = time_->NowTicks();
-  UMA_HISTOGRAM_LONG_TIMES("DomainReliability.UploadLatency",
-                           now - first_beacon_time);
   DCHECK(!upload_time_.is_null());
-  UMA_HISTOGRAM_MEDIUM_TIMES("DomainReliability.UploadDuration",
-                             now - upload_time_);
   last_upload_time_ = upload_time_;
   upload_time_ = base::TimeTicks();
 }

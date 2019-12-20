@@ -11,7 +11,7 @@
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/input_event_ack_source.h"
 #include "content/public/common/input_event_ack_state.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 
 namespace ui {
 class LatencyInfo;
@@ -68,9 +68,24 @@ class CONTENT_EXPORT InputRouterClient {
   // Called to see if there is an ongoing wheel scroll sequence on the client.
   virtual bool IsWheelScrollInProgress() = 0;
 
+  // Called to see if the mouse has entered the autoscroll mode. Note that when
+  // this function returns true it does not necessarily mean that a GSB with
+  // autoscroll source is sent since the GSB gets sent on the first mouse move
+  // in autoscroll mode rather than on middle click/mouse-down.
+  virtual bool IsAutoscrollInProgress() = 0;
+
   // Called to toggle whether the RenderWidgetHost should capture all mouse
   // input.
   virtual void SetMouseCapture(bool capture) = 0;
+
+  virtual void FallbackCursorModeLockCursor(bool left,
+                                            bool right,
+                                            bool up,
+                                            bool down) = 0;
+  virtual void FallbackCursorModeSetCursorVisibility(bool visible) = 0;
+
+  // Returns the size of visible viewport in screen space, in DIPs.
+  virtual gfx::Size GetRootWidgetViewportSize() = 0;
 };
 
 } // namespace content

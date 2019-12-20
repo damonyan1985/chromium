@@ -10,15 +10,13 @@
 #include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/callback.h"
-#include "components/navigation_interception/intercept_navigation_throttle.h"
+#include "components/navigation_interception/jni_headers/InterceptNavigationDelegate_jni.h"
 #include "components/navigation_interception/navigation_params_android.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
-#include "jni/InterceptNavigationDelegate_jni.h"
 #include "url/gurl.h"
 
 using base::android::ConvertUTF8ToJavaString;
@@ -70,9 +68,11 @@ InterceptNavigationDelegate* InterceptNavigationDelegate::Get(
 // static
 std::unique_ptr<content::NavigationThrottle>
 InterceptNavigationDelegate::CreateThrottleFor(
-    content::NavigationHandle* handle) {
+    content::NavigationHandle* handle,
+    navigation_interception::SynchronyMode mode) {
   return std::make_unique<InterceptNavigationThrottle>(
-      handle, base::Bind(&CheckIfShouldIgnoreNavigationOnUIThread));
+      handle, base::BindRepeating(&CheckIfShouldIgnoreNavigationOnUIThread),
+      mode);
 }
 
 InterceptNavigationDelegate::InterceptNavigationDelegate(

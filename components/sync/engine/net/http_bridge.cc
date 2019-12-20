@@ -18,7 +18,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
-#include "components/sync/base/cancelation_signal.h"
+#include "base/threading/thread_restrictions.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_cache.h"
@@ -27,8 +28,6 @@
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/static_http_user_agent_settings.h"
-#include "net/url_request/url_request_status.h"
-#include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "third_party/zlib/google/compression_utils.h"
 
@@ -46,85 +45,38 @@ void LogTimeout(bool timed_out) {
   UMA_HISTOGRAM_BOOLEAN("Sync.URLFetchTimedOut", timed_out);
 }
 
-void RecordSyncRequestContentLengthHistograms(int64_t compressed_content_length,
-                                              int64_t original_content_length) {
-  UMA_HISTOGRAM_COUNTS_1M("Sync.RequestContentLength.Compressed",
-                          compressed_content_length);
-  UMA_HISTOGRAM_COUNTS_1M("Sync.RequestContentLength.Original",
-                          original_content_length);
-}
-
-void RecordSyncResponseContentLengthHistograms(
-    int64_t compressed_content_length,
-    int64_t original_content_length) {
-  UMA_HISTOGRAM_COUNTS_1M("Sync.ResponseContentLength.Compressed",
-                          compressed_content_length);
-  UMA_HISTOGRAM_COUNTS_1M("Sync.ResponseContentLength.Original",
-                          original_content_length);
-}
-
 base::LazyInstance<scoped_refptr<base::SequencedTaskRunner>>::Leaky
     g_io_capable_task_runner_for_tests = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
 HttpBridgeFactory::HttpBridgeFactory(
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        url_loader_factory_info,
-    const NetworkTimeUpdateCallback& network_time_update_callback,
-    CancelationSignal* cancelation_signal)
-    : network_time_update_callback_(network_time_update_callback),
-      cancelation_signal_(cancelation_signal) {
-  // Some tests pass null'ed out url_loader_factory_info instances.
-  if (url_loader_factory_info) {
-    url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-        std::move(url_loader_factory_info));
-  }
-  // This registration is happening on the Sync thread, while signalling occurs
-  // on the UI thread. We must handle the possibility signalling has already
-  // occurred.
-  if (cancelation_signal_->TryRegisterHandler(this)) {
-    registered_for_cancelation_ = true;
-  } else {
-    OnSignalReceived();
-  }
-}
-
-HttpBridgeFactory::~HttpBridgeFactory() {
-  if (registered_for_cancelation_) {
-    cancelation_signal_->UnregisterHandler(this);
-  }
-}
-
-void HttpBridgeFactory::Init(
     const std::string& user_agent,
-    const BindToTrackerCallback& bind_to_tracker_callback) {
-  user_agent_ = user_agent;
-  bind_to_tracker_callback_ = bind_to_tracker_callback;
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_url_loader_factory,
+    const NetworkTimeUpdateCallback& network_time_update_callback)
+    : user_agent_(user_agent),
+      network_time_update_callback_(network_time_update_callback) {
+  // Some tests pass null'ed out pending_url_loader_factory instances.
+  if (pending_url_loader_factory) {
+    url_loader_factory_ = network::SharedURLLoaderFactory::Create(
+        std::move(pending_url_loader_factory));
+  }
 }
+
+HttpBridgeFactory::~HttpBridgeFactory() = default;
 
 HttpPostProviderInterface* HttpBridgeFactory::Create() {
   DCHECK(url_loader_factory_);
 
-  scoped_refptr<HttpBridge> http =
-      new HttpBridge(user_agent_, url_loader_factory_->Clone(),
-                     network_time_update_callback_, bind_to_tracker_callback_);
+  scoped_refptr<HttpBridge> http = new HttpBridge(
+      user_agent_, url_loader_factory_->Clone(), network_time_update_callback_);
   http->AddRef();
   return http.get();
 }
 
 void HttpBridgeFactory::Destroy(HttpPostProviderInterface* http) {
   static_cast<HttpBridge*>(http)->Release();
-}
-
-void HttpBridgeFactory::OnSignalReceived() {
-  // TODO(tonikitoo): Remove this method.
-  //
-  // Prior to the URLLoader conversion the sync code was holding on to a
-  // scoped_refptr of a URLRequestContextGetter it was changing the lifetime
-  // of net objects. With URLLoader, it's only holding on to mojo pipes
-  // that issue doesn't exist.
-  NOTIMPLEMENTED();
 }
 
 HttpBridge::URLFetchState::URLFetchState()
@@ -137,20 +89,18 @@ HttpBridge::URLFetchState::~URLFetchState() {}
 
 HttpBridge::HttpBridge(
     const std::string& user_agent,
-    std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-        url_loader_factory_info,
-    const NetworkTimeUpdateCallback& network_time_update_callback,
-    const BindToTrackerCallback& bind_to_tracker_callback)
+    std::unique_ptr<network::PendingSharedURLLoaderFactory>
+        pending_url_loader_factory,
+    const NetworkTimeUpdateCallback& network_time_update_callback)
     : user_agent_(user_agent),
       http_post_completed_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                            base::WaitableEvent::InitialState::NOT_SIGNALED),
-      url_loader_factory_info_(std::move(url_loader_factory_info)),
-      network_task_runner_(
-          g_io_capable_task_runner_for_tests.Get()
-              ? g_io_capable_task_runner_for_tests.Get()
-              : base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()})),
-      network_time_update_callback_(network_time_update_callback),
-      bind_to_tracker_callback_(bind_to_tracker_callback) {}
+      pending_url_loader_factory_(std::move(pending_url_loader_factory)),
+      network_task_runner_(g_io_capable_task_runner_for_tests.Get()
+                               ? g_io_capable_task_runner_for_tests.Get()
+                               : base::CreateSequencedTaskRunner(
+                                     {base::ThreadPool(), base::MayBlock()})),
+      network_time_update_callback_(network_time_update_callback) {}
 
 HttpBridge::~HttpBridge() {}
 
@@ -172,7 +122,7 @@ void HttpBridge::SetURL(const char* url, int port) {
 #endif
   GURL temp(url);
   GURL::Replacements replacements;
-  std::string port_str = base::IntToString(port);
+  std::string port_str = base::NumberToString(port);
   replacements.SetPort(port_str.c_str(), url::Component(0, port_str.length()));
   url_for_request_ = temp.ReplaceComponents(replacements);
 }
@@ -222,7 +172,10 @@ bool HttpBridge::MakeSynchronousPost(int* net_error_code,
 
   // Block until network request completes or is aborted. See
   // OnURLFetchComplete and Abort.
-  http_post_completed_.Wait();
+  {
+    base::ScopedAllowBaseSyncPrimitives allow_wait;
+    http_post_completed_.Wait();
+  }
 
   base::AutoLock lock(fetch_state_lock_);
   DCHECK(fetch_state_.request_completed || fetch_state_.aborted);
@@ -250,12 +203,12 @@ void HttpBridge::MakeAsynchronousPost() {
 
   // Some tests inject |url_loader_factory_| created to operated on the
   // IO-capable thread currently running.
-  DCHECK((!url_loader_factory_ && url_loader_factory_info_) ||
-         (url_loader_factory_ && !url_loader_factory_info_));
+  DCHECK((!url_loader_factory_ && pending_url_loader_factory_) ||
+         (url_loader_factory_ && !pending_url_loader_factory_));
   if (!url_loader_factory_) {
-    DCHECK(url_loader_factory_info_);
+    DCHECK(pending_url_loader_factory_);
     url_loader_factory_ = network::SharedURLLoaderFactory::Create(
-        std::move(url_loader_factory_info_));
+        std::move(pending_url_loader_factory_));
   }
 
   fetch_state_.start_time = base::Time::Now();
@@ -290,8 +243,8 @@ void HttpBridge::MakeAsynchronousPost() {
   resource_request->url = url_for_request_;
   resource_request->method = "POST";
   resource_request->load_flags =
-      net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE |
-      net::LOAD_DO_NOT_SAVE_COOKIES | net::LOAD_DO_NOT_SEND_COOKIES;
+      net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   if (!extra_headers_.empty())
     resource_request->headers.AddHeadersFromString(extra_headers_);
@@ -300,24 +253,17 @@ void HttpBridge::MakeAsynchronousPost() {
   resource_request->headers.SetHeader(net::HttpRequestHeaders::kUserAgent,
                                       user_agent_);
 
+  variations::AppendVariationsHeader(
+      url_for_request_, variations::InIncognito::kNo,
+      variations::SignedIn::kYes, resource_request.get());
+
   fetch_state_.url_loader = network::SimpleURLLoader::Create(
       std::move(resource_request), traffic_annotation);
   network::SimpleURLLoader* url_loader = fetch_state_.url_loader.get();
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  //
-  // This calls |BindFetcherToDataTracker| in
-  // components/sync/driver/glue/sync_backend_host_core.cc which used to
-  // data_use_measurement::DataUseUserData::AttachToFetcher.
-  // if (!bind_to_tracker_callback_.is_null())
-  //  bind_to_tracker_callback_.Run(fetch_state_.url_poster);
-
   std::string request_to_send;
   compression::GzipCompress(request_content_, &request_to_send);
   url_loader->AttachStringForUpload(request_to_send, content_type_);
-  RecordSyncRequestContentLengthHistograms(request_to_send.size(),
-                                           request_content_.size());
 
   // Sync relies on HTTP errors being detectable (and distinct from
   // net/connection errors).
@@ -358,9 +304,9 @@ const std::string HttpBridge::GetResponseHeaderValue(
 void HttpBridge::Abort() {
   base::AutoLock lock(fetch_state_lock_);
 
-  // Release |url_loader_factory_info_| as soon as possible so that
+  // Release |pending_url_loader_factory_| as soon as possible so that
   // no URLLoaderFactory instances proceed on the network task runner.
-  url_loader_factory_info_.reset();
+  pending_url_loader_factory_.reset();
 
   DCHECK(!fetch_state_.aborted);
   if (fetch_state_.aborted || fetch_state_.request_completed)
@@ -407,15 +353,14 @@ void HttpBridge::OnURLLoadComplete(std::unique_ptr<std::string> response_body) {
     fetch_state_.response_headers = url_loader->ResponseInfo()->headers;
   }
 
-  OnURLLoadCompleteInternal(
-      http_status_code, url_loader->NetError(), url_loader->GetContentSize(),
-      url_loader->GetFinalURL(), std::move(response_body));
+  OnURLLoadCompleteInternal(http_status_code, url_loader->NetError(),
+                            url_loader->GetFinalURL(),
+                            std::move(response_body));
 }
 
 void HttpBridge::OnURLLoadCompleteInternal(
     int http_status_code,
     int net_error_code,
-    int64_t compressed_content_length,
     const GURL& final_url,
     std::unique_ptr<std::string> response_body) {
   DCHECK(network_task_runner_->RunsTasksInCurrentSequence());
@@ -437,12 +382,10 @@ void HttpBridge::OnURLLoadCompleteInternal(
 
   if (fetch_state_.request_succeeded)
     LogTimeout(false);
-  base::UmaHistogramSparse(
-      "Sync.URLFetchResponse",
-      fetch_state_.request_succeeded
-          ? fetch_state_.http_status_code
-          : net::URLRequestStatus::FromError(fetch_state_.net_error_code)
-                .ToNetError());
+  base::UmaHistogramSparse("Sync.URLFetchResponse",
+                           fetch_state_.request_succeeded
+                               ? fetch_state_.http_status_code
+                               : fetch_state_.net_error_code);
   UMA_HISTOGRAM_LONG_TIMES("Sync.URLFetchTime",
                            fetch_state_.end_time - fetch_state_.start_time);
 
@@ -455,10 +398,6 @@ void HttpBridge::OnURLLoadCompleteInternal(
     fetch_state_.response_content = std::move(*response_body);
 
   UpdateNetworkTime();
-
-  int64_t original_content_length = fetch_state_.response_content.size();
-  RecordSyncResponseContentLengthHistograms(compressed_content_length,
-                                            original_content_length);
 
   fetch_state_.url_loader.reset();
   url_loader_factory_ = nullptr;

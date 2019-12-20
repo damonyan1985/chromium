@@ -22,6 +22,7 @@ import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.AwActivityTestRule.TestDependencyFactory;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.device.geolocation.LocationProviderOverrider;
 import org.chromium.device.geolocation.MockLocationProvider;
@@ -92,7 +93,7 @@ public class GeolocationTest {
         }
     }
 
-    private void initAwContents(TestAwContentsClient contentsClient) throws Exception {
+    private void initAwContents(TestAwContentsClient contentsClient) {
         mContentsClient = contentsClient;
         mAwContents = mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient)
                               .getAwContents();
@@ -102,13 +103,13 @@ public class GeolocationTest {
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         mMockLocationProvider = new MockLocationProvider();
         LocationProviderOverrider.setLocationProviderImpl(mMockLocationProvider);
     }
 
     @After
-    public void tearDown() throws Exception {
+    public void tearDown() {
         mMockLocationProvider.stopUpdates();
         mOverridenFactory = null;
     }
@@ -124,7 +125,7 @@ public class GeolocationTest {
         return result;
     }
 
-    private void ensureGeolocationRunning(final boolean running) throws Exception {
+    private void ensureGeolocationRunning(final boolean running) {
         AwActivityTestRule.pollInstrumentationThread(
                 () -> mMockLocationProvider.isRunning() == running);
     }
@@ -156,11 +157,15 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "https://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_getCurrentPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests(
+                                "initiate_getCurrentPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(() -> getPositionCountFromJS() == 1);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_getCurrentPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests(
+                                "initiate_getCurrentPosition();", null));
         AwActivityTestRule.pollInstrumentationThread(() -> getPositionCountFromJS() == 2);
     }
 
@@ -177,7 +182,8 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "https://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(() -> getPositionCountFromJS() > 1);
     }
@@ -192,7 +198,8 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "https://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(() -> getPositionCountFromJS() > 1);
 
@@ -229,7 +236,8 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "https://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests("initiate_watchPosition();", null));
 
         Assert.assertEquals(0, getPositionCountFromJS());
 
@@ -268,7 +276,9 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "https://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_getCurrentPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests(
+                                "initiate_getCurrentPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(new Callable<Boolean>() {
             @Override
@@ -290,7 +300,9 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "http://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_getCurrentPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests(
+                                "initiate_getCurrentPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(new Callable<Boolean>() {
             @Override
@@ -310,7 +322,9 @@ public class GeolocationTest {
                 mContentsClient.getOnPageFinishedHelper(), RAW_HTML, "text/html", false,
                 "http://google.com/", ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
-        mAwContents.evaluateJavaScriptForTests("initiate_getCurrentPosition();", null);
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.evaluateJavaScriptForTests(
+                                "initiate_getCurrentPosition();", null));
 
         AwActivityTestRule.pollInstrumentationThread(() -> getPositionCountFromJS() > 0);
     }

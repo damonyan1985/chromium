@@ -11,6 +11,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "components/autofill/core/browser/ui/payments/card_name_fix_flow_view.h"
 
 namespace content {
 class WebContents;
@@ -18,15 +19,13 @@ class WebContents;
 
 namespace autofill {
 
-class CardNameFixFlowViewDelegateMobile;
+class CardNameFixFlowController;
 
-class CardNameFixFlowViewAndroid {
+class CardNameFixFlowViewAndroid : public CardNameFixFlowView {
  public:
-  CardNameFixFlowViewAndroid(
-      std::unique_ptr<CardNameFixFlowViewDelegateMobile> delegate,
-      content::WebContents* web_contents);
-
-  ~CardNameFixFlowViewAndroid();
+  // |controller| must outlive |this|.
+  CardNameFixFlowViewAndroid(CardNameFixFlowController* controller,
+                             content::WebContents* web_contents);
 
   void OnUserAccept(JNIEnv* env,
                     const base::android::JavaParamRef<jobject>& obj,
@@ -34,14 +33,17 @@ class CardNameFixFlowViewAndroid {
   void PromptDismissed(JNIEnv* env,
                        const base::android::JavaParamRef<jobject>& obj);
 
-  void Show();
+  // CardNameFixFlowView implementation.
+  void Show() override;
+  void ControllerGone() override;
 
  private:
+  ~CardNameFixFlowViewAndroid() override;
+
   // The corresponding java object.
   base::android::ScopedJavaGlobalRef<jobject> java_object_;
 
-  std::unique_ptr<CardNameFixFlowViewDelegateMobile> delegate_;
-
+  CardNameFixFlowController* controller_;
   content::WebContents* web_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(CardNameFixFlowViewAndroid);

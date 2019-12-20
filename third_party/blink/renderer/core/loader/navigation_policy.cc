@@ -31,8 +31,8 @@
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
 
 #include "build/build_config.h"
-#include "third_party/blink/public/platform/web_keyboard_event.h"
-#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/common/input/web_keyboard_event.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/web/web_navigation_policy.h"
 #include "third_party/blink/public/web/web_window_features.h"
 #include "third_party/blink/renderer/core/events/current_input_event.h"
@@ -47,7 +47,7 @@ namespace blink {
 
 namespace {
 
-NavigationPolicy NavigationPolicyFromEventModifiers(unsigned short button,
+NavigationPolicy NavigationPolicyFromEventModifiers(int16_t button,
                                                     bool ctrl,
                                                     bool shift,
                                                     bool alt,
@@ -104,7 +104,7 @@ NavigationPolicy NavigationPolicyFromCurrentEvent() {
   if (!event)
     return kNavigationPolicyCurrentTab;
 
-  unsigned short button = 0;
+  int16_t button = 0;
   if (event->GetType() == WebInputEvent::kMouseUp) {
     const WebMouseEvent* mouse_event = static_cast<const WebMouseEvent*>(event);
 

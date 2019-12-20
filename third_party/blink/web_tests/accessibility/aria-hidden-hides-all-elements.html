@@ -1,7 +1,8 @@
 <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
 <html>
 <head>
-<script src="../resources/js-test.js"></script>
+<script src="../resources/testharness.js"></script>
+<script src="../resources/testharnessreport.js"></script>
 </head>
 <body id="body">
 
@@ -24,27 +25,35 @@
 </div>
 
 <script>
-
-    description("This tests aria-hidden on a parent node will hide all these special subclass objects, unless they are focusable.");
-
-    if (window.accessibilityController) {
-
-        var content = accessibilityController.accessibleElementById("content");
-        shouldBe("content.childrenCount", "6");
-
-        document.getElementById("ul").tabIndex = -1;
-        shouldBe("content.childrenCount", "7");
-
-        document.getElementById("ul").removeAttribute('tabindex');
-        shouldBe("content.childrenCount", "6");
-
-        // Clear the HTML for better results.
-        document.getElementById("content").innerHTML = "";
+function testChildren(parent, expected_unignored_child_indices) {
+    for (let i = 0; i < parent.childrenCount; i++) {
+      if (expected_unignored_child_indices.includes(i))
+        assert_false(parent.childAtIndex(i).isIgnored);
+      else
+        assert_true(parent.childAtIndex(i).isIgnored);
     }
+}
 
+test(function(t) {
+    var content = accessibilityController.accessibleElementById("main");
+    assert_equals(content.childrenCount, 17);
+    assert_true(content.isIgnored);
+    testChildren(content, [0, 2, 4, 6, 11]);
+    document.getElementById("ul").tabIndex = -1;
 
+    assert_equals(content.childrenCount, 17,
+                      "Making list focusable should not impact if it's hidden");
+    assert_true(content.isIgnored);
+    testChildren(content, [0, 2, 4, 6, 10, 11]);
+
+    document.getElementById("ul").removeAttribute("tabindex");
+
+    assert_equals(content.childrenCount, 17,
+                          "Making list unfocusable should make it hidden again");
+    assert_true(content.isIgnored);
+    testChildren(content, [0, 2, 4, 6, 11]);
+});
 </script>
 
 </body>
 </html>
-

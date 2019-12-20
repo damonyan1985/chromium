@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_UPDATER_CHROME_UPDATE_CLIENT_CONFIG_H_
 #define CHROME_BROWSER_EXTENSIONS_UPDATER_CHROME_UPDATE_CLIENT_CONFIG_H_
 
-#include <stdint.h>
-
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,6 +21,7 @@ class BrowserContext;
 
 namespace update_client {
 class ActivityDataService;
+class NetworkFetcherFactory;
 class ProtocolHandlerFactory;
 }
 
@@ -53,10 +52,10 @@ class ChromeUpdateClientConfig : public update_client::Configurator {
   std::string GetOSLongName() const override;
   base::flat_map<std::string, std::string> ExtraRequestParams() const override;
   std::string GetDownloadPreference() const override;
-  scoped_refptr<network::SharedURLLoaderFactory> URLLoaderFactory()
-      const override;
-  std::unique_ptr<service_manager::Connector> CreateServiceManagerConnector()
-      const override;
+  scoped_refptr<update_client::NetworkFetcherFactory> GetNetworkFetcherFactory()
+      override;
+  scoped_refptr<update_client::UnzipperFactory> GetUnzipperFactory() override;
+  scoped_refptr<update_client::PatcherFactory> GetPatcherFactory() override;
   bool EnabledDeltas() const override;
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
@@ -64,11 +63,8 @@ class ChromeUpdateClientConfig : public update_client::Configurator {
   PrefService* GetPrefService() const override;
   update_client::ActivityDataService* GetActivityDataService() const override;
   bool IsPerUserInstall() const override;
-  std::vector<uint8_t> GetRunActionKeyHash() const override;
-  std::string GetAppGuid() const override;
   std::unique_ptr<update_client::ProtocolHandlerFactory>
   GetProtocolHandlerFactory() const override;
-  update_client::RecoveryCRXElevator GetRecoveryCRXElevator() const override;
 
  protected:
   friend class base::RefCountedThreadSafe<ChromeUpdateClientConfig>;
@@ -87,6 +83,9 @@ class ChromeUpdateClientConfig : public update_client::Configurator {
   component_updater::ConfiguratorImpl impl_;
   PrefService* pref_service_;
   std::unique_ptr<update_client::ActivityDataService> activity_data_service_;
+  scoped_refptr<update_client::NetworkFetcherFactory> network_fetcher_factory_;
+  scoped_refptr<update_client::UnzipperFactory> unzip_factory_;
+  scoped_refptr<update_client::PatcherFactory> patch_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeUpdateClientConfig);
 };

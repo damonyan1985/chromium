@@ -273,7 +273,7 @@ class AndroidPort(base.Port):
         devil_chromium.Initialize(
             output_directory=self._build_path(),
             adb_path=self._path_from_chromium_base(
-                'third_party', 'android_tools', 'sdk', 'platform-tools', 'adb'))
+                'third_party', 'android_sdk', 'public', 'platform-tools', 'adb'))
         devil_env.config.InitializeLogging(
             logging.DEBUG
             if self._debug_logging and self.get_option('debug_rwt_logging')
@@ -306,11 +306,6 @@ class AndroidPort(base.Port):
             raise test_run_results.TestRunException(exit_codes.NO_DEVICES_EXIT_STATUS,
                                                     'Unable to find any attached Android devices.')
         return len(usable_devices)
-
-    def max_drivers_per_process(self):
-        # Android falls over when we try to run multiple content_shells per worker.
-        # See https://codereview.chromium.org/1158323009/
-        return 1
 
     def check_build(self, needs_http, printer):
         exit_status = super(AndroidPort, self).check_build(needs_http, printer)
@@ -668,7 +663,7 @@ class ChromiumAndroidDriver(driver.Driver):
             symfs_path = self._find_or_create_symfs()
             kallsyms_path = self._update_kallsyms_cache(symfs_path)
             # FIXME: We should pass this some sort of "Bridge" object abstraction around ADB instead of a path/device pair.
-            self._profiler = AndroidPerf(self._port.host, self._port._path_to_driver(), self._port.results_directory(),
+            self._profiler = AndroidPerf(self._port.host, self._port._path_to_driver(), self._port.artifacts_directory(),
                                          self._device, symfs_path, kallsyms_path)
             # FIXME: This is a layering violation and should be moved to Port.check_sys_deps
             # once we have an abstraction around an adb_path/device_serial pair to make it
@@ -706,7 +701,7 @@ class ChromiumAndroidDriver(driver.Driver):
         if 'ANDROID_SYMFS' in env:
             symfs_path = env['ANDROID_SYMFS']
         else:
-            symfs_path = fs.join(self._port.results_directory(), 'symfs')
+            symfs_path = fs.join(self._port.artifacts_directory(), 'symfs')
             _log.debug('ANDROID_SYMFS not set, using %s', symfs_path)
 
         # find the installed path, and the path of the symboled built library

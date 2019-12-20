@@ -26,6 +26,8 @@
 #include "components/sessions/core/base_session_service_delegate.h"
 #include "components/sessions/core/session_command.h"
 #include "components/sessions/core/session_constants.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 
 namespace sessions {
 
@@ -105,6 +107,7 @@ const SessionCommand::id_type kCommandSetExtensionAppID = 6;
 const SessionCommand::id_type kCommandSetWindowAppName = 7;
 const SessionCommand::id_type kCommandSetTabUserAgentOverride = 8;
 const SessionCommand::id_type kCommandWindow = 9;
+const SessionCommand::id_type kCommandGroup = 10;
 
 // Number of entries (not commands) before we clobber the file and write
 // everything.
@@ -695,6 +698,18 @@ void TabRestoreServiceImpl::PersistenceDelegate::ScheduleCommandsForTab(
     base_session_service_->ScheduleCommand(std::move(command));
   }
 
+  if (tab.group.has_value()) {
+    base::Pickle pickle;
+    WriteTokenToPickle(&pickle, tab.group.value().token());
+    const tab_groups::TabGroupVisualData* visual_data =
+        &tab.group_visual_data.value();
+    pickle.WriteString16(visual_data->title());
+    pickle.WriteUInt32(visual_data->color());
+    std::unique_ptr<SessionCommand> command(
+        new SessionCommand(kCommandGroup, pickle));
+    base_session_service_->ScheduleCommand(std::move(command));
+  }
+
   if (!tab.extension_app_id.empty()) {
     base_session_service_->ScheduleCommand(CreateSetTabExtensionAppIDCommand(
         kCommandSetExtensionAppID, tab.id, tab.extension_app_id));
@@ -939,6 +954,30 @@ void TabRestoreServiceImpl::PersistenceDelegate::CreateEntriesFromCommands(
         // NOTE: payload doesn't matter. kCommandPinnedState is only written if
         // tab is pinned.
         current_tab->pinned = true;
+        break;
+      }
+
+      case kCommandGroup: {
+        if (!current_tab) {
+          // Should be in a tab when we get this.
+          return;
+        }
+        std::unique_ptr<base::Pickle> pickle(command.PayloadAsPickle());
+        base::PickleIterator iter(*pickle);
+        base::Optional<base::Token> group_token = ReadTokenFromPickle(&iter);
+        base::string16 title;
+        SkColor color;
+        if (!iter.ReadString16(&title)) {
+          break;
+        }
+        if (!iter.ReadUInt32(&color)) {
+          break;
+        }
+
+        current_tab->group =
+            tab_groups::TabGroupId::FromRawToken(group_token.value());
+        current_tab->group_visual_data =
+            tab_groups::TabGroupVisualData(title, color);
         break;
       }
 

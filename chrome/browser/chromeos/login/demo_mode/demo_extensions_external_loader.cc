@@ -47,7 +47,8 @@ base::Optional<base::Value> LoadPrefsFromDisk(
     return base::nullopt;
   }
 
-  std::unique_ptr<base::Value> prefs_value = base::JSONReader::Read(prefs_str);
+  std::unique_ptr<base::Value> prefs_value =
+      base::JSONReader::ReadDeprecated(prefs_str);
   if (!prefs_value) {
     LOG(ERROR) << "Unable to parse demo extensions prefs.";
     return base::nullopt;
@@ -74,7 +75,7 @@ bool DemoExtensionsExternalLoader::SupportedForProfile(Profile* profile) {
 
 DemoExtensionsExternalLoader::DemoExtensionsExternalLoader(
     const base::FilePath& cache_dir)
-    : cache_dir_(cache_dir), weak_ptr_factory_(this) {
+    : cache_dir_(cache_dir) {
   DCHECK(DemoSession::Get() && DemoSession::Get()->started());
 }
 
@@ -96,6 +97,11 @@ void DemoExtensionsExternalLoader::LoadApp(const std::string& app_id) {
         true /* always_check_updates */,
         false /* wait_for_cache_initialization */);
   }
+
+  // TODO(crbug.com/991453): In offline Demo Mode, this would overwrite the
+  // prefs from the Offline Demo Resources, so we don't call LoadApp() if the
+  // enrollment is offline. Instead, we should merge these prefs or treat the
+  // cache as a separate provider.
   external_cache_->UpdateExtensionsList(base::DictionaryValue::From(
       base::Value::ToUniquePtrValue(std::move(prefs))));
 }
@@ -136,9 +142,9 @@ void DemoExtensionsExternalLoader::StartLoadingFromOfflineDemoResources() {
     return;
   }
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::PostTaskAndReplyWithResult(
       FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&LoadPrefsFromDisk, demo_extension_list),
       base::BindOnce(

@@ -6,6 +6,10 @@
 
 #include <utility>
 
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/cpp/window_state_type.h"
+#include "chrome/browser/chromeos/arc/pip/arc_pip_bridge.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
@@ -37,6 +41,22 @@ void ArcAppWindowLauncherItemController::ItemSelected(
     ash::ShelfLaunchSource source,
     ItemSelectedCallback callback) {
   if (window_count()) {
+    // Tapping the shelf icon of an app that's showing PIP means expanding PIP.
+    // Even if the app contains multiple windows, we just expand PIP without
+    // showing the menu on the shelf icon.
+    for (ui::BaseWindow* window : windows()) {
+      aura::Window* native_window = window->GetNativeWindow();
+      if (native_window->GetProperty(ash::kWindowStateTypeKey) ==
+          ash::WindowStateType::kPip) {
+        Profile* profile = ChromeLauncherController::instance()->profile();
+        arc::ArcPipBridge* pip_bridge =
+            arc::ArcPipBridge::GetForBrowserContext(profile);
+        // ClosePip() actually expands PIP.
+        pip_bridge->ClosePip();
+        std::move(callback).Run(ash::SHELF_ACTION_NONE, {});
+        return;
+      }
+    }
     AppWindowLauncherItemController::ItemSelected(std::move(event), display_id,
                                                   source, std::move(callback));
     return;
@@ -44,9 +64,9 @@ void ArcAppWindowLauncherItemController::ItemSelected(
 
   if (task_ids_.empty()) {
     NOTREACHED();
-    std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_NONE, {});
     return;
   }
   arc::SetTaskActive(*task_ids_.begin());
-  std::move(callback).Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, base::nullopt);
+  std::move(callback).Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, {});
 }

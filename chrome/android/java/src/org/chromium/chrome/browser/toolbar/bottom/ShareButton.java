@@ -13,8 +13,9 @@ import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ActivityTabProvider.ActivityTabTabObserver;
 import org.chromium.chrome.browser.ThemeColorProvider;
 import org.chromium.chrome.browser.ThemeColorProvider.TintObserver;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabImpl;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.ui.widget.ChromeImageButton;
 
 /**
@@ -24,7 +25,7 @@ class ShareButton extends ChromeImageButton implements TintObserver {
     /** A provider that notifies components when the theme color changes.*/
     private ThemeColorProvider mThemeColorProvider;
 
-    /** The {@link sActivityTabTabObserver} used to know when the active page changed. */
+    /** The {@link ActivityTabTabObserver} used to know when the active page changed. */
     private ActivityTabTabObserver mActivityTabTabObserver;
 
     public ShareButton(Context context, AttributeSet attrs) {
@@ -41,13 +42,13 @@ class ShareButton extends ChromeImageButton implements TintObserver {
             @Override
             public void onObservingDifferentTab(Tab tab) {
                 if (tab == null) return;
-                setEnabled(shouldEnableShare(tab));
+                updateButtonEnabledState(tab);
             }
 
             @Override
             public void onUpdateUrl(Tab tab, String url) {
                 if (tab == null) return;
-                setEnabled(shouldEnableShare(tab));
+                updateButtonEnabledState(tab);
             }
         };
     }
@@ -63,11 +64,12 @@ class ShareButton extends ChromeImageButton implements TintObserver {
         }
     }
 
-    private static boolean shouldEnableShare(Tab tab) {
+    private void updateButtonEnabledState(Tab tab) {
         final String url = tab.getUrl();
         final boolean isChromeScheme = url.startsWith(UrlConstants.CHROME_URL_PREFIX)
                 || url.startsWith(UrlConstants.CHROME_NATIVE_URL_PREFIX);
-        return !isChromeScheme && !tab.isShowingInterstitialPage();
+        final boolean isEnabled = !isChromeScheme && !((TabImpl) tab).isShowingInterstitialPage();
+        setEnabled(isEnabled);
     }
 
     @Override

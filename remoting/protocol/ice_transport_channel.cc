@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/callback_helpers.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/utils.h"
@@ -19,7 +18,7 @@
 #include "remoting/protocol/transport_context.h"
 #include "third_party/webrtc/p2p/base/p2p_constants.h"
 #include "third_party/webrtc/p2p/base/p2p_transport_channel.h"
-#include "third_party/webrtc/p2p/base/packet_transport_interface.h"
+#include "third_party/webrtc/p2p/base/packet_transport_internal.h"
 #include "third_party/webrtc/p2p/base/port.h"
 #include "third_party/webrtc/rtc_base/network.h"
 
@@ -51,11 +50,9 @@ TransportRoute::RouteType CandidateTypeToTransportRouteType(
 IceTransportChannel::IceTransportChannel(
     scoped_refptr<TransportContext> transport_context)
     : transport_context_(transport_context),
-      ice_username_fragment_(
-          rtc::CreateRandomString(kIceUfragLength)),
+      ice_username_fragment_(rtc::CreateRandomString(kIceUfragLength)),
       connect_attempts_left_(
-          transport_context->network_settings().ice_reconnect_attempts),
-      weak_factory_(this) {
+          transport_context->network_settings().ice_reconnect_attempts) {
   DCHECK(!ice_username_fragment_.empty());
 }
 
@@ -132,8 +129,8 @@ void IceTransportChannel::Connect(const std::string& name,
                          this, &IceTransportChannel::TryReconnect);
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&IceTransportChannel::NotifyConnected,
-                            weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&IceTransportChannel::NotifyConnected,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void IceTransportChannel::NotifyConnected() {
@@ -142,7 +139,7 @@ void IceTransportChannel::NotifyConnected() {
       new TransportChannelSocketAdapter(channel_.get()));
   socket->SetOnDestroyedCallback(base::Bind(
       &IceTransportChannel::OnChannelDestroyed, base::Unretained(this)));
-  base::ResetAndReturn(&callback_).Run(std::move(socket));
+  std::move(callback_).Run(std::move(socket));
 }
 
 void IceTransportChannel::SetRemoteCredentials(const std::string& ufrag,
@@ -200,9 +197,9 @@ void IceTransportChannel::OnRouteChange(
 }
 
 void IceTransportChannel::OnWritableState(
-    rtc::PacketTransportInterface* transport) {
+    rtc::PacketTransportInternal* transport) {
   DCHECK_EQ(transport,
-            static_cast<rtc::PacketTransportInterface*>(channel_.get()));
+            static_cast<rtc::PacketTransportInternal*>(channel_.get()));
 
   if (transport->writable()) {
     connect_attempts_left_ =

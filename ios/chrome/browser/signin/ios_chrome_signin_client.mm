@@ -7,7 +7,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/metrics/metrics_service.h"
 #include "components/signin/core/browser/cookie_settings_util.h"
-#include "components/signin/core/browser/device_id_helper.h"
 #include "components/signin/ios/browser/account_consistency_service.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/browser_state_info_cache.h"
@@ -15,7 +14,7 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager.h"
 #include "ios/chrome/browser/signin/account_consistency_service_factory.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios.h"
-#include "ios/chrome/browser/web_data_service_factory.h"
+#include "ios/chrome/browser/webdata_services/web_data_service_factory.h"
 #include "ios/chrome/common/channel_info.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -41,18 +40,6 @@ void IOSChromeSigninClient::Shutdown() {
   network_callback_helper_.reset();
 }
 
-base::Time IOSChromeSigninClient::GetInstallDate() {
-  return base::Time::FromTimeT(
-      GetApplicationContext()->GetMetricsService()->GetInstallDate());
-}
-
-// Returns a string describing the chrome version environment. Version format:
-// <Build Info> <OS> <Version number> (<Last change>)<channel or "-devel">
-// If version information is unavailable, returns "invalid."
-std::string IOSChromeSigninClient::GetProductVersion() {
-  return GetVersionString();
-}
-
 PrefService* IOSChromeSigninClient::GetPrefs() {
   return browser_state_->GetPrefs();
 }
@@ -68,12 +55,12 @@ network::mojom::CookieManager* IOSChromeSigninClient::GetCookieManager() {
 
 void IOSChromeSigninClient::DoFinalInit() {}
 
-bool IOSChromeSigninClient::IsFirstRun() const {
-  return false;
-}
-
 bool IOSChromeSigninClient::AreSigninCookiesAllowed() {
   return signin::SettingsAllowSigninCookies(cookie_settings_.get());
+}
+
+bool IOSChromeSigninClient::AreSigninCookiesDeletedOnExit() {
+  return signin::SettingsDeleteSigninCookiesOnExit(cookie_settings_.get());
 }
 
 void IOSChromeSigninClient::AddContentSettingsObserver(
@@ -92,10 +79,9 @@ void IOSChromeSigninClient::DelayNetworkCall(base::OnceClosure callback) {
 
 std::unique_ptr<GaiaAuthFetcher> IOSChromeSigninClient::CreateGaiaAuthFetcher(
     GaiaAuthConsumer* consumer,
-    gaia::GaiaSource source,
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+    gaia::GaiaSource source) {
   return std::make_unique<GaiaAuthFetcherIOS>(
-      consumer, source, url_loader_factory, browser_state_);
+      consumer, source, GetURLLoaderFactory(), browser_state_);
 }
 
 void IOSChromeSigninClient::PreGaiaLogout(base::OnceClosure callback) {

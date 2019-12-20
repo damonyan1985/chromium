@@ -18,14 +18,13 @@ source_set("lifecycle") {
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/cpp/test:test_support",
     "//services/service_manager/public/mojom",
-    "//services/service_manager/runner/common",
     "//testing/gtest",
   ]
 
   data_deps = [
     ":lifecycle_unittest_app",
-    ":lifecycle_unittest_parent",
     ":lifecycle_unittest_package",
+    ":lifecycle_unittest_parent",
   ]
 }
 

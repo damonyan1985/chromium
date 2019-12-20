@@ -39,17 +39,6 @@ function copyAttributes_(source, destination) {
 }
 
 /**
- * Apply localization to |element| with i18n_template.js if available.
- * @param {Element} element Element to be localized.
- * @private
- */
-function localize_(element) {
-  if (window.i18nTemplate && window.loadTimeData) {
-    i18nTemplate.process(element, loadTimeData);
-  }
-}
-
-/**
  * Returns 'N/A' (Not Available) text if |value| is undefined.
  * @param {*} value Object to print.
  * @return {string} 'N/A' or ''.
@@ -389,14 +378,13 @@ function handleStatistics(event) {
   for (const key in data) {
     let entry = statistics[key];
     if (!entry) {
-      entry = cr.doc.createElement('tr');
+      entry = document.createElement('tr');
       $('stat-entries').appendChild(entry);
       statistics[key] = entry;
     }
     entry.detail = data[key];
     entry.innerHTML = '<td>' + stringToText_(key) + '</td>' +
         '<td>' + stringToText_(entry.detail) + '</td>';
-    localize_(entry);
   }
 }
 
@@ -429,10 +417,9 @@ function updateDescription() {
 
       const normalize = keyAndLabel[i][2] || stringToText_;
 
-      const row = cr.doc.createElement('tr');
+      const row = document.createElement('tr');
       row.innerHTML = '<td>' + label + '</td>' +
           '<td>' + normalize(entry) + '</td>';
-      localize_(row);
       tbody.appendChild(row);
     }
   }
@@ -506,5 +493,5 @@ function onLoad() {
   $('dump-button').addEventListener('click', dump, false);
 }
 
-cr.doc.addEventListener('DOMContentLoaded', onLoad, false);
+document.addEventListener('DOMContentLoaded', onLoad, false);
 })();

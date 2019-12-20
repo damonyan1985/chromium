@@ -7,14 +7,22 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
+#include "third_party/blink/renderer/core/svg/animation/element_smil_animations.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
+
+ElementSMILAnimations& SVGElementRareData::EnsureSMILAnimations() {
+  if (!smil_animations_)
+    smil_animations_ = MakeGarbageCollected<ElementSMILAnimations>();
+  return *smil_animations_;
+}
 
 MutableCSSPropertyValueSet*
 SVGElementRareData::EnsureAnimatedSMILStyleProperties() {
   if (!animated_smil_style_properties_) {
     animated_smil_style_properties_ =
-        MutableCSSPropertyValueSet::Create(kSVGAttributeMode);
+        MakeGarbageCollected<MutableCSSPropertyValueSet>(kSVGAttributeMode);
   }
   return animated_smil_style_properties_.Get();
 }
@@ -56,6 +64,7 @@ void SVGElementRareData::Trace(blink::Visitor* visitor) {
   visitor->Trace(element_instances_);
   visitor->Trace(corresponding_element_);
   visitor->Trace(resource_client_);
+  visitor->Trace(smil_animations_);
 }
 
 AffineTransform* SVGElementRareData::AnimateMotionTransform() {

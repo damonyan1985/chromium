@@ -4,10 +4,9 @@
 
 #include "ash/system/accessibility/select_to_speak_tray.h"
 
-#include "ash/accessibility/accessibility_controller.h"
+#include "ash/accessibility/accessibility_controller_impl.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/session/session_controller.h"
-#include "ash/shelf/shelf_constants.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/tray_constants.h"
@@ -25,13 +24,13 @@ class ImageView;
 namespace ash {
 
 // This constant must be kept the same as SELECT_TO_SPEAK_TRAY_CLASS_NAME in
-// chrome/browser/resources/chromeos/select_to_speak/select_to_speak.js.
+// chrome/browser/resources/chromeos/accessibility/select_to_speak/
+// select_to_speak.js.
 const char kSelectToSpeakTrayClassName[] =
     "tray/TrayBackgroundView/SelectToSpeakTray";
 
 SelectToSpeakTray::SelectToSpeakTray(Shelf* shelf)
     : TrayBackgroundView(shelf), icon_(new views::ImageView()) {
-  SetInkDropMode(InkDropMode::ON);
 
   UpdateIconsForSession();
   icon_->SetImage(inactive_image_);
@@ -91,29 +90,29 @@ void SelectToSpeakTray::UpdateIconsForSession() {
 
 void SelectToSpeakTray::CheckStatusAndUpdateIcon() {
   if (!Shell::Get()->accessibility_controller()->select_to_speak_enabled()) {
-    SetVisible(false);
+    SetVisiblePreferred(false);
     return;
   }
 
-  ash::mojom::SelectToSpeakState state =
+  ash::SelectToSpeakState state =
       Shell::Get()->accessibility_controller()->GetSelectToSpeakState();
   switch (state) {
-    case ash::mojom::SelectToSpeakState::kSelectToSpeakStateInactive:
+    case ash::SelectToSpeakState::kSelectToSpeakStateInactive:
       icon_->SetImage(inactive_image_);
       SetIsActive(false);
       break;
-    case ash::mojom::SelectToSpeakState::kSelectToSpeakStateSelecting:
+    case ash::SelectToSpeakState::kSelectToSpeakStateSelecting:
       // Activate the start selection button during selection.
       icon_->SetImage(selecting_image_);
       SetIsActive(true);
       break;
-    case ash::mojom::SelectToSpeakState::kSelectToSpeakStateSpeaking:
+    case ash::SelectToSpeakState::kSelectToSpeakStateSpeaking:
       icon_->SetImage(speaking_image_);
       SetIsActive(true);
       break;
   }
 
-  SetVisible(true);
+  SetVisiblePreferred(true);
 }
 
 }  // namespace ash

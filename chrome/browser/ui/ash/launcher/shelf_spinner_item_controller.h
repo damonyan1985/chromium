@@ -16,7 +16,7 @@
 #include "base/time/time.h"
 
 class ShelfSpinnerController;
-class LauncherContextMenu;
+class ShelfContextMenu;
 
 // ShelfSpinnerItemController displays the icon of an app that cannot be
 // launched immediately (due to ARC or Crostini not being ready) on Chrome OS'
@@ -29,26 +29,22 @@ class ShelfSpinnerItemController : public ash::ShelfItemDelegate {
 
   virtual void SetHost(const base::WeakPtr<ShelfSpinnerController>& host);
 
-  base::TimeDelta GetActiveTime() const;
+  base::Time start_time() const { return start_time_; }
 
   // ash::ShelfItemDelegate:
-  void ItemSelected(std::unique_ptr<ui::Event> event,
-                    int64_t display_id,
-                    ash::ShelfLaunchSource source,
-                    ItemSelectedCallback callback) override;
   void ExecuteCommand(bool from_context_menu,
                       int64_t command_id,
                       int32_t event_flags,
                       int64_t display_id) override;
   void GetContextMenu(int64_t display_id,
-                      GetMenuModelCallback callback) override;
+                      GetContextMenuCallback callback) override;
   void Close() override;
 
  private:
   base::WeakPtr<ShelfSpinnerController> host_;
   const base::Time start_time_;
 
-  std::unique_ptr<LauncherContextMenu> context_menu_;
+  std::unique_ptr<ShelfContextMenu> context_menu_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfSpinnerItemController);
 };

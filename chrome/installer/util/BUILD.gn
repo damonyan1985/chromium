@@ -40,6 +40,10 @@ import("//testing/test.gni")
 # we would still need the variant with no strings for when chrome.dll replaces
 # all strings with its own versions.
 static_library("with_no_strings") {
+  public_deps = [
+    ":constants",
+  ]
+
   deps = [
     "//base",
     "//chrome:strings",
@@ -68,8 +72,6 @@ static_library("with_no_strings") {
       "html_dialog_impl.cc",
       "logging_installer.cc",
       "logging_installer.h",
-      "lzma_file_allocator.cc",
-      "lzma_file_allocator.h",
       "lzma_util.cc",
       "lzma_util.h",
       "master_preferences.cc",
@@ -86,6 +88,8 @@ static_library("with_no_strings") {
       "shell_util.h",
     ]
 
+    public_deps += [ ":did_run_support" ]
+
     deps += [
       # Need to depend on the generated strings target since files here
       # depend on the generated header, but only depend on the ":strings"
@@ -94,6 +98,7 @@ static_library("with_no_strings") {
       ":generate_strings",
       "//base:i18n",
       "//base/third_party/dynamic_annotations",
+      "//build:branding_buildflags",
       "//chrome/install_static:install_static_util",
       "//components/base32",
       "//components/metrics",
@@ -151,8 +156,6 @@ static_library("with_no_strings") {
       "duplicate_tree_detector.h",
       "firewall_manager_win.cc",
       "firewall_manager_win.h",
-      "google_update_constants.cc",
-      "google_update_constants.h",
       "google_update_settings.cc",
       "google_update_settings.h",
       "google_update_util.cc",
@@ -165,8 +168,6 @@ static_library("with_no_strings") {
       "installation_state.h",
       "l10n_string_util.cc",
       "l10n_string_util.h",
-      "master_preferences_constants.cc",
-      "master_preferences_constants.h",
       "move_tree_work_item.cc",
       "move_tree_work_item.h",
       "registry_key_backup.cc",
@@ -175,8 +176,6 @@ static_library("with_no_strings") {
       "self_reg_work_item.h",
       "set_reg_value_work_item.cc",
       "set_reg_value_work_item.h",
-      "util_constants.cc",
-      "util_constants.h",
       "work_item.cc",
       "work_item.h",
       "work_item_list.cc",
@@ -186,8 +185,6 @@ static_library("with_no_strings") {
     sources = [
       "master_preferences.cc",
       "master_preferences.h",
-      "master_preferences_constants.cc",
-      "master_preferences_constants.h",
     ]
   }
 }
@@ -210,7 +207,7 @@ generate_embedded_i18n("generate_strings") {
   ]
   extractor_datafile =
       "//chrome/installer/util/prebuild/create_installer_string_rc.py"
-  
+
   grdfile_folder = "//chrome/app/"
   if (is_chrome_branded) {
     grdfile_name = "google_chrome_strings"
@@ -218,14 +215,12 @@ generate_embedded_i18n("generate_strings") {
     grdfile_name = "chromium_strings"
   }
   xtb_relative_path = "resources"
-  grd_files_info = [
-    [
-      grdfile_folder,
-      grdfile_name,
-      xtb_relative_path,
-      default_embedded_i18_locales
-    ]
-  ]
+  grd_files_info = [ [
+        grdfile_folder,
+        grdfile_name,
+        xtb_relative_path,
+        default_embedded_i18_locales,
+      ] ]
 
   output_file_name_base = "installer_util_strings"
 
@@ -240,7 +235,49 @@ source_set("strings") {
   ]
 }
 
+source_set("constants") {
+  public = [
+    "master_preferences_constants.h",
+  ]
+
+  sources = [
+    "master_preferences_constants.cc",
+  ]
+
+  if (is_win) {
+    public += [
+      "google_update_constants.h",
+      "util_constants.h",
+    ]
+
+    sources += [
+      "google_update_constants.cc",
+      "util_constants.cc",
+    ]
+
+    public_deps = [
+      "//base",
+    ]
+  }
+}
+
 if (is_win) {
+  source_set("did_run_support") {
+    public = [
+      "update_did_run_state.h",
+    ]
+
+    sources = [
+      "update_did_run_state.cc",
+    ]
+
+    deps = [
+      ":constants",
+      "//base",
+      "//chrome/install_static:install_static_util",
+    ]
+  }
+
   source_set("test_support") {
     testonly = true
     sources = [
@@ -274,11 +311,8 @@ if (is_win) {
       "experiment_unittest.cc",
       "google_update_settings_unittest.cc",
       "install_util_unittest.cc",
-      "installer_util_test_common.cc",
-      "installer_util_test_common.h",
       "l10n_string_util_unittest.cc",
       "logging_installer_unittest.cc",
-      "lzma_file_allocator_unittest.cc",
       "lzma_util_unittest.cc",
       "master_preferences_unittest.cc",
       "move_tree_work_item_unittest.cc",
@@ -304,6 +338,7 @@ if (is_win) {
       ":with_rc_strings",
       "//base",
       "//base/test:test_support",
+      "//build:branding_buildflags",
       "//chrome:other_version",
       "//chrome/common:constants",
       "//chrome/install_static:install_static_util",

@@ -38,7 +38,7 @@ CloudPolicyManager::CloudPolicyManager(
             settings_entity_id,
             cloud_policy_store,
             task_runner,
-            network_connection_tracker_getter),
+            std::move(network_connection_tracker_getter)),
       waiting_for_policy_refresh_(false) {}
 
 CloudPolicyManager::~CloudPolicyManager() {}
@@ -77,9 +77,8 @@ bool CloudPolicyManager::IsInitializationComplete(PolicyDomain domain) const {
 void CloudPolicyManager::RefreshPolicies() {
   if (service()) {
     waiting_for_policy_refresh_ = true;
-    service()->RefreshPolicy(
-        base::Bind(&CloudPolicyManager::OnRefreshComplete,
-                   base::Unretained(this)));
+    service()->RefreshPolicy(base::BindOnce(
+        &CloudPolicyManager::OnRefreshComplete, base::Unretained(this)));
   } else {
     OnRefreshComplete(false);
   }
@@ -121,6 +120,7 @@ void CloudPolicyManager::GetChromePolicy(PolicyMap* policy_map) {
 void CloudPolicyManager::CreateComponentCloudPolicyService(
     const std::string& policy_type,
     const base::FilePath& policy_cache_path,
+    PolicySource policy_source,
     CloudPolicyClient* client,
     SchemaRegistry* schema_registry) {
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
@@ -145,11 +145,11 @@ void CloudPolicyManager::CreateComponentCloudPolicyService(
   // ComponentCloudPolicyService's |backend_task_runner| and |cache| must live
   // on the same task runner.
   const auto task_runner =
-      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
+      base::CreateSequencedTaskRunner({base::ThreadPool(), base::MayBlock()});
   std::unique_ptr<ResourceCache> resource_cache(new ResourceCache(
       policy_cache_path, task_runner, /* max_cache_size */ base::nullopt));
   component_policy_service_.reset(new ComponentCloudPolicyService(
-      policy_type, this, schema_registry, core(), client,
+      policy_type, policy_source, this, schema_registry, core(), client,
       std::move(resource_cache), task_runner));
 #endif  // !defined(OS_ANDROID) && !defined(OS_IOS)
 }

@@ -7,7 +7,7 @@
 #include "base/location.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/exported/web_shared_worker_impl.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
@@ -30,8 +30,8 @@ void SharedWorkerReportingProxy::CountFeature(WebFeature feature) {
   PostCrossThreadTask(
       *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
       FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::CountFeature,
-                      CrossThreadUnretained(worker_), feature));
+      CrossThreadBindOnce(&WebSharedWorkerImpl::CountFeature,
+                          CrossThreadUnretained(worker_), feature));
 }
 
 void SharedWorkerReportingProxy::CountDeprecation(WebFeature feature) {
@@ -51,27 +51,16 @@ void SharedWorkerReportingProxy::ReportException(
   // spec:
   // "For shared workers, if the error is still not handled afterwards, the
   // error may be reported to a developer console."
-  // https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2
+  // https://html.spec.whatwg.org/C/#runtime-script-errors-2
 }
 
-void SharedWorkerReportingProxy::ReportConsoleMessage(MessageSource,
-                                                      MessageLevel,
-                                                      const String& message,
-                                                      SourceLocation*) {
+void SharedWorkerReportingProxy::ReportConsoleMessage(
+    mojom::ConsoleMessageSource,
+    mojom::ConsoleMessageLevel,
+    const String& message,
+    SourceLocation*) {
   DCHECK(!IsMainThread());
   // Not supported in SharedWorker.
-}
-
-void SharedWorkerReportingProxy::DidFetchScript() {
-  DCHECK(!IsMainThread());
-  // TODO(nhiroki): Change the task type to kDOMManipulation here and elsewhere
-  // in this file. See the HTML spec:
-  // https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model:dom-manipulation-task-source-2
-  PostCrossThreadTask(
-      *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
-      FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::DidFetchScript,
-                      CrossThreadUnretained(worker_)));
 }
 
 void SharedWorkerReportingProxy::DidFailToFetchClassicScript() {
@@ -82,8 +71,8 @@ void SharedWorkerReportingProxy::DidFailToFetchClassicScript() {
   PostCrossThreadTask(
       *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
       FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::DidFailToFetchClassicScript,
-                      CrossThreadUnretained(worker_)));
+      CrossThreadBindOnce(&WebSharedWorkerImpl::DidFailToFetchClassicScript,
+                          CrossThreadUnretained(worker_)));
 }
 
 void SharedWorkerReportingProxy::DidFailToFetchModuleScript() {
@@ -98,8 +87,8 @@ void SharedWorkerReportingProxy::DidEvaluateClassicScript(bool success) {
   PostCrossThreadTask(
       *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
       FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::DidEvaluateClassicScript,
-                      CrossThreadUnretained(worker_), success));
+      CrossThreadBindOnce(&WebSharedWorkerImpl::DidEvaluateClassicScript,
+                          CrossThreadUnretained(worker_), success));
 }
 
 void SharedWorkerReportingProxy::DidEvaluateModuleScript(bool success) {
@@ -114,8 +103,8 @@ void SharedWorkerReportingProxy::DidCloseWorkerGlobalScope() {
   PostCrossThreadTask(
       *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
       FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::DidCloseWorkerGlobalScope,
-                      CrossThreadUnretained(worker_)));
+      CrossThreadBindOnce(&WebSharedWorkerImpl::DidCloseWorkerGlobalScope,
+                          CrossThreadUnretained(worker_)));
 }
 
 void SharedWorkerReportingProxy::DidTerminateWorkerThread() {
@@ -123,8 +112,8 @@ void SharedWorkerReportingProxy::DidTerminateWorkerThread() {
   PostCrossThreadTask(
       *parent_execution_context_task_runners_->Get(TaskType::kInternalDefault),
       FROM_HERE,
-      CrossThreadBind(&WebSharedWorkerImpl::DidTerminateWorkerThread,
-                      CrossThreadUnretained(worker_)));
+      CrossThreadBindOnce(&WebSharedWorkerImpl::DidTerminateWorkerThread,
+                          CrossThreadUnretained(worker_)));
 }
 
 void SharedWorkerReportingProxy::Trace(blink::Visitor* visitor) {

@@ -7,11 +7,12 @@
 
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_input_event.h"
-#include "third_party/blink/public/platform/web_keyboard_event.h"
-#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/common/input/web_keyboard_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+#include "third_party/blink/public/common/input/web_touch_event.h"
+#include "ui/events/types/scroll_types.h"
 
 // Provides sensible creation of default WebInputEvents for testing purposes.
 
@@ -33,22 +34,22 @@ class CONTENT_EXPORT SyntheticWebMouseWheelEventBuilder {
  public:
   static blink::WebMouseWheelEvent Build(
       blink::WebMouseWheelEvent::Phase phase);
-  static blink::WebMouseWheelEvent Build(float x,
-                                         float y,
-                                         float dx,
-                                         float dy,
-                                         int modifiers,
-                                         bool precise,
-                                         bool scroll_by_page = false);
-  static blink::WebMouseWheelEvent Build(float x,
-                                         float y,
-                                         float global_x,
-                                         float global_y,
-                                         float dx,
-                                         float dy,
-                                         int modifiers,
-                                         bool precise,
-                                         bool scroll_by_page = false);
+  static blink::WebMouseWheelEvent Build(
+      float x,
+      float y,
+      float dx,
+      float dy,
+      int modifiers,
+      ui::input_types::ScrollGranularity delta_units);
+  static blink::WebMouseWheelEvent Build(
+      float x,
+      float y,
+      float global_x,
+      float global_y,
+      float dx,
+      float dy,
+      int modifiers,
+      ui::input_types::ScrollGranularity delta_units);
 };
 
 class CONTENT_EXPORT SyntheticWebKeyboardEventBuilder {
@@ -91,8 +92,19 @@ class CONTENT_EXPORT SyntheticWebTouchEvent : public blink::WebTouchEvent {
   void ResetPoints();
 
   // Adds an additional point to the touch list, returning the point's index.
-  int PressPoint(float x, float y);
-  void MovePoint(int index, float x, float y);
+  int PressPoint(float x,
+                 float y,
+                 float radius_x = 20.f,
+                 float radius_y = 20.f,
+                 float rotation_angle = 0.f,
+                 float force = 1.f);
+  void MovePoint(int index,
+                 float x,
+                 float y,
+                 float radius_x = 20.f,
+                 float radius_y = 20.f,
+                 float rotation_angle = 0.f,
+                 float force = 1.f);
   void ReleasePoint(int index);
   void CancelPoint(int index);
 

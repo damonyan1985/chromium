@@ -2,6 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// clang-format off
+// #import {assert, assertInstanceof} from 'chrome://resources/js/assert.m.js'
+// #import {EventTracker} from 'chrome://resources/js/event_tracker.m.js'
+// #import {hasKeyModifiers, isRTL} from 'chrome://resources/js/util.m.js'
+// clang-format on
+
 cr.define('cr.ui', function() {
   /**
    * A class to manage focus between given horizontally arranged elements.
@@ -15,7 +21,7 @@ cr.define('cr.ui', function() {
    * changes to a node inside |this.boundary_|. If |boundary| isn't specified,
    * any focus change deactivates the row.
    */
-  class FocusRow {
+  /* #export */ class FocusRow {
     /**
      * @param {!Element} root The root of this focus row. Focus classes are
      *     applied to |root| and all added elements must live within |root|.
@@ -140,7 +146,7 @@ cr.define('cr.ui', function() {
      * @protected
      */
     getCustomEquivalent(sampleElement) {
-      return assert(this.getFirstFocusable());
+      return /** @type {!Element} */ (assert(this.getFirstFocusable()));
     }
 
     /**
@@ -266,7 +272,8 @@ cr.define('cr.ui', function() {
      */
     onKeydown_(e) {
       const elements = this.getFocusableElements();
-      const currentElement = /** @type {!Element} */ (e.currentTarget);
+      const currentElement = cr.ui.FocusRow.getFocusableElement(
+          /** @type {!Element} */ (e.currentTarget));
       const elementIndex = elements.indexOf(currentElement);
       assert(elementIndex >= 0);
 
@@ -274,13 +281,24 @@ cr.define('cr.ui', function() {
         return;
       }
 
-      if (hasKeyModifiers(e)) {
+      const isShiftTab = !e.altKey && !e.ctrlKey && !e.metaKey && e.shiftKey &&
+          e.key === 'Tab';
+
+      if (hasKeyModifiers(e) && !isShiftTab) {
         return;
       }
 
       let index = -1;
+      let shouldStopPropagation = true;
 
-      if (e.key == 'ArrowLeft') {
+      if (isShiftTab) {
+        // This always moves back one element, even in RTL.
+        index = elementIndex - 1;
+        if (index < 0) {
+          // Bubble up to focus on the previous element outside the row.
+          return;
+        }
+      } else if (e.key == 'ArrowLeft') {
         index = elementIndex + (isRTL() ? 1 : -1);
       } else if (e.key == 'ArrowRight') {
         index = elementIndex + (isRTL() ? -1 : 1);
@@ -288,12 +306,17 @@ cr.define('cr.ui', function() {
         index = 0;
       } else if (e.key == 'End') {
         index = elements.length - 1;
+      } else {
+        shouldStopPropagation = false;
       }
 
       const elementToFocus = elements[index];
       if (elementToFocus) {
         this.getEquivalentElement(elementToFocus).focus();
         e.preventDefault();
+      }
+      if (shouldStopPropagation) {
+        e.stopPropagation();
       }
     }
   }
@@ -303,7 +326,7 @@ cr.define('cr.ui', function() {
 
 
   /** @interface */
-  class FocusRowDelegate {
+  /* #export */ class FocusRowDelegate {
     /**
      * Called when a key is pressed while on a FocusRow's item. If true is
      * returned, further processing is skipped.
@@ -327,6 +350,7 @@ cr.define('cr.ui', function() {
     getCustomEquivalent(sampleElement) {}
   }
 
+  // #cr_define_end
   return {
     FocusRow,
     FocusRowDelegate,

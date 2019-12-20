@@ -95,7 +95,7 @@ void InvokeCallbackOnTaskRunner(
     const ExtensionCallback& callback,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     const scoped_refptr<const extensions::Extension>& extension) {
-  task_runner->PostTask(FROM_HERE, base::Bind(callback, extension));
+  task_runner->PostTask(FROM_HERE, base::BindOnce(callback, extension));
 }
 
 // Loads extension with the provided |extension_id|, |location|, and
@@ -168,8 +168,7 @@ AppManagerImpl::AppManagerImpl(const base::TickClock* tick_clock)
     : tick_clock_(tick_clock),
       extensions_observer_(this),
       lock_screen_profile_extensions_observer_(this),
-      note_taking_helper_observer_(this),
-      weak_ptr_factory_(this) {}
+      note_taking_helper_observer_(this) {}
 
 AppManagerImpl::~AppManagerImpl() = default;
 
@@ -426,7 +425,7 @@ AppManagerImpl::State AppManagerImpl::AddAppToLockScreenProfile(
 
   extensions::GetExtensionFileTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &InstallExtensionCopy, lock_profile_app, app->path(),
           lock_screen_service->install_directory(), lock_screen_profile_,
           base::Bind(&InvokeCallbackOnTaskRunner,

@@ -5,11 +5,9 @@
 #ifndef CHROME_COMMON_HEAP_PROFILER_CONTROLLER_H_
 #define CHROME_COMMON_HEAP_PROFILER_CONTROLLER_H_
 
-#include "base/memory/weak_ptr.h"
-
-namespace base {
-class TaskRunner;
-}  // namespace base
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/synchronization/atomic_flag.h"
 
 // HeapProfilerController controls collection of sampled heap allocation
 // snapshots for the current process.
@@ -19,20 +17,16 @@ class HeapProfilerController {
   ~HeapProfilerController();
 
   // Starts periodic heap snapshot collection.
-  void StartIfEnabled();
-
-  void SetTaskRunnerForTest(base::TaskRunner* task_runner) {
-    task_runner_for_test_ = task_runner;
-  }
+  void Start();
 
  private:
-  void ScheduleNextSnapshot();
-  void TakeSnapshot();
-  void RetrieveAndSendSnapshot();
+  using StoppedFlag = base::RefCountedData<base::AtomicFlag>;
 
-  bool started_ = false;
-  base::TaskRunner* task_runner_for_test_ = nullptr;
-  base::WeakPtrFactory<HeapProfilerController> weak_factory_;
+  static void ScheduleNextSnapshot(scoped_refptr<StoppedFlag> stopped);
+  static void TakeSnapshot(scoped_refptr<StoppedFlag> stopped);
+  static void RetrieveAndSendSnapshot();
+
+  scoped_refptr<StoppedFlag> stopped_;
 
   DISALLOW_COPY_AND_ASSIGN(HeapProfilerController);
 };

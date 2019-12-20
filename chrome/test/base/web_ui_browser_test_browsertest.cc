@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -19,6 +20,13 @@
 #include "testing/gtest/include/gtest/gtest-spi.h"
 
 using content::WebUIMessageHandler;
+
+namespace {
+const GURL& DummyUrl() {
+  static GURL url(content::GetWebUIURLString("DummyURL"));
+  return url;
+}
+}  // namespace
 
 // According to the interface for EXPECT_FATAL_FAILURE
 // (https://github.com/google/googletest/blob/master/googletest/docs/AdvancedGuide.md#catching-failures)
@@ -55,7 +63,13 @@ class WebUIBrowserExpectFailTest : public WebUIBrowserTest {
 WebUIBrowserTest* WebUIBrowserExpectFailTest::s_test_ = NULL;
 
 // Test that bogus javascript fails fast - no timeout waiting for result.
-IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestFailsFast) {
+// TODO(crbug/974796): Flaky on Win7 debug builds.
+#if (defined(OS_WIN) && !(defined(NDEBUG)))
+#define MAYBE_TestFailsFast DISABLED_TestFailsFast
+#else
+#define MAYBE_TestFailsFast TestFailsFast
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, MAYBE_TestFailsFast) {
   AddLibrary(base::FilePath(FILE_PATH_LITERAL("sample_downloads.js")));
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIDownloadsURL));
   EXPECT_FATAL_FAILURE(RunJavascriptTestNoReturn("DISABLED_BogusFunctionName"),
@@ -63,12 +77,26 @@ IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestFailsFast) {
 }
 
 // Test that bogus javascript fails fast - no timeout waiting for result.
-IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest, TestRuntimeErrorFailsFast) {
+// Flaky timeouts on Win7 Tests (dbg)(1); see https://crbug.com/985255.
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_TestRuntimeErrorFailsFast DISABLED_TestRuntimeErrorFailsFast
+#else
+#define MAYBE_TestRuntimeErrorFailsFast TestRuntimeErrorFailsFast
+#endif
+IN_PROC_BROWSER_TEST_F(WebUIBrowserExpectFailTest,
+                       MAYBE_TestRuntimeErrorFailsFast) {
   AddLibrary(base::FilePath(FILE_PATH_LITERAL("runtime_error.js")));
-  ui_test_utils::NavigateToURL(browser(), GURL(kDummyURL));
+  ui_test_utils::NavigateToURL(browser(), DummyUrl());
   EXPECT_FATAL_FAILURE(RunJavascriptTestNoReturn("TestRuntimeErrorFailsFast"),
                        "GetAsBoolean(&run_test_succeeded_)");
 }
+
+// Test times out in debug builds: https://crbug.com/902310
+#ifndef NDEBUG
+#define MAYBE_TestFailsAsyncFast DISABLED_TestFailsAsyncFast
+#else
+#define MAYBE_TestFailsAsyncFast TestFailsAsyncFast
+#endif
 
 // Test that bogus javascript fails async test fast as well - no timeout waiting
 // for result.
@@ -149,11 +177,11 @@ class WebUIBrowserAsyncTest : public WebUIBrowserTest {
     return &message_handler_;
   }
 
-  // Set up and browse to kDummyURL for all tests.
+  // Set up and browse to DummyUrl() for all tests.
   void SetUpOnMainThread() override {
     WebUIBrowserTest::SetUpOnMainThread();
     AddLibrary(base::FilePath(FILE_PATH_LITERAL("async.js")));
-    ui_test_utils::NavigateToURL(browser(), GURL(kDummyURL));
+    ui_test_utils::NavigateToURL(browser(), DummyUrl());
   }
 
   DISALLOW_COPY_AND_ASSIGN(WebUIBrowserAsyncTest);

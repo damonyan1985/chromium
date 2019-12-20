@@ -11,12 +11,9 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/task/post_task.h"
-#include "components/history/core/browser/history_service.h"
 #include "components/safe_browsing/browser/threat_details.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_source.h"
 
 using content::BrowserThread;
 
@@ -24,9 +21,7 @@ namespace safe_browsing {
 
 ThreatDetailsRedirectsCollector::ThreatDetailsRedirectsCollector(
     const base::WeakPtr<history::HistoryService>& history_service)
-    : has_started_(false),
-      history_service_(history_service),
-      history_service_observer_(this) {
+    : has_started_(false), history_service_(history_service) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (history_service) {
@@ -36,17 +31,17 @@ ThreatDetailsRedirectsCollector::ThreatDetailsRedirectsCollector(
 
 void ThreatDetailsRedirectsCollector::StartHistoryCollection(
     const std::vector<GURL>& urls,
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   DVLOG(1) << "Num of urls to check in history service: " << urls.size();
   has_started_ = true;
-  callback_ = callback;
+  callback_ = std::move(callback);
 
   if (urls.size() == 0) {
     AllDone();
     return;
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&ThreatDetailsRedirectsCollector::StartGetRedirects, this,
                      urls));
@@ -84,18 +79,18 @@ void ThreatDetailsRedirectsCollector::GetRedirects(const GURL& url) {
 
   history_service_->QueryRedirectsTo(
       url,
-      base::Bind(&ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo,
-                 base::Unretained(this), url),
+      base::BindOnce(&ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo,
+                     base::Unretained(this), url),
       &request_tracker_);
 }
 
 void ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo(
     const GURL& url,
-    const history::RedirectList* redirect_list) {
-  if (!redirect_list->empty()) {
+    history::RedirectList redirect_list) {
+  if (!redirect_list.empty()) {
     std::vector<GURL> urllist;
     urllist.push_back(url);
-    urllist.insert(urllist.end(), redirect_list->begin(), redirect_list->end());
+    urllist.insert(urllist.end(), redirect_list.begin(), redirect_list.end());
     redirects_urls_.push_back(urllist);
   }
 
@@ -112,8 +107,7 @@ void ThreatDetailsRedirectsCollector::OnGotQueryRedirectsTo(
 
 void ThreatDetailsRedirectsCollector::AllDone() {
   DVLOG(1) << "AllDone";
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, callback_);
-  callback_.Reset();
+  base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(callback_));
 }
 
 void ThreatDetailsRedirectsCollector::HistoryServiceBeingDeleted(

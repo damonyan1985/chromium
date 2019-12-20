@@ -9,7 +9,6 @@
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/load_flags.h"
@@ -70,8 +69,7 @@ void UserInfoFetcher::Start(const std::string& access_token) {
   resource_request->url = GaiaUrls::GetInstance()->oauth_user_info_url();
   resource_request->headers.SetHeader(net::HttpRequestHeaders::kAuthorization,
                                       MakeAuthorizationHeader(access_token));
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   url_loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                  traffic_annotation);
@@ -79,9 +77,6 @@ void UserInfoFetcher::Start(const std::string& access_token) {
       url_loader_factory_.get(),
       base::BindOnce(&UserInfoFetcher::OnFetchComplete, base::Unretained(this)),
       1024 * 1024 /* 1 MiB */);
-
-  // TODO(https://crbug.com/808498): Use ServiceURLLoader to flag data usage as
-  // data_use_measurement::DataUseUserData::POLICY.
 }
 
 void UserInfoFetcher::OnFetchComplete(
@@ -110,7 +105,7 @@ void UserInfoFetcher::OnFetchComplete(
   DCHECK(unparsed_data);
   DVLOG(1) << "Received UserInfo response: " << *unparsed_data;
   std::unique_ptr<base::Value> parsed_value =
-      base::JSONReader::Read(*unparsed_data);
+      base::JSONReader::ReadDeprecated(*unparsed_data);
   base::DictionaryValue* dict;
   if (parsed_value.get() && parsed_value->GetAsDictionary(&dict)) {
     delegate_->OnGetUserInfoSuccess(dict);
@@ -121,4 +116,4 @@ void UserInfoFetcher::OnFetchComplete(
   }
 }
 
-};  // namespace policy
+}  // namespace policy

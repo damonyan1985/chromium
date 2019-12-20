@@ -7,7 +7,6 @@
 #include "cc/paint/skia_paint_canvas.h"
 #include "chrome/browser/vr/elements/render_text_wrapper.h"
 #include "chrome/browser/vr/elements/ui_texture.h"
-#include "chrome/browser/vr/font_fallback.h"
 #include "third_party/icu/source/common/unicode/uscript.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
@@ -203,11 +202,6 @@ class TextTexture : public UiTexture {
     return lines_;
   }
 
-  void SetOnUnhandledCodePointCallback(
-      base::RepeatingCallback<void()> callback) {
-    unhandled_codepoint_callback_ = callback;
-  }
-
   void SetOnRenderTextCreated(
       base::RepeatingCallback<void(gfx::RenderText*)> callback) {
     render_text_created_callback_ = callback;
@@ -257,7 +251,6 @@ class TextTexture : public UiTexture {
   std::vector<std::unique_ptr<gfx::RenderText>> lines_;
   Text* element_ = nullptr;
 
-  base::RepeatingCallback<void()> unhandled_codepoint_callback_;
   base::RepeatingCallback<void(gfx::RenderText*)> render_text_created_callback_;
   base::RepeatingCallback<void(const gfx::RenderText&, SkCanvas*)>
       render_text_rendered_callback_;
@@ -353,11 +346,6 @@ void Text::SetUnsupportedCodePointsForTest(bool unsupported) {
   texture_->set_unsupported_code_points_for_test(unsupported);
 }
 
-void Text::SetOnUnhandledCodePointCallback(
-    base::RepeatingCallback<void()> callback) {
-  texture_->SetOnUnhandledCodePointCallback(callback);
-}
-
 void Text::SetOnRenderTextCreated(
     base::RepeatingCallback<void(gfx::RenderText*)> callback) {
   texture_->SetOnRenderTextCreated(callback);
@@ -401,14 +389,8 @@ gfx::Size TextTexture::LayOutText() {
     text_bounds.set_width(DmmToPixel(text_width_));
   }
 
-  gfx::FontList fonts;
-  bool check_all_characters = !!unhandled_codepoint_callback_;
-  if (!GetFontList(kDefaultFontFamily, pixel_font_height, text_, &fonts,
-                   check_all_characters) ||
-      unsupported_code_point_for_test_) {
-    if (unhandled_codepoint_callback_)
-      unhandled_codepoint_callback_.Run();
-  }
+  gfx::FontList fonts =
+      gfx::FontList(gfx::Font(kDefaultFontFamily, pixel_font_height));
 
   TextRenderParameters parameters;
   parameters.color = color_;
@@ -514,7 +496,8 @@ void TextTexture::PrepareDrawWrapText(const base::string16& text,
   int height = 0;
   int line_height = 0;
   for (size_t i = 0; i < strings.size(); i++) {
-    auto render_text = gfx::RenderText::CreateHarfBuzzInstance();
+    std::unique_ptr<gfx::RenderText> render_text =
+        gfx::RenderText::CreateRenderText();
     UpdateRenderText(render_text.get(), strings[i], font_list, parameters.color,
                      parameters.text_alignment, parameters.shadows_enabled,
                      parameters.shadow_color, parameters.shadow_size);
@@ -547,7 +530,7 @@ void TextTexture::PrepareDrawSingleLineText(
     const TextRenderParameters& parameters) {
   if (lines_.size() != 1) {
     lines_.clear();
-    lines_.push_back(gfx::RenderText::CreateHarfBuzzInstance());
+    lines_.push_back(gfx::RenderText::CreateRenderText());
   }
 
   auto* render_text = lines_.front().get();

@@ -6,7 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -20,17 +20,18 @@
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/renderer/web_test/web_test_content_renderer_client.h"
 #include "content/test/test_content_client.h"
-
-#if defined(OS_ANDROID)
-#include "content/shell/app/shell_main_delegate.h"
-#endif
+#include "ui/events/platform/platform_event_source.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/foundation_util.h"
 #endif
 
 #if !defined(OS_CHROMEOS) && defined(OS_LINUX)
-#include "ui/base/ime/input_method_initializer.h"
+#include "ui/base/ime/init/input_method_initializer.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "content/public/test/network_connection_change_simulator.h"
 #endif
 
 #if defined(USE_AURA) && defined(TOOLKIT_VIEWS)
@@ -61,28 +62,15 @@ void ContentBrowserTest::SetUp() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   SetUpCommandLine(command_line);
 
-#if defined(OS_ANDROID)
-  shell_main_delegate_.reset(new ShellMainDelegate);
-  shell_main_delegate_->PreSandboxStartup();
-  if (command_line->HasSwitch(switches::kSingleProcess)) {
-    // We explicitly leak the new ContentRendererClient as we're
-    // setting a global that may be used after ContentBrowserTest is
-    // destroyed.
-    ContentRendererClient* old_client =
-        switches::IsRunWebTestsSwitchPresent()
-            ? SetRendererClientForTesting(new WebTestContentRendererClient)
-            : SetRendererClientForTesting(new ShellContentRendererClient);
-    // No-one should have set this value before we did.
-    DCHECK(!old_client);
-  }
-#elif defined(OS_MACOSX)
+#if defined(OS_MACOSX)
   // See InProcessBrowserTest::PrepareTestCommandLine().
   base::FilePath subprocess_path;
   base::PathService::Get(base::FILE_EXE, &subprocess_path);
   subprocess_path = subprocess_path.DirName().DirName();
   DCHECK_EQ(subprocess_path.BaseName().value(), "Contents");
   subprocess_path = subprocess_path.Append(
-      "Frameworks/Content Shell Helper.app/Contents/MacOS/Content Shell Helper");
+      "Frameworks/Content Shell Framework.framework/Helpers/Content Shell "
+      "Helper.app/Contents/MacOS/Content Shell Helper");
   command_line->AppendSwitchPath(switches::kBrowserSubprocessPath,
                                  subprocess_path);
 #endif
@@ -99,6 +87,8 @@ void ContentBrowserTest::SetUp() {
   ui::InitializeInputMethodForTesting();
 #endif
 
+  ui::PlatformEventSource::SetIgnoreNativePlatformEvents(true);
+
   BrowserTestBase::SetUp();
 }
 
@@ -109,13 +99,14 @@ void ContentBrowserTest::TearDown() {
 #if !defined(OS_CHROMEOS) && defined(OS_LINUX)
   ui::ShutdownInputMethodForTesting();
 #endif
-
-#if defined(OS_ANDROID)
-  shell_main_delegate_.reset();
-#endif
 }
 
 void ContentBrowserTest::PreRunTestOnMainThread() {
+#if defined(OS_CHROMEOS)
+  NetworkConnectionChangeSimulator network_change_simulator;
+  network_change_simulator.InitializeChromeosConnectionType();
+#endif
+
   if (!switches::IsRunWebTestsSwitchPresent()) {
     CHECK_EQ(Shell::windows().size(), 1u);
     shell_ = Shell::windows()[0];

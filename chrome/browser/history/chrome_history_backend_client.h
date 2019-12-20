@@ -18,13 +18,13 @@ class ModelLoader;
 // to provides access to embedder-specific features.
 class ChromeHistoryBackendClient : public history::HistoryBackendClient {
  public:
-  explicit ChromeHistoryBackendClient(bookmarks::ModelLoader* model_loader);
+  explicit ChromeHistoryBackendClient(
+      scoped_refptr<bookmarks::ModelLoader> model_loader);
   ~ChromeHistoryBackendClient() override;
 
   // history::HistoryBackendClient implementation.
   bool IsPinnedURL(const GURL& url) override;
   std::vector<history::URLAndTitle> GetPinnedURLs() override;
-  bool ShouldReportDatabaseError() override;
   bool IsWebSafe(const GURL& url) override;
 #if defined(OS_ANDROID)
   void OnHistoryBackendInitialized(

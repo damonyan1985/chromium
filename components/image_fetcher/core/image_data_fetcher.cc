@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "components/image_fetcher/core/image_fetcher_metrics_reporter.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -16,11 +17,12 @@
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
 
-using data_use_measurement::DataUseUserData;
-
 namespace {
 
 const char kContentLocationHeader[] = "Content-Location";
+const char kNoUmaClient[] = "NoClient";
+
+const int kDownloadTimeoutSeconds = 30;
 
 }  // namespace
 
@@ -44,19 +46,12 @@ struct ImageDataFetcher::ImageDataFetcherRequest {
 
 ImageDataFetcher::ImageDataFetcher(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
-    : url_loader_factory_(url_loader_factory),
-      data_use_service_name_(DataUseUserData::IMAGE_FETCHER_UNTAGGED) {
+    : url_loader_factory_(url_loader_factory) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 ImageDataFetcher::~ImageDataFetcher() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-}
-
-void ImageDataFetcher::SetDataUseServiceName(
-    DataUseServiceName data_use_service_name) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  data_use_service_name_ = data_use_service_name;
 }
 
 void ImageDataFetcher::SetImageDownloadLimit(
@@ -65,15 +60,27 @@ void ImageDataFetcher::SetImageDownloadLimit(
   max_download_bytes_ = max_download_bytes;
 }
 
+void ImageDataFetcher::FetchImageData(const GURL& image_url,
+                                      ImageDataFetcherCallback callback,
+                                      ImageFetcherParams params,
+                                      bool send_cookies) {
+  FetchImageData(
+      image_url, std::move(callback), params, /*referrer=*/std::string(),
+      net::URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE,
+      send_cookies);
+}
+
 void ImageDataFetcher::FetchImageData(
     const GURL& image_url,
     ImageDataFetcherCallback callback,
     const net::NetworkTrafficAnnotationTag& traffic_annotation,
     bool send_cookies) {
   FetchImageData(
-      image_url, std::move(callback), /*referrer=*/std::string(),
+      image_url, std::move(callback),
+      ImageFetcherParams(traffic_annotation, kNoUmaClient),
+      /*referrer=*/std::string(),
       net::URLRequest::CLEAR_REFERRER_ON_TRANSITION_FROM_SECURE_TO_INSECURE,
-      traffic_annotation, send_cookies);
+      send_cookies);
 }
 
 void ImageDataFetcher::FetchImageData(
@@ -83,39 +90,50 @@ void ImageDataFetcher::FetchImageData(
     net::URLRequest::ReferrerPolicy referrer_policy,
     const net::NetworkTrafficAnnotationTag& traffic_annotation,
     bool send_cookies) {
+  FetchImageData(image_url, std::move(callback),
+                 ImageFetcherParams(traffic_annotation, kNoUmaClient), referrer,
+                 referrer_policy, send_cookies);
+}
+
+void ImageDataFetcher::FetchImageData(
+    const GURL& image_url,
+    ImageDataFetcherCallback callback,
+    ImageFetcherParams params,
+    const std::string& referrer,
+    net::URLRequest::ReferrerPolicy referrer_policy,
+    bool send_cookies) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   auto request = std::make_unique<network::ResourceRequest>();
   request->url = image_url;
   request->referrer_policy = referrer_policy;
   request->referrer = GURL(referrer);
-  if (!send_cookies) {
-    request->load_flags = net::LOAD_DO_NOT_SEND_COOKIES |
-                          net::LOAD_DO_NOT_SAVE_COOKIES |
-                          net::LOAD_DO_NOT_SEND_AUTH_DATA;
-  }
-
-  // TODO(https://crbug.com/808498) re-add data use measurement once
-  // SimpleURLLoader supports it.  Parameter:
-  // data_use_service_name_
+  request->credentials_mode = send_cookies
+                                  ? network::mojom::CredentialsMode::kInclude
+                                  : network::mojom::CredentialsMode::kOmit;
 
   std::unique_ptr<network::SimpleURLLoader> loader =
-      network::SimpleURLLoader::Create(std::move(request), traffic_annotation);
+      network::SimpleURLLoader::Create(std::move(request),
+                                       params.traffic_annotation());
 
   // For compatibility in error handling. This is a little wasteful since the
   // body will get thrown out anyway, though.
   loader->SetAllowHttpErrorResults(true);
 
+  loader->SetTimeoutDuration(
+      base::TimeDelta::FromSeconds(kDownloadTimeoutSeconds));
+
   if (max_download_bytes_.has_value()) {
     loader->DownloadToString(
         url_loader_factory_.get(),
         base::BindOnce(&ImageDataFetcher::OnURLLoaderComplete,
-                       base::Unretained(this), loader.get()),
+                       base::Unretained(this), loader.get(), std::move(params)),
         max_download_bytes_.value());
   } else {
     loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
         url_loader_factory_.get(),
         base::BindOnce(&ImageDataFetcher::OnURLLoaderComplete,
-                       base::Unretained(this), loader.get()));
+                       base::Unretained(this), loader.get(),
+                       std::move(params)));
   }
 
   std::unique_ptr<ImageDataFetcherRequest> request_track(
@@ -127,10 +145,12 @@ void ImageDataFetcher::FetchImageData(
 
 void ImageDataFetcher::OnURLLoaderComplete(
     const network::SimpleURLLoader* source,
+    ImageFetcherParams params,
     std::unique_ptr<std::string> response_body) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pending_requests_.find(source) != pending_requests_.end());
   bool success = source->NetError() == net::OK;
+  int status_code = source->NetError();
 
   RequestMetadata metadata;
   if (success && source->ResponseInfo() && source->ResponseInfo()->headers) {
@@ -142,6 +162,7 @@ void ImageDataFetcher::OnURLLoaderComplete(
         /*iter=*/nullptr, kContentLocationHeader,
         &metadata.content_location_header);
     success &= (metadata.http_response_code == net::HTTP_OK);
+    status_code = metadata.http_response_code;
   }
 
   std::string image_data;
@@ -149,6 +170,9 @@ void ImageDataFetcher::OnURLLoaderComplete(
     image_data = std::move(*response_body);
   }
   FinishRequest(source, metadata, image_data);
+
+  ImageFetcherMetricsReporter::ReportRequestStatusCode(params.uma_client_name(),
+                                                       status_code);
 }
 
 void ImageDataFetcher::FinishRequest(const network::SimpleURLLoader* source,

@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/memory/shared_memory.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "build/build_config.h"
 #include "ui/gfx/buffer_types.h"
@@ -16,7 +15,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/gfx_export.h"
 
-#if defined(OS_LINUX)
+#if defined(USE_OZONE) || defined(OS_LINUX)
 #include "ui/gfx/native_pixmap_handle.h"
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include "ui/gfx/mac/io_surface.h"
@@ -59,14 +58,14 @@ struct GFX_EXPORT GpuMemoryBufferHandle {
   GpuMemoryBufferHandle(GpuMemoryBufferHandle&& other);
   GpuMemoryBufferHandle& operator=(GpuMemoryBufferHandle&& other);
   ~GpuMemoryBufferHandle();
+  GpuMemoryBufferHandle Clone() const;
   bool is_null() const { return type == EMPTY_BUFFER; }
   GpuMemoryBufferType type;
   GpuMemoryBufferId id;
   base::UnsafeSharedMemoryRegion region;
   uint32_t offset;
   int32_t stride;
-#if defined(OS_LINUX)
-  // TODO(crbug.com/863011): convert this to a scoped handle.
+#if defined(OS_LINUX) || defined(OS_FUCHSIA)
   NativePixmapHandle native_pixmap_handle;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   ScopedRefCountedIOSurfaceMachPort mach_port;

@@ -8,6 +8,7 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/security_style_explanations.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "net/dns/mock_host_resolver.h"
@@ -37,7 +38,7 @@ void DevToolsProtocolTest::SetUpOnMainThread() {
 
 bool DevToolsProtocolTest::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
@@ -58,7 +59,8 @@ base::DictionaryValue* DevToolsProtocolTest::SendCommand(
 
   std::string json_command;
   base::JSONWriter::Write(command, &json_command);
-  agent_host_->DispatchProtocolMessage(this, json_command);
+  agent_host_->DispatchProtocolMessage(
+      this, base::as_bytes(base::make_span(json_command)));
   // Some messages are dispatched synchronously.
   // Only run loop if we are not finished yet.
   if (in_dispatch_ && wait) {
@@ -138,7 +140,7 @@ DevToolsProtocolTest::WaitForNotification(const std::string& notification,
   return std::move(waiting_for_notification_params_);
 }
 
-blink::WebSecurityStyle DevToolsProtocolTest::GetSecurityStyle(
+blink::SecurityStyle DevToolsProtocolTest::GetSecurityStyle(
     content::WebContents* web_contents,
     content::SecurityStyleExplanations* security_style_explanations) {
   security_style_explanations->secure_explanations.push_back(
@@ -146,7 +148,7 @@ blink::WebSecurityStyle DevToolsProtocolTest::GetSecurityStyle(
           "an explanation title", "an explanation summary",
           "an explanation description", cert_,
           blink::WebMixedContentContextType::kNotMixedContent));
-  return blink::kWebSecurityStyleNeutral;
+  return blink::SecurityStyle::kNeutral;
 }
 
 std::unique_ptr<base::DictionaryValue>
@@ -229,10 +231,11 @@ void DevToolsProtocolTest::RunLoopUpdatingQuitClosure() {
 
 void DevToolsProtocolTest::DispatchProtocolMessage(
     DevToolsAgentHost* agent_host,
-    const std::string& message) {
-  std::unique_ptr<base::DictionaryValue> root(
-      static_cast<base::DictionaryValue*>(
-          base::JSONReader::Read(message).release()));
+    base::span<const uint8_t> message) {
+  base::StringPiece message_str(reinterpret_cast<const char*>(message.data()),
+                                message.size());
+  auto root = base::DictionaryValue::From(
+      base::JSONReader::ReadDeprecated(message_str));
   int id;
   if (root->GetInteger("id", &id)) {
     result_ids_.push_back(id);

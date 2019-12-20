@@ -10,7 +10,7 @@
 #include "ash/app_list/model/app_list_model.h"
 #include "ash/app_list/model/app_list_model_export.h"
 
-namespace app_list {
+namespace ash {
 
 class AppListItem;
 
@@ -31,6 +31,10 @@ class APP_LIST_MODEL_EXPORT AppListModelObserver {
   // Triggered after |item| has moved, changed folders, or changed properties.
   virtual void OnAppListItemUpdated(AppListItem* item) {}
 
+  // Triggered after AppListState has changed.
+  virtual void OnAppListStateChanged(ash::AppListState new_state,
+                                     ash::AppListState old_state) {}
+
   // Triggered when the custom launcher page enabled state is changed.
   virtual void OnCustomLauncherPageEnabledStateChanged(bool enabled) {}
 
@@ -38,6 +42,6 @@ class APP_LIST_MODEL_EXPORT AppListModelObserver {
   virtual ~AppListModelObserver() {}
 };
 
-}  // namespace app_list
+}  // namespace ash
 
 #endif  // ASH_APP_LIST_MODEL_APP_LIST_MODEL_OBSERVER_H_

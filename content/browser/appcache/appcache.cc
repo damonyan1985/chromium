@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <vector>
 
 #include "base/logging.h"
 #include "base/stl_util.h"
@@ -19,12 +20,44 @@
 
 namespace content {
 
+// static
+bool AppCache::CheckValidManifestScope(const GURL& manifest_url,
+                                       const std::string& manifest_scope) {
+  if (manifest_scope.empty())
+    return false;
+  const GURL url = manifest_url.Resolve(manifest_scope);
+  return url.is_valid() && !url.has_ref() && !url.has_query() &&
+         url.spec().back() == '/';
+}
+
+// static
+std::string AppCache::GetManifestScope(const GURL& manifest_url,
+                                       std::string optional_scope) {
+  DCHECK(manifest_url.is_valid());
+  if (!optional_scope.empty()) {
+    std::string scope = manifest_url.Resolve(optional_scope).path();
+    if (CheckValidManifestScope(manifest_url, scope)) {
+      return optional_scope;
+    }
+  }
+
+  // The default manifest scope is the path to the manifest URL's containing
+  // directory.
+  const GURL manifest_scope_url = manifest_url.GetWithoutFilename();
+  DCHECK(manifest_scope_url.is_valid());
+  DCHECK(CheckValidManifestScope(manifest_url, manifest_scope_url.path()));
+  return manifest_scope_url.path();
+}
+
 AppCache::AppCache(AppCacheStorage* storage, int64_t cache_id)
     : cache_id_(cache_id),
       owning_group_(nullptr),
       online_whitelist_all_(false),
       is_complete_(false),
       cache_size_(0),
+      padding_size_(0),
+      manifest_parser_version_(-1),
+      manifest_scope_(""),
       storage_(storage) {
   storage_->working_set()->AddCache(this);
 }
@@ -47,6 +80,7 @@ void AppCache::AddEntry(const GURL& url, const AppCacheEntry& entry) {
   DCHECK(entries_.find(url) == entries_.end());
   entries_.insert(EntryMap::value_type(url, entry));
   cache_size_ += entry.response_size();
+  padding_size_ += entry.padding_size();
 }
 
 bool AppCache::AddOrModifyEntry(const GURL& url, const AppCacheEntry& entry) {
@@ -54,17 +88,22 @@ bool AppCache::AddOrModifyEntry(const GURL& url, const AppCacheEntry& entry) {
       entries_.insert(EntryMap::value_type(url, entry));
 
   // Entry already exists.  Merge the types of the new and existing entries.
-  if (!ret.second)
+  if (!ret.second) {
     ret.first->second.add_types(entry.types());
-  else
+  } else {
     cache_size_ += entry.response_size();  // New entry. Add to cache size.
+    padding_size_ += entry.padding_size();
+  }
   return ret.second;
 }
 
 void AppCache::RemoveEntry(const GURL& url) {
   auto found = entries_.find(url);
   DCHECK(found != entries_.end());
+  DCHECK_GE(cache_size_, found->second.response_size());
+  DCHECK_GE(padding_size_, found->second.padding_size());
   cache_size_ -= found->second.response_size();
+  padding_size_ -= found->second.padding_size();
   entries_.erase(found);
 }
 
@@ -107,6 +146,8 @@ bool SortNamespacesByLength(
 
 void AppCache::InitializeWithManifest(AppCacheManifest* manifest) {
   DCHECK(manifest);
+  manifest_parser_version_ = manifest->parser_version;
+  manifest_scope_ = manifest->scope;
   intercept_namespaces_.swap(manifest->intercept_namespaces);
   fallback_namespaces_.swap(manifest->fallback_namespaces);
   online_whitelist_namespaces_.swap(manifest->online_whitelist_namespaces);
@@ -126,16 +167,19 @@ void AppCache::InitializeWithDatabaseRecords(
     const std::vector<AppCacheDatabase::NamespaceRecord>& intercepts,
     const std::vector<AppCacheDatabase::NamespaceRecord>& fallbacks,
     const std::vector<AppCacheDatabase::OnlineWhiteListRecord>& whitelists) {
-  DCHECK(cache_id_ == cache_record.cache_id);
+  DCHECK_EQ(cache_id_, cache_record.cache_id);
+  manifest_parser_version_ = cache_record.manifest_parser_version;
+  manifest_scope_ = cache_record.manifest_scope;
   online_whitelist_all_ = cache_record.online_wildcard;
   update_time_ = cache_record.update_time;
 
   for (size_t i = 0; i < entries.size(); ++i) {
     const AppCacheDatabase::EntryRecord& entry = entries.at(i);
     AddEntry(entry.url, AppCacheEntry(entry.flags, entry.response_id,
-                                      entry.response_size));
+                                      entry.response_size, entry.padding_size));
   }
-  DCHECK(cache_size_ == cache_record.cache_size);
+  DCHECK_EQ(cache_size_, cache_record.cache_size);
+  DCHECK_EQ(padding_size_, cache_record.padding_size);
 
   for (size_t i = 0; i < intercepts.size(); ++i)
     intercept_namespaces_.push_back(intercepts.at(i).namespace_);
@@ -174,7 +218,10 @@ void AppCache::ToDatabaseRecords(
   cache_record->group_id = group->group_id();
   cache_record->online_wildcard = online_whitelist_all_;
   cache_record->update_time = update_time_;
-  cache_record->cache_size = 0;
+  cache_record->cache_size = cache_size_;
+  cache_record->padding_size = padding_size_;
+  cache_record->manifest_parser_version = manifest_parser_version_;
+  cache_record->manifest_scope = manifest_scope_;
 
   for (const auto& pair : entries_) {
     entries->push_back(AppCacheDatabase::EntryRecord());
@@ -184,7 +231,7 @@ void AppCache::ToDatabaseRecords(
     record.flags = pair.second.types();
     record.response_id = pair.second.response_id();
     record.response_size = pair.second.response_size();
-    cache_record->cache_size += record.response_size;
+    record.padding_size = pair.second.padding_size();
   }
 
   const url::Origin origin = url::Origin::Create(group->manifest_url());
@@ -277,7 +324,8 @@ void AppCache::ToResourceInfoVector(
     info.is_fallback = pair.second.IsFallback();
     info.is_foreign = pair.second.IsForeign();
     info.is_explicit = pair.second.IsExplicit();
-    info.size = pair.second.response_size();
+    info.response_size = pair.second.response_size();
+    info.padding_size = pair.second.padding_size();
     info.response_id = pair.second.response_id();
   }
 }

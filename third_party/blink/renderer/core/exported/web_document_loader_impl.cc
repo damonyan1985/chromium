@@ -34,14 +34,18 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/mojom/loader/mhtml_load_result.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_network_provider.h"
 #include "third_party/blink/public/platform/web_document_subresource_filter.h"
+#include "third_party/blink/public/platform/web_loading_hints_provider.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/loader/subresource_filter.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/mhtml/archive_resource.h"
 #include "third_party/blink/renderer/platform/mhtml/mhtml_archive.h"
@@ -90,10 +94,6 @@ WebURL WebDocumentLoaderImpl::UnreachableURL() const {
   return DocumentLoader::UnreachableURL();
 }
 
-void WebDocumentLoaderImpl::AppendRedirect(const WebURL& url) {
-  DocumentLoader::AppendRedirect(url);
-}
-
 void WebDocumentLoaderImpl::RedirectChain(WebVector<WebURL>& result) const {
   result.Assign(redirect_chain_);
 }
@@ -122,8 +122,12 @@ void WebDocumentLoaderImpl::SetExtraData(
 WebDocumentLoaderImpl::WebDocumentLoaderImpl(
     LocalFrame* frame,
     WebNavigationType navigation_type,
+    base::Optional<ContentSecurityPolicy*> content_security_policy,
     std::unique_ptr<WebNavigationParams> navigation_params)
-    : DocumentLoader(frame, navigation_type, std::move(navigation_params)),
+    : DocumentLoader(frame,
+                     navigation_type,
+                     content_security_policy,
+                     std::move(navigation_params)),
       response_wrapper_(DocumentLoader::GetResponse()) {}
 
 WebDocumentLoaderImpl::~WebDocumentLoaderImpl() {
@@ -138,8 +142,15 @@ void WebDocumentLoaderImpl::DetachFromFrame(bool flush_microtask_queue) {
 
 void WebDocumentLoaderImpl::SetSubresourceFilter(
     WebDocumentSubresourceFilter* subresource_filter) {
-  DocumentLoader::SetSubresourceFilter(SubresourceFilter::Create(
-      *GetFrame()->GetDocument(), base::WrapUnique(subresource_filter)));
+  DocumentLoader::SetSubresourceFilter(MakeGarbageCollected<SubresourceFilter>(
+      GetFrame()->GetDocument(), base::WrapUnique(subresource_filter)));
+}
+
+void WebDocumentLoaderImpl::SetLoadingHintsProvider(
+    std::unique_ptr<blink::WebLoadingHintsProvider> loading_hints_provider) {
+  DocumentLoader::SetPreviewsResourceLoadingHints(
+      PreviewsResourceLoadingHints::CreateFromLoadingHintsProvider(
+          *GetFrame()->GetDocument(), std::move(loading_hints_provider)));
 }
 
 void WebDocumentLoaderImpl::SetServiceWorkerNetworkProvider(
@@ -160,17 +171,25 @@ void WebDocumentLoaderImpl::ResumeParser() {
   DocumentLoader::ResumeParser();
 }
 
-bool WebDocumentLoaderImpl::IsArchive() const {
-  return Fetcher()->Archive();
+bool WebDocumentLoaderImpl::HasBeenLoadedAsWebArchive() const {
+  return archive_ || (archive_load_result_ != mojom::MHTMLLoadResult::kSuccess);
+}
+
+WebURLRequest::PreviewsState WebDocumentLoaderImpl::GetPreviewsState() const {
+  return DocumentLoader::GetPreviewsState();
 }
 
 WebArchiveInfo WebDocumentLoaderImpl::GetArchiveInfo() const {
-  const MHTMLArchive* archive = Fetcher()->Archive();
-  return {archive->MainResource()->Url(), archive->Date()};
+  if (archive_) {
+    DCHECK(archive_->MainResource());
+    return {archive_load_result_, archive_->MainResource()->Url(),
+            archive_->Date()};
+  }
+  return {archive_load_result_, WebURL(), base::Time()};
 }
 
 bool WebDocumentLoaderImpl::HadUserGesture() const {
-  return DocumentLoader::had_transient_activation();
+  return DocumentLoader::HadTransientActivation();
 }
 
 bool WebDocumentLoaderImpl::IsListingFtpDirectory() const {

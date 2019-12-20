@@ -37,11 +37,9 @@ def build(build_config, target_device, extra_gn_options, extra_ninja_options):
       of the ninja build command.
   """
   if target_device == 'iphoneos':
-    target_cpu = 'arm'
-    additional_cpu = 'arm64'
+    target_cpu = 'arm64'
   else:
-    target_cpu = 'x86'
-    additional_cpu = 'x64'
+    target_cpu = 'x64'
 
   if build_config == 'Debug':
     build_config_gn_args = 'is_debug=true'
@@ -51,13 +49,12 @@ def build(build_config, target_device, extra_gn_options, extra_ninja_options):
 
   build_dir = os.path.join("out", target_dir_name(build_config, target_device))
   gn_args = ('target_os="ios" enable_websockets=false '
-            'is_component_build=false use_xcode_clang=true '
+            'is_component_build=false use_xcode_clang=false '
             'disable_file_support=true disable_ftp_support=true '
             'disable_brotli_filter=true ios_enable_code_signing=false '
             'enable_dsyms=true '
-            'target_cpu="%s" additional_target_cpus = ["%s"] %s %s' %
-            (target_cpu, additional_cpu, build_config_gn_args,
-             extra_gn_options))
+            'target_cpu="%s" %s %s' %
+            (target_cpu, build_config_gn_args, extra_gn_options))
 
   gn_command = 'gn gen %s --args=\'%s\'' % (build_dir, gn_args)
   print gn_command
@@ -226,9 +223,6 @@ def main():
     extra_gn_options += 'ios_web_view_include_cronet=false '
   if options.enable_sync:
     extra_gn_options += 'ios_web_view_enable_sync=true '
-    # Used to differentiate //ios/web_view from //ios/chrome in the user agent
-    # product string passed to sync servers.
-    extra_gn_options += 'sync_user_agent_product="ChromeWebView" '
   else:
     extra_gn_options += 'ios_web_view_enable_sync=false '
   if options.enable_autofill:
@@ -236,8 +230,6 @@ def main():
   else:
     extra_gn_options += 'ios_web_view_enable_autofill=false '
   extra_gn_options += 'ios_web_view_output_name="%s" ' % output_name
-  # This is needed until all clients drop iOS 10 support.
-  extra_gn_options += 'ios_deployment_target="10.0" '
   # This prevents Breakpad from being included in the final binary to avoid
   # duplicate symbols with the client app.
   extra_gn_options += 'use_crash_key_stubs=true '

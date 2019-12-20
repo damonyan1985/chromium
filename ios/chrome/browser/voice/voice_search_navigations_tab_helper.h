@@ -5,8 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_VOICE_VOICE_SEARCH_NAVIGATIONS_TAB_HELPER_H_
 #define IOS_CHROME_BROWSER_VOICE_VOICE_SEARCH_NAVIGATIONS_TAB_HELPER_H_
 
-#import "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 // A helper object that tracks which NavigationItems were created because of
 // voice search queries.
@@ -39,6 +39,8 @@ class VoiceSearchNavigationTabHelper
 
   // Whether a voice search navigation is expected.
   bool will_navigate_to_voice_search_result_ = false;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(VoiceSearchNavigationTabHelper);
 };

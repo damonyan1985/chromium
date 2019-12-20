@@ -25,10 +25,9 @@
 
 // See https://webaudio.github.io/web-audio-api/#mediastreamaudiodestinationnode
 [
-    Constructor(AudioContext context, optional AudioNodeOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface MediaStreamAudioDestinationNode : AudioNode {
+] interface MediaStreamAudioDestinationNode : AudioNode {
+    [RaisesException] constructor(AudioContext context, optional AudioNodeOptions options);
     readonly attribute MediaStream stream;
 };

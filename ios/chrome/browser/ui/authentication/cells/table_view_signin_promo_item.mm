@@ -30,7 +30,7 @@ const CGFloat kMargin = 16;
   return self;
 }
 
-- (void)configureCell:(UITableViewCell*)tableCell
+- (void)configureCell:(TableViewCell*)tableCell
            withStyler:(ChromeTableViewStyler*)styler {
   [super configureCell:tableCell withStyler:styler];
   TableViewSigninPromoCell* cell =
@@ -41,6 +41,16 @@ const CGFloat kMargin = 16;
   [self.configurator configureSigninPromoView:cell.signinPromoView];
   if (styler.cellTitleColor)
     cell.signinPromoView.textLabel.textColor = styler.cellTitleColor;
+  if (styler.tintColor) {
+    cell.signinPromoView.primaryButton.backgroundColor = styler.tintColor;
+    [cell.signinPromoView.secondaryButton setTitleColor:styler.tintColor
+                                               forState:UIControlStateNormal];
+  }
+  if (styler.solidButtonTextColor) {
+    [cell.signinPromoView.primaryButton
+        setTitleColor:styler.solidButtonTextColor
+             forState:UIControlStateNormal];
+  }
 }
 
 @end

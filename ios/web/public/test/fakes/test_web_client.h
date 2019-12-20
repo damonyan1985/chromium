@@ -25,10 +25,24 @@ class TestWebClient : public web::WebClient {
 
   // WebClient implementation.
   void AddAdditionalSchemes(Schemes* schemes) const override;
-  // Returns true for kTestWebUIScheme and kTestNativeContentScheme URL schemes.
+
+  // Returns true for kTestWebUIScheme URL.
   bool IsAppSpecificURL(const GURL& url) const override;
+
+  bool ShouldBlockUrlDuringRestore(const GURL& url,
+                                   WebState* web_state) const override;
+
+  void AddSerializableData(web::SerializableUserDataManager* user_data_manager,
+                           web::WebState* web_state) override;
+
   std::string GetUserAgent(UserAgentType type) const override;
+
+  // Returns |plugin_not_supported_text_| as the text to be displayed for an
+  // unsupported plugin.
+  base::string16 GetPluginNotSupportedText() const override;
+
   base::RefCountedMemory* GetDataResourceBytes(int id) const override;
+
   NSString* GetDocumentStartScriptForMainFrame(
       BrowserState* browser_state) const override;
   void AllowCertificateError(WebState*,
@@ -36,7 +50,20 @@ class TestWebClient : public web::WebClient {
                              const net::SSLInfo&,
                              const GURL&,
                              bool overridable,
+                             int64_t navigation_id,
                              const base::Callback<void(bool)>&) override;
+  void PrepareErrorPage(WebState* web_state,
+                        const GURL& url,
+                        NSError* error,
+                        bool is_post,
+                        bool is_off_the_record,
+                        const base::Optional<net::SSLInfo>& info,
+                        int64_t navigation_id,
+                        base::OnceCallback<void(NSString*)> callback) override;
+  UIView* GetWindowedContainer() override;
+
+  // Sets |plugin_not_supported_text_|.
+  void SetPluginNotSupportedText(const base::string16& text);
 
   // Changes Early Page Script for testing purposes.
   void SetEarlyPageScript(NSString* page_script);
@@ -55,6 +82,7 @@ class TestWebClient : public web::WebClient {
   bool last_cert_error_overridable() { return last_cert_error_overridable_; }
 
  private:
+  base::string16 plugin_not_supported_text_;
   NSString* early_page_script_ = nil;
   // Last arguments passed to AllowCertificateError.
   int last_cert_error_code_ = 0;

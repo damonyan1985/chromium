@@ -6,10 +6,9 @@
 
 #include "chrome/installer/setup/uninstall.h"
 
-#include <windows.h>
-
 #include <stddef.h>
 #include <stdint.h>
+#include <windows.h>
 
 #include <initializer_list>
 #include <memory>
@@ -29,6 +28,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "base/win/shortcut.h"
+#include "build/branding_buildflags.h"
+#include "chrome/chrome_elf/chrome_elf_constants.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_result_codes.h"
@@ -56,9 +57,9 @@
 #include "chrome/installer/util/shell_util.h"
 #include "chrome/installer/util/util_constants.h"
 #include "chrome/installer/util/work_item.h"
-#include "chrome_elf/chrome_elf_constants.h"
 #include "content/public/common/result_codes.h"
-#include "rlz/lib/rlz_lib.h"
+#include "rlz/lib/rlz_lib_clear.h"
+#include "rlz/lib/supplementary_branding.h"
 
 using base::win::RegKey;
 
@@ -130,7 +131,7 @@ bool RemoveInstallerFiles(const base::FilePath& installer_directory) {
   for (base::FilePath to_delete = file_enumerator.Next(); !to_delete.empty();
        to_delete = file_enumerator.Next()) {
     VLOG(1) << "Deleting installer path " << to_delete.value();
-    if (!base::DeleteFile(to_delete, true)) {
+    if (!base::DeleteFileRecursively(to_delete)) {
       LOG(ERROR) << "Failed to delete path: " << to_delete.value();
       success = false;
     }
@@ -222,7 +223,7 @@ DeleteResult DeleteEmptyDir(const base::FilePath& path) {
   if (!base::IsDirectoryEmpty(path))
     return DELETE_NOT_EMPTY;
 
-  if (base::DeleteFile(path, true))
+  if (base::DeleteFileRecursively(path))
     return DELETE_SUCCEEDED;
 
   LOG(ERROR) << "Failed to delete folder: " << path.value();
@@ -256,7 +257,7 @@ DeleteResult DeleteUserDataDir(const base::FilePath& user_data_dir) {
 
   DeleteResult result = DELETE_SUCCEEDED;
   VLOG(1) << "Deleting user profile " << user_data_dir.value();
-  if (!base::DeleteFile(user_data_dir, true)) {
+  if (!base::DeleteFileRecursively(user_data_dir)) {
     LOG(ERROR) << "Failed to delete user profile dir: "
                << user_data_dir.value();
     result = DELETE_FAILED;
@@ -367,11 +368,11 @@ DeleteResult DeleteChromeFilesAndFolders(const InstallerState& installer_state,
     }
 
     VLOG(1) << "Deleting install path " << to_delete.value();
-    if (!base::DeleteFile(to_delete, true)) {
+    if (!base::DeleteFileRecursively(to_delete)) {
       LOG(ERROR) << "Failed to delete path (1st try): " << to_delete.value();
       // Try closing any running Chrome processes and deleting files once again.
       CloseAllChromeProcesses();
-      if (!base::DeleteFile(to_delete, true)) {
+      if (!base::DeleteFileRecursively(to_delete)) {
         LOG(ERROR) << "Failed to delete path (2nd try): " << to_delete.value();
         result = DELETE_FAILED;
         break;
@@ -634,7 +635,7 @@ bool DeleteChromeRegistrationKeys(const InstallerState& installer_state,
     LOG(DFATAL) << "Cannot retrieve the toast activator registry path";
   }
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   if (installer_state.system_install()) {
     // Uninstall the elevation service.
     const base::string16 clsid_reg_path =
@@ -652,7 +653,7 @@ bool DeleteChromeRegistrationKeys(const InstallerState& installer_state,
     LOG_IF(WARNING, !InstallServiceWorkItem::DeleteService(
                         install_static::GetElevationServiceName()));
   }
-#endif  // defined(GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING
 
   // Delete all Start Menu Internet registrations that refer to this Chrome.
   {
@@ -773,11 +774,11 @@ void RemoveChromeLegacyRegistryKeys(const base::FilePath& chrome_exe) {
   // to be not worth the hassle. Remove these old registry entries if
   // they exist. See: http://codereview.chromium.org/210007
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   const wchar_t kChromeExtProgId[] = L"ChromeExt";
 #else
   const wchar_t kChromeExtProgId[] = L"ChromiumExt";
-#endif  // defined(GOOGLE_CHROME_BUILD
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING
 
   HKEY roots[] = {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER};
   for (size_t i = 0; i < base::size(roots); ++i) {

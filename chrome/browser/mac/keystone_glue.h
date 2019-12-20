@@ -14,6 +14,7 @@
 
 #include "base/mac/scoped_authorizationref.h"
 #import "base/mac/scoped_nsobject.h"
+#include "chrome/common/mac/staging_watcher.h"
 
 // Possible outcomes of various operations.  A version may accompany some of
 // these, but beware: a version is never required.  For statuses that can be
@@ -69,37 +70,36 @@ extern NSString* const kAutoupdateStatusErrorMessages;
  @protected
 
   // Data for Keystone registration
-  base::scoped_nsobject<NSString> productID_;
-  base::scoped_nsobject<NSString> appPath_;
-  base::scoped_nsobject<NSString> url_;
-  base::scoped_nsobject<NSString> version_;
-  std::string channel_;  // Logically: dev, beta, or stable.
+  base::scoped_nsobject<NSString> _productID;
+  base::scoped_nsobject<NSString> _appPath;
+  base::scoped_nsobject<NSString> _url;
+  base::scoped_nsobject<NSString> _version;
+  std::string _channel;  // Logically: dev, beta, or stable.
   // Cached location of the brand file.
-  base::scoped_nsobject<NSString> brandFile_;
+  base::scoped_nsobject<NSString> _brandFile;
 
   // And the Keystone registration itself, with the active timer
-  base::scoped_nsobject<KSRegistration> registration_;
-  NSTimer* timer_;  // strong
-  BOOL registrationActive_;
-  Class ksUnsignedReportingAttributeClass_;
+  base::scoped_nsobject<KSRegistration> _registration;
+  NSTimer* _timer;  // strong
+  BOOL _registrationActive;
+  Class _ksUnsignedReportingAttributeClass;
 
   // The most recent kAutoupdateStatusNotification notification posted.
-  base::scoped_nsobject<NSNotification> recentNotification_;
+  base::scoped_nsobject<NSNotification> _recentNotification;
 
   // The authorization object, when it needs to persist because it's being
   // carried across threads.
-  base::mac::ScopedAuthorizationRef authorization_;
+  base::mac::ScopedAuthorizationRef _authorization;
 
   // YES if a synchronous promotion operation is in progress (promotion during
   // installation).
-  BOOL synchronousPromotion_;
+  BOOL _synchronousPromotion;
 
   // YES if an update was ever successfully installed by -installUpdate.
-  BOOL updateSuccessfullyInstalled_;
+  BOOL _updateSuccessfullyInstalled;
 
-  // Profile count information.
-  uint32_t numProfiles_;
-  uint32_t numSignedInProfiles_;
+  // The object to use to watch for the staging key.
+  base::scoped_nsobject<CrStagingKeyWatcher> _stagingKeyWatcher;
 }
 
 // Return the default Keystone Glue object.
@@ -172,15 +172,12 @@ extern NSString* const kAutoupdateStatusErrorMessages;
 // asynchronous mode.
 - (void)promoteTicket;
 
+// Set the registration active.
+- (void)setRegistrationActive;
+
 // Sets a new value for appPath.  Used during installation to point a ticket
 // at the installed copy.
 - (void)setAppPath:(NSString*)appPath;
-
-// Sets the total number of profiles and the number of signed in profiles.
-// Passing zeroes sets the application as active, but does not update
-// profile metrics.
-- (void)updateProfileCountsWithNumProfiles:(uint32_t)profiles
-                       numSignedInProfiles:(uint32_t)signedInProfiles;
 
 @end  // @interface KeystoneGlue
 

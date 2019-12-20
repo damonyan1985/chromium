@@ -28,7 +28,7 @@ enum MultipleDisplayState {
   MULTIPLE_DISPLAY_STATE_INVALID,
   MULTIPLE_DISPLAY_STATE_HEADLESS,
   MULTIPLE_DISPLAY_STATE_SINGLE,
-  MULTIPLE_DISPLAY_STATE_DUAL_MIRROR,     // TODO(crbug.com/774795) Rename this.
+  MULTIPLE_DISPLAY_STATE_MULTI_MIRROR,    // 2+ displays in mirror mode.
   MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED,  // 2+ displays in extended mode.
 };
 
@@ -61,6 +61,15 @@ enum HDCPState {
 
   // Update this when adding a new type.
   HDCP_STATE_LAST = HDCP_STATE_ENABLED
+};
+
+// The orientation of the panel in respect to the natural device orientation.
+enum PanelOrientation {
+  kNormal = 0,
+  kBottomUp = 1,
+  kLeftUp = 2,
+  kRightUp = 3,
+  kLast = kRightUp
 };
 
 }  // namespace display

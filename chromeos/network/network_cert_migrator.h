@@ -35,13 +35,12 @@ class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkCertMigrator
   void NetworkListChanged() override;
 
   // NetworkCertLoader::Observer overrides
-  void OnCertificatesLoaded(
-      const net::ScopedCERTCertificateList& cert_list) override;
+  void OnCertificatesLoaded() override;
 
   // Unowned associated NetworkStateHandler* (global or test instance).
   NetworkStateHandler* network_state_handler_;
 
-  base::WeakPtrFactory<NetworkCertMigrator> weak_ptr_factory_;
+  base::WeakPtrFactory<NetworkCertMigrator> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NetworkCertMigrator);
 };

@@ -36,10 +36,10 @@ bool LayoutSVGInline::IsChildAllowed(LayoutObject* child,
   if (child->IsText())
     return SVGLayoutSupport::IsLayoutableTextNode(child);
 
-  if (IsSVGAElement(*GetNode())) {
+  if (IsA<SVGAElement>(*GetNode())) {
     Node* child_node = child->GetNode();
     // Disallow direct descendant 'a'.
-    if (child_node && IsSVGAElement(*child_node))
+    if (child_node && IsA<SVGAElement>(*child_node))
       return false;
   }
 
@@ -83,8 +83,9 @@ FloatRect LayoutSVGInline::VisualRectInLocalSVGCoordinates() const {
   return FloatRect();
 }
 
-LayoutRect LayoutSVGInline::VisualRectInDocument() const {
-  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View());
+PhysicalRect LayoutSVGInline::VisualRectInDocument(
+    VisualRectFlags flags) const {
+  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View(), flags);
 }
 
 void LayoutSVGInline::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
@@ -112,16 +113,15 @@ void LayoutSVGInline::AbsoluteQuads(Vector<FloatQuad>& quads,
     quads.push_back(LocalToAbsoluteQuad(
         FloatRect(text_bounding_box.X() + box->X().ToFloat(),
                   text_bounding_box.Y() + box->Y().ToFloat(),
-                  box->LogicalWidth().ToFloat(),
-                  box->LogicalHeight().ToFloat()),
+                  box->Width().ToFloat(), box->Height().ToFloat()),
         mode));
   }
 }
 
 void LayoutSVGInline::WillBeDestroyed() {
   SVGResourcesCache::ClientDestroyed(*this);
-  SVGResources::ClearClipPathFilterMask(ToSVGElement(*GetNode()), Style());
-  SVGResources::ClearPaints(ToSVGElement(*GetNode()), Style());
+  SVGResources::ClearClipPathFilterMask(To<SVGElement>(*GetNode()), Style());
+  SVGResources::ClearPaints(To<SVGElement>(*GetNode()), Style());
   LayoutInline::WillBeDestroyed();
 }
 
@@ -136,9 +136,9 @@ void LayoutSVGInline::StyleDidChange(StyleDifference diff,
     SetNeedsBoundariesUpdate();
 
   LayoutInline::StyleDidChange(diff, old_style);
-  SVGResources::UpdateClipPathFilterMask(ToSVGElement(*GetNode()), old_style,
+  SVGResources::UpdateClipPathFilterMask(To<SVGElement>(*GetNode()), old_style,
                                          StyleRef());
-  SVGResources::UpdatePaints(ToSVGElement(*GetNode()), old_style, StyleRef());
+  SVGResources::UpdatePaints(To<SVGElement>(*GetNode()), old_style, StyleRef());
   SVGResourcesCache::ClientStyleChanged(*this, diff, StyleRef());
 }
 

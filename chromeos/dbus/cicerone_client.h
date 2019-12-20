@@ -46,6 +46,11 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
     virtual void OnLxdContainerCreated(
         const vm_tools::cicerone::LxdContainerCreatedSignal& signal) = 0;
 
+    // OnLxdContainerDeleted is signaled from Cicerone when the long running
+    // deletion of an Lxd container is complete.
+    virtual void OnLxdContainerDeleted(
+        const vm_tools::cicerone::LxdContainerDeletedSignal& signal) = 0;
+
     // OnLxdContainerDownloading is signaled from Cicerone giving download
     // progress on the container.
     virtual void OnLxdContainerDownloading(
@@ -62,6 +67,32 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
     // required before an old container is safe to use.
     virtual void OnLxdContainerStarting(
         const vm_tools::cicerone::LxdContainerStartingSignal& signal) = 0;
+
+    // OnExportLxdContainerProgress is signalled from Cicerone while a container
+    // is being exported via ExportLxdContainer.
+    virtual void OnExportLxdContainerProgress(
+        const vm_tools::cicerone::ExportLxdContainerProgressSignal& signal) = 0;
+
+    // OnImportLxdContainerProgress is signalled from Cicerone while a container
+    // is being imported via ImportLxdContainer.
+    virtual void OnImportLxdContainerProgress(
+        const vm_tools::cicerone::ImportLxdContainerProgressSignal& signal) = 0;
+
+    // OnPendingAppListUpdates is signalled from Cicerone when the number of
+    // pending app list updates changes.
+    virtual void OnPendingAppListUpdates(
+        const vm_tools::cicerone::PendingAppListUpdatesSignal& signal) = 0;
+
+    // This is signaled from the container while a playbook is being applied
+    // via ApplyAnsiblePlaybook.
+    virtual void OnApplyAnsiblePlaybookProgress(
+        const vm_tools::cicerone::ApplyAnsiblePlaybookProgressSignal&
+            signal) = 0;
+
+    // This is signaled from Cicerone while a container is being upgraded
+    // via UpgradeContainer.
+    virtual void OnUpgradeContainerProgress(
+        const vm_tools::cicerone::UpgradeContainerProgressSignal& signal) = 0;
 
    protected:
     virtual ~Observer() = default;
@@ -93,6 +124,9 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
   // StartLxdContainer.
   virtual bool IsLxdContainerCreatedSignalConnected() = 0;
 
+  // This should be true prior to calling DeleteLxdContainer.
+  virtual bool IsLxdContainerDeletedSignalConnected() = 0;
+
   // This should be true prior to calling CreateLxdContainer or
   // StartLxdContainer.
   virtual bool IsLxdContainerDownloadingSignalConnected() = 0;
@@ -101,8 +135,24 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
   // StartLxdContainer.
   virtual bool IsTremplinStartedSignalConnected() = 0;
 
-  // This should be true prior to calling StartLxdContainer in async mode
+  // This should be true prior to calling StartLxdContainer in async mode.
   virtual bool IsLxdContainerStartingSignalConnected() = 0;
+
+  // This should be true prior to calling ExportLxdContainer.
+  virtual bool IsExportLxdContainerProgressSignalConnected() = 0;
+
+  // This should be true prior to calling ImportLxdContainer.
+  virtual bool IsImportLxdContainerProgressSignalConnected() = 0;
+
+  // This should be true before expecting to recieve
+  // PendingAppListUpdatesSignal.
+  virtual bool IsPendingAppListUpdatesSignalConnected() = 0;
+
+  // This should be true prior to calling ApplyAnsiblePlaybook.
+  virtual bool IsApplyAnsiblePlaybookProgressSignalConnected() = 0;
+
+  // This should be true prior to calling UpgradeContainer.
+  virtual bool IsUpgradeContainerProgressSignalConnected() = 0;
 
   // Launches an application inside a running Container.
   // |callback| is called after the method call finishes.
@@ -148,6 +198,14 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
       DBusMethodCallback<vm_tools::cicerone::CreateLxdContainerResponse>
           callback) = 0;
 
+  // Deletes an Lxd Container.
+  // |callback| is called to indicate deletion status.
+  // |Observer::OnLxdContainerDeleted| will be called on completion.
+  virtual void DeleteLxdContainer(
+      const vm_tools::cicerone::DeleteLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::DeleteLxdContainerResponse>
+          callback) = 0;
+
   // Starts a new Lxd Container.
   // |callback| is called when the method completes.
   virtual void StartLxdContainer(
@@ -169,11 +227,54 @@ class COMPONENT_EXPORT(CHROMEOS_DBUS) CiceroneClient : public DBusClient {
       DBusMethodCallback<vm_tools::cicerone::SetUpLxdContainerUserResponse>
           callback) = 0;
 
-  // Searches for not installed Linux packages in a container.
+  // Exports the Lxd container.
+  // |callback| is called when the method completes.
+  virtual void ExportLxdContainer(
+      const vm_tools::cicerone::ExportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::ExportLxdContainerResponse>
+          callback) = 0;
+
+  // Imports the Lxd container.
+  // |callback| is called when the method completes.
+  virtual void ImportLxdContainer(
+      const vm_tools::cicerone::ImportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::ImportLxdContainerResponse>
+          callback) = 0;
+
+  // Cancels the in progress Lxd container export.
+  // |callback| is called when the method completes.
+  virtual void CancelExportLxdContainer(
+      const vm_tools::cicerone::CancelExportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::CancelExportLxdContainerResponse>
+          callback) = 0;
+
+  // Cancels the in progress Lxd container import.
+  // |callback| is called when the method completes.
+  virtual void CancelImportLxdContainer(
+      const vm_tools::cicerone::CancelImportLxdContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::CancelImportLxdContainerResponse>
+          callback) = 0;
+
+  // Applies Ansible playbook.
   // |callback| is called after the method call finishes.
-  virtual void SearchApp(
-      const vm_tools::cicerone::AppSearchRequest& request,
-      DBusMethodCallback<vm_tools::cicerone::AppSearchResponse> callback) = 0;
+  virtual void ApplyAnsiblePlaybook(
+      const vm_tools::cicerone::ApplyAnsiblePlaybookRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::ApplyAnsiblePlaybookResponse>
+          callback) = 0;
+
+  // Upgrades the container.
+  // |callback| is called when the method completes.
+  virtual void UpgradeContainer(
+      const vm_tools::cicerone::UpgradeContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::UpgradeContainerResponse>
+          callback) = 0;
+
+  // Cancels the in progress container upgrade.
+  // |callback| is called when the method completes.
+  virtual void CancelUpgradeContainer(
+      const vm_tools::cicerone::CancelUpgradeContainerRequest& request,
+      DBusMethodCallback<vm_tools::cicerone::CancelUpgradeContainerResponse>
+          callback) = 0;
 
   // Registers |callback| to run when the Cicerone service becomes available.
   // If the service is already available, or if connecting to the name-owner-

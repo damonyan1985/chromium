@@ -41,7 +41,6 @@ class CORE_EXPORT HTMLIFrameElement final
   USING_GARBAGE_COLLECTED_MIXIN(HTMLIFrameElement);
 
  public:
-  DECLARE_NODE_FACTORY(HTMLIFrameElement);
   void Trace(Visitor*) override;
 
   explicit HTMLIFrameElement(Document&);
@@ -56,9 +55,14 @@ class CORE_EXPORT HTMLIFrameElement final
 
   ParsedFeaturePolicy ConstructContainerPolicy(
       Vector<String>* /* messages */) const override;
+  DocumentPolicy::FeatureState ConstructRequiredPolicy() const override;
 
   FrameOwnerElementType OwnerType() const final {
     return FrameOwnerElementType::kIframe;
+  }
+
+  WebSandboxFlags sandbox_flags_converted_to_feature_policies() const {
+    return sandbox_flags_converted_to_feature_policies_;
   }
 
  private:
@@ -75,7 +79,7 @@ class CORE_EXPORT HTMLIFrameElement final
   void RemovedFrom(ContainerNode&) override;
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) const override;
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
 
   bool IsInteractiveContent() const override;
 
@@ -84,16 +88,26 @@ class CORE_EXPORT HTMLIFrameElement final
   // FrameOwner overrides:
   bool AllowFullscreen() const override { return allow_fullscreen_; }
   bool AllowPaymentRequest() const override { return allow_payment_request_; }
+  bool DisallowDocumentAccess() const override {
+    return disallow_document_access_;
+  }
   AtomicString RequiredCsp() const override { return required_csp_; }
 
   AtomicString name_;
   AtomicString required_csp_;
   AtomicString allow_;
+  AtomicString required_policy_;  // policy attribute
   bool allow_fullscreen_;
   bool allow_payment_request_;
   bool collapsed_by_client_;
-  TraceWrapperMember<HTMLIFrameElementSandbox> sandbox_;
+  bool disallow_document_access_;
+  Member<HTMLIFrameElementSandbox> sandbox_;
   Member<DOMFeaturePolicy> policy_;
+  // This represents a subset of sandbox flags set through 'sandbox' attribute
+  // that will be converted to feature policies as part of the container
+  // policies.
+  WebSandboxFlags sandbox_flags_converted_to_feature_policies_ =
+      WebSandboxFlags::kNone;
 
   network::mojom::ReferrerPolicy referrer_policy_;
 };

@@ -25,12 +25,10 @@ base::LazyInstance<base::Lock>::Leaky g_log_message_handler_lock =
 LogMessageHandler* g_log_message_handler = nullptr;
 }  // namespace
 
-LogMessageHandler::LogMessageHandler(
-    const Delegate& delegate)
+LogMessageHandler::LogMessageHandler(const Delegate& delegate)
     : delegate_(delegate),
       suppress_logging_(false),
-      caller_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      weak_ptr_factory_(this) {
+      caller_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   base::AutoLock lock(g_log_message_handler_lock.Get());
   if (g_log_message_handler) {
     LOG(FATAL) << "LogMessageHandler is already registered. Only one instance "
@@ -89,10 +87,9 @@ void LogMessageHandler::PostLogMessageToCorrectThread(
   // Note that this means that LOG(FATAL) messages will be lost because the
   // process will exit before the message is sent to the client.
   caller_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&LogMessageHandler::SendLogMessageToClient,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 severity, file, line, message_start, str));
+      FROM_HERE, base::BindOnce(&LogMessageHandler::SendLogMessageToClient,
+                                weak_ptr_factory_.GetWeakPtr(), severity, file,
+                                line, message_start, str));
 }
 
 void LogMessageHandler::SendLogMessageToClient(

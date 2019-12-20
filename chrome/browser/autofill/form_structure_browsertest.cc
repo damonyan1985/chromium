@@ -223,13 +223,13 @@ IN_PROC_BROWSER_TEST_P(FormStructureBrowserTest, DataDrivenHeuristics) {
   // Prints the path of the test to be executed.
   LOG(INFO) << GetParam().MaybeAsASCII();
   bool is_expected_to_pass =
-      !base::ContainsKey(GetFailingTestNames(), GetParam().BaseName().value());
+      !base::Contains(GetFailingTestNames(), GetParam().BaseName().value());
   RunOneDataDrivenTest(GetParam(), GetOutputDirectory(kTestName),
                        is_expected_to_pass);
 }
 
-INSTANTIATE_TEST_CASE_P(AllForms,
-                        FormStructureBrowserTest,
-                        testing::ValuesIn(GetTestFiles()));
+INSTANTIATE_TEST_SUITE_P(AllForms,
+                         FormStructureBrowserTest,
+                         testing::ValuesIn(GetTestFiles()));
 
 }  // namespace autofill

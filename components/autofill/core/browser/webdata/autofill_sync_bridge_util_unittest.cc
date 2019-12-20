@@ -7,14 +7,15 @@
 #include <vector>
 
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card_cloud_token_data.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/browser/webdata/autofill_sync_bridge_test_util.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/common/autofill_constants.h"
-#include "components/sync/base/hash_util.h"
+#include "components/sync/base/client_tag_hash.h"
 #include "components/sync/model/entity_data.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,12 +46,13 @@ class TestAutofillTable : public AutofillTable {
   DISALLOW_COPY_AND_ASSIGN(TestAutofillTable);
 };
 
-EntityData SpecificsToEntity(const sync_pb::AutofillWalletSpecifics& specifics,
-                             const std::string& client_tag) {
-  EntityData data;
-  *data.specifics.mutable_autofill_wallet() = specifics;
-  data.client_tag_hash =
-      syncer::GenerateSyncableHash(syncer::AUTOFILL_WALLET_DATA, client_tag);
+std::unique_ptr<EntityData> SpecificsToEntity(
+    const sync_pb::AutofillWalletSpecifics& specifics,
+    const std::string& client_tag) {
+  auto data = std::make_unique<syncer::EntityData>();
+  *data->specifics.mutable_autofill_wallet() = specifics;
+  data->client_tag_hash = syncer::ClientTagHash::FromUnhashed(
+      syncer::AUTOFILL_WALLET_DATA, client_tag);
   return data;
 }
 
@@ -72,31 +74,36 @@ TEST_F(AutofillSyncBridgeUtilTest, PopulateWalletTypesFromSyncData) {
   entity_data.push_back(EntityChange::CreateAdd(
       address_id,
       SpecificsToEntity(CreateAutofillWalletSpecificsForAddress(address_id),
-                        /*client_tag=*/"address-address1")
-          .PassToPtr()));
+                        /*client_tag=*/"address-address1")));
   entity_data.push_back(EntityChange::CreateAdd(
       "card1",
       SpecificsToEntity(CreateAutofillWalletSpecificsForCard(
                             /*id=*/"card1", /*billing_address_id=*/address_id),
-                        /*client_tag=*/"card-card1")
-          .PassToPtr()));
+                        /*client_tag=*/"card-card1")));
   entity_data.push_back(EntityChange::CreateAdd(
       "deadbeef",
       SpecificsToEntity(CreateAutofillWalletSpecificsForPaymentsCustomerData(
                             /*specifics_id=*/"deadbeef"),
-                        /*client_tag=*/"customer-deadbeef")
-          .PassToPtr()));
+                        /*client_tag=*/"customer-deadbeef")));
+  entity_data.push_back(EntityChange::CreateAdd(
+      "data1", SpecificsToEntity(
+                   CreateAutofillWalletSpecificsForCreditCardCloudTokenData(
+                       /*specifics_id=*/"data1"),
+                   /*client_tag=*/"token-data1")));
 
   std::vector<CreditCard> wallet_cards;
   std::vector<AutofillProfile> wallet_addresses;
   std::vector<PaymentsCustomerData> customer_data;
+  std::vector<CreditCardCloudTokenData> cloud_token_data;
   PopulateWalletTypesFromSyncData(entity_data, &wallet_cards, &wallet_addresses,
-                                  &customer_data);
+                                  &customer_data, &cloud_token_data);
 
   ASSERT_EQ(1U, wallet_cards.size());
   ASSERT_EQ(1U, wallet_addresses.size());
 
   EXPECT_EQ("deadbeef", customer_data.back().customer_id);
+
+  EXPECT_EQ("data1", cloud_token_data.back().instrument_token);
 
   // Make sure the card's billing address id is equal to the address' server id.
   EXPECT_EQ(wallet_addresses.back().server_id(),

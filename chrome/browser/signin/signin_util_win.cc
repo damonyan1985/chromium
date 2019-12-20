@@ -9,9 +9,12 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "base/win/win_util.h"
+#include "base/win/wincrypt_shim.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,21 +22,16 @@
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/signin/about_signin_internals_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
 #include "chrome/browser/ui/webui/signin/dice_turn_sync_on_helper.h"
 #include "chrome/credential_provider/common/gcp_strings.h"
-#include "components/os_crypt/os_crypt.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/about_signin_internals.h"
-#include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/browser/signin_metrics.h"
-#include "components/signin/core/browser/signin_pref_names.h"
-#include "services/identity/public/cpp/accounts_mutator.h"
-#include "services/identity/public/cpp/identity_manager.h"
+#include "components/signin/public/base/signin_metrics.h"
+#include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/identity_manager/accounts_mutator.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 namespace signin_util {
 
@@ -41,22 +39,33 @@ namespace {
 
 std::unique_ptr<DiceTurnSyncOnHelper::Delegate>*
 GetDiceTurnSyncOnHelperDelegateForTestingStorage() {
-  static std::unique_ptr<DiceTurnSyncOnHelper::Delegate> delegate;
-  return &delegate;
+  static base::NoDestructor<std::unique_ptr<DiceTurnSyncOnHelper::Delegate>>
+      delegate;
+  return delegate.get();
 }
 
 std::string DecryptRefreshToken(const std::string& cipher_text) {
-  std::string refresh_token;
-  if (!OSCrypt::DecryptString(cipher_text, &refresh_token))
+  DATA_BLOB input;
+  input.pbData =
+      const_cast<BYTE*>(reinterpret_cast<const BYTE*>(cipher_text.data()));
+  input.cbData = static_cast<DWORD>(cipher_text.length());
+  DATA_BLOB output;
+  BOOL result = ::CryptUnprotectData(&input, nullptr, nullptr, nullptr, nullptr,
+                                     CRYPTPROTECT_UI_FORBIDDEN, &output);
+
+  if (!result)
     return std::string();
 
+  std::string refresh_token(reinterpret_cast<char*>(output.pbData),
+                            output.cbData);
+  ::LocalFree(output.pbData);
   return refresh_token;
 }
 
 // Finish the process of import credentials.  This is either called directly
 // from ImportCredentialsFromProvider() if a browser window for the profile is
 // already available or is delayed until a browser can first be opened.
-void FinishImportCredentialsFromProvider(const std::string& account_id,
+void FinishImportCredentialsFromProvider(const CoreAccountId& account_id,
                                          Browser* browser,
                                          Profile* profile,
                                          Profile::CreateStatus status) {
@@ -67,7 +76,8 @@ void FinishImportCredentialsFromProvider(const std::string& account_id,
         signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT,
         signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, account_id,
         DiceTurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT,
-        std::move(*GetDiceTurnSyncOnHelperDelegateForTestingStorage()));
+        std::move(*GetDiceTurnSyncOnHelperDelegateForTestingStorage()),
+        base::DoNothing());
   } else {
     if (!browser)
       browser = chrome::FindLastActiveWithProfile(profile);
@@ -101,7 +111,7 @@ void ImportCredentialsFromProvider(Profile* profile,
       AboutSigninInternalsFactory::GetInstance()->GetForProfile(profile);
   signin_internals->OnAuthenticationResultReceived("Credential Provider");
 
-  std::string account_id =
+  CoreAccountId account_id =
       IdentityManagerFactory::GetForProfile(profile)
           ->GetAccountsMutator()
           ->AddOrUpdateAccount(base::UTF16ToUTF8(gaia_id),
@@ -206,7 +216,7 @@ void SigninWithCredentialProviderIfPossible(Profile* profile) {
   if (!(first_run::IsChromeFirstRun() &&
         g_browser_process->profile_manager()->GetInitialProfileDir() ==
             profile->GetPath().BaseName() &&
-        !SigninManagerFactory::GetForProfile(profile)->IsAuthenticated())) {
+        !IdentityManagerFactory::GetForProfile(profile)->HasPrimaryAccount())) {
     return;
   }
 
@@ -219,19 +229,17 @@ bool ReauthWithCredentialProviderIfPossible(Profile* profile) {
   //  - The profile is marked as having been signed in with a system credential.
   //  - The profile is already signed in.
   //  - The profile is in an auth error state.
-  SigninManager* manager = SigninManagerFactory::GetForProfile(profile);
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
+  auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
   if (!(profile->GetPrefs()->GetBoolean(
             prefs::kSignedInWithCredentialProvider) &&
-        manager->IsAuthenticated() &&
-        token_service->RefreshTokenHasError(
-            manager->GetAuthenticatedAccountId()))) {
+        identity_manager->HasPrimaryAccount() &&
+        identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+            identity_manager->GetPrimaryAccountId()))) {
     return false;
   }
 
   base::string16 gaia_id =
-      base::UTF8ToUTF16(manager->GetAuthenticatedAccountInfo().gaia.c_str());
+      base::UTF8ToUTF16(identity_manager->GetPrimaryAccountInfo().gaia.c_str());
   return TrySigninWithCredentialProvider(profile, gaia_id, false);
 }
 

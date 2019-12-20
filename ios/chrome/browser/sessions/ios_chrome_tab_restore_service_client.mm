@@ -13,7 +13,6 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios.h"
 #include "ios/chrome/browser/sessions/tab_restore_service_delegate_impl_ios_factory.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_model_list.h"
 #include "ios/chrome/browser/tabs/tab_model_synced_window_delegate.h"
@@ -110,9 +109,9 @@ IOSChromeTabRestoreServiceClient::FindLiveTabContextWithID(
 bool IOSChromeTabRestoreServiceClient::ShouldTrackURLForRestore(
     const GURL& url) {
   // NOTE: In the //chrome client, chrome://quit and chrome://restart are
-  // blacklisted from being tracked to avoid entering infinite loops. However,
+  // blocked from being tracked to avoid entering infinite loops. However,
   // iOS intentionally does not support those URLs, so there is no need to
-  // blacklist them here.
+  // block them here.
   return url.is_valid();
 }
 

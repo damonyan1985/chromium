@@ -20,6 +20,7 @@
 #include "media/base/audio_codecs.h"
 #include "media/base/media_export.h"
 #include "media/base/video_codecs.h"
+#include "media/base/video_color_space.h"
 #include "third_party/libwebm/source/mkvmuxer.hpp"
 #include "ui/gfx/geometry/size.h"
 
@@ -53,15 +54,20 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
   // media::VideoFrame.
   struct MEDIA_EXPORT VideoParameters {
     VideoParameters(scoped_refptr<media::VideoFrame> frame);
+    VideoParameters(gfx::Size visible_rect_size,
+                    double frame_rate,
+                    VideoCodec codec,
+                    base::Optional<gfx::ColorSpace> color_space);
+    VideoParameters(const VideoParameters&);
     ~VideoParameters();
     gfx::Size visible_rect_size;
     double frame_rate;
+    VideoCodec codec;
+    base::Optional<gfx::ColorSpace> color_space;
   };
 
-  // |video_codec| should coincide with whatever is sent in OnEncodedVideo(),
-  // and the same applies to audio.
-  WebmMuxer(VideoCodec video_codec,
-            AudioCodec audio_codec,
+  // |audio_codec| should coincide with whatever is sent in OnEncodedAudio(),
+  WebmMuxer(AudioCodec audio_codec,
             bool has_video_,
             bool has_audio_,
             const WriteDataCB& write_data_callback);
@@ -72,12 +78,12 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
   // |encoded_alpha| represents the encode output of alpha channel when
   // available, can be nullptr otherwise.
   bool OnEncodedVideo(const VideoParameters& params,
-                      std::unique_ptr<std::string> encoded_data,
-                      std::unique_ptr<std::string> encoded_alpha,
+                      std::string encoded_data,
+                      std::string encoded_alpha,
                       base::TimeTicks timestamp,
                       bool is_key_frame);
   bool OnEncodedAudio(const media::AudioParameters& params,
-                      std::unique_ptr<std::string> encoded_data,
+                      std::string encoded_data,
                       base::TimeTicks timestamp);
 
   void Pause();
@@ -93,7 +99,9 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
   // AddVideoTrack adds |frame_size| and |frame_rate| to the Segment
   // info, although individual frames passed to OnEncodedVideo() can have any
   // frame size.
-  void AddVideoTrack(const gfx::Size& frame_size, double frame_rate);
+  void AddVideoTrack(const gfx::Size& frame_size,
+                     double frame_rate,
+                     const base::Optional<gfx::ColorSpace>& color_space);
   void AddAudioTrack(const media::AudioParameters& params);
 
   // IMkvWriter interface.
@@ -105,8 +113,8 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
                           mkvmuxer::int64 position) override;
 
   // Helper to simplify saving frames. Returns true on success.
-  bool AddFrame(std::unique_ptr<std::string> encoded_data,
-                std::unique_ptr<std::string> encoded_alpha_data,
+  bool AddFrame(const std::string& encoded_data,
+                const std::string& encoded_alpha_data,
                 uint8_t track_index,
                 base::TimeDelta timestamp,
                 bool is_key_frame);
@@ -114,9 +122,10 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
   // Used to DCHECK that we are called on the correct thread.
   base::ThreadChecker thread_checker_;
 
-  // Video and audio codecs configured on construction.
-  const VideoCodec video_codec_;
+  // Audio codec configured on construction. Video codec is taken from first
+  // received frame.
   const AudioCodec audio_codec_;
+  VideoCodec video_codec_;
 
   // Caller-side identifiers to interact with |segment_|, initialised upon
   // first frame arrival to Add{Video, Audio}Track().
@@ -151,14 +160,14 @@ class MEDIA_EXPORT WebmMuxer : public mkvmuxer::IMkvWriter {
   // Hold on to all encoded video frames to dump them with and when audio is
   // received, if expected, since WebM headers can only be written once.
   struct EncodedVideoFrame {
-    EncodedVideoFrame(std::unique_ptr<std::string> data,
-                      std::unique_ptr<std::string> alpha_data,
+    EncodedVideoFrame(std::string data,
+                      std::string alpha_data,
                       base::TimeTicks timestamp,
                       bool is_keyframe);
     ~EncodedVideoFrame();
 
-    std::unique_ptr<std::string> data;
-    std::unique_ptr<std::string> alpha_data;
+    std::string data;
+    std::string alpha_data;
     base::TimeTicks timestamp;
     bool is_keyframe;
 

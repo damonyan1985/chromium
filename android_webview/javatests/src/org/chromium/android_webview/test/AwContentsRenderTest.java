@@ -19,8 +19,10 @@ import org.junit.runner.RunWith;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContents.VisualStateCallback;
 import org.chromium.android_webview.test.util.GraphicsTestUtils;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.UrlUtils;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 
 import java.util.concurrent.CountDownLatch;
@@ -39,14 +41,14 @@ public class AwContentsRenderTest {
     private AwTestContainerView mContainerView;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         mContentsClient = new TestAwContentsClient();
         mContainerView = mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
         mAwContents = mContainerView.getAwContents();
     }
 
     void setBackgroundColorOnUiThread(final int c) {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.setBackgroundColor(c));
     }
 
     @Test
@@ -87,7 +89,7 @@ public class AwContentsRenderTest {
     @SmallTest
     @Feature({"AndroidWebView"})
     public void testPictureListener() throws Throwable {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
+        TestThreadUtils.runOnUiThreadBlocking(() -> mAwContents.enableOnNewPicture(true, true));
 
         int pictureCount = mContentsClient.getPictureListenerHelper().getCallCount();
         mActivityTestRule.loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(),
@@ -122,10 +124,10 @@ public class AwContentsRenderTest {
         });
         Assert.assertTrue(latch.await(AwActivityTestRule.WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
 
-        final int width = ThreadUtils.runOnUiThreadBlockingNoException(
-                () -> mContainerView.getWidth());
-        final int height = ThreadUtils.runOnUiThreadBlockingNoException(
-                () -> mContainerView.getHeight());
+        final int width =
+                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getWidth());
+        final int height =
+                TestThreadUtils.runOnUiThreadBlockingNoException(() -> mContainerView.getHeight());
         visibleBitmap = GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, width, height);
 
         // Things that affect DOM page visibility:
@@ -155,5 +157,24 @@ public class AwContentsRenderTest {
         invisibleBitmap = GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, width, height);
         Assert.assertNotNull(invisibleBitmap);
         Assert.assertTrue(invisibleBitmap.sameAs(visibleBitmap));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testSoftwareCanvas() throws Throwable {
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> mAwContents.setLayerType(View.LAYER_TYPE_SOFTWARE, null));
+
+        String testFile = "android_webview/test/data/green_canvas.html";
+        String url = UrlUtils.getIsolatedTestFileUrl(testFile);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        mActivityTestRule.loadUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), url);
+        mActivityTestRule.waitForVisualStateCallback(mAwContents);
+
+        CriteriaHelper.pollInstrumentationThread(() -> {
+            Bitmap bitmap = GraphicsTestUtils.drawAwContentsOnUiThread(mAwContents, 500, 500);
+            return Color.GREEN == bitmap.getPixel(250, 250);
+        });
     }
 }

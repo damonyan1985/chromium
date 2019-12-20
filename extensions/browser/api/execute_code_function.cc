@@ -51,10 +51,12 @@ void ExecuteCodeFunction::GetFileURLAndMaybeLocalizeInBackground(
     const std::string& extension_id,
     const base::FilePath& extension_path,
     const std::string& extension_default_locale,
+    extension_l10n_util::GzippedMessagesPermission gzip_permission,
     bool might_require_localization,
     std::string* data) {
   // TODO(karandeepb): Limit scope of ScopedBlockingCall.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // TODO(devlin): FilePathToFileURL() doesn't need to be done on a blocking
   // task runner, so we could do that on the UI thread and then avoid the hop
@@ -71,7 +73,8 @@ void ExecuteCodeFunction::GetFileURLAndMaybeLocalizeInBackground(
 
   std::unique_ptr<SubstitutionMap> localization_messages(
       file_util::LoadMessageBundleSubstitutionMap(extension_path, extension_id,
-                                                  extension_default_locale));
+                                                  extension_default_locale,
+                                                  gzip_permission));
 
   std::string error;
   MessageBundle::ReplaceMessagesWithExternalDictionary(*localization_messages,
@@ -84,9 +87,10 @@ ExecuteCodeFunction::GetFileURLAndLocalizeComponentResourceInBackground(
     const std::string& extension_id,
     const base::FilePath& extension_path,
     const std::string& extension_default_locale,
+    extension_l10n_util::GzippedMessagesPermission gzip_permission,
     bool might_require_localization) {
   GetFileURLAndMaybeLocalizeInBackground(
-      extension_id, extension_path, extension_default_locale,
+      extension_id, extension_path, extension_default_locale, gzip_permission,
       might_require_localization, data.get());
 
   return data;
@@ -166,7 +170,7 @@ bool ExecuteCodeFunction::Execute(const std::string& code_string,
 
   executor->ExecuteScript(
       host_id_, script_type, code_string, frame_scope, frame_id,
-      match_about_blank, run_at, ScriptExecutor::ISOLATED_WORLD,
+      match_about_blank, run_at,
       IsWebView() ? ScriptExecutor::WEB_VIEW_PROCESS
                   : ScriptExecutor::DEFAULT_PROCESS,
       GetWebViewSrc(), file_url_, user_gesture(), css_origin,
@@ -225,11 +229,13 @@ bool ExecuteCodeFunction::LoadFile(const std::string& file,
   std::string extension_default_locale;
   extension()->manifest()->GetString(manifest_keys::kDefaultLocale,
                                      &extension_default_locale);
+  auto gzip_permission =
+      extension_l10n_util::GetGzippedMessagesPermissionForExtension(
+          extension());
   // TODO(lazyboy): |extension_id| should not be empty(), turn this into a
   // DCHECK.
   bool might_require_localization = ShouldInsertCSS() && !extension_id.empty();
-
-  ComponentExtensionResourceInfo resource_info;
+  int resource_id = 0;
   const ComponentExtensionResourceManager*
       component_extension_resource_manager =
           ExtensionsBrowserClient::Get()
@@ -237,21 +243,19 @@ bool ExecuteCodeFunction::LoadFile(const std::string& file,
   if (component_extension_resource_manager &&
       component_extension_resource_manager->IsComponentExtensionResource(
           resource_.extension_root(), resource_.relative_path(),
-          &resource_info)) {
-    DCHECK(!resource_info.gzipped);
-    base::StringPiece resource =
-        ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
-            resource_info.resource_id);
-    std::unique_ptr<std::string> data(
-        new std::string(resource.data(), resource.size()));
+          &resource_id)) {
+    auto data = std::make_unique<std::string>(
+        ui::ResourceBundle::GetSharedInstance().LoadDataResourceString(
+            resource_id));
 
-    base::PostTaskWithTraitsAndReplyWithResult(
+    base::PostTaskAndReplyWithResult(
         FROM_HERE,
-        {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+        {base::ThreadPool(), base::MayBlock(),
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
         base::BindOnce(&ExecuteCodeFunction::
                            GetFileURLAndLocalizeComponentResourceInBackground,
-                       this, base::Passed(std::move(data)), extension_id,
-                       extension_path, extension_default_locale,
+                       this, std::move(data), extension_id, extension_path,
+                       extension_default_locale, gzip_permission,
                        might_require_localization),
         base::BindOnce(&ExecuteCodeFunction::DidLoadAndLocalizeFile, this,
                        resource_.relative_path().AsUTF8Unsafe(),
@@ -261,7 +265,7 @@ bool ExecuteCodeFunction::LoadFile(const std::string& file,
         base::BindOnce(
             &ExecuteCodeFunction::GetFileURLAndMaybeLocalizeInBackground, this,
             extension_id, extension_path, extension_default_locale,
-            might_require_localization);
+            gzip_permission, might_require_localization);
 
     auto file_reader = base::MakeRefCounted<FileReader>(
         resource_, std::move(get_file_and_l10n_callback),

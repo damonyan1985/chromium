@@ -4,13 +4,17 @@
 
 #include "extensions/browser/api/file_handlers/app_file_handler_util.h"
 
+#include <vector>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
 #include "build/build_config.h"
+#include "components/services/app_service/public/cpp/file_handler_info.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
@@ -20,9 +24,9 @@
 #include "extensions/browser/granted_file_entry.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "net/base/mime_util.h"
-#include "storage/browser/fileapi/isolated_context.h"
-#include "storage/common/fileapi/file_system_mount_option.h"
-#include "storage/common/fileapi/file_system_types.h"
+#include "storage/browser/file_system/isolated_context.h"
+#include "storage/common/file_system/file_system_mount_option.h"
+#include "storage/common/file_system/file_system_types.h"
 
 #if defined(OS_CHROMEOS)
 #include "extensions/browser/api/file_handlers/non_native_file_system_delegate.h"
@@ -37,7 +41,7 @@ const char kSecurityError[] = "Security error";
 
 namespace {
 
-bool FileHandlerCanHandleFileWithExtension(const FileHandlerInfo& handler,
+bool FileHandlerCanHandleFileWithExtension(const apps::FileHandlerInfo& handler,
                                            const base::FilePath& path) {
   for (auto extension = handler.extensions.cbegin();
        extension != handler.extensions.cend(); ++extension) {
@@ -66,7 +70,7 @@ bool FileHandlerCanHandleFileWithExtension(const FileHandlerInfo& handler,
   return false;
 }
 
-bool FileHandlerCanHandleFileWithMimeType(const FileHandlerInfo& handler,
+bool FileHandlerCanHandleFileWithMimeType(const apps::FileHandlerInfo& handler,
                                           const std::string& mime_type) {
   for (auto type = handler.types.cbegin(); type != handler.types.cend();
        ++type) {
@@ -104,8 +108,8 @@ class WritableFileChecker
       const std::vector<base::FilePath>& paths,
       content::BrowserContext* context,
       const std::set<base::FilePath>& directory_paths,
-      const base::Closure& on_success,
-      const base::Callback<void(const base::FilePath&)>& on_failure);
+      base::OnceClosure on_success,
+      base::OnceCallback<void(const base::FilePath&)> on_failure);
 
   void Check();
 
@@ -132,22 +136,22 @@ class WritableFileChecker
   const std::set<base::FilePath> directory_paths_;
   size_t outstanding_tasks_;
   base::FilePath error_path_;
-  base::Closure on_success_;
-  base::Callback<void(const base::FilePath&)> on_failure_;
+  base::OnceClosure on_success_;
+  base::OnceCallback<void(const base::FilePath&)> on_failure_;
 };
 
 WritableFileChecker::WritableFileChecker(
     const std::vector<base::FilePath>& paths,
     content::BrowserContext* context,
     const std::set<base::FilePath>& directory_paths,
-    const base::Closure& on_success,
-    const base::Callback<void(const base::FilePath&)>& on_failure)
+    base::OnceClosure on_success,
+    base::OnceCallback<void(const base::FilePath&)> on_failure)
     : paths_(paths),
       context_(context),
       directory_paths_(directory_paths),
       outstanding_tasks_(1),
-      on_success_(on_success),
-      on_failure_(on_failure) {}
+      on_success_(std::move(on_success)),
+      on_failure_(std::move(on_failure)) {}
 
 void WritableFileChecker::Check() {
   outstanding_tasks_ = paths_.size();
@@ -160,19 +164,24 @@ void WritableFileChecker::Check() {
       if (is_directory) {
         delegate->IsNonNativeLocalPathDirectory(
             context_, path,
-            base::Bind(&WritableFileChecker::OnPrepareFileDone, this, path));
+            base::BindOnce(&WritableFileChecker::OnPrepareFileDone, this,
+                           path));
       } else {
         delegate->PrepareNonNativeLocalFileForWritableApp(
             context_, path,
-            base::Bind(&WritableFileChecker::OnPrepareFileDone, this, path));
+            base::BindOnce(&WritableFileChecker::OnPrepareFileDone, this,
+                           path));
       }
       continue;
     }
 #endif
-    base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {base::TaskPriority::USER_BLOCKING, base::MayBlock()},
-        base::Bind(&PrepareNativeLocalFileForWritableApp, path, is_directory),
-        base::Bind(&WritableFileChecker::OnPrepareFileDone, this, path));
+    base::PostTaskAndReplyWithResult(
+        FROM_HERE,
+        {base::ThreadPool(), base::TaskPriority::USER_BLOCKING,
+         base::MayBlock()},
+        base::BindOnce(&PrepareNativeLocalFileForWritableApp, path,
+                       is_directory),
+        base::BindOnce(&WritableFileChecker::OnPrepareFileDone, this, path));
   }
 }
 
@@ -182,9 +191,11 @@ void WritableFileChecker::TaskDone() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (--outstanding_tasks_ == 0) {
     if (error_path_.empty())
-      on_success_.Run();
+      std::move(on_success_).Run();
     else
-      on_failure_.Run(error_path_);
+      std::move(on_failure_).Run(error_path_);
+    on_success_.Reset();
+    on_failure_.Reset();
   }
 }
 
@@ -206,8 +217,8 @@ void WritableFileChecker::OnPrepareFileDone(const base::FilePath& path,
 
 }  // namespace
 
-const FileHandlerInfo* FileHandlerForId(const Extension& app,
-                                        const std::string& handler_id) {
+const apps::FileHandlerInfo* FileHandlerForId(const Extension& app,
+                                              const std::string& handler_id) {
   const FileHandlersInfo* file_handlers = FileHandlers::GetFileHandlers(&app);
   if (!file_handlers)
     return NULL;
@@ -219,34 +230,61 @@ const FileHandlerInfo* FileHandlerForId(const Extension& app,
   return NULL;
 }
 
-std::vector<const FileHandlerInfo*> FindFileHandlersForEntries(
+std::vector<FileHandlerMatch> FindFileHandlerMatchesForEntries(
     const Extension& app,
-    const std::vector<EntryInfo> entries) {
-  std::vector<const FileHandlerInfo*> handlers;
+    const std::vector<EntryInfo>& entries) {
   if (entries.empty())
-    return handlers;
+    return std::vector<FileHandlerMatch>();
 
-  // Look for file handlers which can handle all the MIME types specified.
+  // Look for file handlers which can handle all the MIME types
+  // or file name extensions specified.
   const FileHandlersInfo* file_handlers = FileHandlers::GetFileHandlers(&app);
   if (!file_handlers)
-    return handlers;
+    return std::vector<FileHandlerMatch>();
 
-  for (auto data = file_handlers->cbegin(); data != file_handlers->cend();
-       ++data) {
-    bool handles_all_types = true;
-    for (auto it = entries.cbegin(); it != entries.cend(); ++it) {
-      if (!FileHandlerCanHandleEntry(*data, *it)) {
-        handles_all_types = false;
-        break;
-      }
-    }
-    if (handles_all_types)
-      handlers.push_back(&*data);
-  }
-  return handlers;
+  return MatchesFromFileHandlersForEntries(*file_handlers, entries);
 }
 
-bool FileHandlerCanHandleEntry(const FileHandlerInfo& handler,
+std::vector<FileHandlerMatch> MatchesFromFileHandlersForEntries(
+    const FileHandlersInfo& file_handlers,
+    const std::vector<EntryInfo>& entries) {
+  std::vector<FileHandlerMatch> matches;
+
+  for (const apps::FileHandlerInfo& handler : file_handlers) {
+    bool handles_all_types = true;
+    FileHandlerMatch match;
+
+    // Lifetime of the handler should be the same as usage of the matches
+    // so the pointer shouldn't end up stale.
+    match.handler = &handler;
+    match.matched_mime = match.matched_file_extension = false;
+    for (const auto& entry : entries) {
+      if (entry.is_directory) {
+        if (!handler.include_directories) {
+          handles_all_types = false;
+          break;
+        }
+      } else {
+        match.matched_mime =
+            FileHandlerCanHandleFileWithMimeType(handler, entry.mime_type);
+        if (!match.matched_mime) {
+          match.matched_file_extension =
+              FileHandlerCanHandleFileWithExtension(handler, entry.path);
+          if (!match.matched_file_extension) {
+            handles_all_types = false;
+            break;
+          }
+        }
+      }
+    }
+    if (handles_all_types) {
+      matches.push_back(match);
+    }
+  }
+  return matches;
+}
+
+bool FileHandlerCanHandleEntry(const apps::FileHandlerInfo& handler,
                                const EntryInfo& entry) {
   if (entry.is_directory)
     return handler.include_directories;
@@ -265,9 +303,11 @@ GrantedFileEntry CreateFileEntry(content::BrowserContext* context,
       storage::IsolatedContext::GetInstance();
   DCHECK(isolated_context);
 
-  result.filesystem_id = isolated_context->RegisterFileSystemForPath(
-      storage::kFileSystemTypeNativeForPlatformApp, std::string(), path,
-      &result.registered_name);
+  storage::IsolatedContext::ScopedFSHandle filesystem =
+      isolated_context->RegisterFileSystemForPath(
+          storage::kFileSystemTypeNativeForPlatformApp, std::string(), path,
+          &result.registered_name);
+  result.filesystem_id = filesystem.id();
 
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
@@ -289,10 +329,11 @@ void PrepareFilesForWritableApp(
     const std::vector<base::FilePath>& paths,
     content::BrowserContext* context,
     const std::set<base::FilePath>& directory_paths,
-    const base::Closure& on_success,
-    const base::Callback<void(const base::FilePath&)>& on_failure) {
-  scoped_refptr<WritableFileChecker> checker(new WritableFileChecker(
-      paths, context, directory_paths, on_success, on_failure));
+    base::OnceClosure on_success,
+    base::OnceCallback<void(const base::FilePath&)> on_failure) {
+  auto checker = base::MakeRefCounted<WritableFileChecker>(
+      paths, context, directory_paths, std::move(on_success),
+      std::move(on_failure));
   checker->Check();
 }
 

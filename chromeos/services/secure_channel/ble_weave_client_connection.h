@@ -27,7 +27,7 @@
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_gatt_notify_session.h"
 #include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace base {
 class TaskRunner;
@@ -61,7 +61,7 @@ class BluetoothLowEnergyWeaveClientConnection
         multidevice::RemoteDeviceRef remote_device,
         scoped_refptr<device::BluetoothAdapter> adapter,
         const device::BluetoothUUID remote_service_uuid,
-        device::BluetoothDevice* bluetooth_device,
+        const std::string& device_address,
         bool should_set_low_connection_latency);
     static void SetInstanceForTesting(Factory* factory);
 
@@ -70,7 +70,7 @@ class BluetoothLowEnergyWeaveClientConnection
         multidevice::RemoteDeviceRef remote_device,
         scoped_refptr<device::BluetoothAdapter> adapter,
         const device::BluetoothUUID remote_service_uuid,
-        device::BluetoothDevice* bluetooth_device,
+        const std::string& device_address,
         bool should_set_low_connection_latency);
 
    private:
@@ -96,7 +96,7 @@ class BluetoothLowEnergyWeaveClientConnection
       multidevice::RemoteDeviceRef remote_device,
       scoped_refptr<device::BluetoothAdapter> adapter,
       const device::BluetoothUUID remote_service_uuid,
-      device::BluetoothDevice* bluetooth_device,
+      const std::string& device_address,
       bool should_set_low_connection_latency);
 
   ~BluetoothLowEnergyWeaveClientConnection() override;
@@ -111,7 +111,8 @@ class BluetoothLowEnergyWeaveClientConnection
  protected:
   enum BleWeaveConnectionResult {
     BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY = 0,
-    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_SETTING_CONNECTION_LATENCY = 1,
+    DEPRECATED_BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_SETTING_CONNECTION_LATENCY =
+        1,
     BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_CREATING_GATT_CONNECTION = 2,
     BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_STARTING_NOTIFY_SESSION = 3,
     BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_FINDING_GATT_CHARACTERISTICS = 4,
@@ -343,14 +344,14 @@ class BluetoothLowEnergyWeaveClientConnection
   void CreateGattConnection();
   void OnGattConnectionCreated(
       std::unique_ptr<device::BluetoothGattConnection> gatt_connection);
-  void OnSetConnectionLatencyError();
+  void OnSetConnectionLatencySuccess();
+  void OnSetConnectionLatencyErrorOrTimeout();
   void OnCreateGattConnectionError(
       device::BluetoothDevice::ConnectErrorCode error_code);
   void OnCharacteristicsFound(const RemoteAttribute& service,
                               const RemoteAttribute& tx_characteristic,
                               const RemoteAttribute& rx_characteristic);
-  void OnCharacteristicsFinderError(const RemoteAttribute& tx_characteristic,
-                                    const RemoteAttribute& rx_characteristic);
+  void OnCharacteristicsFinderError();
   void StartNotifySession();
   void OnNotifySessionStarted(
       std::unique_ptr<device::BluetoothGattNotifySession> notify_session);
@@ -394,8 +395,11 @@ class BluetoothLowEnergyWeaveClientConnection
   // connection.
   std::string GetReasonForClose();
 
-  // The device to which to connect.
-  device::BluetoothDevice* bluetooth_device_;
+  // The initial address of the Bluetooth device to which to connect. The
+  // address of the device we're connecting to may change over time because
+  // public addresses of BLE devices periodically rotate (we don't know its
+  // static private address because we're not paired to it.)
+  const std::string initial_device_address_;
 
   bool should_set_low_connection_latency_;
 
@@ -435,7 +439,7 @@ class BluetoothLowEnergyWeaveClientConnection
   base::queue<std::unique_ptr<WireMessage>> queued_wire_messages_;
 
   base::WeakPtrFactory<BluetoothLowEnergyWeaveClientConnection>
-      weak_ptr_factory_;
+      weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothLowEnergyWeaveClientConnection);
 };

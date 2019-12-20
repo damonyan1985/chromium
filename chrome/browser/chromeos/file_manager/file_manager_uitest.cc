@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/path_service.h"
+#include "base/strings/stringprintf.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -21,6 +22,13 @@ class FileManagerUITest : public InProcessBrowserTest {
     // --disable-web-security required to load resources from
     // files and from chrome://resources/... urls.
     command_line->AppendSwitch(switches::kDisableWebSecurity);
+
+    // TODO(yoichio): This is temporary switch to support chrome internal
+    // components migration from the old web APIs.
+    // After completion of the migration, we should remove this.
+    // See crbug.com/924873 for detail.
+    command_line->AppendSwitchASCII(switches::kDisableBlinkFeatures,
+                                    "ShadowDOMV0,CustomElementsV0,HTMLImports");
   }
 
   void RunTest(std::string test_scope) {
@@ -77,12 +85,12 @@ IN_PROC_BROWSER_TEST_F(FileManagerUITest, Menu) {
   RunTest("menu");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerUITest, ProgressCenter) {
-  RunTest("progressCenter");
+IN_PROC_BROWSER_TEST_F(FileManagerUITest, PluginVm) {
+  RunTest("pluginVm");
 }
 
-IN_PROC_BROWSER_TEST_F(FileManagerUITest, UMA) {
-  RunTest("uma");
+IN_PROC_BROWSER_TEST_F(FileManagerUITest, PluginVmShare) {
+  RunTest("pluginVmShare");
 }
 
 }  // namespace file_manager

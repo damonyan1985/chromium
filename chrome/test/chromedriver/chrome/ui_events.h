@@ -32,6 +32,9 @@ enum MouseButton {
 // Specifies the event's pointer type.
 enum PointerType { kMouse = 0, kPen };
 
+// Specifies the origin of pointer location.
+enum OriginType { kViewPort, kPointer, kElement };
+
 struct MouseEvent {
   MouseEvent(MouseEventType type,
              MouseButton button,
@@ -51,14 +54,20 @@ struct MouseEvent {
   int buttons;
   // |click_count| should not be negative.
   int click_count;
-  std::string element_id;
   PointerType pointer_type;
 };
 
 // Specifies the type of the touch event.
-enum TouchEventType { kTouchStart = 0, kTouchEnd, kTouchMove, kPause };
+enum TouchEventType {
+  kTouchStart = 0,
+  kTouchEnd,
+  kTouchMove,
+  kTouchCancel,
+  kPause
+};
 
 struct TouchEvent {
+  TouchEvent();
   TouchEvent(TouchEventType type,
              int x,
              int y);
@@ -68,7 +77,12 @@ struct TouchEvent {
   TouchEventType type;
   int x;
   int y;
-  std::string element_id;
+  double radiusX;
+  double radiusY;
+  double rotationAngle;
+  double force;
+  int id;
+  bool dispatch;
 };
 
 // Specifies the type of the keyboard event.

@@ -195,8 +195,8 @@ bool ParseServerResponse(const GURL& server_url,
   // Parse the response, ignoring comments.
   std::string error_msg;
   std::unique_ptr<base::Value> response_value =
-      base::JSONReader::ReadAndReturnError(response_body, base::JSON_PARSE_RFC,
-                                           NULL, &error_msg);
+      base::JSONReader::ReadAndReturnErrorDeprecated(
+          response_body, base::JSON_PARSE_RFC, NULL, &error_msg);
   if (response_value == NULL) {
     PrintGeolocationError(
         server_url, "JSONReader failed: " + error_msg, position);
@@ -289,7 +289,7 @@ bool GetGeolocationFromResponse(bool http_success,
   }
   if (status_code != net::HTTP_OK) {
     std::string message = "Returned error code ";
-    message += base::IntToString(status_code);
+    message += base::NumberToString(status_code);
     PrintGeolocationError(server_url, message, position);
     RecordUmaEvent(SIMPLE_GEOLOCATION_REQUEST_EVENT_RESPONSE_NOT_OK);
     return false;
@@ -317,7 +317,7 @@ std::unique_ptr<base::DictionaryValue> CreateAccessPointDictionary(
   if (!access_point.timestamp.is_null()) {
     access_point_dictionary->SetKey(
         kAge,
-        base::Value(base::Int64ToString(
+        base::Value(base::NumberToString(
             (base::Time::Now() - access_point.timestamp).InMilliseconds())));
   }
 
@@ -341,7 +341,7 @@ std::unique_ptr<base::DictionaryValue> CreateCellTowerDictionary(
   if (!cell_tower.timestamp.is_null()) {
     cell_tower_dictionary->SetKey(
         kAge,
-        base::Value(base::Int64ToString(
+        base::Value(base::NumberToString(
             (base::Time::Now() - cell_tower.timestamp).InMilliseconds())));
   }
   return cell_tower_dictionary;
@@ -370,7 +370,7 @@ SimpleGeolocationRequest::~SimpleGeolocationRequest() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // If callback is not empty, request is cancelled.
-  if (!callback_.is_null()) {
+  if (callback_) {
     RecordUmaResponseTime(base::Time::Now() - request_started_at_, false);
     RecordUmaResult(SIMPLE_GEOLOCATION_REQUEST_RESULT_CANCELLED, retries_);
   }
@@ -442,7 +442,7 @@ void SimpleGeolocationRequest::StartRequest() {
   request->url = request_url_;
   request->method = "POST";
   request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
-  request->allow_credentials = false;
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
   simple_url_loader_ = network::SimpleURLLoader::Create(
       std::move(request), NO_TRAFFIC_ANNOTATION_YET);
@@ -458,8 +458,8 @@ void SimpleGeolocationRequest::StartRequest() {
                      base::Unretained(this)));
 }
 
-void SimpleGeolocationRequest::MakeRequest(const ResponseCallback& callback) {
-  callback_ = callback;
+void SimpleGeolocationRequest::MakeRequest(ResponseCallback callback) {
+  callback_ = std::move(callback);
   request_url_ = GeolocationRequestURL(service_url_);
   timeout_timer_.Start(
       FROM_HERE, timeout_, this, &SimpleGeolocationRequest::OnTimeout);
@@ -530,14 +530,14 @@ void SimpleGeolocationRequest::ReplyAndDestroySelf(
   timeout_timer_.Stop();
   request_scheduled_.Stop();
 
-  ResponseCallback callback = callback_;
+  ResponseCallback callback = std::move(callback_);
 
   // Empty callback is used to identify "completed or not yet started request".
   callback_.Reset();
 
   // callback.Run() usually destroys SimpleGeolocationRequest, because this is
   // the way callback is implemented in GeolocationProvider.
-  callback.Run(position_, server_error, elapsed);
+  std::move(callback).Run(position_, server_error, elapsed);
   // "this" is already destroyed here.
 }
 

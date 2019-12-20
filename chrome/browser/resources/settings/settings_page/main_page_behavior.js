@@ -140,7 +140,12 @@ cr.define('settings', function() {
      * @private
      */
     shouldExpandAdvanced_: function(route) {
-      return this.tagName == 'SETTINGS-BASIC-PAGE' &&
+      return (
+                 this.tagName == 'SETTINGS-BASIC-PAGE'
+                 // <if expr="chromeos">
+                 || this.tagName == 'OS-SETTINGS-PAGE'
+                 // </if>
+                 ) &&
           settings.routes.ADVANCED && settings.routes.ADVANCED.contains(route);
     },
 
@@ -160,11 +165,8 @@ cr.define('settings', function() {
         return Promise.resolve(section);
       }
 
-      // TODO(dpapad): Remove condition when Polymer 2 migration is complete.
       // The function to use to wait for <dom-if>s to render.
-      const waitFn = Polymer.DomIf ?
-          Polymer.RenderStatus.beforeNextRender.bind(null, this) :
-          requestAnimationFrame;
+      const waitFn = Polymer.RenderStatus.beforeNextRender.bind(null, this);
 
       return new Promise(resolve => {
         if (this.shouldExpandAdvanced_(route)) {
@@ -191,6 +193,16 @@ cr.define('settings', function() {
       this.scroller.scrollTop = 0;
       this.classList.add('showing-subpage');
       this.fire('subpage-expand');
+
+      // Explicitly load the lazy_load.html module, since all subpages reside in
+      // the lazy loaded module.
+      // TODO(dpapad): On chrome://os-settings the lazy_load.html file resides
+      // at a different path. Remove conditional logic once this file is not
+      // shared between chrome://settings and chrome://os-settings.
+      const lazyLoadPathPrefix =
+          window.origin === 'chrome://settings' ? '' : '/chromeos';
+      Polymer.importHref(`${lazyLoadPathPrefix}/lazy_load.html`, () => {});
+
       this.ensureSectionForRoute_(route).then(section => {
         section.classList.add('expanded');
         // Fire event used by a11y tests only.
@@ -202,17 +214,21 @@ cr.define('settings', function() {
 
     /**
      * @param {!settings.Route} oldRoute
+     * @return {!Promise<void>}
      * @private
      */
     enterMainPage_: function(oldRoute) {
       const oldSection = this.getSection(oldRoute.section);
       oldSection.classList.remove('expanded');
       this.classList.remove('showing-subpage');
-      requestAnimationFrame(() => {
-        if (settings.lastRouteChangeWasPopstate()) {
-          this.scroller.scrollTop = this.lastScrollTop_;
-        }
-        this.fire('showing-main-page');
+      return new Promise((res, rej) => {
+        requestAnimationFrame(() => {
+          if (settings.lastRouteChangeWasPopstate()) {
+            this.scroller.scrollTop = this.lastScrollTop_;
+          }
+          this.fire('showing-main-page');
+          res();
+        });
       });
     },
 
@@ -318,8 +334,9 @@ cr.define('settings', function() {
           // different sections, but are linked to each other. For example
           // /storage and /accounts (in ChromeOS).
           if (!oldRoute.contains(newRoute) && !newRoute.contains(oldRoute)) {
-            this.enterMainPage_(oldRoute);
-            this.enterSubpage_(newRoute);
+            this.enterMainPage_(oldRoute).then(() => {
+              this.enterSubpage_(newRoute);
+            });
             return;
           }
 

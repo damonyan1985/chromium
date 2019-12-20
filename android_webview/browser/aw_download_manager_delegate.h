@@ -5,8 +5,17 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_DOWNLOAD_MANAGER_DELEGATE_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_DOWNLOAD_MANAGER_DELEGATE_H_
 
+#include <string>
+
+#include "base/macros.h"
 #include "base/supports_user_data.h"
 #include "content/public/browser/download_manager_delegate.h"
+
+namespace content {
+
+class WebContents;
+
+}  // namespace content
 
 namespace android_webview {
 
@@ -15,18 +24,22 @@ namespace android_webview {
 class AwDownloadManagerDelegate : public content::DownloadManagerDelegate,
                                   public base::SupportsUserData::Data {
  public:
+  AwDownloadManagerDelegate();
   ~AwDownloadManagerDelegate() override;
 
   // content::DownloadManagerDelegate implementation.
-  bool DetermineDownloadTarget(
-      download::DownloadItem* item,
-      const content::DownloadTargetCallback& callback) override;
-  bool ShouldCompleteDownload(download::DownloadItem* item,
-                              const base::Closure& complete_callback) override;
-  bool ShouldOpenDownload(
-      download::DownloadItem* item,
-      const content::DownloadOpenDelayedCallback& callback) override;
-  void GetNextId(const content::DownloadIdCallback& callback) override;
+  bool InterceptDownloadIfApplicable(
+      const GURL& url,
+      const std::string& user_agent,
+      const std::string& content_disposition,
+      const std::string& mime_type,
+      const std::string& request_origin,
+      int64_t content_length,
+      bool is_transient,
+      content::WebContents* web_contents) override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(AwDownloadManagerDelegate);
 };
 
 }  // namespace android_webview

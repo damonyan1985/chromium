@@ -11,6 +11,9 @@
 #include "components/cloud_devices/common/printer_description.h"
 #include "printing/backend/win_helper.h"
 
+using cloud_devices::printer::ColorType;
+using cloud_devices::printer::DuplexType;
+
 namespace cloud_print {
 
 bool IsValidCjt(const std::string& print_ticket_data) {
@@ -27,15 +30,14 @@ std::unique_ptr<DEVMODE, base::FreeDeleter> CjtToDevMode(
   if (!description.InitFromString(print_ticket))
     return dev_mode;
 
-  using namespace cloud_devices::printer;
   printing::ScopedPrinterHandle printer;
-  if (!printer.OpenPrinter(printer_name.c_str()))
+  if (!printer.OpenPrinterWithName(printer_name.c_str()))
     return dev_mode;
 
   {
-    ColorTicketItem color;
+    cloud_devices::printer::ColorTicketItem color;
     if (color.LoadFrom(description)) {
-      bool is_color = color.value().type == STANDARD_COLOR;
+      bool is_color = color.value().type == ColorType::STANDARD_COLOR;
       dev_mode = printing::CreateDevModeWithColor(printer.Get(), printer_name,
                                                   is_color);
     } else {
@@ -46,21 +48,22 @@ std::unique_ptr<DEVMODE, base::FreeDeleter> CjtToDevMode(
   if (!dev_mode)
     return dev_mode;
 
-  ColorTicketItem color;
-  DuplexTicketItem duplex;
-  OrientationTicketItem orientation;
-  MarginsTicketItem margins;
-  DpiTicketItem dpi;
-  FitToPageTicketItem fit_to_page;
-  MediaTicketItem media;
-  CopiesTicketItem copies;
-  PageRangeTicketItem page_range;
-  CollateTicketItem collate;
-  ReverseTicketItem reverse;
+  cloud_devices::printer::ColorTicketItem color;
+  cloud_devices::printer::DuplexTicketItem duplex;
+  cloud_devices::printer::OrientationTicketItem orientation;
+  cloud_devices::printer::MarginsTicketItem margins;
+  cloud_devices::printer::DpiTicketItem dpi;
+  cloud_devices::printer::FitToPageTicketItem fit_to_page;
+  cloud_devices::printer::MediaTicketItem media;
+  cloud_devices::printer::CopiesTicketItem copies;
+  cloud_devices::printer::PageRangeTicketItem page_range;
+  cloud_devices::printer::CollateTicketItem collate;
+  cloud_devices::printer::ReverseTicketItem reverse;
 
   if (orientation.LoadFrom(description)) {
     dev_mode->dmFields |= DM_ORIENTATION;
-    if (orientation.value() == LANDSCAPE) {
+    if (orientation.value() ==
+        cloud_devices::printer::OrientationType::LANDSCAPE) {
       dev_mode->dmOrientation = DMORIENT_LANDSCAPE;
     } else {
       dev_mode->dmOrientation = DMORIENT_PORTRAIT;
@@ -69,9 +72,9 @@ std::unique_ptr<DEVMODE, base::FreeDeleter> CjtToDevMode(
 
   if (color.LoadFrom(description)) {
     dev_mode->dmFields |= DM_COLOR;
-    if (color.value().type == STANDARD_MONOCHROME) {
+    if (color.value().type == ColorType::STANDARD_MONOCHROME) {
       dev_mode->dmColor = DMCOLOR_MONOCHROME;
-    } else if (color.value().type == STANDARD_COLOR) {
+    } else if (color.value().type == ColorType::STANDARD_COLOR) {
       dev_mode->dmColor = DMCOLOR_COLOR;
     } else {
       NOTREACHED();
@@ -80,11 +83,11 @@ std::unique_ptr<DEVMODE, base::FreeDeleter> CjtToDevMode(
 
   if (duplex.LoadFrom(description)) {
     dev_mode->dmFields |= DM_DUPLEX;
-    if (duplex.value() == NO_DUPLEX) {
+    if (duplex.value() == DuplexType::NO_DUPLEX) {
       dev_mode->dmDuplex = DMDUP_SIMPLEX;
-    } else if (duplex.value() == LONG_EDGE) {
+    } else if (duplex.value() == DuplexType::LONG_EDGE) {
       dev_mode->dmDuplex = DMDUP_VERTICAL;
-    } else if (duplex.value() == SHORT_EDGE) {
+    } else if (duplex.value() == DuplexType::SHORT_EDGE) {
       dev_mode->dmDuplex = DMDUP_HORIZONTAL;
     } else {
       NOTREACHED();

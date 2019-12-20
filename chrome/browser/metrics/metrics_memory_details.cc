@@ -14,7 +14,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/site_details.h"
+#include "chrome/browser/site_isolation/site_details.h"
 #include "components/nacl/common/nacl_process_type.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
@@ -44,15 +44,16 @@ void CountRenderProcessHosts(size_t* initialized_and_not_dead, size_t* all) {
 
 }  // namespace
 
-MetricsMemoryDetails::MetricsMemoryDetails(const base::Closure& callback)
-    : callback_(callback) {}
+MetricsMemoryDetails::MetricsMemoryDetails(base::OnceClosure callback)
+    : callback_(std::move(callback)) {}
 
 MetricsMemoryDetails::~MetricsMemoryDetails() {
 }
 
 void MetricsMemoryDetails::OnDetailsAvailable() {
   UpdateHistograms();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback_);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                std::move(callback_));
 }
 
 void MetricsMemoryDetails::UpdateHistograms() {

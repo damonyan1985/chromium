@@ -40,6 +40,17 @@ namespace url {
 class Origin;
 }
 
+namespace ukm {
+class MojoUkmRecorder;
+}
+
+namespace v8 {
+class Isolate;
+template <typename T>
+class Local;
+class Object;
+}  // namespace v8
+
 class ChromeExtensionsRendererClient
     : public extensions::ExtensionsRendererClient {
  public:
@@ -57,6 +68,10 @@ class ChromeExtensionsRendererClient
   void OnExtensionUnloaded(
       const extensions::ExtensionId& extension_id) override;
 
+  bool ExtensionAPIEnabledForServiceWorkerScript(
+      const GURL& scope,
+      const GURL& script_url) const override;
+
   // See ChromeContentRendererClient methods with the same names.
   void RenderThreadStarted();
   void RenderFrameCreated(content::RenderFrame* render_frame,
@@ -67,9 +82,13 @@ class ChromeExtensionsRendererClient
   void WillSendRequest(blink::WebLocalFrame* frame,
                        ui::PageTransition transition_type,
                        const blink::WebURL& url,
+                       const blink::WebURL& site_for_cookies,
                        const url::Origin* initiator_origin,
                        GURL* new_url,
                        bool* attach_same_site_cookies);
+  v8::Local<v8::Object> GetScriptableObject(
+      const blink::WebElement& plugin_element,
+      v8::Isolate* isolate);
   void SetExtensionDispatcherForTest(
       std::unique_ptr<extensions::Dispatcher> extension_dispatcher);
   extensions::Dispatcher* GetExtensionDispatcherForTest();
@@ -83,12 +102,13 @@ class ChromeExtensionsRendererClient
       const content::WebPluginInfo& info,
       const std::string& mime_type,
       const GURL& original_url);
+  static void DidBlockMimeHandlerViewForDisallowedPlugin(
+      const blink::WebElement& plugin_element);
   static bool MaybeCreateMimeHandlerView(
       const blink::WebElement& plugin_element,
       const GURL& resource_url,
       const std::string& mime_type,
-      const content::WebPluginInfo& plugin_info,
-      int32_t element_instance_id);
+      const content::WebPluginInfo& plugin_info);
   static blink::WebFrame* FindFrame(blink::WebLocalFrame* relative_to_frame,
                                     const std::string& name);
 
@@ -101,6 +121,7 @@ class ChromeExtensionsRendererClient
   }
 
  private:
+  std::unique_ptr<ukm::MojoUkmRecorder> ukm_recorder_;
   std::unique_ptr<extensions::Dispatcher> extension_dispatcher_;
   std::unique_ptr<extensions::RendererPermissionsPolicyDelegate>
       permissions_policy_delegate_;

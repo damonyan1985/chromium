@@ -270,8 +270,8 @@ TEST_P(MdIconNormalizerTestWithColorType, SquareIcon) {
   EXPECT_EQ(1, ::GetScale(bitmap));
 }
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     MdIconNormalizerTestWithColorType,
     ::testing::Values(kAlpha_8_SkColorType,
                       kARGB_4444_SkColorType,
@@ -311,8 +311,8 @@ TEST_P(MdIconNormalizerTestWithNoAlpha, NoScaling) {
   ::ExpectScaledSize(kGuidelineSizeSquare, kIconSize, bitmap);
 }
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     MdIconNormalizerTestWithNoAlpha,
     ::testing::Values(kGray_8_SkColorType,
                       kRGB_565_SkColorType,

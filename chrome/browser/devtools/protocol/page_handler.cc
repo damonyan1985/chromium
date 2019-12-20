@@ -4,7 +4,9 @@
 
 #include "chrome/browser/devtools/protocol/page_handler.h"
 
+#include "chrome/browser/installable/installable_manager.h"
 #include "chrome/browser/subresource_filter/chrome_subresource_filter_client.h"
+#include "ui/gfx/image/image.h"
 
 PageHandler::PageHandler(content::WebContents* web_contents,
                          protocol::UberDispatcher* dispatcher)
@@ -46,4 +48,56 @@ protocol::Response PageHandler::SetAdBlockingEnabled(bool enabled) {
     return protocol::Response::Error("Page domain is disabled.");
   ToggleAdBlocking(enabled);
   return protocol::Response::OK();
+}
+
+void PageHandler::GetInstallabilityErrors(
+    std::unique_ptr<GetInstallabilityErrorsCallback> callback) {
+  auto errors = std::make_unique<protocol::Array<std::string>>();
+  InstallableManager* manager =
+      web_contents() ? InstallableManager::FromWebContents(web_contents())
+                     : nullptr;
+  if (!manager) {
+    callback->sendFailure(
+        protocol::Response::Error("Unable to fetch errors for target"));
+    return;
+  }
+  manager->GetAllErrors(base::BindOnce(&PageHandler::GotInstallabilityErrors,
+                                       std::move(callback)));
+}
+
+// static
+void PageHandler::GotInstallabilityErrors(
+    std::unique_ptr<GetInstallabilityErrorsCallback> callback,
+    std::vector<std::string> errors) {
+  callback->sendSuccess(
+      std::make_unique<protocol::Array<std::string>>(std::move(errors)));
+}
+
+void PageHandler::GetManifestIcons(
+    std::unique_ptr<GetManifestIconsCallback> callback) {
+  InstallableManager* manager =
+      web_contents() ? InstallableManager::FromWebContents(web_contents())
+                     : nullptr;
+
+  if (!manager) {
+    callback->sendFailure(
+        protocol::Response::Error("Unable to fetch icons for target"));
+    return;
+  }
+
+  manager->GetPrimaryIcon(
+      base::BindOnce(&PageHandler::GotManifestIcons, std::move(callback)));
+}
+
+void PageHandler::GotManifestIcons(
+    std::unique_ptr<GetManifestIconsCallback> callback,
+    const SkBitmap* primary_icon) {
+  protocol::Maybe<protocol::Binary> primaryIconAsBinary;
+
+  if (primary_icon && !primary_icon->empty()) {
+    primaryIconAsBinary = std::move(protocol::Binary::fromRefCounted(
+        gfx::Image::CreateFrom1xBitmap(*primary_icon).As1xPNGBytes()));
+  }
+
+  callback->sendSuccess(std::move(primaryIconAsBinary));
 }

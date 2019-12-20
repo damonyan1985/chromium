@@ -7,13 +7,17 @@
 
 #include <map>
 #include <string>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/strings/string16.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
+#include "base/token.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/sessions/session_common_utils.h"
 #include "chrome/browser/sessions/session_service_utils.h"
@@ -24,6 +28,9 @@
 #include "components/sessions/core/base_session_service_delegate.h"
 #include "components/sessions/core/session_service_commands.h"
 #include "components/sessions/core/tab_restore_service_client.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ui_base_types.h"
 
 class Profile;
@@ -63,12 +70,6 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
                        public BrowserListObserver {
   friend class SessionServiceTestHelper;
  public:
-  // Used to distinguish an application from a ordinary content window.
-  enum AppType {
-    TYPE_APP,
-    TYPE_NORMAL
-  };
-
   // Creates a SessionService for the specified profile.
   explicit SessionService(Profile* profile);
   // For testing.
@@ -122,6 +123,19 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
                            const SessionID& tab_id,
                            int new_index);
 
+  // Sets a tab's group ID, if any. Note that a group can't be split between
+  // multiple windows.
+  void SetTabGroup(const SessionID& window_id,
+                   const SessionID& tab_id,
+                   base::Optional<tab_groups::TabGroupId> group);
+
+  // Updates the metadata associated with a tab group. |window_id| should be the
+  // window where the group currently resides. Note that a group can't be split
+  // between multiple windows.
+  void SetTabGroupMetadata(const SessionID& window_id,
+                           const tab_groups::TabGroupId& group_id,
+                           const tab_groups::TabGroupVisualData* visual_data);
+
   // Sets the pinned state of the tab.
   void SetPinnedState(const SessionID& window_id,
                       const SessionID& tab_id,
@@ -154,25 +168,19 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
   // Sets the type of window. In order for the contents of a window to be
   // tracked SetWindowType must be invoked with a type we track
   // (ShouldRestoreOfWindowType returns true).
-  void SetWindowType(const SessionID& window_id,
-                     Browser::Type type,
-                     AppType app_type);
+  void SetWindowType(const SessionID& window_id, Browser::Type type);
 
   // Sets the application name of the specified window.
   void SetWindowAppName(const SessionID& window_id,
                         const std::string& app_name);
 
-  // Invoked when the NavigationController has removed entries from the back of
-  // the list. |count| gives the number of entries in the navigation controller.
-  void TabNavigationPathPrunedFromBack(const SessionID& window_id,
-                                       const SessionID& tab_id,
-                                       int count);
-
-  // Invoked when the NavigationController has removed entries from the front of
-  // the list. |count| gives the number of entries that were removed.
-  void TabNavigationPathPrunedFromFront(const SessionID& window_id,
-                                        const SessionID& tab_id,
-                                        int count);
+  // Invoked when the NavigationController has removed entries from the list.
+  // |index| gives the the starting index from which entries were deleted.
+  // |count| gives the number of entries that were removed.
+  void TabNavigationPathPruned(const SessionID& window_id,
+                               const SessionID& tab_id,
+                               int index,
+                               int count);
 
   // Invoked when the NavigationController has deleted entries because of a
   // history deletion.
@@ -236,10 +244,10 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
 
   void Init();
 
-  // Returns true if a window of given |window_type| and |app_type| should get
+  // Returns true if a window of given |window_type| should get
   // restored upon session restore.
-  bool ShouldRestoreWindowOfType(sessions::SessionWindow::WindowType type,
-                                 AppType app_type) const;
+  bool ShouldRestoreWindowOfType(
+      sessions::SessionWindow::WindowType type) const;
 
   // Removes unrestorable windows from the previous windows list.
   void RemoveUnusedRestoreWindows(
@@ -265,12 +273,12 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
   // direction from the current navigation index).
   // A pair is added to tab_to_available_range indicating the range of
   // indices that were written.
-  void BuildCommandsForTab(
-      const SessionID& window_id,
-      content::WebContents* tab,
-      int index_in_window,
-      bool is_pinned,
-      IdToRange* tab_to_available_range);
+  void BuildCommandsForTab(const SessionID& window_id,
+                           content::WebContents* tab,
+                           int index_in_window,
+                           base::Optional<tab_groups::TabGroupId> group,
+                           bool is_pinned,
+                           IdToRange* tab_to_available_range);
 
   // Adds commands to create the specified browser, and invokes
   // BuildCommandsForTab for each of the tabs in the browser. This ignores
@@ -328,6 +336,11 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
 
   // Unit test accessors.
   sessions::BaseSessionService* GetBaseSessionServiceForTest();
+
+  void SetAvailableRangeForTest(const SessionID& tab_id,
+                                const std::pair<int, int>& range);
+  bool GetAvailableRangeForTest(const SessionID& tab_id,
+                                std::pair<int, int>* range);
 
   // The profile. This may be null during testing.
   Profile* profile_;
@@ -388,7 +401,7 @@ class SessionService : public sessions::BaseSessionServiceDelegate,
   // tab's index hasn't changed.
   std::map<SessionID, int> last_selected_tab_in_window_;
 
-  base::WeakPtrFactory<SessionService> weak_factory_;
+  base::WeakPtrFactory<SessionService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SessionService);
 };

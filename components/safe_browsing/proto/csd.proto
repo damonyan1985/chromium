@@ -148,38 +148,6 @@ message ClientPhishingResponse {
   repeated string OBSOLETE_whitelist_expression = 2;
 }
 
-message ClientMalwareRequest {
-  // URL that the client visited.  The CGI parameters are stripped by the
-  // client.
-  required string url = 1;
-
-  // Field 2 is deleted and no longer in use.
-
-  // Field 3 is only used on the server.
-
-  // The referrer URL.  This field might not be set, for example, in the case
-  // where the referrer uses HTTPS.
-  optional string referrer_url = 4;
-
-  // Field 5 and 6 are only used on the server.
-
-  message UrlInfo {
-    required string ip = 1;
-    required string url = 2;
-    optional string method = 3;
-    optional string referrer = 4;
-    // Resource type, the int value is a direct cast from the Type enum
-    // of ResourceType class defined in //src/webkit/commom/resource_type.h
-    optional int32 resource_type = 5;
-  }
-
-  // List of resource urls that match the malware IP list.
-  repeated UrlInfo bad_ip_url_info = 7;
-
-  // Population that the reporting user is part of.
-  optional ChromeUserPopulation population = 9;
-}
-
 // The message is used for client request to determine whether the provided URL
 // is safe for the purposes of entering user credentials for logging in.
 message LoginReputationClientRequest {
@@ -251,9 +219,11 @@ message LoginReputationClientRequest {
     // The frame that the password reuse is detected.
     optional int32 frame_id = 2;
 
+    // TODO(crbug/914410): Remove once ReusedPasswordAccountType is implemented.
     // Whether the reused password is used for Chrome signin.
     optional bool is_chrome_signin_password = 3;
 
+    // TODO(crbug/914410): Remove once ReusedPasswordAccountType is implemented.
     // Sync account type. Only set if |is_chrome_signin_password| is true.
     enum SyncAccountType {
       // Not a sign-in user.
@@ -267,6 +237,7 @@ message LoginReputationClientRequest {
     }
     optional SyncAccountType sync_account_type = 4;
 
+    // TODO(crbug/914410): Remove once ReusedPasswordAccountType is implemented.
     // Type of password being reused.
     enum ReusedPasswordType {
       REUSED_PASSWORD_TYPE_UNKNOWN = 0;
@@ -286,6 +257,30 @@ message LoginReputationClientRequest {
     }
     optional ReusedPasswordType reused_password_type = 5
         [default = REUSED_PASSWORD_TYPE_UNKNOWN];
+
+    message ReusedPasswordAccountType {
+      // Whether the current reused password account is syncing.
+      optional bool is_account_syncing = 1;
+
+      enum AccountType {
+        UNKNOWN = 0;
+
+        // User signed in with a dasher account.
+        GSUITE = 1;
+
+        // User signed in with @gmail.com, or @googlemail.com account.
+        GMAIL = 2;
+
+        // Password used for Enterprise login on an Enterprise login page.
+        NON_GAIA_ENTERPRISE = 3;
+
+        // Password saved in Chrome's password manager.
+        SAVED_PASSWORD = 4;
+      }
+      optional AccountType account_type = 2;
+    }
+
+    optional ReusedPasswordAccountType reused_password_account_type = 6;
   }
 
   optional PasswordReuseEvent password_reuse_event = 4;
@@ -313,6 +308,22 @@ message LoginReputationClientRequest {
   // Visual features of the current page. This field should only be filled for
   // extended reporting users.
   optional VisualFeatures visual_features = 11;
+
+  // DOM features of the current page.
+  optional DomFeatures dom_features = 12;
+
+  enum ReportType {
+    UNKNOWN = 0;
+    // Normal/full ping to Safe Browsing containing all the fields in the
+    // PasswordProtectionRequest.
+    FULL_REPORT = 1;
+    // Sample ping to Safe Browsing containing only the stripped URL and
+    // referrer chain.
+    SAMPLE_REPORT = 2;
+  }
+  // Whether the ping sent to Safe Browsing is a normal (full request) ping or a
+  // sample ping for URLs on the allow-list.
+  optional ReportType report_type = 13;
 }
 
 // The message is used for client response for login reputation requests.
@@ -399,20 +410,32 @@ message VisualFeatures {
   }
 
   // Blurred, downsampled image of the current page.
+  // Using Rec 2020 color space:
+  // https://en.wikipedia.org/wiki/Rec._2020
   optional BlurredImage image = 2;
-
-  // The final pHash for the current page.
-  optional bytes phash = 3;
 }
 
-message ClientMalwareResponse {
-  required bool blacklist = 1;
-  // The confirmed blacklisted bad IP and its url, which will be shown in
-  // malware warning, if the blacklist verdict is true.
-  // This IP string could be either in IPv4 or IPv6 format, which is the same
-  // as the ones client sent to server.
-  optional string bad_ip = 2;
-  optional string bad_url = 3;
+// This message encapsulates all the DOM features of the current page.
+message DomFeatures {
+  message Feature {
+    // Feature name. E.g., 'PageHasForms'
+    optional string name = 1;
+
+    // Feature value is always in the range [0.0, 1.0].  Boolean features
+    // have value 1.0.
+    optional double value = 2;
+  }
+
+  // List of features extracted.
+  repeated Feature feature_map = 1;
+
+  // List of shingle hashes we extracted.
+  repeated uint32 shingle_hashes = 2 [packed = true];
+
+  // The model version used to generate these hashes. This is copied from
+  // ClientSideModel.version(). The model sets the term list, which affects
+  // the feature extraction.
+  optional int32 model_version = 3;
 }
 
 message ClientDownloadRequest {
@@ -554,6 +577,8 @@ message ClientDownloadRequest {
     // .rar file that Chrome failed to unpack to the point of finding
     // executables or archives.
     INVALID_RAR = 13;
+    // Office Document or PDF.
+    DOCUMENT = 14;
   }
   optional DownloadType download_type = 10 [default = WIN_EXECUTABLE];
 
@@ -682,7 +707,12 @@ message ClientDownloadRequest {
   // protection for Advanced Protection users.
   optional bool request_ap_verdicts = 67;
 
-  // next available tag number: 68;
+  // For archives files the number of files and directories contained within the
+  // archive.
+  optional int32 archive_file_count = 68;
+  optional int32 archive_directory_count = 69;
+
+  // next available tag number: 70;
 }
 
 message ReferrerChainOptions {
@@ -1123,6 +1153,8 @@ message ClientSafeBrowsingReportRequest {
     URL_SUSPICIOUS = 15;
     BILLING = 16;
     APK_DOWNLOAD = 17;
+    BLOCKED_AD_REDIRECT = 19;
+    BLOCKED_AD_POPUP = 20;
   }
 
   message HTTPHeader {
@@ -1180,7 +1212,12 @@ message ClientSafeBrowsingReportRequest {
 
   // URL of the page in the address bar.
   optional string url = 1;
+
+  // Must be set if the ReportType is not one of DANGEROUS_DOWNLOAD_RECOVERY,
+  // DANGEROUS_DOWNLOAD_WARNING, DANGEROUS_DOWNLOAD_BY_API,
+  // DANGEROUS_DOWNLOAD_OPENED, URL_PASSWORD_PROTECTION_PHISHING.
   optional string page_url = 2;
+
   optional string referrer_url = 3;
 
   repeated Resource resources = 4;
@@ -1288,6 +1325,8 @@ message HTMLElement {
     optional string value = 2;
   }
   repeated Attribute attribute = 6;
+
+  optional bytes inner_html = 7;
 }
 
 // Protobuf for Chrome extension webstore install request.

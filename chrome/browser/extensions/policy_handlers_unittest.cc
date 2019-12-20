@@ -5,8 +5,11 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_management_constants.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/policy_handlers.h"
 #include "components/policy/core/browser/policy_error_map.h"
@@ -15,8 +18,10 @@
 #include "components/policy/core/common/schema.h"
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_value_map.h"
+#include "components/strings/grit/components_strings.h"
 #include "extensions/browser/pref_names.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_WIN)
 #include "base/win/win_util.h"
@@ -111,7 +116,7 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettingsURL) {
     std::string policy = base::StringPrintf(policy_template, url.c_str());
     std::string error;
     std::unique_ptr<base::Value> policy_value =
-        base::JSONReader::ReadAndReturnError(
+        base::JSONReader::ReadAndReturnErrorDeprecated(
             policy, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS,
             nullptr, &error);
     if (!policy_value)
@@ -352,7 +357,7 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   std::string error;
   std::unique_ptr<base::Value> policy_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           kTestManagementPolicy1,
           base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
@@ -371,6 +376,50 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   EXPECT_FALSE(errors.empty());
 }
 
+TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettingsTooManyHosts) {
+  const char policy_template[] =
+      "{"
+      "  \"*\": {"
+      "    \"runtime_blocked_hosts\": [%s],"
+      "    \"runtime_allowed_hosts\": [%s]"
+      "  }"
+      "}";
+
+  std::string urls;
+  for (size_t i = 0; i < 101; ++i)
+    urls.append("\"*://example" + base::NumberToString(i) + ".com\",");
+
+  std::string policy =
+      base::StringPrintf(policy_template, urls.c_str(), urls.c_str());
+
+  std::string error;
+  auto policy_value = base::JSONReader::ReadAndReturnValueWithError(
+      policy, base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS);
+  policy::Schema chrome_schema =
+      policy::Schema::Wrap(policy::GetChromeSchemaData());
+  policy::PolicyMap policy_map;
+  policy::PolicyErrorMap errors;
+  ExtensionSettingsPolicyHandler handler(chrome_schema);
+
+  policy_map.Set(policy::key::kExtensionSettings,
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD,
+                 policy_value.value.value().CreateDeepCopy(), nullptr);
+
+  EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
+  EXPECT_EQ(2u, errors.size());
+  auto error_str = errors.GetErrors(policy::key::kExtensionSettings);
+  auto expected_allowed = l10n_util::GetStringFUTF16(
+      IDS_POLICY_EXTENSION_SETTINGS_ORIGIN_LIMIT_WARNING,
+      base::NumberToString16(schema_constants::kMaxItemsURLPatternSet));
+  auto expected_blocked = l10n_util::GetStringFUTF16(
+      IDS_POLICY_EXTENSION_SETTINGS_ORIGIN_LIMIT_WARNING,
+      base::NumberToString16(schema_constants::kMaxItemsURLPatternSet));
+
+  EXPECT_TRUE(error_str.find(expected_allowed) != std::wstring::npos);
+  EXPECT_TRUE(error_str.find(expected_blocked) != std::wstring::npos);
+}
+
 TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
 // Mark as enterprise managed.
 #if defined(OS_WIN)
@@ -379,7 +428,7 @@ TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
 
   std::string error;
   std::unique_ptr<base::Value> policy_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           kTestManagementPolicy2,
           base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
@@ -411,7 +460,7 @@ TEST(ExtensionSettingsPolicyHandlerTest, NonManagedOffWebstoreExtension) {
 
   std::string error;
   std::unique_ptr<base::Value> policy_value =
-      base::JSONReader::ReadAndReturnError(
+      base::JSONReader::ReadAndReturnErrorDeprecated(
           kTestManagementPolicy2,
           base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
   ASSERT_TRUE(policy_value.get()) << error;

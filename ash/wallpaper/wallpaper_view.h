@@ -5,13 +5,9 @@
 #ifndef ASH_WALLPAPER_WALLPAPER_VIEW_H_
 #define ASH_WALLPAPER_WALLPAPER_VIEW_H_
 
-#include <memory>
-
-#include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "ash/wm/tablet_mode/tablet_mode_observer.h"
-#include "base/scoped_observer.h"
+#include "ash/wallpaper/wallpaper_base_view.h"
+#include "ash/wallpaper/wallpaper_property.h"
 #include "ui/views/context_menu_controller.h"
-#include "ui/views/view.h"
 
 namespace aura {
 class Window;
@@ -19,43 +15,61 @@ class Window;
 
 namespace ash {
 
-class PreEventDispatchHandler;
-
-class WallpaperView : public views::View,
-                      public views::ContextMenuController,
-                      TabletModeObserver {
+// The desktop wallpaper view that, in addition to painting the wallpaper, can
+// also add blur and dimming effects, as well as handle context menu requests.
+class WallpaperView : public WallpaperBaseView,
+                      public views::ContextMenuController {
  public:
-  WallpaperView();
+  explicit WallpaperView(const WallpaperProperty& property);
   ~WallpaperView() override;
 
- private:
-  friend class WallpaperControllerTest;
+  // Clears cached image. Must be called when wallpaper image is changed.
+  void ClearCachedImage();
 
-  // Overridden from views::View:
-  void OnPaint(gfx::Canvas* canvas) override;
+  // Enables/Disables the lock shield layer.
+  void SetLockShieldEnabled(bool enabled);
+
+  void set_wallpaper_property(const WallpaperProperty& property) {
+    property_ = property;
+  }
+  const WallpaperProperty& property() const { return property_; }
+
+ private:
+  // views::View:
+  const char* GetClassName() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
 
-  // Overridden from TabletModeObserver:
-  void OnTabletModeStarted() override;
-  void OnTabletModeEnded() override;
-  void OnTabletControllerDestroyed() override;
+  // views::ContextMenuController:
+  void ShowContextMenuForViewImpl(views::View* source,
+                                  const gfx::Point& point,
+                                  ui::MenuSourceType source_type) override;
 
-  // Overridden from views::ContextMenuController:
-  void ShowContextMenuForView(views::View* source,
-                              const gfx::Point& point,
-                              ui::MenuSourceType source_type) override;
+  // WallpaperBaseView:
+  void DrawWallpaper(const gfx::ImageSkia& wallpaper,
+                     const gfx::Rect& src,
+                     const gfx::Rect& dst,
+                     const cc::PaintFlags& flags,
+                     gfx::Canvas* canvas) override;
 
-  ScopedObserver<TabletModeController, TabletModeObserver>
-      tablet_mode_observer_{this};
-  bool is_tablet_mode_ = false;
+  // Paint parameters (blur sigma and opacity) to draw wallpaper.
+  WallpaperProperty property_{wallpaper_constants::kClear};
 
-  std::unique_ptr<PreEventDispatchHandler> pre_dispatch_handler_;
+  // A view to hold solid color layer to hide desktop, in case compositor
+  // failed to draw its content due to memory shortage.
+  views::View* shield_view_ = nullptr;
+
+  // A cached downsampled image of the wallpaper image. It will help wallpaper
+  // blur/brightness animations be more performant.
+  base::Optional<gfx::ImageSkia> small_image_;
 
   DISALLOW_COPY_AND_ASSIGN(WallpaperView);
 };
 
-views::Widget* CreateWallpaperWidget(aura::Window* root_window,
-                                     int container_id);
+std::unique_ptr<views::Widget> CreateWallpaperWidget(
+    aura::Window* root_window,
+    int container_id,
+    const WallpaperProperty& property,
+    WallpaperView** out_wallpaper_view);
 
 }  // namespace ash
 

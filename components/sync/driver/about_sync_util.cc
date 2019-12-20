@@ -24,6 +24,10 @@
 #include "components/sync/protocol/proto_enum_conversions.h"
 #include "url/gurl.h"
 
+#if defined(OS_CHROMEOS)
+#include "chromeos/constants/chromeos_features.h"
+#endif
+
 namespace syncer {
 
 namespace sync_ui_util {
@@ -142,7 +146,7 @@ class Section {
     result.SetKey("title", base::Value(title_));
     base::Value stats(base::Value::Type::LIST);
     for (const std::unique_ptr<StatBase>& stat : stats_)
-      stats.GetList().push_back(stat->ToValue());
+      stats.Append(stat->ToValue());
     result.SetKey("data", std::move(stats));
     result.SetKey("is_sensitive", base::Value(is_sensitive_));
     return result;
@@ -174,7 +178,7 @@ class SectionList {
   base::Value ToValue() const {
     base::Value result(base::Value::Type::LIST);
     for (const std::unique_ptr<Section>& section : sections_)
-      result.GetList().push_back(section->ToValue());
+      result.Append(section->ToValue());
     return result;
   }
 
@@ -182,21 +186,24 @@ class SectionList {
   std::vector<std::unique_ptr<Section>> sections_;
 };
 
-std::string GetDisableReasonsString(int disable_reasons) {
-  if (disable_reasons == syncer::SyncService::DISABLE_REASON_NONE) {
+std::string GetDisableReasonsString(
+    SyncService::DisableReasonSet disable_reasons) {
+  if (disable_reasons.Empty()) {
     return "None";
   }
   std::vector<std::string> reason_strings;
-  if (disable_reasons & syncer::SyncService::DISABLE_REASON_PLATFORM_OVERRIDE)
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_PLATFORM_OVERRIDE))
     reason_strings.push_back("Platform override");
-  if (disable_reasons & syncer::SyncService::DISABLE_REASON_ENTERPRISE_POLICY)
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_ENTERPRISE_POLICY))
     reason_strings.push_back("Enterprise policy");
-  if (disable_reasons & syncer::SyncService::DISABLE_REASON_NOT_SIGNED_IN)
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_NOT_SIGNED_IN))
     reason_strings.push_back("Not signed in");
-  if (disable_reasons & syncer::SyncService::DISABLE_REASON_USER_CHOICE)
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_USER_CHOICE))
     reason_strings.push_back("User choice");
-  if (disable_reasons & syncer::SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR)
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_UNRECOVERABLE_ERROR))
     reason_strings.push_back("Unrecoverable error");
+  if (disable_reasons.Has(SyncService::DISABLE_REASON_PAUSED))
+    reason_strings.push_back("Paused");
   return base::JoinString(reason_strings, ", ");
 }
 
@@ -204,8 +211,6 @@ std::string GetTransportStateString(syncer::SyncService::TransportState state) {
   switch (state) {
     case syncer::SyncService::TransportState::DISABLED:
       return "Disabled";
-    case syncer::SyncService::TransportState::WAITING_FOR_START_REQUEST:
-      return "Waiting for start request";
     case syncer::SyncService::TransportState::START_DEFERRED:
       return "Start deferred";
     case syncer::SyncService::TransportState::INITIALIZING:
@@ -312,10 +317,15 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
       section_summary->AddStringStat("Transport State");
   Stat<std::string>* disable_reasons =
       section_summary->AddStringStat("Disable Reasons");
+#if defined(OS_CHROMEOS)
+  Stat<std::string>* os_feature_state =
+      section_summary->AddStringStat("Chrome OS Sync Feature");
+#endif
   Stat<bool>* feature_enabled =
       section_summary->AddBoolStat("Sync Feature Enabled");
   Stat<bool>* setup_in_progress =
       section_summary->AddBoolStat("Setup In Progress");
+  Stat<std::string>* auth_error = section_summary->AddStringStat("Auth Error");
 
   Section* section_version = section_list.AddSection("Version Info");
   Stat<std::string>* client_version =
@@ -330,14 +340,12 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
       section_identity->AddStringStat("Invalidator Client ID");
   Stat<std::string>* username = section_identity->AddStringStat("Username");
   Stat<bool>* user_is_primary = section_identity->AddBoolStat("Is Primary");
-  Stat<std::string>* auth_error = section_identity->AddStringStat("Auth Error");
-  // TODO(treib): Add the *time* of the auth error?
 
   Section* section_credentials = section_list.AddSection("Credentials");
-  Stat<std::string>* request_token_time =
+  Stat<std::string>* token_request_time =
       section_credentials->AddStringStat("Requested Token");
-  Stat<std::string>* receive_token_time =
-      section_credentials->AddStringStat("Received Token");
+  Stat<std::string>* token_response_time =
+      section_credentials->AddStringStat("Received Token Response");
   Stat<std::string>* last_token_request_result =
       section_credentials->AddStringStat("Last Token Request Result");
   Stat<bool>* has_token = section_credentials->AddBoolStat("Has Token");
@@ -368,8 +376,8 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
       section_encryption->AddBoolStat("Explicit Passphrase");
   Stat<bool>* is_passphrase_required =
       section_encryption->AddBoolStat("Passphrase Required");
-  Stat<bool>* is_cryptographer_ready =
-      section_encryption->AddBoolStat("Cryptographer Ready");
+  Stat<bool>* cryptographer_can_encrypt =
+      section_encryption->AddBoolStat("Cryptographer Ready To Encrypt");
   Stat<bool>* has_pending_keys =
       section_encryption->AddBoolStat("Cryptographer Has Pending Keys");
   Stat<std::string>* encrypted_types =
@@ -429,15 +437,6 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
       section_that_cycle->AddIntStat("Committed Count");
   Stat<int>* entries = section_that_cycle->AddIntStat("Entries");
 
-  Section* section_nudge_info =
-      section_list.AddSection("Nudge Source Counters");
-  Stat<int>* nudge_source_notification =
-      section_nudge_info->AddIntStat("Server Invalidations");
-  Stat<int>* nudge_source_local =
-      section_nudge_info->AddIntStat("Local Changes");
-  Stat<int>* nudge_source_local_refresh =
-      section_nudge_info->AddIntStat("Local Refreshes");
-
   // Populate all the fields we declared above.
   client_version->Set(GetVersionString(channel));
 
@@ -450,31 +449,48 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
   // Summary.
   transport_state->Set(GetTransportStateString(service->GetTransportState()));
   disable_reasons->Set(GetDisableReasonsString(service->GetDisableReasons()));
+#if defined(OS_CHROMEOS)
+  if (!chromeos::features::IsSplitSettingsSyncEnabled())
+    os_feature_state->Set("Flag disabled");
+  else if (service->GetUserSettings()->IsOsSyncFeatureEnabled())
+    os_feature_state->Set("Enabled");
+  else
+    os_feature_state->Set("Disabled");
+#endif  // defined(OS_CHROMEOS)
   feature_enabled->Set(service->IsSyncFeatureEnabled());
   setup_in_progress->Set(service->IsSetupInProgress());
+  std::string auth_error_str = service->GetAuthError().ToString();
+  auth_error->Set(base::StringPrintf(
+      "%s since %s", (auth_error_str.empty() ? "OK" : auth_error_str).c_str(),
+      GetTimeStr(service->GetAuthErrorTime(), "browser startup").c_str()));
 
   SyncStatus full_status;
-  bool is_status_valid = service->QueryDetailedSyncStatus(&full_status);
-  const SyncCycleSnapshot& snapshot = service->GetLastCycleSnapshot();
-  const SyncTokenStatus& token_status = service->GetSyncTokenStatus();
+  bool is_status_valid =
+      service->QueryDetailedSyncStatusForDebugging(&full_status);
+  const SyncCycleSnapshot& snapshot =
+      service->GetLastCycleSnapshotForDebugging();
+  const SyncTokenStatus& token_status =
+      service->GetSyncTokenStatusForDebugging();
+  bool is_local_sync_enabled_state = service->IsLocalSyncEnabled();
 
   // Version Info.
   // |client_version| was already set above.
-  server_url->Set(service->sync_service_url().spec());
+  if (!is_local_sync_enabled_state)
+    server_url->Set(service->GetSyncServiceUrlForDebugging().spec());
 
   // Identity.
   if (is_status_valid && !full_status.sync_id.empty())
     sync_client_id->Set(full_status.sync_id);
   if (is_status_valid && !full_status.invalidator_client_id.empty())
     invalidator_id->Set(full_status.invalidator_client_id);
-  username->Set(service->GetAuthenticatedAccountInfo().email);
-  user_is_primary->Set(service->IsAuthenticatedAccountPrimary());
-  std::string auth_error_str = service->GetAuthError().ToString();
-  auth_error->Set(auth_error_str.empty() ? "None" : auth_error_str);
+  if (!is_local_sync_enabled_state) {
+    username->Set(service->GetAuthenticatedAccountInfo().email);
+    user_is_primary->Set(service->IsAuthenticatedAccountPrimary());
+  }
 
   // Credentials.
-  request_token_time->Set(GetTimeStr(token_status.token_request_time, "n/a"));
-  receive_token_time->Set(GetTimeStr(token_status.token_receive_time, "n/a"));
+  token_request_time->Set(GetTimeStr(token_status.token_request_time, "n/a"));
+  token_response_time->Set(GetTimeStr(token_status.token_response_time, "n/a"));
   std::string err = token_status.last_get_token_error.error_message();
   last_token_request_result->Set(err.empty() ? "OK" : err);
   has_token->Set(token_status.has_token);
@@ -483,12 +499,13 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
 
   // Local State.
   server_connection->Set(GetConnectionStatus(token_status));
-  last_synced->Set(GetLastSyncedTimeString(service->GetLastSyncedTime()));
+  last_synced->Set(
+      GetLastSyncedTimeString(service->GetLastSyncedTimeForDebugging()));
   is_setup_complete->Set(service->GetUserSettings()->IsFirstSetupComplete());
   if (is_status_valid)
     is_syncing->Set(full_status.syncing);
-  is_local_sync_enabled->Set(service->IsLocalSyncEnabled());
-  if (service->IsLocalSyncEnabled() && is_status_valid)
+  is_local_sync_enabled->Set(is_local_sync_enabled_state);
+  if (is_local_sync_enabled_state && is_status_valid)
     local_backend_path->Set(full_status.local_sync_folder);
 
   // Network.
@@ -503,7 +520,8 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
 
   // Encryption.
   if (service->IsSyncFeatureActive()) {
-    is_using_explicit_passphrase->Set(service->IsUsingSecondaryPassphrase());
+    is_using_explicit_passphrase->Set(
+        service->GetUserSettings()->IsUsingSecondaryPassphrase());
     is_passphrase_required->Set(
         service->GetUserSettings()->IsPassphraseRequired());
     passphrase_time->Set(
@@ -511,7 +529,7 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
                    "No Passphrase Time"));
   }
   if (is_status_valid) {
-    is_cryptographer_ready->Set(full_status.cryptographer_ready);
+    cryptographer_can_encrypt->Set(full_status.cryptographer_can_encrypt);
     has_pending_keys->Set(full_status.crypto_has_pending_keys);
     encrypted_types->Set(ModelTypeSetToString(full_status.encrypted_types));
     has_keystore_key->Set(full_status.has_keystore_key);
@@ -560,13 +578,6 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
     entries->Set(static_cast<int>(snapshot.num_entries()));
   }
 
-  // Nudge Source Counters.
-  if (is_status_valid) {
-    nudge_source_notification->Set(full_status.nudge_source_notification);
-    nudge_source_local->Set(full_status.nudge_source_local);
-    nudge_source_local_refresh->Set(full_status.nudge_source_local_refresh);
-  }
-
   // This list of sections belongs in the 'details' field of the returned
   // message.
   about_info->SetKey(kDetailsKey, section_list.ToValue());
@@ -601,10 +612,10 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
     description.Set(full_status.sync_protocol_error.error_description);
   }
 
-  actionable_error.GetList().push_back(error_type.ToValue());
-  actionable_error.GetList().push_back(action.ToValue());
-  actionable_error.GetList().push_back(url.ToValue());
-  actionable_error.GetList().push_back(description.ToValue());
+  actionable_error.Append(error_type.ToValue());
+  actionable_error.Append(action.ToValue());
+  actionable_error.Append(url.ToValue());
+  actionable_error.Append(description.ToValue());
   about_info->SetKey("actionable_error", std::move(actionable_error));
 
   about_info->SetKey("unrecoverable_error_detected",
@@ -613,14 +624,15 @@ std::unique_ptr<base::DictionaryValue> ConstructAboutInformation(
   if (service->HasUnrecoverableError()) {
     std::string unrecoverable_error_message =
         "Unrecoverable error detected at " +
-        service->unrecoverable_error_location().ToString() + ": " +
-        service->unrecoverable_error_message();
+        service->GetUnrecoverableErrorLocationForDebugging().ToString() + ": " +
+        service->GetUnrecoverableErrorMessageForDebugging();
     about_info->SetKey("unrecoverable_error_message",
                        base::Value(unrecoverable_error_message));
   }
 
-  about_info->SetKey("type_status", base::Value::FromUniquePtrValue(
-                                        service->GetTypeStatusMap()));
+  about_info->SetKey(
+      "type_status",
+      base::Value::FromUniquePtrValue(service->GetTypeStatusMapForDebugging()));
 
   return about_info;
 }

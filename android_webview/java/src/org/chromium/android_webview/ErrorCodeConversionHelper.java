@@ -48,7 +48,7 @@ public final class ErrorCodeConversionHelper {
     // Request was identified as a bad url by safebrowsing.
     public static final int ERROR_UNSAFE_RESOURCE = WebViewClient.ERROR_UNSAFE_RESOURCE;
 
-    static int convertErrorCode(int netError) {
+    static int convertErrorCode(@NetError int netError) {
         // Note: many NetError.Error constants don't have an obvious mapping.
         // These will be handled by the default case, ERROR_UNKNOWN.
         switch (netError) {
@@ -130,6 +130,7 @@ public final class ErrorCodeConversionHelper {
 
             // The certificate errors are handled by onReceivedSslError
             // and don't need to be reported here.
+            case NetError.ERR_CERT_KNOWN_INTERCEPTION_BLOCKED:
             case NetError.ERR_CERT_COMMON_NAME_INVALID:
             case NetError.ERR_CERT_DATE_INVALID:
             case NetError.ERR_CERT_AUTHORITY_INVALID:

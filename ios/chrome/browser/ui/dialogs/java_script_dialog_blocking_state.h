@@ -7,8 +7,8 @@
 
 #import <Foundation/Foundation.h>
 
-#import "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 namespace web {
 class NavigationItem;
@@ -55,6 +55,8 @@ class JavaScriptDialogBlockingState
   size_t dialog_count_ = 0;
   // The NavigationItem for which JavaScript dialogs were blocked.
   web::NavigationItem* blocked_item_ = nullptr;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(JavaScriptDialogBlockingState);
 };

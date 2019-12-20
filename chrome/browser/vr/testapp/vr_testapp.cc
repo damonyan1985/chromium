@@ -8,9 +8,10 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/vr/base_graphics_delegate.h"
@@ -147,6 +148,7 @@ class AppWindow : public ui::PlatformWindowDelegate {
   }
   void OnAcceleratedWidgetDestroyed() override { NOTREACHED(); }
   void OnActivationChanged(bool active) override {}
+  void OnMouseEnter() override {}
 
  private:
   // Since we pretend to have a GPU process, we should also pretend to
@@ -284,10 +286,10 @@ int main(int argc, char** argv) {
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kUseGL, gl::kGLImplementationEGLName);
 
-  // Build UI thread message loop. This is used by platform
+  // Build UI thread task executor. This is used by platform
   // implementations for event polling & running background tasks.
-  base::MessageLoopForUI message_loop;
-  base::TaskScheduler::CreateAndStartWithDefaultParams("VrUiViewer");
+  base::SingleThreadTaskExecutor main_task_executor(base::MessagePumpType::UI);
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("VrUiViewer");
 
   ui::OzonePlatform::InitParams params;
   params.single_process = true;

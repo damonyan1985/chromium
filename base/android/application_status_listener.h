@@ -12,7 +12,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
-#include "base/observer_list_threadsafe.h"
 
 namespace base {
 namespace android {
@@ -81,6 +80,9 @@ class BASE_EXPORT ApplicationStatusListener {
 
   // Expose jni call for ApplicationStatus.getStateForApplication.
   static ApplicationState GetState();
+
+  // Returns true if the app is currently foregrounded.
+  static bool HasVisibleActivities();
 
  protected:
   ApplicationStatusListener();

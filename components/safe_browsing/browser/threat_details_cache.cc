@@ -9,15 +9,14 @@
 #include <stdint.h>
 
 #include "base/bind.h"
+#include "base/hash/md5.h"
 #include "base/lazy_instance.h"
-#include "base/md5.h"
 #include "base/strings/string_util.h"
 #include "base/task/post_task.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/safe_browsing/browser/threat_details_cache.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/base/host_port_pair.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -40,7 +39,7 @@ void ThreatDetailsCacheCollector::StartCacheCollection(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     ResourceMap* resources,
     bool* result,
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   // Start the data collection from the HTTP cache. We use a URLFetcher
   // and set the right flags so we only hit the cache.
   DVLOG(1) << "Getting cache data for all urls...";
@@ -48,14 +47,13 @@ void ThreatDetailsCacheCollector::StartCacheCollection(
   resources_ = resources;
   resources_it_ = resources_->begin();
   result_ = result;
-  callback_ = callback;
+  callback_ = std::move(callback);
   has_started_ = true;
 
   // Post a task in the message loop, so the callers don't need to
   // check if we call their callback immediately.
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
 }
 
 bool ThreatDetailsCacheCollector::HasStarted() {
@@ -112,10 +110,10 @@ void ThreatDetailsCacheCollector::OpenEntry() {
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = GURL(resources_it_->first);
-  // Only from cache, and don't save cookies.
-  resource_request->load_flags = net::LOAD_ONLY_FROM_CACHE |
-                                 net::LOAD_SKIP_CACHE_VALIDATION |
-                                 net::LOAD_DO_NOT_SAVE_COOKIES;
+  // Only from cache, and don't use cookies.
+  resource_request->load_flags =
+      net::LOAD_ONLY_FROM_CACHE | net::LOAD_SKIP_CACHE_VALIDATION;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   current_load_ = network::SimpleURLLoader::Create(std::move(resource_request),
                                                    traffic_annotation);
   current_load_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
@@ -203,7 +201,7 @@ void ThreatDetailsCacheCollector::ReadResponse(
       !current_load_->ResponseInfo()->proxy_server.is_direct();
   if (!was_fetched_via_proxy) {
     pb_response->set_remote_ip(
-        current_load_->ResponseInfo()->socket_address.ToString());
+        current_load_->ResponseInfo()->remote_endpoint.ToString());
   }
 }
 
@@ -229,17 +227,15 @@ void ThreatDetailsCacheCollector::AdvanceEntry() {
   current_load_.reset();
 
   // Create a task so we don't take over the UI thread for too long.
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&ThreatDetailsCacheCollector::OpenEntry, this));
 }
 
 void ThreatDetailsCacheCollector::AllDone(bool success) {
   DVLOG(1) << "AllDone";
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   *result_ = success;
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, callback_);
-  callback_.Reset();
+  base::PostTask(FROM_HERE, {BrowserThread::UI}, std::move(callback_));
 }
 
 }  // namespace safe_browsing

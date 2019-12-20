@@ -26,25 +26,24 @@ namespace internal {
 
 base::Optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
   return base::nullopt;
 }
 
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
 }
 
 std::unique_ptr<FileMappedForLaunch>
 ChildProcessLauncherHelper::GetFilesToMap() {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  return CreateDefaultPosixFilesToMap(child_process_id(),
-                                      mojo_channel_->remote_endpoint(),
-                                      true /* include_service_required_files */,
-                                      GetProcessType(), command_line());
+  return CreateDefaultPosixFilesToMap(
+      child_process_id(), mojo_channel_->remote_endpoint(), files_to_preload_,
+      GetProcessType(), command_line());
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const PosixFileDescriptorInfo& files_to_register,
+    PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
   // Convert FD mapping to FileHandleMappingVector
   options->fds_to_remap = files_to_register.GetMappingWithIDAdjustment(
@@ -56,7 +55,7 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
         std::make_pair(sandbox_fd, service_manager::GetSandboxFD()));
   }
 
-  options->environ = delegate_->GetEnvironment();
+  options->environment = delegate_->GetEnvironment();
 
   return true;
 }
@@ -159,18 +158,6 @@ void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   if (process.CanBackgroundProcesses())
     process.SetProcessBackgrounded(priority.is_background());
-}
-
-// static
-void ChildProcessLauncherHelper::SetRegisteredFilesForService(
-    const std::string& service_name,
-    std::map<std::string, base::FilePath> required_files) {
-  SetFilesToShareForServicePosix(service_name, std::move(required_files));
-}
-
-// static
-void ChildProcessLauncherHelper::ResetRegisteredFilesForTesting() {
-  ResetFilesToShareForTestingPosix();
 }
 
 // static

@@ -12,7 +12,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "components/policy/core/common/mac_util.h"
 #include "components/policy/core/common/policy_bundle.h"
@@ -44,8 +44,8 @@ NSString* const kEncodedChromePolicyKey = @"EncodedChromePolicy";
 // Helper that observes notifications for NSUserDefaults and triggers an update
 // at the loader on the right thread.
 @interface PolicyNotificationObserver : NSObject {
-  base::Closure callback_;
-  scoped_refptr<base::SequencedTaskRunner> taskRunner_;
+  base::Closure _callback;
+  scoped_refptr<base::SequencedTaskRunner> _taskRunner;
 }
 
 // Designated initializer. |callback| will be posted to |taskRunner| whenever
@@ -65,8 +65,8 @@ NSString* const kEncodedChromePolicyKey = @"EncodedChromePolicy";
 - (id)initWithCallback:(const base::Closure&)callback
             taskRunner:(scoped_refptr<base::SequencedTaskRunner>)taskRunner {
   if ((self = [super init])) {
-    callback_ = callback;
-    taskRunner_ = taskRunner;
+    _callback = callback;
+    _taskRunner = taskRunner;
     [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(userDefaultsChanged:)
@@ -79,7 +79,7 @@ NSString* const kEncodedChromePolicyKey = @"EncodedChromePolicy";
 - (void)userDefaultsChanged:(NSNotification*)notification {
   // This may be invoked on any thread. Post the |callback_| to the loader's
   // |taskRunner_| to make sure it Reloads() on the right thread.
-  taskRunner_->PostTask(FROM_HERE, callback_);
+  _taskRunner->PostTask(FROM_HERE, _callback);
 }
 
 - (void)dealloc {

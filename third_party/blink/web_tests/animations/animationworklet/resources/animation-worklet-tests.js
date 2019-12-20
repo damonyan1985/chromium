@@ -14,13 +14,30 @@ function waitForAnimationFrames(count, callback) {
     }
   }
   rafCallback();
-};
+}
 
 // Wait for two main thread frames to guarantee that compositor has produced
 // at least one frame.
 function waitTwoAnimationFrames(callback) {
   waitForAnimationFrames(2, callback);
-};
+}
+
+function waitForAsyncAnimationFrame() {
+  return new Promise(waitTwoAnimationFrames);
+}
+
+async function waitForDocumentTimelineAdvance() {
+  const timeAtStart = document.timeline.currentTime;
+  do {
+    await new Promise(window.requestAnimationFrame);
+  } while (timeAtStart === document.timeline.currentTime)
+}
+
+async function waitForAnimationFrameWithCondition(condition) {
+  do {
+    await new Promise(window.requestAnimationFrame);
+  } while (!condition())
+}
 
 // Load test cases in worklet context in sequence and wait until they are resolved.
 function runTests(testcases) {

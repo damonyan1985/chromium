@@ -48,9 +48,9 @@ ExtensionMsg_PermissionSetStruct& ExtensionMsg_PermissionSetStruct::operator=(
 std::unique_ptr<const PermissionSet>
 ExtensionMsg_PermissionSetStruct::ToPermissionSet() const {
   // TODO(devlin): Make this destructive so we can std::move() the members.
-  return std::make_unique<PermissionSet>(apis.Clone(),
-                                         manifest_permissions.Clone(),
-                                         explicit_hosts, scriptable_hosts);
+  return std::make_unique<PermissionSet>(
+      apis.Clone(), manifest_permissions.Clone(), explicit_hosts.Clone(),
+      scriptable_hosts.Clone());
 }
 
 ExtensionMsg_Loaded_Params::ExtensionMsg_Loaded_Params()
@@ -139,10 +139,7 @@ bool ParamTraits<URLPattern>::Read(const base::Pickle* m,
   // schemes after parsing the pattern. Update these method calls once we can
   // ignore scheme validation with URLPattern parse options. crbug.com/90544
   p->SetValidSchemes(URLPattern::SCHEME_ALL);
-  // Allow effective TLD wildcarding since this check is only needed on initial
-  // creation of URLPattern and not as part of deserialization.
-  URLPattern::ParseResult result =
-      p->Parse(spec, URLPattern::ALLOW_WILDCARD_FOR_EFFECTIVE_TLD);
+  URLPattern::ParseResult result = p->Parse(spec);
   p->SetValidSchemes(valid_schemes);
   return URLPattern::ParseResult::kSuccess == result;
 }

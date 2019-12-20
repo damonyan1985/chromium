@@ -96,7 +96,7 @@ class PlatformParentalControlsValue {
   static bool IsParentalControlActivityLoggingOnImpl() {
     // Since we can potentially block, make sure the thread is okay with this.
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
     Microsoft::WRL::ComPtr<IWindowsParentalControlsCore> parent_controls;
     HRESULT hr = ::CoCreateInstance(__uuidof(WindowsParentalControls), nullptr,
                                     CLSCTX_ALL, IID_PPV_ARGS(&parent_controls));
@@ -124,10 +124,15 @@ class PlatformParentalControlsValue {
 #endif  // OS_WIN
 
 // static
+// Sadly, this is required until c++17.
+constexpr IncognitoModePrefs::Availability
+    IncognitoModePrefs::kDefaultAvailability;
+
+// static
 bool IncognitoModePrefs::IntToAvailability(int in_value,
                                            Availability* out_value) {
   if (in_value < 0 || in_value >= AVAILABILITY_NUM_TYPES) {
-    *out_value = ENABLED;
+    *out_value = kDefaultAvailability;
     return false;
   }
   *out_value = static_cast<Availability>(in_value);
@@ -150,7 +155,7 @@ void IncognitoModePrefs::SetAvailability(PrefService* prefs,
 void IncognitoModePrefs::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterIntegerPref(prefs::kIncognitoModeAvailability,
-                                IncognitoModePrefs::ENABLED);
+                                kDefaultAvailability);
 }
 
 // static
@@ -194,9 +199,9 @@ bool IncognitoModePrefs::CanOpenBrowser(Profile* profile) {
 #if defined(OS_WIN)
 // static
 void IncognitoModePrefs::InitializePlatformParentalControls() {
-  base::CreateCOMSTATaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE})
-      ->PostTask(FROM_HERE, base::Bind(base::IgnoreResult(
+  base::CreateCOMSTATaskRunner(
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::USER_VISIBLE})
+      ->PostTask(FROM_HERE, base::BindOnce(base::IgnoreResult(
                                 &PlatformParentalControlsValue::GetInstance)));
 }
 #endif
@@ -218,7 +223,7 @@ IncognitoModePrefs::Availability IncognitoModePrefs::GetAvailabilityInternal(
     GetAvailabilityMode mode) {
   DCHECK(pref_service);
   int pref_value = pref_service->GetInteger(prefs::kIncognitoModeAvailability);
-  Availability result = IncognitoModePrefs::ENABLED;
+  Availability result = kDefaultAvailability;
   bool valid = IntToAvailability(pref_value, &result);
   DCHECK(valid);
   if (result != IncognitoModePrefs::DISABLED &&

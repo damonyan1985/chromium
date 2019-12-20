@@ -36,11 +36,10 @@ enum BiquadFilterType {
 };
 
 [
-    Constructor(BaseAudioContext context, optional BiquadFilterOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface BiquadFilterNode : AudioNode {
+] interface BiquadFilterNode : AudioNode {
+    [RaisesException] constructor(BaseAudioContext context, optional BiquadFilterOptions options);
     attribute BiquadFilterType type;
 
     readonly attribute AudioParam frequency; // in Hertz

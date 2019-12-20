@@ -13,7 +13,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "remoting/signaling/jid_util.h"
+#include "remoting/signaling/signaling_id_util.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 #include "third_party/libjingle_xmpp/xmpp/constants.h"
 
@@ -31,13 +31,36 @@ void FakeSignalStrategy::Connect(FakeSignalStrategy* peer1,
 FakeSignalStrategy::FakeSignalStrategy(const SignalingAddress& address)
     : main_thread_(base::ThreadTaskRunnerHandle::Get()),
       address_(address),
-      last_id_(0),
-      weak_factory_(this) {
+      last_id_(0) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 FakeSignalStrategy::~FakeSignalStrategy() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
+
+void FakeSignalStrategy::SetError(Error error) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  error_ = error;
+}
+
+void FakeSignalStrategy::SetIsSignInError(bool is_sign_in_error) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  is_sign_in_error_ = is_sign_in_error;
+}
+
+void FakeSignalStrategy::SetState(State state) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (state == state_) {
+    return;
+  }
+  state_ = state;
+  for (auto& observer : listeners_)
+    observer.OnSignalStrategyStateChange(state_);
+}
+
+void FakeSignalStrategy::SetPeerCallback(const PeerCallback& peer_callback) {
+  peer_callback_ = peer_callback;
 }
 
 void FakeSignalStrategy::ConnectTo(FakeSignalStrategy* peer) {
@@ -49,8 +72,8 @@ void FakeSignalStrategy::ConnectTo(FakeSignalStrategy* peer) {
     peer->SetPeerCallback(peer_callback);
   } else {
     peer->main_thread_->PostTask(
-        FROM_HERE, base::Bind(&FakeSignalStrategy::SetPeerCallback,
-                              base::Unretained(peer), peer_callback));
+        FROM_HERE, base::BindOnce(&FakeSignalStrategy::SetPeerCallback,
+                                  base::Unretained(peer), peer_callback));
   }
 }
 
@@ -64,18 +87,44 @@ void FakeSignalStrategy::SimulateMessageReordering() {
   simulate_reorder_ = true;
 }
 
+void FakeSignalStrategy::SimulateTwoStageConnect() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  simulate_two_stage_connect_ = true;
+}
+
+void FakeSignalStrategy::OnIncomingMessage(
+    std::unique_ptr<jingle_xmpp::XmlElement> stanza) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  if (!simulate_reorder_) {
+    NotifyListeners(std::move(stanza));
+    return;
+  }
+
+  // Simulate IQ messages re-ordering by swapping the delivery order of
+  // next pair of messages.
+  if (pending_stanza_) {
+    NotifyListeners(std::move(stanza));
+    NotifyListeners(std::move(pending_stanza_));
+    pending_stanza_.reset();
+  } else {
+    pending_stanza_ = std::move(stanza);
+  }
+}
+
+void FakeSignalStrategy::ProceedConnect() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  SetState(CONNECTED);
+}
+
 void FakeSignalStrategy::Connect() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  state_ = CONNECTED;
-  for (auto& observer : listeners_)
-    observer.OnSignalStrategyStateChange(CONNECTED);
+  SetState(simulate_two_stage_connect_ ? CONNECTING : CONNECTED);
 }
 
 void FakeSignalStrategy::Disconnect() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  state_ = DISCONNECTED;
-  for (auto& observer : listeners_)
-    observer.OnSignalStrategyStateChange(DISCONNECTED);
+  SetState(DISCONNECTED);
 }
 
 SignalStrategy::State FakeSignalStrategy::GetState() const {
@@ -83,7 +132,7 @@ SignalStrategy::State FakeSignalStrategy::GetState() const {
 }
 
 SignalStrategy::Error FakeSignalStrategy::GetError() const {
-  return OK;
+  return error_;
 }
 
 const SignalingAddress& FakeSignalStrategy::GetLocalAddress() const {
@@ -113,7 +162,7 @@ bool FakeSignalStrategy::SendStanza(std::unique_ptr<jingle_xmpp::XmlElement> sta
     peer_callback_.Run(std::move(stanza));
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(peer_callback_, base::Passed(&stanza)),
+        FROM_HERE, base::BindOnce(peer_callback_, std::move(stanza)),
         send_delay_);
   }
   return true;
@@ -121,7 +170,11 @@ bool FakeSignalStrategy::SendStanza(std::unique_ptr<jingle_xmpp::XmlElement> sta
 
 std::string FakeSignalStrategy::GetNextId() {
   ++last_id_;
-  return base::IntToString(last_id_);
+  return base::NumberToString(last_id_);
+}
+
+bool FakeSignalStrategy::IsSignInError() const {
+  return is_sign_in_error_;
 }
 
 // static
@@ -129,29 +182,9 @@ void FakeSignalStrategy::DeliverMessageOnThread(
     scoped_refptr<base::SingleThreadTaskRunner> thread,
     base::WeakPtr<FakeSignalStrategy> target,
     std::unique_ptr<jingle_xmpp::XmlElement> stanza) {
-  thread->PostTask(FROM_HERE,
-                   base::Bind(&FakeSignalStrategy::OnIncomingMessage,
-                              target, base::Passed(&stanza)));
-}
-
-void FakeSignalStrategy::OnIncomingMessage(
-    std::unique_ptr<jingle_xmpp::XmlElement> stanza) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  if (!simulate_reorder_) {
-    NotifyListeners(std::move(stanza));
-    return;
-  }
-
-  // Simulate IQ messages re-ordering by swapping the delivery order of
-  // next pair of messages.
-  if (pending_stanza_) {
-    NotifyListeners(std::move(stanza));
-    NotifyListeners(std::move(pending_stanza_));
-    pending_stanza_.reset();
-  } else {
-    pending_stanza_ = std::move(stanza);
-  }
+  thread->PostTask(
+      FROM_HERE, base::BindOnce(&FakeSignalStrategy::OnIncomingMessage, target,
+                                std::move(stanza)));
 }
 
 void FakeSignalStrategy::NotifyListeners(
@@ -175,10 +208,6 @@ void FakeSignalStrategy::NotifyListeners(
     if (listener.OnSignalStrategyIncomingStanza(stanza_ptr))
       break;
   }
-}
-
-void FakeSignalStrategy::SetPeerCallback(const PeerCallback& peer_callback) {
-  peer_callback_ = peer_callback;
 }
 
 }  // namespace remoting

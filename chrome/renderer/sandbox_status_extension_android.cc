@@ -26,7 +26,7 @@
 #include "v8/include/v8.h"
 
 SandboxStatusExtension::SandboxStatusExtension(content::RenderFrame* frame)
-    : content::RenderFrameObserver(frame), binding_(this) {
+    : content::RenderFrameObserver(frame) {
   // Don't do anything else for subframes.
   if (!frame->IsMainFrame())
     return;
@@ -57,8 +57,9 @@ void SandboxStatusExtension::AddSandboxStatusExtension() {
 }
 
 void SandboxStatusExtension::OnSandboxStatusExtensionRequest(
-    chrome::mojom::SandboxStatusExtensionAssociatedRequest request) {
-  binding_.Bind(std::move(request));
+    mojo::PendingAssociatedReceiver<chrome::mojom::SandboxStatusExtension>
+        receiver) {
+  receiver_.Bind(std::move(receiver));
 }
 
 void SandboxStatusExtension::Install() {
@@ -75,7 +76,7 @@ void SandboxStatusExtension::Install() {
   v8::Context::Scope context_scope(context);
 
   v8::Local<v8::Object> chrome =
-      content::GetOrCreateChromeObject(isolate, context->Global());
+      content::GetOrCreateChromeObject(isolate, context);
   v8::Local<v8::Function> function;
   bool success =
       gin::CreateFunctionTemplate(
@@ -83,8 +84,11 @@ void SandboxStatusExtension::Install() {
           ->GetFunction(context)
           .ToLocal(&function);
   if (success) {
-    success = chrome->Set(
-        gin::StringToSymbol(isolate, "getAndroidSandboxStatus"), function);
+    success = chrome
+                  ->Set(context,
+                        gin::StringToSymbol(isolate, "getAndroidSandboxStatus"),
+                        function)
+                  .IsJust();
   }
   DCHECK(success);
 }
@@ -110,8 +114,8 @@ void SandboxStatusExtension::GetSandboxStatus(gin::Arguments* args) {
   auto global_callback =
       std::make_unique<v8::Global<v8::Function>>(args->isolate(), callback);
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock()},
+  base::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::ThreadPool(), base::MayBlock()},
       base::Bind(&SandboxStatusExtension::ReadSandboxStatus, this),
       base::Bind(&SandboxStatusExtension::RunCallback, this,
                  base::Passed(&global_callback)));

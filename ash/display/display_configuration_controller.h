@@ -96,10 +96,6 @@ class ASH_EXPORT DisplayConfigurationController
   // Allow tests to enable or disable animations.
   void SetAnimatorForTest(bool enable);
 
-  void SetScreenRotationAnimatorForTest(
-      int64_t display_id,
-      std::unique_ptr<ScreenRotationAnimator> animator);
-
  private:
   class DisplayChangeLimiter;
 
@@ -125,7 +121,7 @@ class ASH_EXPORT DisplayConfigurationController
   std::unique_ptr<DisplayAnimator> display_animator_;
   std::unique_ptr<DisplayChangeLimiter> limiter_;
 
-  base::WeakPtrFactory<DisplayConfigurationController> weak_ptr_factory_;
+  base::WeakPtrFactory<DisplayConfigurationController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DisplayConfigurationController);
 };

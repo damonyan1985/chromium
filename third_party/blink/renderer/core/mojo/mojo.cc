@@ -5,10 +5,11 @@
 #include "third_party/blink/renderer/core/mojo/mojo.h"
 
 #include <string>
+#include <utility>
 
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/platform/interface_provider.h"
+#include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -38,10 +39,10 @@ MojoCreateMessagePipeResult* Mojo::createMessagePipe() {
 
   result_dict->setResult(result);
   if (result == MOJO_RESULT_OK) {
-    result_dict->setHandle0(
-        MojoHandle::Create(mojo::ScopedHandle::From(std::move(handle0))));
-    result_dict->setHandle1(
-        MojoHandle::Create(mojo::ScopedHandle::From(std::move(handle1))));
+    result_dict->setHandle0(MakeGarbageCollected<MojoHandle>(
+        mojo::ScopedHandle::From(std::move(handle0))));
+    result_dict->setHandle1(MakeGarbageCollected<MojoHandle>(
+        mojo::ScopedHandle::From(std::move(handle1))));
   }
   return result_dict;
 }
@@ -68,10 +69,10 @@ MojoCreateDataPipeResult* Mojo::createDataPipe(
   MojoResult result = mojo::CreateDataPipe(&options, &producer, &consumer);
   result_dict->setResult(result);
   if (result == MOJO_RESULT_OK) {
-    result_dict->setProducer(
-        MojoHandle::Create(mojo::ScopedHandle::From(std::move(producer))));
-    result_dict->setConsumer(
-        MojoHandle::Create(mojo::ScopedHandle::From(std::move(consumer))));
+    result_dict->setProducer(MakeGarbageCollected<MojoHandle>(
+        mojo::ScopedHandle::From(std::move(producer))));
+    result_dict->setConsumer(MakeGarbageCollected<MojoHandle>(
+        mojo::ScopedHandle::From(std::move(consumer))));
   }
   return result_dict;
 }
@@ -87,7 +88,8 @@ MojoCreateSharedBufferResult* Mojo::createSharedBuffer(unsigned num_bytes) {
 
   result_dict->setResult(result);
   if (result == MOJO_RESULT_OK) {
-    result_dict->setHandle(MojoHandle::Create(mojo::MakeScopedHandle(handle)));
+    result_dict->setHandle(
+        MakeGarbageCollected<MojoHandle>(mojo::MakeScopedHandle(handle)));
   }
   return result_dict;
 }
@@ -96,18 +98,29 @@ MojoCreateSharedBufferResult* Mojo::createSharedBuffer(unsigned num_bytes) {
 void Mojo::bindInterface(ScriptState* script_state,
                          const String& interface_name,
                          MojoHandle* request_handle,
-                         const String& scope) {
-  std::string name =
-      StringUTF8Adaptor(interface_name).AsStringPiece().as_string();
+                         const String& scope,
+                         bool use_browser_interface_broker) {
+  std::string name = interface_name.Utf8();
   auto handle =
       mojo::ScopedMessagePipeHandle::From(request_handle->TakeHandle());
 
   if (scope == "process") {
-    Platform::Current()->GetInterfaceProvider()->GetInterface(
-        name.c_str(), std::move(handle));
+    Platform::Current()->GetBrowserInterfaceBroker()->GetInterface(
+        mojo::GenericPendingReceiver(name, std::move(handle)));
     return;
   }
 
+  // This should replace InterfaceProvider usage below when all
+  // InterfaceProvider clients are converted to use BrowserInterfaceBroker. See
+  // crbug.com/936482.
+  if (use_browser_interface_broker) {
+    ExecutionContext::From(script_state)
+        ->GetBrowserInterfaceBroker()
+        .GetInterface(name, std::move(handle));
+    return;
+  }
+
+  // TODO(crbug.com/995556): remove when no longer used.
   if (auto* interface_provider =
           ExecutionContext::From(script_state)->GetInterfaceProvider()) {
     interface_provider->GetInterfaceByName(name, std::move(handle));

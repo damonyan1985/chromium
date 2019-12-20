@@ -49,14 +49,14 @@ void RecordDownloadPathGeneration(DownloadPathGenerationEvent event,
   }
 }
 
-void RecordDownloadPathValidation(PathValidationResult result,
+void RecordDownloadPathValidation(download::PathValidationResult result,
                                   bool is_transient) {
   if (is_transient) {
     UMA_HISTOGRAM_ENUMERATION("Download.PathValidationResult.Transient", result,
-                              PathValidationResult::COUNT);
+                              download::PathValidationResult::COUNT);
   } else {
     UMA_HISTOGRAM_ENUMERATION("Download.PathValidationResult.UserDownload",
-                              result, PathValidationResult::COUNT);
+                              result, download::PathValidationResult::COUNT);
   }
 }
 
@@ -69,12 +69,6 @@ void RecordDownloadShelfDragEvent(DownloadShelfDragEvent drag_event) {
 void RecordMediaParserEvent(MediaParserEvent event) {
   UMA_HISTOGRAM_ENUMERATION("Download.MediaParser.Event", event,
                             MediaParserEvent::kCount);
-}
-
-void RecordMediaParserCompletionTime(const base::TimeDelta& duration) {
-  UMA_HISTOGRAM_CUSTOM_TIMES("Download.MediaParser.CompletionTime", duration,
-                             base::TimeDelta::FromMilliseconds(10),
-                             base::TimeDelta::FromSeconds(60), 50);
 }
 
 void RecordMediaMetadataEvent(MediaMetadataEvent event) {

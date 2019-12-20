@@ -106,6 +106,10 @@
 class PrefService;
 class Profile;
 
+namespace apps {
+struct FileHandlerInfo;
+}
+
 namespace extensions {
 struct EntryInfo;
 }
@@ -125,6 +129,7 @@ enum TaskType {
   DEPRECATED_TASK_TYPE_DRIVE_APP,
   TASK_TYPE_ARC_APP,
   TASK_TYPE_CROSTINI_APP,
+  TASK_TYPE_WEB_APP,
   // The enum values must be kept in sync with FileManagerTaskType in
   // tools/metrics/histograms/enums.xml. Since enums for histograms are
   // append-only (for keeping the number consistent across versions), new values
@@ -158,7 +163,8 @@ class FullTaskDescriptor {
       const extensions::api::file_manager_private::Verb task_verb,
       const GURL& icon_url,
       bool is_default,
-      bool is_generic_file_handler);
+      bool is_generic_file_handler,
+      bool is_file_extension_match);
 
   ~FullTaskDescriptor();
 
@@ -186,6 +192,13 @@ class FullTaskDescriptor {
   void set_is_generic_file_handler(bool is_generic_file_handler) {
     is_generic_file_handler_ = is_generic_file_handler;
   }
+  // True if this task is from a file extension only. e.g. an extension/app
+  // that declares no MIME types in its manifest, but matches with the
+  // file_handlers "extensions" instead.
+  bool is_file_extension_match() const { return is_file_extension_match_; }
+  void set_is_file_extension_match(bool is_file_extension_match) {
+    is_file_extension_match_ = is_file_extension_match;
+  }
 
  private:
   TaskDescriptor task_descriptor_;
@@ -194,6 +207,7 @@ class FullTaskDescriptor {
   GURL icon_url_;
   bool is_default_;
   bool is_generic_file_handler_;
+  bool is_file_extension_match_;
 };
 
 // Update the default file handler for the given sets of suffixes and MIME
@@ -231,10 +245,10 @@ std::string TaskDescriptorToId(const TaskDescriptor& task_descriptor);
 // "task_id" looks like.
 bool ParseTaskID(const std::string& task_id, TaskDescriptor* task);
 
-// The callback is used for ExecuteFileTask(). Will be called with true if
-// the file task execution is successful, or false if unsuccessful.
+// The callback is used for ExecuteFileTask().
 typedef base::OnceCallback<void(
-    extensions::api::file_manager_private::TaskResult result)>
+    extensions::api::file_manager_private::TaskResult result,
+    std::string error_message)>
     FileTaskFinishedCallback;
 
 // Executes file handler task for each element of |file_urls|.
@@ -256,10 +270,14 @@ bool ExecuteFileTask(Profile* profile,
                      const std::vector<storage::FileSystemURL>& file_urls,
                      FileTaskFinishedCallback done);
 
+// Returns true if a file handler is enabled. Some handlers such as
+// import-crostini-image can be disabled at runtime by enterprise policy.
+bool IsFileHandlerEnabled(Profile* profile,
+                          const apps::FileHandlerInfo& file_handler_info);
+
 // Returns true if a file handler matches with entries as good match.
-bool IsGoodMatchFileHandler(
-    const extensions::FileHandlerInfo& file_handler_info,
-    const std::vector<extensions::EntryInfo>& entries);
+bool IsGoodMatchFileHandler(const apps::FileHandlerInfo& file_handler_info,
+                            const std::vector<extensions::EntryInfo>& entries);
 
 // Finds the file handler tasks (apps declaring "file_handlers" in
 // manifest.json) that can be used with the given entries, appending them to

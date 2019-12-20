@@ -18,7 +18,6 @@
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
 #include "components/gcm_driver/instance_id/instance_id_profile_service.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -47,9 +46,7 @@ ExtensionGCMAppHandler::GetFactoryInstance() {
 }
 
 ExtensionGCMAppHandler::ExtensionGCMAppHandler(content::BrowserContext* context)
-    : profile_(Profile::FromBrowserContext(context)),
-      extension_registry_observer_(this),
-      weak_factory_(this) {
+    : profile_(Profile::FromBrowserContext(context)) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
   js_event_router_.reset(new extensions::GcmJsEventRouter(profile_));
 }
@@ -112,7 +109,7 @@ void ExtensionGCMAppHandler::OnExtensionUnloaded(
     return;
 
   if (reason == UnloadedExtensionReason::UPDATE &&
-      GetGCMDriver()->app_handlers().size() >= 1) {
+      !GetGCMDriver()->app_handlers().empty()) {
     // When the extension is being updated, it will be first unloaded and then
     // loaded again by ExtensionService::AddExtension. If the app handler for
     // this extension is the only handler, removing it and adding it again will

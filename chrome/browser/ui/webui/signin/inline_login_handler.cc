@@ -6,6 +6,7 @@
 
 #include <limits.h>
 #include <string>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/metrics/user_metrics.h"
@@ -14,7 +15,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/extensions/signin/gaia_auth_extension_loader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -26,21 +26,18 @@
 #include "chrome/common/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_pref_names.h"
+#include "components/signin/public/base/signin_pref_names.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/url_util.h"
-
-#if !defined(OS_CHROMEOS)
-#include "chrome/browser/ui/signin_view_controller.h"
-#endif
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 
 const char kSignInPromoQueryKeyShowAccountManagement[] =
     "showAccountManagement";
 
-InlineLoginHandler::InlineLoginHandler() : weak_ptr_factory_(this) {}
+InlineLoginHandler::InlineLoginHandler() {}
 
 InlineLoginHandler::~InlineLoginHandler() {}
 
@@ -48,6 +45,10 @@ void InlineLoginHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "initialize",
       base::BindRepeating(&InlineLoginHandler::HandleInitializeMessage,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "authExtensionReady",
+      base::BindRepeating(&InlineLoginHandler::HandleAuthExtensionReadyMessage,
                           base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "completeLogin",
@@ -70,8 +71,7 @@ void InlineLoginHandler::HandleInitializeMessage(const base::ListValue* args) {
   AllowJavascript();
   content::WebContents* contents = web_ui()->GetWebContents();
   content::StoragePartition* partition =
-      content::BrowserContext::GetStoragePartitionForSite(
-          contents->GetBrowserContext(), signin::GetSigninPartitionURL());
+      signin::GetSigninPartition(contents->GetBrowserContext());
   if (partition) {
     const GURL& current_url = web_ui()->GetWebContents()->GetURL();
 
@@ -125,8 +125,6 @@ void InlineLoginHandler::ContinueHandleInitializeMessage() {
     params.SetBoolean("isLoginPrimaryAccount", true);
   }
 
-  params.SetString("continueUrl", signin::GetLandingURL(access_point).spec());
-
   Profile* profile = Profile::FromWebUI(web_ui());
   std::string default_email;
   if (reason == signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT ||
@@ -161,14 +159,11 @@ void InlineLoginHandler::HandleCompleteLoginMessage(
   // CookieManager.
   content::WebContents* contents = web_ui()->GetWebContents();
   content::StoragePartition* partition =
-      content::BrowserContext::GetStoragePartitionForSite(
-          contents->GetBrowserContext(), signin::GetSigninPartitionURL());
-
-  net::CookieOptions cookie_options;
-  cookie_options.set_include_httponly();
+      signin::GetSigninPartition(contents->GetBrowserContext());
 
   partition->GetCookieManagerForBrowserProcess()->GetCookieList(
-      GaiaUrls::GetInstance()->gaia_url(), cookie_options,
+      GaiaUrls::GetInstance()->gaia_url(),
+      net::CookieOptions::MakeAllInclusive(),
       base::BindOnce(&InlineLoginHandler::HandleCompleteLoginMessageWithCookies,
                      weak_ptr_factory_.GetWeakPtr(),
                      base::ListValue(args->GetList())));
@@ -176,7 +171,8 @@ void InlineLoginHandler::HandleCompleteLoginMessage(
 
 void InlineLoginHandler::HandleCompleteLoginMessageWithCookies(
     const base::ListValue& args,
-    const std::vector<net::CanonicalCookie>& cookies) {
+    const net::CookieStatusList& cookies,
+    const net::CookieStatusList& excluded_cookies) {
   const base::DictionaryValue* dict = nullptr;
   args.GetDictionary(0, &dict);
 
@@ -185,9 +181,9 @@ void InlineLoginHandler::HandleCompleteLoginMessageWithCookies(
   const std::string& gaia_id = dict->FindKey("gaiaId")->GetString();
 
   std::string auth_code;
-  for (const auto& cookie : cookies) {
-    if (cookie.Name() == "oauth_code")
-      auth_code = cookie.Value();
+  for (const auto& cookie_with_status : cookies) {
+    if (cookie_with_status.cookie.Name() == "oauth_code")
+      auth_code = cookie_with_status.cookie.Value();
   }
 
   bool skip_for_now = false;
@@ -236,20 +232,15 @@ void InlineLoginHandler::HandleSwitchToFullTabMessage(
 void InlineLoginHandler::HandleNavigationButtonClicked(
     const base::ListValue* args) {
 #if !defined(OS_CHROMEOS)
-  Browser* browser = signin::GetDesktopBrowser(web_ui());
-  DCHECK(browser);
-
-  browser->signin_view_controller()->PerformNavigation();
+  NOTREACHED() << "The inline login handler is no longer used in a browser "
+                  "or tab modal dialog.";
+#else
+  FireWebUIListener("navigateBackInWebview");
 #endif
 }
 
 void InlineLoginHandler::HandleDialogClose(const base::ListValue* args) {
 #if !defined(OS_CHROMEOS)
-  Browser* browser = signin::GetDesktopBrowser(web_ui());
-  // If the dialog was opened in the User Manager browser will be null here.
-  if (browser)
-    browser->signin_view_controller()->CloseModalSignin();
-
   // Does nothing if user manager is not showing.
   UserManagerProfileDialog::HideDialog();
 #endif  // !defined(OS_CHROMEOS)

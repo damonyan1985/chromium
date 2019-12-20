@@ -49,7 +49,7 @@ class OAuth2ManifestTest : public ManifestTest {
   std::unique_ptr<base::Value> CreateManifest(AutoApproveValue auto_approve,
                                               bool extension_id_whitelisted,
                                               ClientIdValue client_id) {
-    std::unique_ptr<base::Value> manifest = base::test::ParseJson(
+    std::unique_ptr<base::Value> manifest = base::test::ParseJsonDeprecated(
         "{ \n"
         "  \"name\": \"test\", \n"
         "  \"version\": \"0.1\", \n"
@@ -106,8 +106,8 @@ TEST_F(OAuth2ManifestTest, OAuth2SectionParsing) {
   base_manifest.SetPath(TokenizeDictionaryPath(keys::kOAuth2ClientId),
                         base::Value("client1"));
   base::Value scopes(base::Value::Type::LIST);
-  scopes.GetList().push_back(base::Value("scope1"));
-  scopes.GetList().push_back(base::Value("scope2"));
+  scopes.Append(base::Value("scope1"));
+  scopes.Append(base::Value("scope2"));
   base_manifest.SetPath(TokenizeDictionaryPath(keys::kOAuth2Scopes),
                         std::move(scopes));
 

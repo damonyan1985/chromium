@@ -13,6 +13,7 @@
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/profiles/profile.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -42,10 +43,11 @@ class DBTester {
   // Returns true if the database was retrieved successfully.
   bool DoGetDBTests() {
     base::RunLoop run_loop;
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::IO},
-        base::Bind(&DBTester::GetDBAndDoTestsOnIOThread, base::Unretained(this),
-                   profile_->GetResourceContext(), run_loop.QuitClosure()));
+        base::BindOnce(&DBTester::GetDBAndDoTestsOnIOThread,
+                       base::Unretained(this), profile_->GetResourceContext(),
+                       run_loop.QuitClosure()));
     run_loop.Run();
     return !!db_;
   }
@@ -53,11 +55,11 @@ class DBTester {
   // Test retrieving the database again, should be called after DoGetDBTests.
   void DoGetDBAgainTests() {
     base::RunLoop run_loop;
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::IO},
-        base::Bind(&DBTester::DoGetDBAgainTestsOnIOThread,
-                   base::Unretained(this), profile_->GetResourceContext(),
-                   run_loop.QuitClosure()));
+        base::BindOnce(&DBTester::DoGetDBAgainTestsOnIOThread,
+                       base::Unretained(this), profile_->GetResourceContext(),
+                       run_loop.QuitClosure()));
     run_loop.Run();
   }
 
@@ -94,8 +96,7 @@ class DBTester {
       EXPECT_EQ(db->GetPublicSlot().get(), db->GetPrivateSlot().get());
     }
 
-    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                             done_callback);
+    base::PostTask(FROM_HERE, {content::BrowserThread::UI}, done_callback);
   }
 
   void DoGetDBAgainTestsOnIOThread(content::ResourceContext* context,
@@ -107,8 +108,7 @@ class DBTester {
     // Should return the same db as before.
     EXPECT_EQ(db_, db);
 
-    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                             done_callback);
+    base::PostTask(FROM_HERE, {content::BrowserThread::UI}, done_callback);
   }
 
   Profile* profile_;

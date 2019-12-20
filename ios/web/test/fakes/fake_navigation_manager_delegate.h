@@ -14,14 +14,13 @@ namespace web {
 class FakeNavigationManagerDelegate : public NavigationManagerDelegate {
  public:
   void ClearTransientContent() override;
+  void ClearDialogs() override;
   void RecordPageStateInNavigationItem() override;
   void OnGoToIndexSameDocumentNavigation(NavigationInitiationType type,
                                          bool has_user_gesture) override;
-  void WillChangeUserAgentType() override;
-  void LoadCurrentItem() override;
+  void LoadCurrentItem(NavigationInitiationType type) override;
   void LoadIfNecessary() override;
   void Reload() override;
-  void OnNavigationItemsPruned(size_t pruned_item_count) override;
   void OnNavigationItemCommitted(NavigationItem* item) override;
   WebState* GetWebState() override;
   id<CRWWebViewNavigationProxy> GetWebViewNavigationProxy() const override;
@@ -30,12 +29,15 @@ class FakeNavigationManagerDelegate : public NavigationManagerDelegate {
                                NavigationInitiationType type,
                                bool has_user_gesture) override;
   void RemoveWebView() override;
+  NavigationItemImpl* GetPendingItem() override;
 
   // Setters for tests to inject dependencies.
   void SetWebViewNavigationProxy(id test_web_view);
+  void SetWebState(WebState*);
 
  private:
   id test_web_view_;
+  WebState* web_state_ = nullptr;
 };
 
 }  // namespace web

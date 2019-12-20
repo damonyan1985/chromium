@@ -7,7 +7,8 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/test/scoped_feature_list.h"
+#include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -23,7 +24,6 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_features.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "net/base/filename_util.h"
@@ -38,43 +38,24 @@
 namespace extensions {
 namespace {
 
-class ExtensionActiveTabTest : public ExtensionApiTest,
-                               public testing::WithParamInterface<bool> {
+class ExtensionActiveTabTest : public ExtensionApiTest {
  public:
   ExtensionActiveTabTest() = default;
 
   // ExtensionApiTest override:
-  void SetUp() override {
-    if (ShouldEnableRuntimeHostPermissions()) {
-      scoped_feature_list_.InitAndEnableFeature(
-          extensions_features::kRuntimeHostPermissions);
-    } else {
-      scoped_feature_list_.InitAndDisableFeature(
-          extensions_features::kRuntimeHostPermissions);
-    }
-    ExtensionApiTest::SetUp();
-  }
-
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
 
     // Map all hosts to localhost.
     host_resolver()->AddRule("*", "127.0.0.1");
-
-    ASSERT_EQ(ShouldEnableRuntimeHostPermissions(),
-              base::FeatureList::IsEnabled(
-                  extensions_features::kRuntimeHostPermissions));
   }
 
  private:
-  bool ShouldEnableRuntimeHostPermissions() const { return GetParam(); }
-
-  base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionActiveTabTest);
 };
 
-IN_PROC_BROWSER_TEST_P(ExtensionActiveTabTest, ActiveTab) {
+IN_PROC_BROWSER_TEST_F(ExtensionActiveTabTest, ActiveTab) {
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   ExtensionTestMessageListener background_page_ready("ready",
@@ -167,9 +148,37 @@ IN_PROC_BROWSER_TEST_P(ExtensionActiveTabTest, ActiveTab) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(ExtensionActiveTabTest,
-                         ExtensionActiveTabTest,
-                         testing::Bool());
+IN_PROC_BROWSER_TEST_F(ExtensionActiveTabTest, ActiveTabCors) {
+  ASSERT_TRUE(StartEmbeddedTestServer());
+
+  ExtensionTestMessageListener background_page_ready("ready",
+                                                     false /*will_reply*/);
+  const Extension* extension =
+      LoadExtension(test_data_dir_.AppendASCII("active_tab_cors"));
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(background_page_ready.WaitUntilSatisfied());
+
+  {
+    ui_test_utils::NavigateToURL(
+        browser(),
+        embedded_test_server()->GetURL(
+            "google.com", "/extensions/api_test/active_tab_cors/page.html"));
+    base::string16 title = base::ASCIIToUTF16("page");
+    content::TitleWatcher watcher(
+        browser()->tab_strip_model()->GetActiveWebContents(), title);
+    ASSERT_EQ(title, watcher.WaitAndGetTitle());
+  }
+
+  {
+    // The injected content script has an access to page's origin without
+    // explicit permissions other than "activeTab".
+    ResultCatcher catcher;
+    ExtensionActionRunner::GetForWebContents(
+        browser()->tab_strip_model()->GetActiveWebContents())
+        ->RunAction(extension, true);
+    EXPECT_TRUE(catcher.GetNextResult()) << message_;
+  }
+}
 
 // Tests the behavior of activeTab and its relation to an extension's ability to
 // xhr file urls and inject scripts in file frames.
@@ -223,8 +232,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, FileURLs) {
   };
 
   auto can_load_file_iframe = [this, &extension_id]() {
-    const Extension* extension =
-        extension_service()->GetExtensionById(extension_id, false);
+    const Extension* extension = extension_registry()->GetExtensionById(
+        extension_id, ExtensionRegistry::ENABLED);
 
     // Load an extension page with a file iframe.
     GURL page = extension->GetResourceURL("file_iframe.html");

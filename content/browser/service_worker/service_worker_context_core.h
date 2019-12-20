@@ -40,13 +40,11 @@ class SpecialStoragePolicy;
 
 namespace content {
 
-class EmbeddedWorkerRegistry;
 class ServiceWorkerContextCoreObserver;
 class ServiceWorkerContextWrapper;
 class ServiceWorkerJobCoordinator;
 class ServiceWorkerProviderHost;
 class ServiceWorkerRegistration;
-class ServiceWorkerStorage;
 class URLLoaderFactoryGetter;
 
 // This class manages data associated with service workers.
@@ -70,41 +68,39 @@ class CONTENT_EXPORT ServiceWorkerContextCore
                               int64_t registration_id)>;
   using UnregistrationCallback =
       base::OnceCallback<void(blink::ServiceWorkerStatusCode status)>;
-  // TODO(falken): Change these to just use std::map.
-  using ProviderMap = base::IDMap<std::unique_ptr<ServiceWorkerProviderHost>>;
-  using ProcessToProviderMap = base::IDMap<std::unique_ptr<ProviderMap>>;
-
-  using ProviderByClientUUIDMap =
-      std::map<std::string, ServiceWorkerProviderHost*>;
+  using ProviderByIdMap =
+      std::map<int, std::unique_ptr<ServiceWorkerProviderHost>>;
+  using ContainerHostByClientUUIDMap =
+      std::map<std::string, ServiceWorkerContainerHost*>;
 
   // Directory for ServiceWorkerStorage and ServiceWorkerCacheManager.
   static const base::FilePath::CharType kServiceWorkerDirectory[];
 
-  // Iterates over ServiceWorkerProviderHost objects in a ProcessToProviderMap.
-  // TODO(falken): This can just iterate over the simple map
-  // |providers_by_uuid_| for simplicity.
-  class CONTENT_EXPORT ProviderHostIterator {
+  // Iterates over ServiceWorkerContainerHost objects in the
+  // ContainerHostByClientUUIDMap.
+  // Note: As ContainerHostIterator is operating on a member of
+  // ServiceWorkerContextCore, users must ensure the ServiceWorkerContextCore
+  // instance always outlives the ContainerHostIterator one.
+  class CONTENT_EXPORT ContainerHostIterator {
    public:
-    ~ProviderHostIterator();
-    ServiceWorkerProviderHost* GetProviderHost();
+    ~ContainerHostIterator();
+    ServiceWorkerContainerHost* GetContainerHost();
     void Advance();
     bool IsAtEnd();
 
    private:
     friend class ServiceWorkerContextCore;
-    using ProviderHostPredicate =
-        base::RepeatingCallback<bool(ServiceWorkerProviderHost*)>;
-    ProviderHostIterator(ProcessToProviderMap* map,
-                         ProviderHostPredicate predicate);
-    void Initialize();
-    bool ForwardUntilMatchingProviderHost();
+    using ContainerHostPredicate =
+        base::RepeatingCallback<bool(ServiceWorkerContainerHost*)>;
+    ContainerHostIterator(ContainerHostByClientUUIDMap* map,
+                          ContainerHostPredicate predicate);
+    void ForwardUntilMatchingContainerHost();
 
-    ProcessToProviderMap* map_;
-    ProviderHostPredicate predicate_;
-    std::unique_ptr<ProcessToProviderMap::iterator> process_iterator_;
-    std::unique_ptr<ProviderMap::iterator> provider_host_iterator_;
+    ContainerHostByClientUUIDMap* const map_;
+    ContainerHostPredicate predicate_;
+    ContainerHostByClientUUIDMap::iterator container_host_iterator_;
 
-    DISALLOW_COPY_AND_ASSIGN(ProviderHostIterator);
+    DISALLOW_COPY_AND_ASSIGN(ContainerHostIterator);
   };
 
   // This is owned by the StoragePartition, which will supply it with
@@ -113,17 +109,18 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   // ServiceWorkerContextWrapper. When Notify() of |observer_list| is called in
   // ServiceWorkerContextCore, the methods of ServiceWorkerContextCoreObserver
   // will be called on the thread which called AddObserver() of |observer_list|.
-  // |url_loader_factory_getter| is used only when IsServicificationEnabled is
-  // true.
   ServiceWorkerContextCore(
       const base::FilePath& user_data_directory,
       scoped_refptr<base::SequencedTaskRunner> database_task_runner,
       storage::QuotaManagerProxy* quota_manager_proxy,
       storage::SpecialStoragePolicy* special_storage_policy,
       URLLoaderFactoryGetter* url_loader_factory_getter,
+      std::unique_ptr<blink::PendingURLLoaderFactoryBundle>
+          non_network_pending_loader_factory_bundle_for_update_check,
       base::ObserverListThreadSafe<ServiceWorkerContextCoreObserver>*
           observer_list,
       ServiceWorkerContextWrapper* wrapper);
+  // TODO(https://crbug.com/877356): Remove this copy mechanism.
   ServiceWorkerContextCore(
       ServiceWorkerContextCore* old_context,
       ServiceWorkerContextWrapper* wrapper);
@@ -142,8 +139,8 @@ class CONTENT_EXPORT ServiceWorkerContextCore
                        int column_number,
                        const GURL& source_url) override;
   void OnReportConsoleMessage(ServiceWorkerVersion* version,
-                              int source_identifier,
-                              int message_level,
+                              blink::mojom::ConsoleMessageSource source,
+                              blink::mojom::ConsoleMessageLevel message_level,
                               const base::string16& message,
                               int line_number,
                               const GURL& source_url) override;
@@ -157,51 +154,56 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   ServiceWorkerContextWrapper* wrapper() const { return wrapper_; }
   ServiceWorkerStorage* storage() { return storage_.get(); }
   ServiceWorkerProcessManager* process_manager();
-  EmbeddedWorkerRegistry* embedded_worker_registry() {
-    return embedded_worker_registry_.get();
-  }
   ServiceWorkerJobCoordinator* job_coordinator() {
     return job_coordinator_.get();
   }
 
   // The context class owns the set of ProviderHosts.
-  //
-  // For browser-assigned provider ids, the |process_id| parameter is ignored,
-  // since they have unique ids.
   void AddProviderHost(
       std::unique_ptr<ServiceWorkerProviderHost> provider_host);
-  ServiceWorkerProviderHost* GetProviderHost(int process_id, int provider_id);
-  void RemoveProviderHost(int process_id, int provider_id);
-  void RemoveAllProviderHostsForProcess(int process_id);
+  void RemoveProviderHost(int provider_id);
 
-  // Returns a ProviderHost iterator for all service worker clients for the
+  // Returns a ContainerHost iterator for all service worker clients for the
   // |origin|. If |include_reserved_clients| is false, this only returns clients
-  // that are execution ready (i.e., for windows, the navigation has been
-  // committed and for workers, the final response after redirects has been
+  // that are execution ready (i.e., for windows, the document has been
+  // created and for workers, the final response after redirects has been
   // delivered).
-  std::unique_ptr<ProviderHostIterator> GetClientProviderHostIterator(
+  std::unique_ptr<ContainerHostIterator> GetClientContainerHostIterator(
       const GURL& origin,
       bool include_reserved_clients);
 
-  // Runs the callback with true if there is a ProviderHost for |origin| of type
-  // blink::mojom::ServiceWorkerProviderType::kForWindow which is a main
-  // (top-level) frame. Reserved clients are ignored.
-  void HasMainFrameProviderHost(const GURL& origin,
-                                BoolCallback callback) const;
+  // Returns a ContainerHost iterator for service worker window clients for the
+  // |origin|. If |include_reserved_clients| is false, this only returns clients
+  // that are execution ready.
+  std::unique_ptr<ContainerHostIterator> GetWindowClientContainerHostIterator(
+      const GURL& origin,
+      bool include_reserved_clients);
 
-  // Maintains a map from Client UUID to ProviderHost.
+  // Runs the callback with true if there is a ContainerHost for |origin| of
+  // type blink::mojom::ServiceWorkerProviderType::kForWindow which is a main
+  // (top-level) frame. Reserved clients are ignored.
+  // TODO(crbug.com/824858): Make this synchronously return bool when the core
+  // thread is UI.
+  void HasMainFrameWindowClient(const GURL& origin, BoolCallback callback);
+
+  // Maintains a map from Client UUID to ServiceWorkerContainerHost for service
+  // worker clients. |container_host| should not be for a service worker
+  // execution context.
   // (Note: instead of maintaining 2 maps we might be able to uniformly use
   // UUID instead of process_id+provider_id elsewhere. For now I'm leaving
   // these as provider_id is deeply wired everywhere)
-  void RegisterProviderHostByClientID(const std::string& client_uuid,
-                                      ServiceWorkerProviderHost* provider_host);
-  void UnregisterProviderHostByClientID(const std::string& client_uuid);
-  ServiceWorkerProviderHost* GetProviderHostByClientID(
+  void RegisterContainerHostByClientID(
+      const std::string& client_uuid,
+      ServiceWorkerContainerHost* container_host);
+  void UnregisterContainerHostByClientID(const std::string& client_uuid);
+  ServiceWorkerContainerHost* GetContainerHostByClientID(
       const std::string& client_uuid);
 
   void RegisterServiceWorker(
       const GURL& script_url,
       const blink::mojom::ServiceWorkerRegistrationOptions& options,
+      blink::mojom::FetchClientSettingsObjectPtr
+          outside_fetch_client_settings_object,
       RegistrationCallback callback);
   void UnregisterServiceWorker(const GURL& scope,
                                UnregistrationCallback callback);
@@ -226,6 +228,8 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   void UpdateServiceWorker(ServiceWorkerRegistration* registration,
                            bool force_bypass_cache,
                            bool skip_script_comparison,
+                           blink::mojom::FetchClientSettingsObjectPtr
+                               outside_fetch_client_settings_object,
                            UpdateCallback callback);
 
   // Used in DevTools to update the service worker registrations without
@@ -270,12 +274,11 @@ class CONTENT_EXPORT ServiceWorkerContextCore
 
   void ClearAllServiceWorkersForTest(base::OnceClosure callback);
 
-  // Determines if there is a ServiceWorker registration that matches |url|, and
-  // if |other_url| falls inside the scope of the same registration. See
-  // ServiceWorkerContext::CheckHasServiceWorker for more details.
+  // Determines if there is a ServiceWorker registration that matches
+  // |url|. See ServiceWorkerContext::CheckHasServiceWorker for more
+  // details.
   void CheckHasServiceWorker(
       const GURL& url,
-      const GURL& other_url,
       const ServiceWorkerContext::CheckHasServiceWorkerCallback callback);
 
   void UpdateVersionFailureCount(int64_t version_id,
@@ -291,9 +294,16 @@ class CONTENT_EXPORT ServiceWorkerContextCore
     return loader_factory_getter_.get();
   }
 
+  const scoped_refptr<blink::URLLoaderFactoryBundle>&
+  loader_factory_bundle_for_update_check() {
+    return loader_factory_bundle_for_update_check_;
+  }
+
   base::WeakPtr<ServiceWorkerContextCore> AsWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
+
+  int GetNextEmbeddedWorkerId();
 
  private:
   friend class ServiceWorkerContextCoreTest;
@@ -306,8 +316,6 @@ class CONTENT_EXPORT ServiceWorkerContextCore
     int count;
     blink::ServiceWorkerStatusCode last_failure;
   };
-
-  ProviderMap* GetProviderMapForProcess(int process_id);
 
   void RegistrationComplete(const GURL& scope,
                             RegistrationCallback callback,
@@ -336,7 +344,6 @@ class CONTENT_EXPORT ServiceWorkerContextCore
           registrations);
 
   void DidFindRegistrationForCheckHasServiceWorker(
-      const GURL& other_url,
       ServiceWorkerContext::CheckHasServiceWorkerCallback callback,
       blink::ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
@@ -349,14 +356,15 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   // Bind() to hold a reference to |wrapper_| until |this| is fully destroyed.
   ServiceWorkerContextWrapper* wrapper_;
 
-  // |providers_| owns the provider hosts. Hosts with browser-assigned provider
-  // ids (unique over all processes), are kept in the map for process id -1.
-  std::unique_ptr<ProcessToProviderMap> providers_;
-  // |provider_by_uuid_| contains raw pointers to hosts owned by |providers_|.
-  std::unique_ptr<ProviderByClientUUIDMap> provider_by_uuid_;
+  // |providers_| owns the provider hosts.
+  std::unique_ptr<ProviderByIdMap> providers_;
+
+  // |container_host_by_uuid_| contains raw pointers to container hosts for
+  // service worker clients. This doesn't contain container hosts for service
+  // worker execution contexts.
+  std::unique_ptr<ContainerHostByClientUUIDMap> container_host_by_uuid_;
 
   std::unique_ptr<ServiceWorkerStorage> storage_;
-  scoped_refptr<EmbeddedWorkerRegistry> embedded_worker_registry_;
   std::unique_ptr<ServiceWorkerJobCoordinator> job_coordinator_;
   std::map<int64_t, ServiceWorkerRegistration*> live_registrations_;
   std::map<int64_t, ServiceWorkerVersion*> live_versions_;
@@ -364,8 +372,10 @@ class CONTENT_EXPORT ServiceWorkerContextCore
 
   std::map<int64_t /* version_id */, FailureInfo> failure_counts_;
 
-  // IsServicificationEnabled
   scoped_refptr<URLLoaderFactoryGetter> loader_factory_getter_;
+
+  scoped_refptr<blink::URLLoaderFactoryBundle>
+      loader_factory_bundle_for_update_check_;
 
   bool force_update_on_page_load_;
   // Set in RegisterServiceWorker(), cleared in ClearAllServiceWorkersForTest().
@@ -376,7 +386,9 @@ class CONTENT_EXPORT ServiceWorkerContextCore
       base::ObserverListThreadSafe<ServiceWorkerContextCoreObserver>;
   const scoped_refptr<ServiceWorkerContextObserverList> observer_list_;
 
-  base::WeakPtrFactory<ServiceWorkerContextCore> weak_factory_;
+  int next_embedded_worker_id_ = 0;
+
+  base::WeakPtrFactory<ServiceWorkerContextCore> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerContextCore);
 };

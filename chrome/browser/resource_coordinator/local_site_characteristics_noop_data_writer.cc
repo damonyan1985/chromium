@@ -16,7 +16,7 @@ void LocalSiteCharacteristicsNoopDataWriter::NotifySiteLoaded() {}
 void LocalSiteCharacteristicsNoopDataWriter::NotifySiteUnloaded() {}
 
 void LocalSiteCharacteristicsNoopDataWriter::NotifySiteVisibilityChanged(
-    TabVisibility visibility) {}
+    performance_manager::TabVisibility visibility) {}
 
 void LocalSiteCharacteristicsNoopDataWriter::
     NotifyUpdatesFaviconInBackground() {}
@@ -24,9 +24,6 @@ void LocalSiteCharacteristicsNoopDataWriter::
 void LocalSiteCharacteristicsNoopDataWriter::NotifyUpdatesTitleInBackground() {}
 
 void LocalSiteCharacteristicsNoopDataWriter::NotifyUsesAudioInBackground() {}
-
-void LocalSiteCharacteristicsNoopDataWriter::
-    NotifyUsesNotificationsInBackground() {}
 
 void LocalSiteCharacteristicsNoopDataWriter::
     NotifyLoadTimePerformanceMeasurement(

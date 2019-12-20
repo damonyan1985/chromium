@@ -16,9 +16,9 @@
 #include "base/scoped_observer.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/base/completion_callback.h"
 
 namespace safe_browsing {
 
@@ -34,7 +34,7 @@ class ThreatDetailsRedirectsCollector
   // Collects urls' redirects chain information from the history service.
   // We get access to history service via web_contents in UI thread.
   void StartHistoryCollection(const std::vector<GURL>& urls,
-                              const base::Closure& callback);
+                              base::OnceClosure callback);
 
   // Returns whether or not StartCacheCollection has been called.
   bool HasStarted() const;
@@ -54,7 +54,7 @@ class ThreatDetailsRedirectsCollector
   void StartGetRedirects(const std::vector<GURL>& urls);
   void GetRedirects(const GURL& url);
   void OnGotQueryRedirectsTo(const GURL& url,
-                             const history::RedirectList* redirect_list);
+                             history::RedirectList redirect_list);
 
   // Runs the callback when redirects collecting is all done.
   void AllDone();
@@ -63,7 +63,7 @@ class ThreatDetailsRedirectsCollector
 
   // Method we call when we are done. The caller must be alive for the
   // whole time, we are modifying its state (see above).
-  base::Closure callback_;
+  base::OnceClosure callback_;
 
   // Sets to true once StartHistoryCollection is called
   bool has_started_;
@@ -77,7 +77,7 @@ class ThreatDetailsRedirectsCollector
 
   base::WeakPtr<history::HistoryService> history_service_;
   ScopedObserver<history::HistoryService, history::HistoryServiceObserver>
-      history_service_observer_;
+      history_service_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ThreatDetailsRedirectsCollector);
 };

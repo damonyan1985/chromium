@@ -30,8 +30,7 @@ IdleHelper::IdleHelper(
       state_(helper, delegate, idle_period_tracing_name),
       required_quiescence_duration_before_long_idle_period_(
           required_quiescence_duration_before_long_idle_period),
-      is_shutdown_(false),
-      weak_factory_(this) {
+      is_shutdown_(false) {
   weak_idle_helper_ptr_ = weak_factory_.GetWeakPtr();
   enable_next_long_idle_period_closure_.Reset(base::BindRepeating(
       &IdleHelper::EnableLongIdlePeriod, weak_idle_helper_ptr_));
@@ -218,7 +217,8 @@ void IdleHelper::EndIdlePeriod() {
                      base::TimeTicks());
 }
 
-void IdleHelper::WillProcessTask(const base::PendingTask& pending_task) {
+void IdleHelper::WillProcessTask(const base::PendingTask& pending_task,
+                                 bool was_blocked_or_low_priority) {
   DCHECK(!is_shutdown_);
 }
 

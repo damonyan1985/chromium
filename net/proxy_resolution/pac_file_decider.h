@@ -32,9 +32,26 @@ namespace net {
 
 class DhcpPacFileFetcher;
 class NetLog;
-class NetLogCaptureMode;
 class ProxyResolver;
 class PacFileFetcher;
+
+// Structure that encapsulates the result a PacFileData along with an
+// indication of its origin: was it obtained implicitly from auto-detect,
+// or was it read from a more explicitly configured URL.
+//
+// Note that |!from_auto_detect| does NOT imply the script was securely
+// delivered. Most commonly PAC scripts are configured from http:// URLs,
+// both for auto-detect and not.
+struct NET_EXPORT_PRIVATE PacFileDataWithSource {
+  PacFileDataWithSource();
+  explicit PacFileDataWithSource(const PacFileDataWithSource&);
+  ~PacFileDataWithSource();
+
+  PacFileDataWithSource& operator=(const PacFileDataWithSource&);
+
+  scoped_refptr<PacFileData> data;
+  bool from_auto_detect = false;
+};
 
 // PacFileDecider is a helper class used by ProxyResolutionService to
 // determine which PAC script to use given our proxy configuration.
@@ -82,12 +99,13 @@ class NET_EXPORT_PRIVATE PacFileDecider {
             CompletionOnceCallback callback);
 
   // Shuts down any in-progress DNS requests, and cancels any ScriptFetcher
-  // requests.  Does not call OnShutdown on the [Dhcp]PacFileFetcher.
+  // requests. Does not call OnShutdown() on the [Dhcp]PacFileFetcher. Any
+  // pending callback will not be invoked.
   void OnShutdown();
 
   const ProxyConfigWithAnnotation& effective_config() const;
 
-  const scoped_refptr<PacFileData>& script_data() const;
+  const PacFileDataWithSource& script_data() const;
 
   void set_quick_check_enabled(bool enabled) { quick_check_enabled_ = enabled; }
 
@@ -101,12 +119,10 @@ class NET_EXPORT_PRIVATE PacFileDecider {
 
     PacSource(Type type, const GURL& url) : type(type), url(url) {}
 
-    // Returns a Value representing the PacSource.  |effective_pac_url| must
-    // be non-NULL and point to the URL derived from information contained in
+    // Returns a Value representing the PacSource.  |effective_pac_url| is the
+    // URL derived from information contained in
     // |this|, if Type is not WPAD_DHCP.
-    std::unique_ptr<base::Value> NetLogCallback(
-        const GURL* effective_pac_url,
-        NetLogCaptureMode capture_mode) const;
+    base::Value NetLogParams(const GURL& effective_pac_url) const;
 
     Type type;
     GURL url;  // Empty unless |type == PAC_SOURCE_CUSTOM|.
@@ -197,12 +213,11 @@ class NET_EXPORT_PRIVATE PacFileDecider {
 
   // Results.
   ProxyConfigWithAnnotation effective_config_;
-  scoped_refptr<PacFileData> script_data_;
+  PacFileDataWithSource script_data_;
 
   std::unique_ptr<HostResolver::ResolveHostRequest> resolve_request_;
 
   base::OneShotTimer quick_check_timer_;
-  base::Time quick_check_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(PacFileDecider);
 };

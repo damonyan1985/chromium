@@ -15,14 +15,13 @@
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/content_settings/chrome_content_settings_utils.h"
 #include "chrome/browser/status_icons/status_icon.h"
 #include "chrome/browser/status_icons/status_tray.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -79,6 +78,36 @@ base::string16 GetTitle(WebContents* web_contents) {
   return url_formatter::FormatUrlForSecurityDisplay(web_contents->GetURL());
 }
 
+typedef void (MediaStreamCaptureIndicator::Observer::*ObserverMethod)(
+    content::WebContents* web_contents,
+    bool value);
+
+ObserverMethod GetObserverMethodToCall(blink::mojom::MediaStreamType type) {
+  switch (type) {
+    case blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE:
+      return &MediaStreamCaptureIndicator::Observer::OnIsCapturingAudioChanged;
+
+    case blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE:
+      return &MediaStreamCaptureIndicator::Observer::OnIsCapturingVideoChanged;
+
+    case blink::mojom::MediaStreamType::GUM_TAB_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE:
+      return &MediaStreamCaptureIndicator::Observer::OnIsBeingMirroredChanged;
+
+    case blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
+      return &MediaStreamCaptureIndicator::Observer::
+          OnIsCapturingDesktopChanged;
+
+    case blink::mojom::MediaStreamType::NO_SERVICE:
+    case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
+      NOTREACHED();
+      return nullptr;
+  }
+}
+
 }  // namespace
 
 // Stores usage counts for all the capture devices associated with a single
@@ -91,9 +120,7 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
  public:
   WebContentsDeviceUsage(scoped_refptr<MediaStreamCaptureIndicator> indicator,
                          WebContents* web_contents)
-      : WebContentsObserver(web_contents),
-        indicator_(std::move(indicator)),
-        weak_factory_(this) {}
+      : WebContentsObserver(web_contents), indicator_(std::move(indicator)) {}
 
   bool IsCapturingAudio() const { return audio_stream_count_ > 0; }
   bool IsCapturingVideo() const { return video_stream_count_ > 0; }
@@ -115,7 +142,7 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
   void NotifyStopped();
 
  private:
-  int& GetStreamCount(blink::MediaStreamType type);
+  int& GetStreamCount(blink::mojom::MediaStreamType type);
 
   // content::WebContentsObserver overrides.
   void WebContentsDestroyed() override {
@@ -129,7 +156,7 @@ class MediaStreamCaptureIndicator::WebContentsDeviceUsage
   int desktop_stream_count_ = 0;
 
   base::OnceClosure stop_callback_;
-  base::WeakPtrFactory<WebContentsDeviceUsage> weak_factory_;
+  base::WeakPtrFactory<WebContentsDeviceUsage> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsDeviceUsage);
 };
@@ -155,8 +182,9 @@ class MediaStreamCaptureIndicator::UIDelegate : public content::MediaStreamUI {
 
  private:
   // content::MediaStreamUI interface.
-  gfx::NativeViewId OnStarted(base::OnceClosure stop_callback,
-                              base::RepeatingClosure source_callback) override {
+  gfx::NativeViewId OnStarted(
+      base::OnceClosure stop_callback,
+      content::MediaStreamUI::SourceCallback source_callback) override {
     DCHECK(!started_);
     started_ = true;
 
@@ -194,8 +222,17 @@ MediaStreamCaptureIndicator::WebContentsDeviceUsage::RegisterMediaStream(
 void MediaStreamCaptureIndicator::WebContentsDeviceUsage::AddDevices(
     const blink::MediaStreamDevices& devices,
     base::OnceClosure stop_callback) {
-  for (const auto& device : devices)
-    ++GetStreamCount(device.type);
+  for (const auto& device : devices) {
+    int& stream_count = GetStreamCount(device.type);
+    ++stream_count;
+
+    if (web_contents() && stream_count == 1) {
+      ObserverMethod obs_func = GetObserverMethodToCall(device.type);
+      DCHECK(obs_func);
+      for (Observer& obs : indicator_->observers_)
+        (obs.*obs_func)(web_contents(), true);
+    }
+  }
 
   if (web_contents()) {
     stop_callback_ = std::move(stop_callback);
@@ -211,14 +248,18 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::RemoveDevices(
     int& stream_count = GetStreamCount(device.type);
     --stream_count;
     DCHECK_GE(stream_count, 0);
+
+    if (web_contents() && stream_count == 0) {
+      ObserverMethod obs_func = GetObserverMethodToCall(device.type);
+      DCHECK(obs_func);
+      for (Observer& obs : indicator_->observers_)
+        (obs.*obs_func)(web_contents(), false);
+    }
   }
 
   if (web_contents()) {
     web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TAB);
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED,
-        content::Source<WebContents>(web_contents()),
-        content::NotificationService::NoDetails());
+    content_settings::UpdateLocationBarUiForWebContents(web_contents());
   }
 
   indicator_->UpdateNotificationUserInterface();
@@ -230,29 +271,33 @@ void MediaStreamCaptureIndicator::WebContentsDeviceUsage::NotifyStopped() {
 }
 
 int& MediaStreamCaptureIndicator::WebContentsDeviceUsage::GetStreamCount(
-    blink::MediaStreamType type) {
+    blink::mojom::MediaStreamType type) {
   switch (type) {
-    case blink::MEDIA_DEVICE_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE:
       return audio_stream_count_;
 
-    case blink::MEDIA_DEVICE_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE:
       return video_stream_count_;
 
-    case blink::MEDIA_GUM_TAB_AUDIO_CAPTURE:
-    case blink::MEDIA_GUM_TAB_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_TAB_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_TAB_VIDEO_CAPTURE:
       return mirroring_stream_count_;
 
-    case blink::MEDIA_GUM_DESKTOP_VIDEO_CAPTURE:
-    case blink::MEDIA_GUM_DESKTOP_AUDIO_CAPTURE:
-    case blink::MEDIA_DISPLAY_VIDEO_CAPTURE:
-    case blink::MEDIA_DISPLAY_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::GUM_DESKTOP_AUDIO_CAPTURE:
+    case blink::mojom::MediaStreamType::DISPLAY_VIDEO_CAPTURE:
+    case blink::mojom::MediaStreamType::DISPLAY_AUDIO_CAPTURE:
       return desktop_stream_count_;
 
-    case blink::MEDIA_NO_SERVICE:
-    case blink::NUM_MEDIA_TYPES:
+    case blink::mojom::MediaStreamType::NO_SERVICE:
+    case blink::mojom::MediaStreamType::NUM_MEDIA_TYPES:
       NOTREACHED();
       return video_stream_count_;
   }
+}
+
+MediaStreamCaptureIndicator::Observer::~Observer() {
+  DCHECK(!IsInObserverList());
 }
 
 MediaStreamCaptureIndicator::MediaStreamCaptureIndicator() {}
@@ -288,7 +333,7 @@ void MediaStreamCaptureIndicator::ExecuteCommand(int command_id,
   DCHECK_LE(0, index);
   DCHECK_GT(static_cast<int>(command_targets_.size()), index);
   WebContents* web_contents = command_targets_[index];
-  if (ContainsKey(usage_map_, web_contents))
+  if (base::Contains(usage_map_, web_contents))
     web_contents->GetDelegate()->ActivateContents(web_contents);
 }
 

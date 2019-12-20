@@ -60,8 +60,8 @@ async function unloadOpenFileDialog(
  *    the Array being the basic file entry set of the |volume|.
  */
 async function setUpFileEntrySet(volume) {
-  let localEntryPromise = addEntries(['local'], BASIC_LOCAL_ENTRY_SET);
-  let driveEntryPromise = addEntries(
+  const localEntryPromise = addEntries(['local'], BASIC_LOCAL_ENTRY_SET);
+  const driveEntryPromise = addEntries(
       ['drive'], [ENTRIES.hello, ENTRIES.pinned, ENTRIES.testDocument]);
 
   await Promise.all([localEntryPromise, driveEntryPromise]);
@@ -84,7 +84,9 @@ async function setUpFileEntrySet(volume) {
 async function openFileDialogClickOkButton(
     volume, name, useBrowserOpen = false) {
   const okButton = '.button-panel button.ok:enabled';
-  let closer = clickOpenFileDialogButton.bind(null, name, okButton);
+  await sendTestMessage(
+      {name: 'expectFileTask', fileNames: [name], openType: 'open'});
+  const closer = clickOpenFileDialogButton.bind(null, name, okButton);
 
   const entrySet = await setUpFileEntrySet(volume);
   const result = await openAndWaitForClosingDialog(
@@ -109,7 +111,10 @@ async function openFileDialogClickOkButton(
 async function saveFileDialogClickOkButton(volume, name) {
   const caller = getCaller();
 
-  let closer = async (appId) => {
+  await sendTestMessage(
+      {name: 'expectFileTask', fileNames: [name], openType: 'saveAs'});
+
+  const closer = async (appId) => {
     const okButton = '.button-panel button.ok:enabled';
 
     await remoteCall.callRemoteTestUtil('selectFile', appId, [name]);
@@ -156,7 +161,7 @@ async function openFileDialogExpectOkButtonDisabled(
   const okButton = '.button-panel button.ok:enabled';
   const disabledOkButton = '.button-panel button.ok:disabled';
   const cancelButton = '.button-panel button.cancel';
-  let closer = async (dialog) => {
+  const closer = async (dialog) => {
     await remoteCall.callRemoteTestUtil('selectFile', dialog, [enabledName]);
     await remoteCall.waitForElement(dialog, okButton);
     await remoteCall.callRemoteTestUtil('selectFile', dialog, [name]);
@@ -182,7 +187,7 @@ async function openFileDialogClickCancelButton(volume, name) {
   const type = {type: 'openFile'};
 
   const cancelButton = '.button-panel button.cancel';
-  let closer = clickOpenFileDialogButton.bind(null, name, cancelButton);
+  const closer = clickOpenFileDialogButton.bind(null, name, cancelButton);
 
   const entrySet = await setUpFileEntrySet(volume);
   chrome.test.assertEq(
@@ -202,12 +207,31 @@ async function openFileDialogSendEscapeKey(volume, name) {
   const type = {type: 'openFile'};
 
   const escapeKey = ['#file-list', 'Escape', false, false, false];
-  let closer = sendOpenFileDialogKey.bind(null, name, escapeKey);
+  const closer = sendOpenFileDialogKey.bind(null, name, escapeKey);
 
   const entrySet = await setUpFileEntrySet(volume);
   chrome.test.assertEq(
       undefined,
       await openAndWaitForClosingDialog(type, volume, entrySet, closer));
+}
+
+/**
+ * Tests for display:none status of feedback panels in Files app.
+ *
+ * @param {string} type Type of dialog to open.
+ */
+async function checkFeedbackDisplayHidden(type) {
+  // Open dialog of the specified 'type'.
+  chrome.fileSystem.chooseEntry({type: type}, (entry) => {});
+  const appId = await remoteCall.waitForWindow('dialog#');
+
+  // Wait to finish initial load.
+  await remoteCall.waitFor('isFileManagerLoaded', appId, true);
+  // Check the display style of the feedback panels container.
+  const element = await remoteCall.waitForElementStyles(
+      appId, ['.files-feedback-panels'], ['display']);
+  // Check that CSS display style is 'none'.
+  chrome.test.assertTrue(element.styles['display'] === 'none');
 }
 
 /**
@@ -219,29 +243,64 @@ const TEST_LOCAL_FILE = BASIC_LOCAL_ENTRY_SET[0].targetPath;
 /**
  * Tests opening file dialog on Downloads and closing it with Ok button.
  */
-testcase.openFileDialogDownloads = function() {
+testcase.openFileDialogDownloads = () => {
   return openFileDialogClickOkButton('downloads', TEST_LOCAL_FILE);
 };
 
 /**
  * Tests opening save file dialog on Downloads and closing it with Ok button.
  */
-testcase.saveFileDialogDownloads = function() {
+testcase.saveFileDialogDownloads = () => {
   return saveFileDialogClickOkButton('downloads', TEST_LOCAL_FILE);
+};
+
+/**
+ * Tests opening save file dialog on Downloads and using New Folder button.
+ */
+testcase.saveFileDialogDownloadsNewFolderButton = async () => {
+  // Open Save as dialog.
+  chrome.fileSystem.chooseEntry({type: 'saveFile'}, (entry) => {});
+  const appId = await remoteCall.waitForWindow('dialog#');
+
+  // Wait to finish initial load.
+  await remoteCall.waitFor('isFileManagerLoaded', appId, true);
+
+  // Check: New Folder button should be enabled and click on it.
+  const query = '#new-folder-button:not([disabled])';
+  const newFolderButton = await remoteCall.waitAndClickElement(appId, query);
+
+  // Wait for the new folder with input to appear, assume the rest of the
+  // process works (covered by other tests).
+  const textInput = '#file-list .table-row[renaming] input.rename';
+  await remoteCall.waitForElement(appId, textInput);
 };
 
 /**
  * Tests opening file dialog on Downloads and closing it with Cancel button.
  */
-testcase.openFileDialogCancelDownloads = function() {
+testcase.openFileDialogCancelDownloads = () => {
   return openFileDialogClickCancelButton('downloads', TEST_LOCAL_FILE);
 };
 
 /**
  * Tests opening file dialog on Downloads and closing it with ESC key.
  */
-testcase.openFileDialogEscapeDownloads = function() {
+testcase.openFileDialogEscapeDownloads = () => {
   return openFileDialogSendEscapeKey('downloads', TEST_LOCAL_FILE);
+};
+
+/**
+ * Tests the feedback panels are hidden when using an open file dialog.
+ */
+testcase.openFileDialogPanelsDisabled = () => {
+  return checkFeedbackDisplayHidden('openFile');
+};
+
+/**
+ * Tests the feedback panels are hidden when using a save file dialog.
+ */
+testcase.saveFileDialogPanelsDisabled = () => {
+  return checkFeedbackDisplayHidden('saveFile');
 };
 
 /**
@@ -259,14 +318,14 @@ const TEST_DRIVE_PINNED_FILE = ENTRIES.pinned.targetPath;
 /**
  * Tests opening file dialog on Drive and closing it with Ok button.
  */
-testcase.openFileDialogDrive = function() {
+testcase.openFileDialogDrive = () => {
   return openFileDialogClickOkButton('drive', TEST_DRIVE_FILE);
 };
 
 /**
  * Tests save file dialog on Drive and closing it with Ok button.
  */
-testcase.saveFileDialogDrive = function() {
+testcase.saveFileDialogDrive = () => {
   return saveFileDialogClickOkButton('drive', TEST_DRIVE_FILE);
 };
 
@@ -274,7 +333,7 @@ testcase.saveFileDialogDrive = function() {
  * Tests that an unpinned file cannot be selected in file open dialogs while
  * offline.
  */
-testcase.openFileDialogDriveOffline = function() {
+testcase.openFileDialogDriveOffline = () => {
   return openFileDialogExpectOkButtonDisabled(
       'drive', TEST_DRIVE_FILE, TEST_DRIVE_PINNED_FILE);
 };
@@ -283,7 +342,7 @@ testcase.openFileDialogDriveOffline = function() {
  * Tests that an unpinned file cannot be selected in save file dialogs while
  * offline.
  */
-testcase.saveFileDialogDriveOffline = function() {
+testcase.saveFileDialogDriveOffline = () => {
   return openFileDialogExpectOkButtonDisabled(
       'drive', TEST_DRIVE_FILE, TEST_DRIVE_PINNED_FILE, 'saveFile');
 };
@@ -291,14 +350,14 @@ testcase.saveFileDialogDriveOffline = function() {
 /**
  * Tests opening file dialog on Drive and closing it with Ok button.
  */
-testcase.openFileDialogDriveOfflinePinned = function() {
+testcase.openFileDialogDriveOfflinePinned = () => {
   return openFileDialogClickOkButton('drive', TEST_DRIVE_PINNED_FILE);
 };
 
 /**
  * Tests save file dialog on Drive and closing it with Ok button.
  */
-testcase.saveFileDialogDriveOfflinePinned = function() {
+testcase.saveFileDialogDriveOfflinePinned = () => {
   return saveFileDialogClickOkButton('drive', TEST_DRIVE_PINNED_FILE);
 };
 
@@ -306,15 +365,11 @@ testcase.saveFileDialogDriveOfflinePinned = function() {
  * Tests opening a file from Drive in the browser, ensuring it correctly
  * opens the file URL.
  */
-testcase.openFileDialogDriveFromBrowser = async function() {
+testcase.openFileDialogDriveFromBrowser = async () => {
   const url = new URL(
       await openFileDialogClickOkButton('drive', TEST_DRIVE_FILE, true));
 
-  const isDriveFsEnabled =
-      await sendTestMessage({name: 'getDriveFsEnabled'}) === 'true';
-
-  chrome.test.assertEq(
-      url.protocol, isDriveFsEnabled ? 'file:' : 'externalfile:');
+  chrome.test.assertEq(url.protocol, 'file:');
   chrome.test.assertTrue(
       url.pathname.endsWith(`/root/${TEST_DRIVE_FILE}`), url.pathname);
 };
@@ -323,7 +378,7 @@ testcase.openFileDialogDriveFromBrowser = async function() {
  * Tests opening a hosted doc in the browser, ensuring it correctly navigates to
  * the doc's URL.
  */
-testcase.openFileDialogDriveHostedDoc = async function() {
+testcase.openFileDialogDriveHostedDoc = async () => {
   chrome.test.assertEq(
       await openFileDialogClickOkButton(
           'drive', ENTRIES.testDocument.nameText, true),
@@ -334,7 +389,7 @@ testcase.openFileDialogDriveHostedDoc = async function() {
  * Tests that selecting a hosted doc from a dialog requiring a real file is
  * disabled.
  */
-testcase.openFileDialogDriveHostedNeedsFile = function() {
+testcase.openFileDialogDriveHostedNeedsFile = () => {
   return openFileDialogExpectOkButtonDisabled(
       'drive', ENTRIES.testDocument.nameText, TEST_DRIVE_FILE);
 };
@@ -343,7 +398,7 @@ testcase.openFileDialogDriveHostedNeedsFile = function() {
  * Tests that selecting a hosted doc from a dialog requiring a real file is
  * disabled.
  */
-testcase.saveFileDialogDriveHostedNeedsFile = function() {
+testcase.saveFileDialogDriveHostedNeedsFile = () => {
   return openFileDialogExpectOkButtonDisabled(
       'drive', ENTRIES.testDocument.nameText, TEST_DRIVE_FILE, 'saveFile');
 };
@@ -351,22 +406,168 @@ testcase.saveFileDialogDriveHostedNeedsFile = function() {
 /**
  * Tests opening file dialog on Drive and closing it with Cancel button.
  */
-testcase.openFileDialogCancelDrive = function() {
+testcase.openFileDialogCancelDrive = () => {
   return openFileDialogClickCancelButton('drive', TEST_DRIVE_FILE);
 };
 
 /**
  * Tests opening file dialog on Drive and closing it with ESC key.
  */
-testcase.openFileDialogEscapeDrive = function() {
+testcase.openFileDialogEscapeDrive = () => {
   return openFileDialogSendEscapeKey('drive', TEST_DRIVE_FILE);
 };
 
 /**
  * Tests opening file dialog, then closing it with an 'unload' event.
  */
-testcase.openFileDialogUnload = async function() {
+testcase.openFileDialogUnload = async () => {
   chrome.fileSystem.chooseEntry({type: 'openFile'}, (entry) => {});
   const dialog = await remoteCall.waitForWindow('dialog#');
   await unloadOpenFileDialog(dialog);
+};
+
+/**
+ * Tests that the open file dialog's filetype filter does not default to all
+ * types.
+ */
+testcase.openFileDialogDefaultFilter = async () => {
+  const params = {
+    type: 'openFile',
+    accepts: [{extensions: ['jpg']}],
+    acceptsAllTypes: true,
+  };
+  chrome.fileSystem.chooseEntry(params, (entry) => {});
+  const dialog = await remoteCall.waitForWindow('dialog#');
+
+  // Check: 'JPEG image' should be selected.
+  const selectedFilter =
+      await remoteCall.waitForElement(dialog, '.file-type option:checked');
+  chrome.test.assertEq('1', selectedFilter.value);
+  chrome.test.assertEq('JPEG image', selectedFilter.text);
+};
+
+/**
+ * Tests that the save file dialog's filetype filter defaults to all types.
+ */
+testcase.saveFileDialogDefaultFilter = async () => {
+  const params = {
+    type: 'saveFile',
+    accepts: [{extensions: ['jpg']}],
+    acceptsAllTypes: true,
+  };
+  chrome.fileSystem.chooseEntry(params, (entry) => {});
+  const dialog = await remoteCall.waitForWindow('dialog#');
+
+  // Check: 'All files' should be selected.
+  const selectedFilter =
+      await remoteCall.waitForElement(dialog, '.file-type option:checked');
+  chrome.test.assertEq('0', selectedFilter.value);
+  chrome.test.assertEq('All files', selectedFilter.text);
+};
+
+/**
+ * Tests that context menu on File List for file picker dialog.
+ * File picker dialog displays fewer menu options than full Files app. For
+ * example copy/paste commands are disabled. Right-click on a file/folder should
+ * show context menu, whereas right-clicking on the blank parts of file list
+ * should NOT display the context menu.
+ *
+ * crbug.com/917975 crbug.com/983507.
+ */
+testcase.openFileDialogFileListShowContextMenu = async () => {
+  // Add entries to Downloads.
+  await addEntries(['local'], BASIC_LOCAL_ENTRY_SET);
+
+  // Open file picker dialog.
+  chrome.fileSystem.chooseEntry({type: 'openFile'}, (entry) => {});
+  const appId = await remoteCall.waitForWindow('dialog#');
+
+  // Wait to finish initial load.
+  await remoteCall.waitFor('isFileManagerLoaded', appId, true);
+
+  // Wait for files to be displayed.
+  const expectedRows = [
+    ['Play files', '--', 'Folder'],
+    ['Downloads', '--', 'Folder'],
+    ['Linux files', '--', 'Folder'],
+  ];
+  await remoteCall.waitForFiles(
+      appId, expectedRows, {ignoreLastModifiedTime: true});
+
+  // Navigate to Downloads folder.
+  await remoteCall.navigateWithDirectoryTree(appId, '/Downloads', 'My files');
+
+  // Right-click "photos" folder to show context menu.
+  await remoteCall.waitAndRightClick(appId, '#file-list [file-name="photos"]');
+
+  // Wait until the context menu appears.
+  const menuVisible = '#file-context-menu:not([hidden])';
+  await remoteCall.waitForElement(appId, menuVisible);
+
+  // Dismiss context menu.
+  const escKey = ['Escape', false, false, false];
+  await remoteCall.fakeKeyDown(appId, menuVisible, ...escKey);
+  await remoteCall.waitForElementLost(appId, menuVisible);
+
+  // Right-click 100px inside of #file-list (in an empty space).
+  const offsetBottom = -100;
+  const offsetRight = -100;
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil(
+          'rightClickOffset', appId, ['#file-list', offsetBottom, offsetRight]),
+      'right click failed');
+
+  // Check that context menu is NOT displayed because there is no visible menu
+  // items.
+  await remoteCall.waitForElement(appId, '#file-context-menu[hidden]');
+};
+
+/**
+ * Tests that select all is disabled in the gear menu for an open file dialog.
+ */
+testcase.openFileDialogSelectAllDisabled = async () => {
+  // Open file picker dialog.
+  chrome.fileSystem.chooseEntry({type: 'openFile'}, (entry) => {});
+  const appId = await remoteCall.waitForWindow('dialog#');
+
+  // Wait to finish initial load.
+  await remoteCall.waitFor('isFileManagerLoaded', appId, true);
+
+  // Wait for the gear menu button to appear and click it.
+  await remoteCall.waitAndClickElement(appId, '#gear-button');
+
+  // Wait for the gear menu to appear.
+  await remoteCall.waitForElement(appId, '#gear-menu:not([hidden])');
+
+  // Check: #select-all command is shown, but disabled.
+  await remoteCall.waitForElement(
+      appId,
+      '#gear-menu ' +
+          'cr-menu-item[command="#select-all"][disabled]:not([hidden])');
+};
+
+/**
+ * Tests that select all is enabled in the gear menu for an open multiple files
+ * dialog. crbug.com/937251
+ */
+testcase.openMultiFileDialogSelectAllEnabled = async () => {
+  // Open file picker dialog with support for selecting multiple files.
+  chrome.fileSystem.chooseEntry(
+      {type: 'openFile', acceptsMultiple: true}, (entry) => {});
+  const appId = await remoteCall.waitForWindow('dialog#');
+
+  // Wait to finish initial load.
+  await remoteCall.waitFor('isFileManagerLoaded', appId, true);
+
+  // Wait for the gear menu button to appear and click it.
+  await remoteCall.waitAndClickElement(appId, '#gear-button');
+
+  // Wait for the gear menu to appear.
+  await remoteCall.waitForElement(appId, '#gear-menu:not([hidden])');
+
+  // Check: #select-all command is shown, but enabled.
+  await remoteCall.waitForElement(
+      appId,
+      '#gear-menu ' +
+          'cr-menu-item[command="#select-all"]:not([disabled]):not([hidden])');
 };

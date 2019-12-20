@@ -67,7 +67,7 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
 
   // VideoDecodeAccelerator implementation.
   bool Initialize(const Config& config, Client* client) override;
-  void Decode(const BitstreamBuffer& bitstream_buffer) override;
+  void Decode(BitstreamBuffer bitstream_buffer) override;
   void Decode(scoped_refptr<DecoderBuffer> buffer,
               int32_t bitstream_id) override;
   void AssignPictureBuffers(const std::vector<PictureBuffer>& buffers) override;
@@ -75,7 +75,7 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   void ImportBufferForPicture(
       int32_t picture_buffer_id,
       VideoPixelFormat pixel_format,
-      const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) override;
+      gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) override;
 #endif
   void ReusePictureBuffer(int32_t picture_buffer_id) override;
   void Flush() override;
@@ -90,7 +90,7 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
 
   // DecodeSurfaceHandler implementation.
   scoped_refptr<VASurface> CreateSurface() override;
-  void SurfaceReady(const scoped_refptr<VASurface>& va_surface,
+  void SurfaceReady(scoped_refptr<VASurface> va_surface,
                     int32_t bitstream_id,
                     const gfx::Rect& visible_rect,
                     const VideoColorSpace& color_space) override;
@@ -165,7 +165,7 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   // available VaapiPicture in |available_picture_buffers_| for output. Puts
   // contents of |va_surface| into the latter, releases the surface and passes
   // the resulting picture to |client_| along with |visible_rect|.
-  void OutputPicture(const scoped_refptr<VASurface>& va_surface,
+  void OutputPicture(scoped_refptr<VASurface> va_surface,
                      int32_t input_id,
                      gfx::Rect visible_rect,
                      const VideoColorSpace& picture_color_space);
@@ -183,10 +183,33 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   // by |decoder_|.
   void InitiateSurfaceSetChange(size_t num_pics,
                                 gfx::Size size,
-                                size_t num_reference_frames);
+                                size_t num_reference_frames,
+                                const gfx::Rect& visible_rect);
 
   // Check if the surfaces have been released or post ourselves for later.
   void TryFinishSurfaceSetChange();
+
+  // Different modes of internal buffer allocations.
+  enum class BufferAllocationMode {
+    // Only using |client_|s provided PictureBuffers, none internal.
+    kNone,
+    // Using a reduced amount of |client_|s provided PictureBuffers and
+    // |decoder_|s GetNumReferenceFrames() internallly.
+    kSuperReduced,
+    // Similar to kSuperReduced, but we have to increase slightly the amount of
+    // PictureBuffers allocated for the |client_|.
+    kReduced,
+
+    // VaapiVideoDecodeAccelerator can work with this mode on all platforms.
+    // Using |client_|s provided PictureBuffers and as many internally
+    // allocated.
+    kNormal,
+  };
+
+  // Decides the concrete buffer allocation mode, depending on the hardware
+  // platform and other parameters.
+  BufferAllocationMode DecideBufferAllocationMode();
+  bool IsBufferAllocationModeReducedOrSuperReduced() const;
 
   // VAVDA state.
   enum State {
@@ -224,6 +247,9 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   // Only used on |decoder_thread_task_runner_|.
   std::unique_ptr<AcceleratedVideoDecoder> decoder_;
 
+  // Filled in during Initialize().
+  BufferAllocationMode buffer_allocation_mode_;
+
   // VaapiWrapper for VPP (Video Post Processing). This is used for copying
   // from a decoded surface to a surface bound to client's PictureBuffer.
   scoped_refptr<VaapiWrapper> vpp_vaapi_wrapper_;
@@ -243,6 +269,8 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   std::list<VASurfaceID> available_va_surfaces_ GUARDED_BY(lock_);
   // Signalled when output surfaces are queued into |available_va_surfaces_|.
   base::ConditionVariable surfaces_available_;
+  // VASurfaceIDs format, filled in when created.
+  unsigned int va_surface_format_;
 
   // Pending output requests from the decoder. When it indicates that we should
   // output a surface and we have an available Picture (i.e. texture) ready
@@ -255,14 +283,6 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   // Only used on |task_runner_|.
   base::queue<base::OnceClosure> pending_output_cbs_;
 
-  // TODO(crbug.com/912295): Enable these two for IMPORT |output_mode_| as well.
-  // Under some circumstances, we can pass to libva our own VASurfaceIDs to
-  // decode onto, which skips one copy. see https://crbug.com/822346.
-  bool decode_using_client_picture_buffers_;
-  // When |decode_using_client_picture_buffers_| is false and under certain
-  // conditions, we can reduce the number of necessary allocated buffers.
-  bool use_reduced_number_of_allocations_;
-
   // WeakPtr<> pointing to |this| for use in posting tasks from the decoder
   // thread back to the ChildThread.  Because the decoder thread is a member of
   // this class, any task running on the decoder thread is guaranteed that this
@@ -272,7 +292,7 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   base::WeakPtr<VaapiVideoDecodeAccelerator> weak_this_;
 
   // Callback used when creating VASurface objects. Only used on |task_runner_|.
-  VASurface::ReleaseCB va_surface_release_cb_;
+  base::RepeatingCallback<void(VASurfaceID)> va_surface_release_cb_;
 
   // To expose client callbacks from VideoDecodeAccelerator. Used only on
   // |task_runner_|.
@@ -296,14 +316,21 @@ class MEDIA_GPU_EXPORT VaapiVideoDecodeAccelerator
   // to be returned before we can free them. Only used on |task_runner_|.
   bool awaiting_va_surfaces_recycle_;
 
-  // Last requested number/resolution of output PictureBuffers.
+  // Last requested number/resolution/visible rectangle of output
+  // PictureBuffers.
   size_t requested_num_pics_;
   gfx::Size requested_pic_size_;
+  gfx::Rect requested_visible_rect_;
+  // Potential extra PictureBuffers to request, used only on
+  // BufferAllocationMode::kNone, see DecideBufferAllocationMode().
+  size_t num_extra_pics_ = 0;
+
   // Max number of reference frames needed by |decoder_|. Only used on
-  // |task_runner_| and when |use_reduced_number_of_allocations_| is true.
+  // |task_runner_| and when in BufferAllocationMode::kNone.
   size_t requested_num_reference_frames_;
   size_t previously_requested_num_reference_frames_;
 
+  // The video stream's profile.
   VideoCodecProfile profile_;
 
   // Callback to make GL context current.

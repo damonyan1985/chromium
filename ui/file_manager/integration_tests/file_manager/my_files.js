@@ -1,16 +1,38 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+/**
+ * Select My files in directory tree and wait for load.
+ *
+ * @param {string} appId ID of the app window.
+ */
+async function selectMyFiles(appId) {
+  // Select My Files folder.
+  const myFilesQuery = '#directory-tree [entry-label="My files"]';
+  const isDriveQuery = false;
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectInDirectoryTree', appId, [myFilesQuery, isDriveQuery]));
+
+  // Wait for file list to display Downloads and Crostini.
+  const downloadsRow = ['Downloads', '--', 'Folder'];
+  const playFilesRow = ['Play files', '--', 'Folder'];
+  const crostiniRow = ['Linux files', '--', 'Folder'];
+  await remoteCall.waitForFiles(
+      appId, [downloadsRow, playFilesRow, crostiniRow],
+      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+}
+
 /**
  * Tests if MyFiles is displayed when flag is true.
  */
-testcase.showMyFiles = async function() {
+testcase.showMyFiles = async () => {
   const expectedElementLabels = [
     'Recent: FakeItem',
     'My files: EntryListItem',
     'Downloads: SubDirectoryItem',
-    'Play files: SubDirectoryItem',
     'Linux files: FakeItem',
+    'Play files: SubDirectoryItem',
     'Google Drive: DriveVolumeItem',
     'My Drive: SubDirectoryItem',
     'Shared with me: SubDirectoryItem',
@@ -27,7 +49,7 @@ testcase.showMyFiles = async function() {
       'queryAllElements', appId, dirTreeQuery);
 
   // Check tree elements for the correct order and label/element type.
-  var visibleElements = [];
+  const visibleElements = [];
   for (let element of elements) {
     if (!element.hidden) {  // Ignore hidden elements.
       visibleElements.push(
@@ -52,42 +74,6 @@ testcase.showMyFiles = async function() {
 };
 
 /**
- * Tests search button hidden when selected My Files.
- */
-testcase.hideSearchButton = async function() {
-  // Open Files app on local Downloads.
-  const appId =
-      await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.beautiful], []);
-
-  // Select Downloads folder.
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'selectVolume', appId, ['downloads']));
-
-  // Get the search button element.
-  const buttonQuery = ['#search-button'];
-  let buttonElements = await remoteCall.callRemoteTestUtil(
-      'queryAllElements', appId, buttonQuery);
-
-  // Check that search button is visible on Downloads.
-  chrome.test.assertEq(1, buttonElements.length);
-  chrome.test.assertFalse(buttonElements[0].hidden);
-
-  // Select My Files folder.
-  const myFilesQuery = '#directory-tree [entry-label="My files"]';
-  const isDriveQuery = false;
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'selectInDirectoryTree', appId, [myFilesQuery, isDriveQuery]));
-
-  // Get the search button element.
-  buttonElements = await remoteCall.callRemoteTestUtil(
-      'queryAllElements', appId, buttonQuery);
-
-  // Check that search button is hidden on My Files.
-  chrome.test.assertEq(1, buttonElements.length);
-  chrome.test.assertTrue(buttonElements[0].hidden);
-};
-
-/**
  * Tests directory tree refresh doesn't hide Downloads folder.
  *
  * This tests a regression where Downloads folder would disappear because
@@ -95,7 +81,7 @@ testcase.hideSearchButton = async function() {
  * DirectoryTree expects NavigationModelItem to be the same instance through
  * updates.
  */
-testcase.directoryTreeRefresh = async function() {
+testcase.directoryTreeRefresh = async () => {
   const USB_VOLUME_QUERY = '#directory-tree [volume-type-icon="removable"]';
 
   // Open Files app on local Downloads.
@@ -117,24 +103,13 @@ testcase.directoryTreeRefresh = async function() {
  * Tests My Files displaying Downloads on file list (RHS) and opening Downloads
  * from file list.
  */
-testcase.myFilesDisplaysAndOpensEntries = async function() {
+testcase.myFilesDisplaysAndOpensEntries = async () => {
   // Open Files app on local Downloads.
   const appId =
       await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.beautiful], []);
 
-  // Select My Files folder.
-  const myFilesQuery = '#directory-tree [entry-label="My files"]';
-  const isDriveQuery = false;
-  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
-      'selectInDirectoryTree', appId, [myFilesQuery, isDriveQuery]));
-
-  // Wait for file list to display Downloads and Crostini.
-  const downloadsRow = ['Downloads', '--', 'Folder'];
-  const playFilesRow = ['Play files', '--', 'Folder'];
-  const crostiniRow = ['Linux files', '--', 'Folder'];
-  await remoteCall.waitForFiles(
-      appId, [downloadsRow, playFilesRow, crostiniRow],
-      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+  // Select My files in directory tree.
+  await selectMyFiles(appId);
 
   // Double click on Download on file list.
   const downloadsFileListQuery = '#file-list [file-name="Downloads"]';
@@ -158,7 +133,7 @@ testcase.myFilesDisplaysAndOpensEntries = async function() {
  * If it doesn't update its children recursively it can cause directory tree to
  * not show or hide sub-folders crbug.com/864453.
  */
-testcase.myFilesUpdatesChildren = async function() {
+testcase.myFilesUpdatesChildren = async () => {
   const downloadsQuery = '#directory-tree [entry-label="Downloads"]';
   const hiddenFolder = new TestEntryInfo({
     type: EntryType.DIRECTORY,
@@ -221,30 +196,15 @@ testcase.myFilesUpdatesChildren = async function() {
  * Check naming a folder after navigating inside MyFiles using file list (RHS).
  * crbug.com/889636.
  */
-testcase.myFilesFolderRename = async function() {
+testcase.myFilesFolderRename = async () => {
   const textInput = '#file-list .table-row[renaming] input.rename';
 
   // Open Files app on local Downloads.
   const appId =
       await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.photos], []);
 
-  // Select "My files" folder via directory tree.
-  const myFilesQuery = '#directory-tree [entry-label="My files"]';
-  const isDriveQuery = false;
-  chrome.test.assertTrue(
-      !!await remoteCall.callRemoteTestUtil(
-          'selectInDirectoryTree', appId, [myFilesQuery, isDriveQuery]),
-      'selectInDirectoryTree failed');
-
-  // Wait for Downloads to load.
-  const expectedRows = [
-    ['Downloads', '--', 'Folder'],
-    ['Play files', '--', 'Folder'],
-    ['Linux files', '--', 'Folder'],
-  ];
-  await remoteCall.waitForFiles(
-      appId, expectedRows,
-      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+  // Select My files in directory tree.
+  await selectMyFiles(appId);
 
   // Select Downloads via file list.
   const downloads = ['Downloads'];
@@ -293,4 +253,136 @@ testcase.myFilesFolderRename = async function() {
   await remoteCall.waitForFiles(
       appId, expectedRows2,
       {ignoreFileSize: true, ignoreLastModifiedTime: true});
+};
+
+/**
+ * Tests that MyFiles only auto expands once.
+ */
+testcase.myFilesAutoExpandOnce = async () => {
+  // Open Files app on local Downloads.
+  const appId = await setupAndWaitUntilReady(
+      RootPath.DOWNLOADS, [ENTRIES.photos], [ENTRIES.beautiful]);
+
+  // Collapse MyFiles.
+  const myFiles = '#directory-tree [entry-label="My files"]';
+  let expandIcon = myFiles + '[expanded] > .tree-row[has-children=true]' +
+      '> .expand-icon';
+  await remoteCall.waitAndClickElement(appId, expandIcon);
+  await remoteCall.waitForElement(appId, myFiles + ':not([expanded])');
+
+  // Expand Google Drive.
+  const driveGrandRoot = '#directory-tree [entry-label="Google Drive"]';
+  expandIcon = driveGrandRoot + ' > .tree-row > .expand-icon';
+  await remoteCall.waitAndClickElement(appId, expandIcon);
+
+  // Wait for its subtree to expand and display its children.
+  const expandedSubItems =
+      driveGrandRoot + ' > .tree-children[expanded] > .tree-item';
+  await remoteCall.waitForElement(appId, expandedSubItems);
+
+  // Click on My Drive
+  const myDrive = '#directory-tree [entry-label="My Drive"]';
+  await remoteCall.waitAndClickElement(appId, myDrive);
+
+  // Wait for My Drive to selected.
+  await remoteCall.waitForFiles(
+      appId, [ENTRIES.beautiful.getExpectedRow()],
+      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+
+  // Check that MyFiles is still collapsed.
+  await remoteCall.waitForElement(appId, myFiles + ':not([expanded])');
+};
+
+/**
+ * Tests that My files refreshes its contents when PlayFiles is mounted.
+ * crbug.com/946972.
+ */
+testcase.myFilesUpdatesWhenAndroidVolumeMounts = async () => {
+  const playFilesTreeItem = '#directory-tree [entry-label="Play files"]';
+  // Mount Downloads.
+  await sendTestMessage({name: 'mountDownloads'});
+
+  // Wait until Downloads is mounted.
+  await remoteCall.waitFor('getVolumesCount', null, (count) => count === 1, []);
+
+  // Open Files app on local Downloads.
+  const appId =
+      await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.beautiful], []);
+
+  // Click on My files and wait it to load.
+  const myFiles = '#directory-tree [entry-label="My files"]';
+  const downloadsRow = ['Downloads', '--', 'Folder'];
+  const playFilesRow = ['Play files', '--', 'Folder'];
+  const crostiniRow = ['Linux files', '--', 'Folder'];
+  await remoteCall.waitAndClickElement(appId, myFiles);
+  await remoteCall.waitForFiles(
+      appId, [downloadsRow, crostiniRow],
+      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+
+  // Mount Play files volume.
+  await sendTestMessage({name: 'mountPlayFiles'});
+
+  // Wait until it is mounted.
+  await remoteCall.waitFor('getVolumesCount', null, (count) => count === 2, []);
+
+  // Android volume should automatically appear on directory tree and file list.
+  await remoteCall.waitForElement(appId, playFilesTreeItem);
+  await remoteCall.waitForFiles(
+      appId, [downloadsRow, crostiniRow, playFilesRow],
+      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+
+  // Un-mount Play files volume.
+  await sendTestMessage({name: 'unmountPlayFiles'});
+
+  // Wait until it is un-mounted.
+  await remoteCall.waitFor('getVolumesCount', null, (count) => count === 1, []);
+
+  // Check: Play files should disappear from file list.
+  await remoteCall.waitForFiles(
+      appId, [downloadsRow, crostiniRow],
+      {ignoreFileSize: true, ignoreLastModifiedTime: true});
+
+  // Check: Play files should disappear from directory tree.
+  chrome.test.assertTrue(
+      !!await remoteCall.waitForElementLost(appId, playFilesTreeItem));
+};
+
+/**
+ * Tests that toolbar delete is not shown for Downloads, or Linux files.
+ */
+testcase.myFilesToolbarDelete = async () => {
+  // Open Files app on local Downloads.
+  const appId =
+      await setupAndWaitUntilReady(RootPath.DOWNLOADS, [ENTRIES.beautiful], []);
+
+  // Select My files in directory tree.
+  await selectMyFiles(appId);
+
+  // Select Downloads folder in list.
+  chrome.test.assertTrue(
+      await remoteCall.callRemoteTestUtil('selectFile', appId, ['Downloads']));
+
+  // Test that the delete button isn't visible.
+  const hiddenDeleteButton = '#delete-button[hidden]';
+  await remoteCall.waitForElement(appId, hiddenDeleteButton);
+
+  // Select fake entry Linux files folder in list.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, ['Linux files']));
+
+  // Test that the delete button isn't visible.
+  await remoteCall.waitForElement(appId, hiddenDeleteButton);
+
+  // Mount crostini and test real root entry.
+  await mountCrostini(appId);
+
+  // Select My files in directory tree.
+  await selectMyFiles(appId);
+
+  // Select real Linux files folder in list.
+  chrome.test.assertTrue(await remoteCall.callRemoteTestUtil(
+      'selectFile', appId, ['Linux files']));
+
+  // Test that the delete button isn't visible.
+  await remoteCall.waitForElement(appId, hiddenDeleteButton);
 };

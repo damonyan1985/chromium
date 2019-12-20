@@ -4,32 +4,32 @@
 
 #include "chrome/browser/chromeos/accessibility/spoken_feedback_event_rewriter_delegate.h"
 
-#include "ash/public/interfaces/constants.mojom.h"
+#include "ash/public/cpp/event_rewriter_controller.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/accessibility/event_handler_common.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
+#include "components/arc/arc_util.h"
+#include "components/exo/wm_helper.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/common/constants.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/events/event.h"
 
-SpokenFeedbackEventRewriterDelegate::SpokenFeedbackEventRewriterDelegate()
-    : binding_(this) {
-  content::ServiceManagerConnection* connection =
-      content::ServiceManagerConnection::GetForProcess();
-  connection->GetConnector()->BindInterface(ash::mojom::kServiceName,
-                                            &event_rewriter_controller_ptr_);
-  // Set this object as the SpokenFeedbackEventRewriterDelegate.
-  ash::mojom::SpokenFeedbackEventRewriterDelegatePtr ptr;
-  binding_.Bind(mojo::MakeRequest(&ptr));
-  event_rewriter_controller_ptr_->SetSpokenFeedbackEventRewriterDelegate(
-      std::move(ptr));
+SpokenFeedbackEventRewriterDelegate::SpokenFeedbackEventRewriterDelegate() {
+  // If WMHelper doesn't exist, do nothing. This occurs in tests.
+  if (exo::WMHelper::HasInstance())
+    exo::WMHelper::GetInstance()->AddActivationObserver(this);
 }
 
-SpokenFeedbackEventRewriterDelegate::~SpokenFeedbackEventRewriterDelegate() {}
+SpokenFeedbackEventRewriterDelegate::~SpokenFeedbackEventRewriterDelegate() {
+  // If WMHelper is already destroyed, do nothing.
+  // TODO(crbug.com/748380): Fix shutdown order.
+  if (exo::WMHelper::HasInstance())
+    exo::WMHelper::GetInstance()->RemoveActivationObserver(this);
+}
 
 void SpokenFeedbackEventRewriterDelegate::DispatchKeyEventToChromeVox(
     std::unique_ptr<ui::Event> event,
@@ -47,37 +47,30 @@ void SpokenFeedbackEventRewriterDelegate::DispatchKeyEventToChromeVox(
   chromeos::ForwardKeyToExtension(*(event->AsKeyEvent()), host);
 }
 
+void SpokenFeedbackEventRewriterDelegate::OnWindowActivated(
+    ActivationReason reason,
+    aura::Window* gained_active,
+    aura::Window* lost_active) {
+  if (gained_active == lost_active)
+    return;
+
+  is_arc_window_active_ = arc::IsArcAppWindow(gained_active);
+}
+
 void SpokenFeedbackEventRewriterDelegate::DispatchMouseEventToChromeVox(
     std::unique_ptr<ui::Event> event) {
+  if (is_arc_window_active_)
+    return;
+
   if (event->type() == ui::ET_MOUSE_MOVED) {
     AutomationManagerAura::GetInstance()->HandleEvent(
         ax::mojom::Event::kMouseMoved);
   }
 }
 
-bool SpokenFeedbackEventRewriterDelegate::ShouldDispatchKeyEventToChromeVox(
-    const ui::Event* event) const {
-  chromeos::AccessibilityManager* accessibility_manager =
-      chromeos::AccessibilityManager::Get();
-  if (!accessibility_manager->IsSpokenFeedbackEnabled() ||
-      accessibility_manager->keyboard_listener_extension_id().empty() ||
-      !chromeos::GetAccessibilityExtensionHost(
-          extension_misc::kChromeVoxExtensionId)) {
-    VLOG(1) << "Event sent to Spoken Feedback when disabled or unavailable";
-    return false;
-  }
-
-  if (!event || !event->IsKeyEvent()) {
-    NOTREACHED() << "Unexpected event sent to Spoken Feedback";
-    return false;
-  }
-
-  return true;
-}
-
 void SpokenFeedbackEventRewriterDelegate::OnUnhandledSpokenFeedbackEvent(
     std::unique_ptr<ui::Event> event) const {
-  event_rewriter_controller_ptr_->OnUnhandledSpokenFeedbackEvent(
+  ash::EventRewriterController::Get()->OnUnhandledSpokenFeedbackEvent(
       std::move(event));
 }
 

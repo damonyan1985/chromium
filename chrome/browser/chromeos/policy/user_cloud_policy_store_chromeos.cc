@@ -16,6 +16,7 @@
 #include "chrome/browser/chromeos/policy/value_validation/onc_user_policy_value_validator.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
 using RetrievePolicyResponseType =
@@ -42,7 +43,8 @@ UserCloudPolicyStoreChromeOS::UserCloudPolicyStoreChromeOS(
     const base::FilePath& user_policy_key_dir,
     bool is_active_directory)
     : UserCloudPolicyStoreBase(background_task_runner,
-                               PolicyScope::POLICY_SCOPE_USER),
+                               PolicyScope::POLICY_SCOPE_USER,
+                               PolicySource::POLICY_SOURCE_CLOUD),
       session_manager_client_(session_manager_client),
       account_id_(account_id),
       is_active_directory_(is_active_directory),
@@ -50,8 +52,7 @@ UserCloudPolicyStoreChromeOS::UserCloudPolicyStoreChromeOS(
           cryptohome_client,
           background_task_runner,
           account_id,
-          user_policy_key_dir)),
-      weak_factory_(this) {}
+          user_policy_key_dir)) {}
 
 UserCloudPolicyStoreChromeOS::~UserCloudPolicyStoreChromeOS() {}
 
@@ -158,8 +159,8 @@ void UserCloudPolicyStoreChromeOS::ValidatePolicyForStore(
   // Start validation.
   UserCloudPolicyValidator::StartValidation(
       std::move(validator),
-      base::Bind(&UserCloudPolicyStoreChromeOS::OnPolicyToStoreValidated,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&UserCloudPolicyStoreChromeOS::OnPolicyToStoreValidated,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void UserCloudPolicyStoreChromeOS::OnPolicyToStoreValidated(
@@ -253,8 +254,8 @@ void UserCloudPolicyStoreChromeOS::ValidateRetrievedPolicy(
     std::unique_ptr<em::PolicyFetchResponse> policy) {
   UserCloudPolicyValidator::StartValidation(
       CreateValidatorForLoad(std::move(policy)),
-      base::Bind(&UserCloudPolicyStoreChromeOS::OnRetrievedPolicyValidated,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&UserCloudPolicyStoreChromeOS::OnRetrievedPolicyValidated,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void UserCloudPolicyStoreChromeOS::OnRetrievedPolicyValidated(

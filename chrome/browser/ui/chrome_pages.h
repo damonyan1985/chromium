@@ -32,6 +32,11 @@ enum HelpSource {
 
   // WebUI (the "About" page).
   HELP_SOURCE_WEBUI,
+
+#if defined(OS_CHROMEOS)
+  // WebUI (the OS "About" page).
+  HELP_SOURCE_WEBUI_CHROME_OS,
+#endif
 };
 
 // Sources of feedback requests.
@@ -49,6 +54,7 @@ enum FeedbackSource {
   kFeedbackSourceSadTabPage,
   kFeedbackSourceSupervisedUserInterstitial,
   kFeedbackSourceAssistant,
+  kFeedbackSourceDesktopTabGroups,
 
   // Must be last.
   kFeedbackSourceCount,
@@ -63,7 +69,16 @@ void ShowExtensions(Browser* browser,
 
 // ShowFeedbackPage() uses |browser| to determine the URL of the current tab.
 // |browser| should be NULL if there are no currently open browser windows.
-void ShowFeedbackPage(Browser* browser,
+void ShowFeedbackPage(const Browser* browser,
+                      FeedbackSource source,
+                      const std::string& description_template,
+                      const std::string& description_placeholder_text,
+                      const std::string& category_tag,
+                      const std::string& extra_diagnostics);
+
+// Displays the Feedback ui.
+void ShowFeedbackPage(const GURL& page_url,
+                      Profile* profile,
                       FeedbackSource source,
                       const std::string& description_template,
                       const std::string& description_placeholder_text,
@@ -72,6 +87,7 @@ void ShowFeedbackPage(Browser* browser,
 
 void ShowHelp(Browser* browser, HelpSource source);
 void ShowHelpForProfile(Profile* profile, HelpSource source);
+void LaunchReleaseNotes(Profile* profile);
 void ShowBetaForum(Browser* browser);
 void ShowPolicy(Browser* browser);
 void ShowSlow(Browser* browser);
@@ -84,8 +100,8 @@ GURL GetSettingsUrl(const std::string& sub_page);
 bool IsTrustedPopupWindowWithScheme(const Browser* browser,
                                     const std::string& scheme);
 
-
 // Various things that open in a settings UI.
+// NOTE: For Chrome OS settings, use SettingsWindowManager::ShowOSSettings().
 void ShowSettings(Browser* browser);
 void ShowSettingsSubPage(Browser* browser, const std::string& sub_page);
 void ShowSettingsSubPageForProfile(Profile* profile,
@@ -99,6 +115,8 @@ void ShowContentSettingsExceptionsForProfile(
 void ShowSiteSettings(Profile* profile, const GURL& url);
 void ShowSiteSettings(Browser* browser, const GURL& url);
 
+void ShowAppManagementPage(Profile* profile, const std::string& app_id);
+
 void ShowContentSettings(Browser* browser,
                          ContentSettingsType content_settings_type);
 void ShowSettingsSubPageInTabbedBrowser(Browser* browser,
@@ -109,7 +127,15 @@ void ShowImportDialog(Browser* browser);
 void ShowAboutChrome(Browser* browser);
 void ShowSearchEngineSettings(Browser* browser);
 
-#if !defined(OS_ANDROID)
+#if defined(OS_CHROMEOS)
+// Shows the enterprise management info page in a browser tab.
+void ShowEnterpriseManagementPageInTabbedBrowser(Browser* browser);
+
+// Constructs an OS settings GURL for the specified |sub_page|.
+GURL GetOSSettingsUrl(const std::string& sub_page);
+#endif
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 // Initiates signin in a new browser tab.
 void ShowBrowserSignin(Browser* browser,
                        signin_metrics::AccessPoint access_point);

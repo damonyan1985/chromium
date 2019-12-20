@@ -14,7 +14,6 @@
 #include "base/macros.h"
 #include "media/base/media_export.h"
 #include "media/formats/mp4/bitstream_converter.h"
-#include "media/media_buildflags.h"
 
 namespace media {
 
@@ -26,7 +25,7 @@ struct AVCDecoderConfigurationRecord;
 
 class MEDIA_EXPORT AVC {
  public:
-  static bool ConvertFrameToAnnexB(int length_size,
+  static bool ConvertFrameToAnnexB(size_t length_size,
                                    std::vector<uint8_t>* buffer,
                                    std::vector<SubsampleEntry>* subsamples);
 
@@ -72,13 +71,6 @@ class AVCBitstreamConverter : public BitstreamConverter {
   explicit AVCBitstreamConverter(
       std::unique_ptr<AVCDecoderConfigurationRecord> avc_config);
 
-#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
-  // TODO(erickung): Dolby Vision should have its own subclasses of the
-  // bitstream converters so that the validation logic can properly accommodate
-  // it.
-  void disable_validation() { disable_validation_ = true; }
-#endif  // BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
-
   // BitstreamConverter interface
   bool ConvertAndAnalyzeFrame(std::vector<uint8_t>* frame_buf,
                               bool is_keyframe,
@@ -91,11 +83,6 @@ class AVCBitstreamConverter : public BitstreamConverter {
       std::vector<uint8_t>* frame_buf,
       std::vector<SubsampleEntry>* subsamples) const override;
   std::unique_ptr<AVCDecoderConfigurationRecord> avc_config_;
-
-#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
-  // Annex B validation is short-circuited when true.
-  bool disable_validation_;
-#endif  // BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
 
   DISALLOW_COPY_AND_ASSIGN(AVCBitstreamConverter);
 };

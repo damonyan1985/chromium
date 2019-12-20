@@ -69,6 +69,75 @@ LEGACY_EMBEDDED_JSON_WHITELIST = [
     # complex schemas using stringified JSON - instead, store them as dicts.
 ]
 
+# 100 MiB upper limit on the total device policy external data max size limits
+# due to the security reasons.
+# You can increase this limit if you're introducing new external data type
+# device policy, but be aware that too heavy policies could result in user
+# profiles not having enough space on the device.
+TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE = 1024 * 1024 * 100
+
+# Each policy must have a description message shorter than 4096 characters in
+# all its translations (ADM format limitation). However, translations of the
+# description might exceed this limit, so a lower limit of is used instead.
+POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT = 3500
+
+# Dictionaries that define how the checks can determine if a change to a policy
+# value are backwards compatible.
+
+# Defines specific keys in specific types that have custom validation functions
+# for checking if a change to the value is a backwards compatible change.
+# For instance increasing the 'maxmimum' value for an integer is less
+# restrictive than decreasing it.
+CUSTOM_VALUE_CHANGE_VALIDATION_PER_TYPE = {
+    'integer': {
+        'minimum': lambda old_value, new_value: new_value <= old_value,
+        'maximum': lambda old_value, new_value: new_value >= old_value
+    }
+}
+
+# Defines keys per type that can simply be removed in a newer version of a
+# policy. For example, removing a 'required' field makes a policy schema less
+# restrictive.
+# This dictionary allows us to state that the given key can be totally removed
+# when checking for a particular type. Or if the key usually represents an
+# array of values, it states that entries in the array can be removed. Normally
+# no array value can be removed in a policy change if we want to keep it
+# backwards compatible.
+REMOVABLE_SCHEMA_VALUES_PER_TYPE = {
+    'integer': ['minimum', 'maximum'],
+    'string': ['pattern'],
+    'object': ['required']
+}
+
+# Defines keys per type that that can be changed in any way without affecting
+# policy compatibility (for example we can change, remove or add a 'description'
+# to a policy schema without causings incompatibilities).
+MODIFIABLE_SCHEMA_KEYS_PER_TYPE = {
+    'integer': ['description', 'sensitiveValue'],
+    'string': ['description', 'sensitiveValue'],
+    'object': ['description', 'sensitiveValue']
+}
+
+# Defines keys per type that themselves define a further dictionary of
+# properties each with their own schemas. For example, 'object' types define
+# a 'properties' key that list all the possible keys in the object.
+KEYS_DEFINING_PROPERTY_DICT_SCHEMAS_PER_TYPE = {
+    'object': ['properties', 'patternProperties']
+}
+
+# Defines keys per type that themselves define a schema. For example, 'array'
+# types define an 'items' key defines the scheme for each item in the array.
+KEYS_DEFINING_SCHEMAS_PER_TYPE = {
+    'object': ['additionalProperties'],
+    'array': ['items']
+}
+
+
+# Helper function to determine if a given type defines a key in a dictionary
+# that is used to condition certain backwards compatibility checks.
+def IsKeyDefinedForTypeInDictionary(type, key, key_per_type_dict):
+  return type in key_per_type_dict and key in key_per_type_dict[type]
+
 
 class PolicyTemplateChecker(object):
 
@@ -206,7 +275,7 @@ class PolicyTemplateChecker(object):
         self._Error('Schema is invalid for policy %s' % policy.get('name'))
         self.has_schema_error = True
 
-    if policy.has_key('validation_schema'):
+    if 'validation_schema' in policy:
       validation_schema = policy.get('validation_schema')
       if not self.schema_validator.ValidateSchema(validation_schema):
         self._Error(
@@ -223,7 +292,7 @@ class PolicyTemplateChecker(object):
 
     # Checks that the policy doesn't have a validation_schema - the whole
     # schema should be defined in 'schema'- unless whitelisted as legacy.
-    if (policy.has_key('validation_schema') and
+    if ('validation_schema' in policy and
         policy.get('name') not in LEGACY_EMBEDDED_JSON_WHITELIST):
       self._Error(('"validation_schema" is defined for new policy %s - ' +
                    'entire schema data should be contained in "schema"') %
@@ -237,6 +306,21 @@ class PolicyTemplateChecker(object):
                    'not store complex data as stringified JSON - instead, ' +
                    'store it in a dict and define it in "schema".') %
                   policy.get('name'))
+
+  def _CheckTotalDevicePolicyExternalDataMaxSize(self, policy_definitions):
+    total_device_policy_external_data_max_size = 0
+    for policy in policy_definitions:
+      if (policy.get('device_only', False) and
+          self._CheckContains(policy, 'type', str) == 'external'):
+        total_device_policy_external_data_max_size += self._CheckContains(
+            policy, 'max_size', int)
+    if (total_device_policy_external_data_max_size >
+        TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE):
+      self._Error(
+          ('Total sum of device policy external data maximum size limits ' +
+           'should not exceed %d bytes, current sum is %d bytes.') %
+          (TOTAL_DEVICE_POLICY_EXTERNAL_DATA_MAX_SIZE,
+           total_device_policy_external_data_max_size))
 
   # Returns True if the example value for a policy seems to contain JSON
   # embedded inside a string. Simply checks if strings start with '{', so it
@@ -252,6 +336,66 @@ class PolicyTemplateChecker(object):
           self._AppearsToContainEmbeddedJson(v)
           for v in example_value.itervalues())
 
+  # Checks that there are no duplicate proto paths in device_policy_proto_map.
+  def _CheckDevicePolicyProtoMappingUniqueness(self, device_policy_proto_map,
+                                               legacy_device_policy_proto_map):
+    # Check that device_policy_proto_map does not have duplicate values.
+    proto_paths = set()
+    for proto_path in device_policy_proto_map.itervalues():
+      if proto_path in proto_paths:
+        self._Error(
+            "Duplicate proto path '%s' in device_policy_proto_map. Did you set "
+            "the right path for your device policy?" % proto_path)
+      proto_paths.add(proto_path)
+
+    # Check that legacy_device_policy_proto_map only contains pairs
+    # [policy_name, proto_path] and does not have duplicate proto_paths.
+    for policy_and_path in legacy_device_policy_proto_map:
+      if len(policy_and_path) != 2 or not isinstance(
+          policy_and_path[0], str) or not isinstance(policy_and_path[1], str):
+        self._Error(
+            "Every entry in legacy_device_policy_proto_map must be an array of "
+            "two strings, but found '%s'" % policy_and_path)
+      if policy_and_path[1] != '' and policy_and_path[1] in proto_paths:
+        self._Error(
+            "Duplicate proto path '%s' in legacy_device_policy_proto_map. Did "
+            "you set the right path for your device policy?" %
+            policy_and_path[1])
+      proto_paths.add(policy_and_path[1])
+
+  # If 'device only' field is true, the policy must be mapped to its proto
+  # field in device_policy_proto_map.json.
+  def _CheckDevicePolicyProtoMappingDeviceOnly(
+      self, policy, device_policy_proto_map, legacy_device_policy_proto_map):
+    if not policy.get('device_only', False):
+      return
+
+    name = policy.get('name')
+    if not name in device_policy_proto_map and not any(
+        name == policy_and_path[0]
+        for policy_and_path in legacy_device_policy_proto_map):
+      self._Error(
+          "Please add '%s' to device_policy_proto_map and map it to "
+          "the corresponding field in chrome_device_policy.proto." % name)
+      return
+
+  # Performs a quick check whether all fields in |device_policy_proto_map| are
+  # actually present in the device policy proto at |device_policy_proto_path|.
+  # Note that this presubmit check can't compile the proto to pb2.py easily (or
+  # can it?).
+  def _CheckDevicePolicyProtoMappingExistence(self, device_policy_proto_map,
+                                              device_policy_proto_path):
+    with open(device_policy_proto_path, 'r') as file:
+      device_policy_proto = file.read()
+
+    for policy, proto_path in device_policy_proto_map.items():
+      fields = proto_path.split(".")
+      for field in fields:
+        if field not in device_policy_proto:
+          self._Error("Bad device_policy_proto_map for policy '%s': "
+                      "Field '%s' not present in device policy proto." %
+                      (policy, field))
+
   def _CheckPolicy(self, policy, is_in_group, policy_ids, deleted_policy_ids):
     if not isinstance(policy, dict):
       self._Error('Each policy must be a dictionary.', 'policy', None, policy)
@@ -259,10 +403,11 @@ class PolicyTemplateChecker(object):
 
     # There should not be any unknown keys in |policy|.
     for key in policy:
-      if key not in ('name', 'type', 'caption', 'desc', 'device_only',
+      if key not in ('name', 'owners', 'type', 'caption', 'desc', 'device_only',
                      'supported_on', 'label', 'policies', 'items',
                      'example_value', 'features', 'deprecated', 'future', 'id',
-                     'schema', 'validation_schema', 'max_size', 'tags',
+                     'schema', 'validation_schema', 'description_schema',
+                     'url_schema', 'max_size', 'tags',
                      'default_for_enterprise_users',
                      'default_for_managed_devices_doc_only', 'arc_support',
                      'supported_chrome_os_management'):
@@ -285,19 +430,18 @@ class PolicyTemplateChecker(object):
     # Each policy must have a caption message.
     self._CheckContains(policy, 'caption', str)
 
-    # Each policy must have a description message shorter than 4096 characters
-    # in all its translations (ADM format limitation).
+    # Each policy's description should be within the limit.
     desc = self._CheckContains(policy, 'desc', str)
-    if len(desc.decode("UTF-8")) > 4096:
+    if len(desc.decode("UTF-8")) > POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT:
       self._Error(
-          'The length of the description is more than the limit of 4096'
-          ' characters long', 'policy', policy.get('name'))
-    # Warning length picked right above the largest existing policy.
-    elif len(desc.decode("UTF-8")) > 3100:
-      self.warning_count += 1
-      print('In policy %s: Warning: Length of description is more than 3100 '
-            'characters. It might exceed limit of 4096 characters in one of '
-            'its translations.' % (policy.get('name')))
+          'Length of description is more than %d characters, which might '
+          'exceed the limit of 4096 characters in one of its '
+          'translations. If there is no alternative to reducing the length '
+          'of the description, it is recommended to add a page under %s '
+          'instead and provide a link to it.' %
+          (POLICY_DESCRIPTION_LENGTH_SOFT_LIMIT,
+           'https://www.chromium.org/administrators'), 'policy',
+          policy.get('name'))
 
     # If 'label' is present, it must be a string.
     self._CheckContains(policy, 'label', str, True)
@@ -337,6 +481,11 @@ class PolicyTemplateChecker(object):
       id = self._CheckContains(policy, 'id', int)
       self._AddPolicyID(id, policy_ids, policy, deleted_policy_ids)
 
+      # Each policy must have an owner.
+      # TODO(pastarmovj): Verify that each owner is either an OWNERS file or an
+      # email of a committer.
+      self._CheckContains(policy, 'owners', list)
+
       # Each policy must have a tag list.
       self._CheckContains(policy, 'tags', list)
 
@@ -349,9 +498,27 @@ class PolicyTemplateChecker(object):
       supported_on = self._CheckContains(policy, 'supported_on', list)
       if supported_on is not None:
         for s in supported_on:
-          if not isinstance(s, str):
-            self._Error('Entries in "supported_on" must be strings.', 'policy',
-                        policy, supported_on)
+          (
+              supported_on_platform,
+              supported_on_from,
+              supported_on_to,
+          ) = self._GetSupportedVersionPlatformAndRange(s)
+          if not isinstance(supported_on_platform,
+                            str) or not supported_on_platform:
+            self._Error(
+                'Entries in "supported_on" must have a valid target before the '
+                '":".', 'policy', policy, supported_on)
+          elif not isinstance(supported_on_from, int):
+            self._Error(
+                'Entries in "supported_on" must have a valid starting '
+                'supported version after the ":".', 'policy', policy,
+                supported_on)
+          elif isinstance(supported_on_to,
+                          int) and supported_on_to < supported_on_from:
+            self._Error(
+                'Entries in "supported_on" that have an ending '
+                'supported version must have a version larger than the '
+                'starting supported version.', 'policy', policy, supported_on)
 
       # Each policy must have a 'features' dict.
       features = self._CheckContains(policy, 'features', dict)
@@ -464,8 +631,12 @@ class PolicyTemplateChecker(object):
           self._Error(('Example for policy %s does not comply to the policy\'s '
                        'schema or does not use all properties at least once.') %
                       policy.get('name'))
-        if policy.has_key('validation_schema'):
-          validation_schema = policy['validation_schema']
+        if 'validation_schema' in policy and 'description_schema' in policy:
+          self._Error(('validation_schema and description_schema both defined '
+                       'for policy %s.') % policy.get('name'))
+        secondary_schema = policy.get('validation_schema',
+                                      policy.get('description_schema'))
+        if secondary_schema:
           real_example = {}
           if policy_type == 'string':
             real_example = json.loads(example)
@@ -474,7 +645,7 @@ class PolicyTemplateChecker(object):
           else:
             self._Error('Unsupported type for legacy embedded json policy.')
           if not self.schema_validator.ValidateValue(
-              validation_schema, real_example, enforce_use_entire_schema=True):
+              secondary_schema, real_example, enforce_use_entire_schema=True):
             self._Error(('Example for policy %s does not comply to the ' +
                          'policy\'s validation_schema') % policy.get('name'))
 
@@ -545,6 +716,468 @@ class PolicyTemplateChecker(object):
       if vkey not in ('desc', 'text'):
         self.warning_count += 1
         print 'In message %s: Warning: Unknown key: %s' % (key, vkey)
+
+  def _GetSupportedVersionPlatformAndRange(self, supported_on):
+    (supported_on_platform, supported_on_versions) = supported_on.split(":")
+
+    (supported_on_from, supported_on_to) = supported_on_versions.split("-")
+
+    return supported_on_platform, (
+        int(supported_on_from) if supported_on_from else None), (
+            int(supported_on_to) if supported_on_to else None)
+
+  def _CheckPolicyIsReleasedToStableBranch(self, original_policy,
+                                           current_version):
+    '''
+    Given the unchanged policy definition, check if it was already released to
+    a stable branch (not necessarily fully released publicly to stable) by
+    checking the current_version found in the code at head.
+
+    |original_policy|: The policy definition as it appeared in the unmodified
+      policy templates file.
+    |current_version|: The current major version of the branch as stored in
+      chrome/VERSION. This is usually the master version, but may also be a
+      stable version number if we are trying to submit a change into a stable
+      cut branch.
+    '''
+
+    if 'future' in original_policy and original_policy['future']:
+      return False
+
+    if all(original_supported_version >= current_version
+           for original_supported_version in (
+               self._GetSupportedVersionPlatformAndRange(supported_on)[1]
+               for supported_on in original_policy['supported_on'])):
+      return False
+
+    return True
+
+  def _CheckSingleSchemaValueIsCompatible(
+      self, old_schema_value, new_schema_value, custom_value_validation):
+    '''
+    Checks if a |new_schema_value| in a schema is compatible with an
+    |old_schema_value| in a schema. The check will either use the provided
+    |custom_value_validation| if any or do a normal equality comparison.
+    '''
+    return (custom_value_validation == None and
+            old_schema_value == new_schema_value) or (
+                custom_value_validation != None and
+                custom_value_validation(old_schema_value, new_schema_value))
+
+  def _CheckSchemaValueIsCompatible(self, schema_key_path, old_schema_value,
+                                    new_schema_value, only_removals_allowed,
+                                    custom_value_validation):
+    '''
+    Checks if two leaf schema values defined by |old_schema_value| and
+    |new_schema_value| are compatible with each other given certain conditions
+    concerning removal (|only_removals_allowed|) and also for custom
+    compatibility validation (|custom_value_validation|). The leaf schema should
+    never be a dictionary type.
+
+    |schema_key_path|: Used for error reporting, this is the current path in the
+      policy schema that we are processing represented as a list of paths.
+    |old_schema_value|: The value of the schema property in the original policy
+      templates file.
+    |new_schema_value|: The value of the schema property in the modified policy
+      templates file.
+    |only_removals_allowed|: Specifies whether the schema value can be removed
+      in the modified policy templates file. For list type schema values, this
+      flag will also allow removing some entries in the list while keeping other
+      parts.
+    |custom_value_validation|: Custom validation function used to compare the
+      old and new values to see if they are compatible. If None is provided then
+      an equality comparison is used.
+    '''
+    current_schema_key = '/'.join(schema_key_path)
+
+    # If there is no new value but an old one exists, generally this is
+    # considered an incompatibility and should be reported unless removals are
+    # allowed for this value.
+    if (new_schema_value == None):
+      if not only_removals_allowed:
+        self._Error(
+            'Value in policy schema path \'%s\' was removed in new schema '
+            'value.' % (current_schema_key))
+      return
+
+    # Both old and new values must be of the same type.
+    if type(old_schema_value) != type(new_schema_value):
+      self._Error(
+          'Value in policy schema path \'%s\' is of type \'%s\' but value in '
+          'schema is of type \'%s\'.' % (current_schema_key,
+                                         type(old_schema_value).__name__,
+                                         type(new_schema_value).__name__))
+
+    # We are checking a leaf schema key and do not expect to ever get a
+    # dictionary value at this level.
+    if (type(old_schema_value) is dict):
+      self._Error(
+          'Value in policy schema path \'%s\' had an unexpected type: \'%s\'.' %
+          (current_schema_key, type(old_schema_value).__name__))
+    # We have a list type schema value. In general additions to the list are
+    # allowed (e.g. adding a new enum value) but removals from the lists are
+    # not allowed. Also additions to the list must only occur at the END of the
+    # old list and not in the middle.
+    elif (type(old_schema_value) is list):
+      # If only removal from the list is allowed check that there are no new
+      # values and that only old values are removed. Since we are enforcing
+      # strict ordering we can check the lists sequentially for this condition.
+      if only_removals_allowed:
+        j = 0
+        i = 0
+
+        # For every old value, check that it either exists in the new value in
+        # the same order or was removed. This loop only iterates sequentially
+        # on both lists.
+        while i < len(old_schema_value) and j < len(new_schema_value):
+          # Keep looking in the old value until we find a matching new_value at
+          # our current position in the list or until we reach the end of the
+          # old values.
+          while not self._CheckSingleSchemaValueIsCompatible(
+              old_schema_value[i], new_schema_value[j],
+              custom_value_validation):
+            i += 1
+            if i >= len(old_schema_value):
+              break
+
+          # Here either we've found the matching old value so that we can say
+          # the new value matches and move to the next new value (j += 1) and
+          # the next old value (i += 1) to check, or we have exhausted the old
+          # value list and can exit the loop.
+          if i < len(old_schema_value):
+            j += 1
+            i += 1
+        # Everything we have not processed in the new value list is in error
+        # because only allow removal in this list.
+        while j < len(new_schema_value):
+          self._Error(
+              'Value \'%s\' in policy schema path \'%s/[%s]\' was added which '
+              'is not allowed.' % (str(new_schema_value[j]), current_schema_key,
+                                   j))
+          j += 1
+      else:
+        # If removals are not allowed we should be able to add to the list, but
+        # only at the end. We only need to check that all the old values appear
+        # in the same order in the new value as in the old value. Everything
+        # added after the end of the old value list is allowed.
+        # If the new value list is shorter than the old value list we will end
+        # up with calls to _CheckSchemaValueIsCompatible where
+        # new_schema_value == None and this will raise an error on the first
+        # check in the function.
+        for i in range(len(old_schema_value)):
+          self._CheckSchemaValueIsCompatible(
+              schema_key_path + ['[' + str(i) + ']'], old_schema_value[i],
+              new_schema_value[i] if len(new_schema_value) > i else None,
+              only_removals_allowed, custom_value_validation)
+    # For non list values, we compare the two values against each other with
+    # the custom_value_validation or standard equality comparisons.
+    elif not self._CheckSingleSchemaValueIsCompatible(
+        old_schema_value, new_schema_value, custom_value_validation):
+      self._Error(
+          'Value in policy schema path \'%s\' was changed from \'%s\' to '
+          '\'%s\' which is not allowed.' %
+          (current_schema_key, str(old_schema_value), str(new_schema_value)))
+
+  def _CheckSchemasAreCompatible(self, schema_key_path, old_schema, new_schema):
+    current_schema_key = '/'.join(schema_key_path)
+    '''
+    Checks if two given schemas are compatible with each other.
+
+    This function will raise errors if it finds any incompatibilities between
+    the |old_schema| and |new_schema|.
+
+    |schema_key_path|: Used for error reporting, this is the current path in the
+      policy schema that we are processing represented as a list of paths.
+    |old_schema|: The full contents of the schema as found in the original
+      policy templates file.
+    |new_schema|: The full contents of the new schema as found  (if any) in the
+      modified policy templates file.
+    '''
+
+    # If the old schema was present and the new one is no longer present, this
+    # is an error. This case can occur while we are recursing through various
+    # 'object' type schemas.
+    if (new_schema is None):
+      self._Error(
+          'Policy schema path \'%s\' in old schema was removed in newer '
+          'version.' % (current_schema_key))
+      return
+
+    # Both old and new schema information must be in dict format.
+    if type(old_schema) is not dict:
+      self._Error(
+          'Policy schema path \'%s\' in old policy is of type \'%s\', it must '
+          'be dict type.' % (current_schema_key, type(old_schema)))
+
+    if type(new_schema) is not dict:
+      self._Error(
+          'Policy schema path \'%s\' in new policy is of type \'%s\', it must '
+          'be dict type.' % (current_schema_key, type(new_schema)))
+
+    # Both schemas must either have a 'type' key or not. This covers the case
+    # where the scheme is merely a '$ref'
+    if ('type' in old_schema) != ('type' in new_schema):
+      self._Error(
+          'Mismatch in type definition for old schema and new schema for '
+          'policy schema path \'%s\'. One schema defines a type while the other'
+          ' does not.' % (current_schema_key, old_schema['type'],
+                          new_schema['type']))
+      return
+
+    # For schemes that define a 'type', make sure they match.
+    schema_type = None
+    if ('type' in old_schema):
+      if (old_schema['type'] != new_schema['type']):
+        self._Error(
+            'Policy schema path \'%s\' in old schema is of type \'%s\' but '
+            'new schema is of type \'%s\'.' %
+            (current_schema_key, old_schema['type'], new_schema['type']))
+        return
+      schema_type = old_schema['type']
+
+    # If a schema does not have 'type' we will simply end up comparing every
+    # key/value pair for exact matching (the final else in this loop). This will
+    # ensure that '$ref' type schemas match.
+    for old_key, old_value in old_schema.items():
+      # 'type' key was already checked above.
+      if (old_key == 'type'):
+        continue
+
+      # If the schema key is marked as modifiable (e.g. 'description'), then
+      # no validation is needed. Anything can be done to it include removal.
+      if IsKeyDefinedForTypeInDictionary(schema_type, old_key,
+                                         MODIFIABLE_SCHEMA_KEYS_PER_TYPE):
+        continue
+
+      # If a key was removed in the new schema, check if the removal was
+      # allowed. If not this is an error. The removal of some schema keys make
+      # the schema less restrictive (e.g. removing 'required' keys in
+      # dictionaries or removing 'minimum' in integer schemas).
+      if old_key not in new_schema:
+        if not IsKeyDefinedForTypeInDictionary(
+            schema_type, old_key, REMOVABLE_SCHEMA_VALUES_PER_TYPE):
+          self._Error(
+              'Key \'%s\' in old policy schema path \'%s\' was removed in '
+              'newer version.' % (old_key, current_schema_key))
+        continue
+
+      # For a given type that has a key that can define dictionaries of schemas
+      # (e.g. 'object' types), we need to validate the schema of each individual
+      # property that is defined. We also need to validate that no old
+      # properties were removed. Any new properties can be added.
+      if IsKeyDefinedForTypeInDictionary(
+          schema_type, old_key, KEYS_DEFINING_PROPERTY_DICT_SCHEMAS_PER_TYPE):
+        if type(old_value) is not dict:
+          self._Error(
+              'Unexpected type \'%s\' at policy schema path \'%s\'. It must be '
+              'dict' % (type(old_value).__name__,))
+          continue
+
+        # Make all old properties exist and are compatible. Everything else that
+        # is new requires no validation.
+        new_schema_value = new_schema[old_key]
+        for sub_key in old_value.keys():
+          self._CheckSchemasAreCompatible(
+              schema_key_path + [old_key, sub_key], old_value[sub_key],
+              new_schema_value[sub_key]
+              if sub_key in new_schema_value else None)
+      # For types that have a key that themselves define a schema (e.g. 'items'
+      # schema in an 'array' type), we need to validate the schema defined in
+      # the key.
+      elif IsKeyDefinedForTypeInDictionary(schema_type, old_key,
+                                           KEYS_DEFINING_SCHEMAS_PER_TYPE):
+        self._CheckSchemasAreCompatible(
+            schema_key_path + [old_key], old_value,
+            new_schema[old_key] if old_key in new_schema else None)
+      # For any other key, we just check if the two values of the key are
+      # compatible with each other, possibly allowing removal of entries in
+      # array values if needed (e.g. removing 'required' fields makes the schema
+      # less restrictive).
+      else:
+        self._CheckSchemaValueIsCompatible(
+            schema_key_path + [old_key], old_value, new_schema[old_key],
+            IsKeyDefinedForTypeInDictionary(schema_type, old_key,
+                                            REMOVABLE_SCHEMA_VALUES_PER_TYPE),
+            CUSTOM_VALUE_CHANGE_VALIDATION_PER_TYPE[schema_type][old_key]
+            if IsKeyDefinedForTypeInDictionary(
+                schema_type, old_key,
+                CUSTOM_VALUE_CHANGE_VALIDATION_PER_TYPE) else None)
+
+    for new_key in (old_key for old_key in new_schema.keys()
+                    if not old_key in old_schema.keys()):
+      self._Error(
+          'Key \'%s\' was added to policy schema path \'%s\' in new schema.' %
+          (new_key, current_schema_key))
+
+  def _CheckPolicyDefinitionChangeCompatibility(self, original_policy,
+                                                new_policy, current_version):
+    '''
+    Checks if the new policy definition is compatible with the original policy
+    definition.
+
+    |original_policy|: The policy definition as it was in the original policy
+      templates file.
+    |new_policy|: The policy definition as it is (if any) in the modified policy
+      templates file.
+    |current_version|: The current major version of the branch as stored in
+      chrome/VERSION.
+    '''
+
+    # 1. Check if the supported_on versions are valid.
+
+    # All starting versions in supported_on in the original policy must also
+    # appear in the changed policy. The only thing that can be added is an
+    # ending version.
+    new_supported_versions = {}
+    for new_supported_version in new_policy['supported_on']:
+      (supported_on_platform, supported_on_from_version,
+       _) = self._GetSupportedVersionPlatformAndRange(new_supported_version)
+      new_supported_versions[supported_on_platform] = supported_on_from_version
+
+    is_pushed_postponed = False
+    has_version_error = False
+    for original_supported_on in original_policy['supported_on']:
+      (original_supported_on_platform, original_supported_on_version,
+       _) = self._GetSupportedVersionPlatformAndRange(original_supported_on)
+
+      if original_supported_on_platform not in new_supported_versions:
+        self._Error(
+            'Cannot remove supported_on \'%s\' on released policy \'%s\'.' %
+            (original_supported_on_platform, original_policy['name']))
+        has_version_error = True
+      # It's possible that a policy was cut to the stable branch but now we
+      # want to release later than the current stable breanch. We check if
+      # we are trying to change the supported version of the policy to
+      # version_of_stable_branch + 1.
+      # This means:
+      # original supported version ==
+      #   version of stable branch == current_version - 1
+      # and
+      # changed supported version = current dev version = current_version.
+      elif new_supported_versions[
+          original_supported_on_platform] != original_supported_on_version:
+        if (not new_supported_versions[original_supported_on_platform] >=
+            original_supported_on_version or
+            original_supported_on_version != current_version - 1):
+          has_version_error = True
+          self._Error(
+              'Cannot change the supported_on of released policy \'%s\' on '
+              'platform \'%s\' from %d to %d.' %
+              (original_policy['name'], original_supported_on_platform,
+               original_supported_on_version,
+               new_supported_versions[original_supported_on_platform]))
+        elif (original_supported_on_version == current_version - 1):
+          is_pushed_postponed = True
+
+    # If the policy release has been pushed back from the stable branch we
+    # consider the policy as un-released and all changes to it are allowed.
+    if is_pushed_postponed and not has_version_error:
+      print('Policy %s release has been postponed. Skipping further '
+            'verification') % (
+                new_policy['name'])
+      return
+
+    #3. Check if the type of the policy has changed.
+    if new_policy['type'] != original_policy['type']:
+      self._Error(
+          'Cannot change the type of released policy \'%s\' from %s to %s.' %
+          (new_policy['name'], original_policy['type'], new_policy['type']))
+
+    #4 Check if the policy has suddenly been marked as future: true.
+    if ('future' in new_policy and
+        new_policy['future']) and ('future' not in original_policy or
+                                   not original_policy['future']):
+      self._Error('Cannot make released policy \'%s\' a future policy' %
+                  (new_policy['name']))
+
+    original_device_only = ('device_only' in original_policy and
+                            original_policy['device_only'])
+
+    #5 Check if the policy has changed its device_only value
+    if (('device_only' in new_policy and
+         original_device_only != new_policy['device_only']) or
+        ('device_only' not in new_policy and original_device_only)):
+      self._Error(
+          'Cannot change the device_only status of released policy \'%s\'' %
+          (new_policy['name']))
+
+    #6 Check schema changes for compatibility.
+    self._CheckSchemasAreCompatible([original_policy['name']],
+                                    original_policy['schema'],
+                                    new_policy['schema'])
+
+  # Checks if the new policy definitions are compatible with the policy
+  # definitions coming from the original_file_contents.
+  def _CheckPolicyDefinitionsChangeCompatibility(
+      self, policy_definitions, original_file_contents, current_version):
+    '''
+    Checks if all the |policy_definitions| in the modified policy templates file
+    are compatible with the policy definitions defined in the original policy
+    templates file with |original_file_contents| .
+
+    |policy_definitions|: The policy definition as it is in the modified policy
+      templates file.
+    |original_file_contents|: The full contents of the original policy templates
+      file.
+    |current_version|: The current major version of the branch as stored in
+      chrome/VERSION.
+    '''
+
+    try:
+      original_container = eval(original_file_contents)
+    except:
+      import traceback
+      traceback.print_exc(file=sys.stdout)
+      self._Error('Invalid Python/JSON syntax in original file.')
+      return
+
+    if original_container == None:
+      self._Error('Invalid Python/JSON syntax in original file.')
+      return
+
+    original_policy_definitions = self._CheckContains(
+        original_container,
+        'policy_definitions',
+        list,
+        parent_element=None,
+        optional=True,
+        container_name='The root element',
+        offending=None)
+
+    if original_policy_definitions is None:
+      return
+
+    # Sort the new policies by name for faster searches.
+    policy_definitions_dict = {
+        policy['name']: policy
+        for policy in policy_definitions
+        if policy['type'] != 'group'
+    }
+
+    for original_policy in original_policy_definitions:
+      # Check change compatibility for all non-group policy definitions.
+      if original_policy['type'] == 'group':
+        continue
+
+      # First check if the unchanged policy is considered unreleased. If it is
+      # then any change on it is allowed and we can skip verification.
+      if not self._CheckPolicyIsReleasedToStableBranch(original_policy,
+                                                       current_version):
+        continue
+
+      # The unchanged policy is considered released, now check if the changed
+      # policy is still present and has the valid supported_on versions.
+
+      new_policy = policy_definitions_dict.get(original_policy['name'])
+
+      # A policy that is considered released cannot be removed.
+      if new_policy is None:
+        self._Error('Released policy \'%s\' has been removed.' %
+                    original_policy['name'])
+        continue
+
+      self._CheckPolicyDefinitionChangeCompatibility(
+          original_policy, new_policy, current_version)
 
   def _LeadingWhitespace(self, line):
     match = LEADING_WHITESPACE.match(line)
@@ -638,7 +1271,27 @@ class PolicyTemplateChecker(object):
       with open(filename, 'w') as f:
         f.writelines(fixed_lines)
 
-  def Main(self, filename, options):
+  def _ValidatePolicyAtomicGroups(self, atomic_groups, max_id):
+    ids = [x['id'] for x in atomic_groups]
+    actual_highest_id = max(ids)
+    if actual_highest_id != max_id:
+      self._Error(
+          ("\'highest_atomic_group_id_currently_used\' must be set to the "
+           "highest atomic group id in use, which is currently %s (vs %s).") %
+          (actual_highest_id, max_id))
+      return
+
+    ids_set = set()
+    for i in range(len(ids)):
+      if (ids[i] in ids_set):
+        self._Error('Duplicate atomic group id %s' % (ids[i]))
+        return
+      ids_set.add(ids[i])
+      if i + 1 != ids[i]:
+        self._Error('Missing atomic group id %s' % (i + 1))
+        return
+
+  def Main(self, filename, options, original_file_contents, current_version):
     try:
       with open(filename, "rb") as f:
         data = eval(f.read().decode("UTF-8"))
@@ -690,13 +1343,52 @@ class PolicyTemplateChecker(object):
         parent_element=None,
         container_name='The root element',
         offending=None)
+    highest_atomic_group_id = self._CheckContains(
+        data,
+        'highest_atomic_group_id_currently_used',
+        int,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    device_policy_proto_map = self._CheckContains(
+        data,
+        'device_policy_proto_map',
+        dict,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    legacy_device_policy_proto_map = self._CheckContains(
+        data,
+        'legacy_device_policy_proto_map',
+        list,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+    policy_atomic_group_definitions = self._CheckContains(
+        data,
+        'policy_atomic_group_definitions',
+        list,
+        parent_element=None,
+        container_name='The root element',
+        offending=None)
+
+    self._ValidatePolicyAtomicGroups(policy_atomic_group_definitions,
+                                     highest_atomic_group_id)
+    self._CheckDevicePolicyProtoMappingUniqueness(
+        device_policy_proto_map, legacy_device_policy_proto_map)
+    self._CheckDevicePolicyProtoMappingExistence(
+        device_policy_proto_map, options.device_policy_proto_path)
+
     if policy_definitions is not None:
       policy_ids = set()
       for policy in policy_definitions:
         self._CheckPolicy(policy, False, policy_ids, deleted_policy_ids)
+        self._CheckDevicePolicyProtoMappingDeviceOnly(
+            policy, device_policy_proto_map, legacy_device_policy_proto_map)
       self._CheckPolicyIDs(policy_ids, deleted_policy_ids)
       if highest_id is not None:
         self._CheckHighestId(policy_ids, highest_id)
+      self._CheckTotalDevicePolicyExternalDataMaxSize(policy_definitions)
 
     # Made it as a dict (policy_name -> True) to reuse _CheckContains.
     policy_names = {
@@ -719,10 +1411,45 @@ class PolicyTemplateChecker(object):
         else:
           policy_in_groups.add(policy_name)
 
+    policy_in_atomic_groups = set()
+    for group in policy_atomic_group_definitions:
+      for policy_name in group['policies']:
+        self._CheckContains(
+            policy_names,
+            policy_name,
+            bool,
+            parent_element='policy_definitions')
+        if policy_name in policy_in_atomic_groups:
+          self._Error('Policy %s defined in several atomic policy groups.' %
+                      (policy_name))
+        else:
+          policy_in_atomic_groups.add(policy_name)
+
     # Second part: check formatting.
     self._CheckFormat(filename)
 
-    # Third part: summary and exit.
+    # Third part: if the original file contents are available, try to check
+    # if the new policy definitions are compatible with the original policy
+    # definitions (if the original file contents have not raised any syntax
+    # errors).
+    current_error_count = self.error_count
+    if (not current_error_count and original_file_contents is not None and
+        current_version is not None):
+      self._CheckPolicyDefinitionsChangeCompatibility(
+          policy_definitions, original_file_contents, current_version)
+
+    if current_error_count != self.error_count:
+      print(
+          'There were compatibility validation errors in the change. You may '
+          'bypass this validation by adding "BYPASS_POLICY_COMPATIBILITY_CHECK='
+          '<justification>" to your changelist description. If you believe '
+          'that this validation is a bug, please file a crbug against '
+          '"Enterprise>CloudPolicy" and add a link to the bug as '
+          'justification. Otherwise, please provide an explanation for the '
+          'change. For more information please refer to: '
+          'https://bit.ly/33qr3ZV.')
+
+    # Fourth part: summary and exit.
     print('Finished checking %s. %d errors, %d warnings.' %
           (filename, self.error_count, self.warning_count))
     if self.options.stats:
@@ -737,10 +1464,18 @@ class PolicyTemplateChecker(object):
       return 1
     return 0
 
-  def Run(self, argv, filename=None):
+  def Run(self,
+          argv,
+          filename=None,
+          original_file_contents=None,
+          current_version=None):
     parser = optparse.OptionParser(
         usage='usage: %prog [options] filename',
         description='Syntax check a policy_templates.json file.')
+    parser.add_option(
+        '--device_policy_proto_path',
+        help='[REQUIRED] File path of the device policy proto file.',
+        type='string')
     parser.add_option(
         '--fix', action='store_true', help='Automatically fix formatting.')
     parser.add_option(
@@ -753,9 +1488,12 @@ class PolicyTemplateChecker(object):
     if filename is None:
       if len(args) != 2:
         parser.print_help()
-        sys.exit(1)
+        return 1
       filename = args[1]
-    return self.Main(filename, options)
+    if options.device_policy_proto_path is None:
+      print('Error: Missing --device_policy_proto_path argument.')
+      return 1
+    return self.Main(filename, options, original_file_contents, current_version)
 
 
 if __name__ == '__main__':

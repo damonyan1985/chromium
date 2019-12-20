@@ -5,9 +5,15 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TABS_FAKE_BASE_TAB_STRIP_CONTROLLER_H_
 #define CHROME_BROWSER_UI_VIEWS_TABS_FAKE_BASE_TAB_STRIP_CONTROLLER_H_
 
+#include <memory>
+#include <vector>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "ui/base/models/list_selection_model.h"
 
 class FakeBaseTabStripController : public TabStripController {
@@ -18,6 +24,9 @@ class FakeBaseTabStripController : public TabStripController {
   void AddTab(int index, bool is_active);
   void AddPinnedTab(int index, bool is_active);
   void RemoveTab(int index);
+
+  void MoveTabIntoGroup(int index,
+                        base::Optional<tab_groups::TabGroupId> new_group);
 
   ui::ListSelectionModel* selection_model() { return &selection_model_; }
 
@@ -31,39 +40,44 @@ class FakeBaseTabStripController : public TabStripController {
   int GetActiveIndex() const override;
   bool IsTabSelected(int index) const override;
   bool IsTabPinned(int index) const override;
-  void SelectTab(int index) override;
+  void SelectTab(int index, const ui::Event& event) override;
   void ExtendSelectionTo(int index) override;
   void ToggleSelected(int index) override;
   void AddSelectionFromAnchorTo(int index) override;
   bool BeforeCloseTab(int index, CloseTabSource source) override;
   void CloseTab(int index, CloseTabSource source) override;
+  void MoveTab(int from_index, int to_index) override;
   void ShowContextMenuForTab(Tab* tab,
                              const gfx::Point& p,
                              ui::MenuSourceType source_type) override;
   int HasAvailableDragActions() const override;
   void OnDropIndexUpdate(int index, bool drop_before) override;
-  bool IsCompatibleWith(TabStrip* other) const override;
-  NewTabButtonPosition GetNewTabButtonPosition() const override;
   void CreateNewTab() override;
   void CreateNewTabWithLocation(const base::string16& loc) override;
   void StackedLayoutMaybeChanged() override;
-  bool IsSingleTabModeAvailable() override;
-  void OnStartedDraggingTabs() override;
-  void OnStoppedDraggingTabs() override;
+  void OnStartedDragging() override;
+  void OnStoppedDragging() override;
+  void OnKeyboardFocusedTabChanged(base::Optional<int> index) override;
+  const tab_groups::TabGroupVisualData* GetVisualDataForGroup(
+      tab_groups::TabGroupId group_id) const override;
+  void SetVisualDataForGroup(
+      tab_groups::TabGroupId group,
+      tab_groups::TabGroupVisualData visual_data) override;
+  std::vector<int> ListTabsInGroup(tab_groups::TabGroupId group) const override;
+  void UngroupAllTabsInGroup(tab_groups::TabGroupId group) override;
+  void AddNewTabInGroup(tab_groups::TabGroupId group) override;
   bool IsFrameCondensed() const override;
   bool HasVisibleBackgroundTabShapes() const override;
   bool EverHasVisibleBackgroundTabShapes() const override;
   bool ShouldPaintAsActiveFrame() const override;
   bool CanDrawStrokes() const override;
-  SkColor GetFrameColor(
-      BrowserNonClientFrameView::ActiveState active_state =
-          BrowserNonClientFrameView::kUseCurrent) const override;
+  SkColor GetFrameColor(BrowserFrameActiveState active_state) const override;
   SkColor GetToolbarTopSeparatorColor() const override;
-  int GetTabBackgroundResourceId(
-      BrowserNonClientFrameView::ActiveState active_state,
-      bool* has_custom_image) const override;
+  base::Optional<int> GetCustomBackgroundId(
+      BrowserFrameActiveState active_state) const override;
   base::string16 GetAccessibleTabName(const Tab* tab) const override;
   Profile* GetProfile() const override;
+  const Browser* GetBrowser() const override;
 
  private:
   void SetActiveIndex(int new_index);
@@ -72,6 +86,9 @@ class FakeBaseTabStripController : public TabStripController {
 
   int num_tabs_ = 0;
   int active_index_ = -1;
+
+  tab_groups::TabGroupVisualData fake_group_data_;
+  std::vector<base::Optional<tab_groups::TabGroupId>> tab_groups_;
 
   ui::ListSelectionModel selection_model_;
 

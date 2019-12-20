@@ -202,6 +202,14 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
                      const base::android::JavaParamRef<jobject>& obj,
                      jint id);
 
+  // Add a fake spelling error for testing spelling spannables.
+  void AddSpellingErrorForTesting(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint id,
+      jint start_offset,
+      jint end_offset);
+
   // Request loading inline text boxes for a given node.
   void LoadInlineTextBoxes(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>& obj,
@@ -274,6 +282,6 @@ class CONTENT_EXPORT WebContentsAccessibilityAndroid
   DISALLOW_COPY_AND_ASSIGN(WebContentsAccessibilityAndroid);
 };
 
-}
+}  // namespace content
 
 #endif  // CONTENT_BROWSER_ACCESSIBILITY_WEB_CONTENTS_ACCESSIBILITY_ANDROID_H_

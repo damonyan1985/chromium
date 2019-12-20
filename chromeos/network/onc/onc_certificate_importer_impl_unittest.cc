@@ -51,7 +51,7 @@ class ONCCertificateImporterImplTest : public testing::Test {
 
   void TearDown() override {
     thread_task_runner_handle_.reset();
-    task_runner_ = NULL;
+    task_runner_.reset();
   }
 
  protected:
@@ -331,7 +331,7 @@ TEST_P(ONCCertificateImporterImplTestWithParam, UpdateCertificate) {
 TEST_P(ONCCertificateImporterImplTestWithParam, ReimportCertificate) {
   // Verify that reimporting a client certificate works.
   for (int i = 0; i < 2; ++i) {
-    SCOPED_TRACE("Import certificate, iteration " + base::IntToString(i));
+    SCOPED_TRACE("Import certificate, iteration " + base::NumberToString(i));
     AddCertificateFromFile(GetParam().original_file,
                            ImportType::kAllCertificates, GetParam().cert_type,
                            NULL);

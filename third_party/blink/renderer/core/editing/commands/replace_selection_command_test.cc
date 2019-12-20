@@ -49,8 +49,8 @@ TEST_F(ReplaceSelectionCommandTest, pastingEmptySpan) {
       ReplaceSelectionCommand::kSanitizeFragment |
       ReplaceSelectionCommand::kSelectReplacement |
       ReplaceSelectionCommand::kSmartReplace;
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), fragment, options);
+  auto* command = MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), fragment, options);
 
   EXPECT_TRUE(command->Apply()) << "the replace command should have succeeded";
   EXPECT_EQ("foo", GetDocument().body()->InnerHTMLAsString())
@@ -75,41 +75,12 @@ TEST_F(ReplaceSelectionCommandTest, pasteSpanInText) {
   fragment->ParseHTML("<span><div>bar</div></span>", b_element);
 
   ReplaceSelectionCommand::CommandOptions options = 0;
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), fragment, options);
+  auto* command = MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), fragment, options);
 
   EXPECT_TRUE(command->Apply()) << "the replace command should have succeeded";
   EXPECT_EQ("<b>t</b>bar<b>ext</b>", GetDocument().body()->InnerHTMLAsString())
       << "'bar' should have been inserted";
-}
-
-// This is a regression test for https://crbug.com/121163
-TEST_F(ReplaceSelectionCommandTest, styleTagsInPastedHeadIncludedInContent) {
-  GetDocument().setDesignMode("on");
-  UpdateAllLifecyclePhasesForTest();
-  GetDummyPageHolder().GetFrame().Selection().SetSelection(
-      SelectionInDOMTree::Builder()
-          .Collapse(Position(GetDocument().body(), 0))
-          .Build(),
-      SetSelectionOptions());
-
-  DocumentFragment* fragment = GetDocument().createDocumentFragment();
-  fragment->ParseHTML(
-      "<head><style>foo { bar: baz; }</style></head>"
-      "<body><p>Text</p></body>",
-      GetDocument().documentElement(), kDisallowScriptingAndPluginContent);
-
-  ReplaceSelectionCommand::CommandOptions options = 0;
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), fragment, options);
-  EXPECT_TRUE(command->Apply()) << "the replace command should have succeeded";
-
-  EXPECT_EQ(
-      "<head><style>foo { bar: baz; }</style></head>"
-      "<body><p>Text</p></body>",
-      GetDocument().body()->InnerHTMLAsString())
-      << "the STYLE and P elements should have been pasted into the body "
-      << "of the document";
 }
 
 // Helper function to set autosizing multipliers on a document.
@@ -154,8 +125,8 @@ TEST_F(ReplaceSelectionCommandTest, TextAutosizingDoesntInflateText) {
   ReplaceSelectionCommand::CommandOptions options =
       ReplaceSelectionCommand::kMatchStyle;
 
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), fragment, options);
+  auto* command = MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), fragment, options);
 
   EXPECT_TRUE(command->Apply()) << "the replace command should have succeeded";
   // The span element should not have been split to increase the font size.
@@ -171,8 +142,8 @@ TEST_F(ReplaceSelectionCommandTest, TrailingNonVisibleTextCrash) {
   DocumentFragment* fragment = GetDocument().createDocumentFragment();
   fragment->ParseHTML("<div>bar</div> ", GetDocument().QuerySelector("div"));
   ReplaceSelectionCommand::CommandOptions options = 0;
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), fragment, options);
+  auto* command = MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), fragment, options);
 
   // Crash should not occur on applying ReplaceSelectionCommand
   EXPECT_FALSE(command->Apply());
@@ -184,8 +155,8 @@ TEST_F(ReplaceSelectionCommandTest, CrashWithNoSelection) {
   GetDocument().setDesignMode("on");
   SetBodyContent("<div></div>");
   ReplaceSelectionCommand::CommandOptions options = 0;
-  ReplaceSelectionCommand* command =
-      ReplaceSelectionCommand::Create(GetDocument(), 0, options);
+  auto* command = MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), nullptr, options);
 
   // Crash should not occur on applying ReplaceSelectionCommand
   EXPECT_FALSE(command->Apply());
@@ -205,9 +176,9 @@ TEST_F(ReplaceSelectionCommandTest, SmartPlainTextPaste) {
       ReplaceSelectionCommand::kSanitizeFragment |
       ReplaceSelectionCommand::kMatchStyle |
       ReplaceSelectionCommand::kSmartReplace;
-  ReplaceSelectionCommand& command =
-      *ReplaceSelectionCommand::Create(GetDocument(), &fragment, options,
-                                       InputEvent::InputType::kInsertFromPaste);
+  auto& command = *MakeGarbageCollected<ReplaceSelectionCommand>(
+      GetDocument(), &fragment, options,
+      InputEvent::InputType::kInsertFromPaste);
 
   EXPECT_TRUE(command.Apply());
   // Smart paste inserts a space before pasted text.

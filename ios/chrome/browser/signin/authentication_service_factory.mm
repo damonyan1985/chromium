@@ -10,17 +10,30 @@
 #include "base/no_destructor.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
-#include "ios/chrome/browser/signin/account_tracker_service_factory.h"
 #import "ios/chrome/browser/signin/authentication_service.h"
 #import "ios/chrome/browser/signin/authentication_service_delegate.h"
 #include "ios/chrome/browser/signin/identity_manager_factory.h"
-#include "ios/chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+namespace {
+
+std::unique_ptr<KeyedService> BuildAuthenticationService(
+    web::BrowserState* context) {
+  ios::ChromeBrowserState* browser_state =
+      ios::ChromeBrowserState::FromBrowserState(context);
+  return std::make_unique<AuthenticationService>(
+      browser_state->GetPrefs(),
+      SyncSetupServiceFactory::GetForBrowserState(browser_state),
+      IdentityManagerFactory::GetForBrowserState(browser_state),
+      ProfileSyncServiceFactory::GetForBrowserState(browser_state));
+}
+
+}  // namespace
 
 // static
 AuthenticationService* AuthenticationServiceFactory::GetForBrowserState(
@@ -47,12 +60,16 @@ void AuthenticationServiceFactory::CreateAndInitializeForBrowserState(
   service->Initialize(std::move(delegate));
 }
 
+// static
+AuthenticationServiceFactory::TestingFactory
+AuthenticationServiceFactory::GetDefaultFactory() {
+  return base::BindRepeating(&BuildAuthenticationService);
+}
+
 AuthenticationServiceFactory::AuthenticationServiceFactory()
     : BrowserStateKeyedServiceFactory(
           "AuthenticationService",
           BrowserStateDependencyManager::GetInstance()) {
-  DependsOn(ios::AccountTrackerServiceFactory::GetInstance());
-  DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
   DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(SyncSetupServiceFactory::GetInstance());
   DependsOn(ProfileSyncServiceFactory::GetInstance());
@@ -63,15 +80,7 @@ AuthenticationServiceFactory::~AuthenticationServiceFactory() {}
 std::unique_ptr<KeyedService>
 AuthenticationServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  ios::ChromeBrowserState* browser_state =
-      ios::ChromeBrowserState::FromBrowserState(context);
-  return std::make_unique<AuthenticationService>(
-      browser_state->GetPrefs(),
-      ProfileOAuth2TokenServiceFactory::GetForBrowserState(browser_state),
-      SyncSetupServiceFactory::GetForBrowserState(browser_state),
-      ios::AccountTrackerServiceFactory::GetForBrowserState(browser_state),
-      IdentityManagerFactory::GetForBrowserState(browser_state),
-      ProfileSyncServiceFactory::GetForBrowserState(browser_state));
+  return BuildAuthenticationService(context);
 }
 
 void AuthenticationServiceFactory::RegisterBrowserStatePrefs(

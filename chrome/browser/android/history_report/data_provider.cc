@@ -20,6 +20,7 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
+#include "components/bookmarks/browser/history_bookmark_model.h"
 #include "components/bookmarks/browser/model_loader.h"
 #include "components/bookmarks/browser/url_and_title.h"
 #include "components/history/core/browser/history_db_task.h"
@@ -51,25 +52,21 @@ struct Context {
 void UpdateUrl(Context* context,
                size_t position,
                std::vector<history_report::DeltaFileEntryWithData>* urls,
-               bool success,
-               const history::URLRow& url,
-               const history::VisitVector& visits) {
+               history::QueryURLResult result) {
   history_report::DeltaFileEntryWithData* entry = &((*urls)[position]);
-  if (success) {
-    entry->SetData(url);
-  } else if (g_is_debug){
+  if (result.success) {
+    entry->SetData(result.row);
+  } else if (g_is_debug) {
     LOG(WARNING) << "DB not initialized or no data for url " << entry->Url();
   }
   if (position + 1 == urls->size()) {
     context->finished.Signal();
   } else {
-    context->history_service->QueryURL(GURL((*urls)[position + 1].Url()),
-                                       false,
-                                       base::Bind(&UpdateUrl,
-                                                  base::Unretained(context),
-                                                  position + 1,
-                                                  base::Unretained(urls)),
-                                       context->history_task_tracker);
+    context->history_service->QueryURL(
+        GURL((*urls)[position + 1].Url()), false,
+        base::BindOnce(&UpdateUrl, base::Unretained(context), position + 1,
+                       base::Unretained(urls)),
+        context->history_task_tracker);
   }
 }
 
@@ -79,13 +76,11 @@ void QueryUrlsHistoryInUiThread(
   context->history_task_tracker->TryCancelAll();
   // TODO(haaawk): change history service so that all this data can be
   //               obtained with a single call to history service.
-  context->history_service->QueryURL(GURL((*urls)[0].Url()),
-                                     false,
-                                     base::Bind(&UpdateUrl,
-                                                base::Unretained(context),
-                                                0,
-                                                base::Unretained(urls)),
-                                     context->history_task_tracker);
+  context->history_service->QueryURL(
+      GURL((*urls)[0].Url()), false,
+      base::BindOnce(&UpdateUrl, base::Unretained(context), 0,
+                     base::Unretained(urls)),
+      context->history_task_tracker);
 }
 
 void StartVisitMigrationToUsageBufferUiThread(
@@ -108,11 +103,11 @@ namespace history_report {
 DataProvider::DataProvider(Profile* profile,
                            DeltaFileService* delta_file_service,
                            BookmarkModel* bookmark_model)
-    : bookmark_model_(bookmark_model),
-      delta_file_service_(delta_file_service) {
-  history_service_ = HistoryServiceFactory::GetForProfile(
-      profile, ServiceAccessType::EXPLICIT_ACCESS);
-}
+    : history_service_(HistoryServiceFactory::GetForProfile(
+          profile,
+          ServiceAccessType::EXPLICIT_ACCESS)),
+      bookmark_model_loader_(bookmark_model->model_loader()),
+      delta_file_service_(delta_file_service) {}
 
 DataProvider::~DataProvider() {}
 
@@ -128,13 +123,14 @@ std::unique_ptr<std::vector<DeltaFileEntryWithData>> DataProvider::Query(
     if (!entries->empty()) {
       Context context(history_service_,
                       &history_task_tracker_);
-      base::PostTaskWithTraits(
-          FROM_HERE, {content::BrowserThread::UI},
-          base::Bind(&QueryUrlsHistoryInUiThread, base::Unretained(&context),
-                     base::Unretained(entries.get())));
+      base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                     base::BindOnce(&QueryUrlsHistoryInUiThread,
+                                    base::Unretained(&context),
+                                    base::Unretained(entries.get())));
       std::vector<UrlAndTitle> bookmarks;
-      bookmark_model_->model_loader()->BlockTillLoaded();
-      bookmark_model_->GetBookmarks(&bookmarks);
+      bookmark_model_loader_->BlockTillLoaded();
+      bookmark_model_loader_->history_bookmark_model()->GetBookmarks(
+          &bookmarks);
       BookmarkMap bookmark_map;
       for (size_t i = 0; i < bookmarks.size(); ++i) {
         bookmark_map.insert(
@@ -165,12 +161,11 @@ void DataProvider::StartVisitMigrationToUsageBuffer(
   base::WaitableEvent finished(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                                base::WaitableEvent::InitialState::NOT_SIGNALED);
   buffer_service->Clear();
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(&StartVisitMigrationToUsageBufferUiThread,
-                 base::Unretained(history_service_), buffer_service,
-                 base::Unretained(&finished),
-                 base::Unretained(&history_task_tracker_)));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&StartVisitMigrationToUsageBufferUiThread,
+                                base::Unretained(history_service_),
+                                buffer_service, base::Unretained(&finished),
+                                base::Unretained(&history_task_tracker_)));
   finished.Wait();
 }
 
@@ -184,22 +179,21 @@ void DataProvider::RecreateLog() {
     std::unique_ptr<history::HistoryDBTask> task =
         std::unique_ptr<history::HistoryDBTask>(
             new GetAllUrlsFromHistoryTask(&finished, &urls));
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::UI},
-        base::Bind(base::IgnoreResult(&history::HistoryService::ScheduleDBTask),
-                   base::Unretained(history_service_), FROM_HERE,
-                   base::Passed(&task),
-                   base::Unretained(&history_task_tracker_)));
+        base::BindOnce(
+            base::IgnoreResult(&history::HistoryService::ScheduleDBTask),
+            base::Unretained(history_service_), FROM_HERE, std::move(task),
+            base::Unretained(&history_task_tracker_)));
     finished.Wait();
   }
 
   std::vector<UrlAndTitle> bookmarks;
-  bookmark_model_->model_loader()->BlockTillLoaded();
-  bookmark_model_->GetBookmarks(&bookmarks);
+  bookmark_model_loader_->BlockTillLoaded();
+  bookmark_model_loader_->history_bookmark_model()->GetBookmarks(&bookmarks);
   urls.reserve(urls.size() + bookmarks.size());
-  for (size_t i = 0; i < bookmarks.size(); i++) {
+  for (size_t i = 0; i < bookmarks.size(); i++)
     urls.push_back(bookmarks[i].url.spec());
-  }
   delta_file_service_->Recreate(urls);
 }
 

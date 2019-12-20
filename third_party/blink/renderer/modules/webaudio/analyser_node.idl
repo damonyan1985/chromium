@@ -25,11 +25,10 @@
 
 // See https://webaudio.github.io/web-audio-api/#analysernode
 [
-    Constructor(BaseAudioContext context, optional AnalyserOptions options),
-    RaisesException=Constructor,
+    Exposed=Window,
     Measure
-]
-interface AnalyserNode : AudioNode {
+] interface AnalyserNode : AudioNode {
+    [RaisesException] constructor(BaseAudioContext context, optional AnalyserOptions options);
     [RaisesException=Setter] attribute unsigned long fftSize;
     readonly attribute unsigned long frequencyBinCount;
 

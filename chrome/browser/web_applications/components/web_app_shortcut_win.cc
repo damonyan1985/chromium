@@ -13,9 +13,9 @@
 #include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/md5.h"
 #include "base/path_service.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
@@ -44,11 +44,8 @@ constexpr base::FilePath::CharType kIconChecksumFileExt[] =
 constexpr base::FilePath::CharType kChromeProxyExecutable[] =
     FILE_PATH_LITERAL("chrome_proxy.exe");
 
-base::FilePath GetChromeProxyPath() {
-  base::FilePath chrome_dir;
-  CHECK(base::PathService::Get(base::DIR_EXE, &chrome_dir));
-  return chrome_dir.Append(kChromeProxyExecutable);
-}
+constexpr base::FilePath::CharType kChromePwaLauncherExecutable[] =
+    FILE_PATH_LITERAL("chrome_pwa_launcher.exe");
 
 // Calculates checksum of an icon family using MD5.
 // The checksum is derived from all of the icons in the family.
@@ -195,7 +192,7 @@ bool CreateShortcutsInPaths(const base::FilePath& web_app_path,
     return false;
   }
 
-  base::FilePath chrome_proxy_path = GetChromeProxyPath();
+  base::FilePath chrome_proxy_path = web_app::GetChromeProxyPath();
 
   // Working directory.
   base::FilePath working_dir(chrome_proxy_path.DirName());
@@ -238,14 +235,10 @@ bool CreateShortcutsInPaths(const base::FilePath& web_app_path,
         continue;
     }
     if (shortcut_paths[i] != web_app_path) {
-      int unique_number = base::GetUniquePathNumber(
-          shortcut_file, base::FilePath::StringType());
-      if (unique_number == -1) {
+      shortcut_file = base::GetUniquePath(shortcut_file);
+      if (shortcut_file.empty()) {
         success = false;
         continue;
-      } else if (unique_number > 0) {
-        shortcut_file = shortcut_file.InsertBeforeExtensionASCII(
-            base::StringPrintf(" (%d)", unique_number));
       }
     }
     base::win::ShortcutProperties shortcut_properties;
@@ -346,7 +339,7 @@ void CreateIconAndSetRelaunchDetails(
                                                     shortcut_info.extension_id,
                                                     shortcut_info.profile_path);
 
-  command_line.SetProgram(GetChromeProxyPath());
+  command_line.SetProgram(web_app::GetChromeProxyPath());
   ui::win::SetRelaunchDetailsForWindow(command_line.GetCommandLineString(),
                                        shortcut_info.title, hwnd);
 
@@ -361,18 +354,30 @@ void CreateIconAndSetRelaunchDetails(
 
 namespace web_app {
 
+base::FilePath GetChromeProxyPath() {
+  base::FilePath chrome_dir;
+  CHECK(base::PathService::Get(base::DIR_EXE, &chrome_dir));
+  return chrome_dir.Append(kChromeProxyExecutable);
+}
+
+base::FilePath GetChromePwaLauncherPath() {
+  base::FilePath chrome_dir;
+  CHECK(base::PathService::Get(base::DIR_EXE, &chrome_dir));
+  return chrome_dir.Append(kChromePwaLauncherExecutable);
+}
+
 namespace internals {
 
 void OnShortcutInfoLoadedForSetRelaunchDetails(
     HWND hwnd,
-    std::unique_ptr<web_app::ShortcutInfo> shortcut_info) {
+    std::unique_ptr<ShortcutInfo> shortcut_info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Set window's icon to the one we're about to create/update in the web app
   // path. The icon cache will refresh on icon creation.
-  base::FilePath web_app_path = web_app::GetWebAppDataDirectory(
-      shortcut_info->profile_path, shortcut_info->extension_id,
-      shortcut_info->url);
+  base::FilePath web_app_path =
+      GetWebAppDataDirectory(shortcut_info->profile_path,
+                             shortcut_info->extension_id, shortcut_info->url);
   base::FilePath icon_file =
       web_app::internals::GetIconFilePath(web_app_path, shortcut_info->title);
 
@@ -445,7 +450,8 @@ bool CreatePlatformShortcuts(const base::FilePath& web_app_path,
 void UpdatePlatformShortcuts(const base::FilePath& web_app_path,
                              const base::string16& old_app_title,
                              const ShortcutInfo& shortcut_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   // Generates file name to use with persisted ico and shortcut file.
   base::FilePath file_name =
@@ -497,7 +503,8 @@ void DeletePlatformShortcuts(const base::FilePath& web_app_path,
 }
 
 void DeleteAllShortcutsForProfile(const base::FilePath& profile_path) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   GetShortcutLocationsAndDeleteShortcuts(base::FilePath(), profile_path, L"",
                                          NULL, NULL);
 

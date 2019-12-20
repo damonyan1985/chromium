@@ -8,78 +8,91 @@
 #include <map>
 #include <memory>
 #include <queue>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "chrome/browser/chromeos/crostini/crostini_manager.h"
 #include "chrome/browser/chromeos/crostini/crostini_package_notification.h"
 #include "chrome/browser/chromeos/crostini/crostini_package_operation_status.h"
 #include "chrome/browser/chromeos/crostini/crostini_registry_service.h"
+#include "chrome/browser/chromeos/crostini/crostini_util.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "storage/browser/file_system/file_system_url.h"
 
 namespace crostini {
 
 class CrostiniPackageService : public KeyedService,
-                               public LinuxPackageOperationProgressObserver {
+                               public LinuxPackageOperationProgressObserver,
+                               public PendingAppListUpdatesObserver,
+                               public VmShutdownObserver {
  public:
+  using StateChangeCallback =
+      base::RepeatingCallback<void(PackageOperationStatus)>;
+
   static CrostiniPackageService* GetForProfile(Profile* profile);
 
   explicit CrostiniPackageService(Profile* profile);
   ~CrostiniPackageService() override;
+
+  // For testing: Set a callback that will be called each time a notification
+  // is set to a new state.
+  void SetNotificationStateChangeCallbackForTesting(
+      StateChangeCallback state_change_callback);
 
   // KeyedService:
   void Shutdown() override;
 
   void NotificationCompleted(CrostiniPackageNotification* notification);
 
-  // The package installer service caches the most recent retrieved package
-  // info, for use in a package install notification.
-  // TODO(timloh): Actually cache the values.
   void GetLinuxPackageInfo(
       const std::string& vm_name,
       const std::string& container_name,
-      const std::string& package_path,
+      const storage::FileSystemURL& package_url,
       CrostiniManager::GetLinuxPackageInfoCallback callback);
 
-  // Install a Linux package. If successfully started, a system notification
-  // will be used to display further updates.
-  void InstallLinuxPackage(
-      const std::string& vm_name,
-      const std::string& container_name,
-      const std::string& package_path,
-      CrostiniManager::InstallLinuxPackageCallback callback);
-
   // LinuxPackageOperationProgressObserver:
-  void OnInstallLinuxPackageProgress(const std::string& vm_name,
-                                     const std::string& container_name,
+  void OnInstallLinuxPackageProgress(const ContainerId& container_id,
                                      InstallLinuxPackageProgressStatus status,
-                                     int progress_percent) override;
+                                     int progress_percent,
+                                     const std::string& error_message) override;
 
-  void OnUninstallPackageProgress(const std::string& vm_name,
-                                  const std::string& container_name,
+  void OnUninstallPackageProgress(const ContainerId& container_id,
                                   UninstallPackageProgressStatus status,
                                   int progress_percent) override;
+
+  // PendingAppListUpdatesObserver:
+  void OnPendingAppListUpdates(const ContainerId& container_id,
+                               int count) override;
+
+  // VmShutdownObserver
+  void OnVmShutdown(const std::string& vm_name) override;
+
+  // (Eventually) install a Linux package. If successfully started, a system
+  // notification will be used to display further updates.
+  void QueueInstallLinuxPackage(
+      const std::string& vm_name,
+      const std::string& container_name,
+      const storage::FileSystemURL& package_url,
+      CrostiniManager::InstallLinuxPackageCallback callback);
 
   // (Eventually) uninstall the package identified by |app_id|. If successfully
   // started, a system notification will be used to display further updates.
   void QueueUninstallApplication(const std::string& app_id);
 
  private:
-  // A unique identifier for our containers. This is <vm_name, container_name>.
-  using ContainerIdentifier = std::pair<std::string, std::string>;
-
-  // The user can request new uninstalls while a different operation is in
+  // The user can request new operations while a different operation is in
   // progress. Rather than sending a request which will fail, just queue the
   // request until the previous one is done.
+  struct QueuedInstall;
   struct QueuedUninstall;
 
-  std::string ContainerIdentifierToString(
-      const ContainerIdentifier& container_id) const;
-
-  bool ContainerHasRunningOperation(
-      const ContainerIdentifier& container_id) const;
+  bool ContainerHasRunningOperation(const ContainerId& container_id) const;
+  bool ContainerHasQueuedOperation(const ContainerId& container_id) const;
 
   // Creates a new notification and adds it to running_notifications_.
   // |app_name| is the name of the application being modified, if any -- for
@@ -88,22 +101,40 @@ class CrostiniPackageService : public KeyedService,
   // If there is a running notification, it will be set to error state. Caller
   // should check before calling this if a different behavior is desired.
   void CreateRunningNotification(
-      const ContainerIdentifier& container_id,
+      const ContainerId& container_id,
       CrostiniPackageNotification::NotificationType notification_type,
       const std::string& app_name);
 
   // Creates a new uninstall notification and adds it to queued_uninstalls_.
-  void CreateQueuedUninstall(const ContainerIdentifier& container_id,
+  void CreateQueuedUninstall(const ContainerId& container_id,
                              const std::string& app_id,
                              const std::string& app_name);
+
+  // Creates a new install notification and adds it to queued_installs_.
+  void CreateQueuedInstall(
+      const ContainerId& container_id,
+      const std::string& package,
+      CrostiniManager::InstallLinuxPackageCallback callback);
 
   // Sets the operation status of the current operation. Sets the notification
   // window's current state and updates containers_with_running_operations_.
   // Note that if status is |SUCCEEDED| or |FAILED|, this may kick off another
-  // operation from the queued_uninstalls_ list.
-  void UpdatePackageOperationStatus(const ContainerIdentifier& container_id,
+  // operation from the queued_uninstalls_ list. When status is |FAILED|, the
+  // |error_message| will contain an error reported by the installation process.
+  void UpdatePackageOperationStatus(const ContainerId& container_id,
                                     PackageOperationStatus status,
-                                    int progress_percent);
+                                    int progress_percent,
+                                    const std::string& error_message = {});
+
+  // Callback between sharing and invoking GetLinuxPackageInfo().
+  void OnSharePathForGetLinuxPackageInfo(
+      const std::string& vm_name,
+      const std::string& container_name,
+      const storage::FileSystemURL& package_url,
+      const base::FilePath& package_path,
+      CrostiniManager::GetLinuxPackageInfoCallback callback,
+      bool share_success,
+      const std::string& share_failure_reason);
 
   // Wraps the callback provided in GetLinuxPackageInfo().
   void OnGetLinuxPackageInfo(
@@ -121,34 +152,37 @@ class CrostiniPackageService : public KeyedService,
 
   // Kicks off an uninstall of the given app. Never queues the operation. Helper
   // for QueueUninstallApplication (if the operation can be performed
-  // immediately) and StartQueuedUninstall.
+  // immediately) and StartQueuedOperation.
   void UninstallApplication(
       const CrostiniRegistryService::Registration& registration,
       const std::string& app_id);
 
   // Callback when the Crostini container is up and ready to accept messages.
   // Used by the uninstall flow only.
-  void OnCrostiniRunningForUninstall(const ContainerIdentifier& container_id,
+  void OnCrostiniRunningForUninstall(const ContainerId& container_id,
                                      const std::string& desktop_file_id,
                                      CrostiniResult result);
 
   // Callback for CrostiniManager::UninstallPackageOwningFile().
-  void OnUninstallPackageOwningFile(const ContainerIdentifier& container_id,
+  void OnUninstallPackageOwningFile(const ContainerId& container_id,
                                     CrostiniResult result);
 
   // Kick off the next operation in the queue for the given container.
-  void StartQueuedUninstall(const ContainerIdentifier& container_id);
+  void StartQueuedOperation(const ContainerId& container_id);
 
   std::string GetUniqueNotificationId();
 
   Profile* profile_;
 
   // The notifications in the RUNNING state for each container.
-  std::map<ContainerIdentifier, std::unique_ptr<CrostiniPackageNotification>>
+  std::map<ContainerId, std::unique_ptr<CrostiniPackageNotification>>
       running_notifications_;
 
-  // Uninstalls we want to run when the current one is done.
-  std::map<ContainerIdentifier, std::queue<QueuedUninstall>> queued_uninstalls_;
+  // Installs we want to run when the current operation is done.
+  std::map<ContainerId, std::queue<QueuedInstall>> queued_installs_;
+
+  // Uninstalls we want to run when the current operation is done.
+  std::map<ContainerId, std::queue<QueuedUninstall>> queued_uninstalls_;
 
   // Notifications in a finished state (either SUCCEEDED or FAILED). We need
   // to keep notifications around until they are dismissed even if we don't
@@ -156,9 +190,17 @@ class CrostiniPackageService : public KeyedService,
   std::vector<std::unique_ptr<CrostiniPackageNotification>>
       finished_notifications_;
 
+  // A map storing which containers have currently pending app list update
+  // operations. If a container is not present in the map, we assume no pending
+  // updates.
+  std::set<ContainerId> has_pending_app_list_updates_;
+
+  // Called each time a notification is set to a new state.
+  StateChangeCallback testing_state_change_callback_;
+
   int next_notification_id_ = 0;
 
-  base::WeakPtrFactory<CrostiniPackageService> weak_ptr_factory_;
+  base::WeakPtrFactory<CrostiniPackageService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CrostiniPackageService);
 };

@@ -19,9 +19,6 @@
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "device/usb/mojo/type_converters.h"
-#include "device/usb/public/mojom/device.mojom.h"
-#include "device/usb/usb_device.h"
 #include "extensions/browser/api/printer_provider/printer_provider_print_job.h"
 #include "extensions/browser/api/printer_provider_internal/printer_provider_internal_api.h"
 #include "extensions/browser/api/printer_provider_internal/printer_provider_internal_api_observer.h"
@@ -33,8 +30,6 @@
 #include "extensions/common/api/printer_provider_internal.h"
 #include "extensions/common/api/usb.h"
 #include "extensions/common/extension.h"
-
-using device::UsbDevice;
 
 namespace extensions {
 
@@ -257,7 +252,7 @@ class PrinterProviderAPIImpl : public PrinterProviderAPI,
                                              int request_id) const override;
   void DispatchGetUsbPrinterInfoRequested(
       const std::string& extension_id,
-      scoped_refptr<UsbDevice> device,
+      const device::mojom::UsbDeviceInfo& device,
       GetPrinterInfoCallback callback) override;
 
   // PrinterProviderInternalAPIObserver implementation:
@@ -289,6 +284,7 @@ class PrinterProviderAPIImpl : public PrinterProviderAPI,
   // with the event.
   bool WillRequestPrinters(int request_id,
                            content::BrowserContext* browser_context,
+                           Feature::Context target_context,
                            const Extension* extension,
                            Event* event,
                            const base::DictionaryValue* listener_filter);
@@ -306,10 +302,10 @@ class PrinterProviderAPIImpl : public PrinterProviderAPI,
       pending_usb_printer_info_requests_;
 
   ScopedObserver<PrinterProviderInternalAPI, PrinterProviderInternalAPIObserver>
-      internal_api_observer_;
+      internal_api_observer_{this};
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrinterProviderAPIImpl);
 };
@@ -507,9 +503,7 @@ void PendingUsbPrinterInfoRequests::FailAll() {
 
 PrinterProviderAPIImpl::PrinterProviderAPIImpl(
     content::BrowserContext* browser_context)
-    : browser_context_(browser_context),
-      internal_api_observer_(this),
-      extension_registry_observer_(this) {
+    : browser_context_(browser_context) {
   internal_api_observer_.Add(
       PrinterProviderInternalAPI::GetFactoryInstance()->Get(browser_context));
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context));
@@ -639,7 +633,7 @@ const PrinterProviderPrintJob* PrinterProviderAPIImpl::GetPrintJob(
 
 void PrinterProviderAPIImpl::DispatchGetUsbPrinterInfoRequested(
     const std::string& extension_id,
-    scoped_refptr<UsbDevice> device,
+    const device::mojom::UsbDeviceInfo& device,
     GetPrinterInfoCallback callback) {
   EventRouter* event_router = EventRouter::Get(browser_context_);
   if (!event_router->ExtensionHasEventListener(
@@ -652,10 +646,7 @@ void PrinterProviderAPIImpl::DispatchGetUsbPrinterInfoRequested(
   int request_id =
       pending_usb_printer_info_requests_[extension_id].Add(std::move(callback));
   api::usb::Device api_device;
-  auto device_info = device::mojom::UsbDeviceInfo::From(*device);
-  DCHECK(device_info);
-  UsbDeviceManager::Get(browser_context_)
-      ->GetApiDevice(*device_info, &api_device);
+  UsbDeviceManager::Get(browser_context_)->GetApiDevice(device, &api_device);
 
   std::unique_ptr<base::ListValue> internal_args(new base::ListValue());
   // Request id is not part of the public API and it will be massaged out in
@@ -744,6 +735,7 @@ void PrinterProviderAPIImpl::OnExtensionUnloaded(
 bool PrinterProviderAPIImpl::WillRequestPrinters(
     int request_id,
     content::BrowserContext* browser_context,
+    Feature::Context target_context,
     const Extension* extension,
     Event* event,
     const base::DictionaryValue* listener_filter) {

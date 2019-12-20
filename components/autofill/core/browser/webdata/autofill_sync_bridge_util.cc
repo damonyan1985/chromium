@@ -9,8 +9,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card_cloud_token_data.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
 #include "components/autofill/core/browser/webdata/autofill_table.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -114,45 +115,6 @@ CreditCard::CardType CardTypeFromWalletCardClass(
   }
 }
 
-// Creates an AutofillProfile from the specified |address| specifics.
-AutofillProfile ProfileFromSpecifics(
-    const sync_pb::WalletPostalAddress& address) {
-  AutofillProfile profile(AutofillProfile::SERVER_PROFILE, std::string());
-
-  // AutofillProfile stores multi-line addresses with newline separators.
-  std::vector<base::StringPiece> street_address(
-      address.street_address().begin(), address.street_address().end());
-  profile.SetRawInfo(ADDRESS_HOME_STREET_ADDRESS,
-                     base::UTF8ToUTF16(base::JoinString(street_address, "\n")));
-
-  profile.SetRawInfo(COMPANY_NAME, base::UTF8ToUTF16(address.company_name()));
-  profile.SetRawInfo(ADDRESS_HOME_STATE,
-                     base::UTF8ToUTF16(address.address_1()));
-  profile.SetRawInfo(ADDRESS_HOME_CITY, base::UTF8ToUTF16(address.address_2()));
-  profile.SetRawInfo(ADDRESS_HOME_DEPENDENT_LOCALITY,
-                     base::UTF8ToUTF16(address.address_3()));
-  // AutofillProfile doesn't support address_4 ("sub dependent locality").
-  profile.SetRawInfo(ADDRESS_HOME_ZIP,
-                     base::UTF8ToUTF16(address.postal_code()));
-  profile.SetRawInfo(ADDRESS_HOME_SORTING_CODE,
-                     base::UTF8ToUTF16(address.sorting_code()));
-  profile.SetRawInfo(ADDRESS_HOME_COUNTRY,
-                     base::UTF8ToUTF16(address.country_code()));
-  profile.set_language_code(address.language_code());
-
-  // SetInfo instead of SetRawInfo so the constituent pieces will be parsed
-  // for these data types.
-  profile.SetInfo(NAME_FULL, base::UTF8ToUTF16(address.recipient_name()),
-                  profile.language_code());
-  profile.SetInfo(PHONE_HOME_WHOLE_NUMBER,
-                  base::UTF8ToUTF16(address.phone_number()),
-                  profile.language_code());
-
-  profile.GenerateServerProfileIdentifier();
-
-  return profile;
-}
-
 // Creates an AutofillProfile from the specified |card| specifics.
 CreditCard CardFromSpecifics(const sync_pb::WalletMaskedCreditCard& card) {
   CreditCard result(CreditCard::MASKED_SERVER_CARD, card.id());
@@ -174,6 +136,20 @@ CreditCard CardFromSpecifics(const sync_pb::WalletMaskedCreditCard& card) {
 PaymentsCustomerData CustomerDataFromSpecifics(
     const sync_pb::PaymentsCustomerData& customer_data) {
   return PaymentsCustomerData{/*customer_id=*/customer_data.id()};
+}
+
+// Creates a CreditCardCloudTokenData object corresponding to the sync datatype
+// |cloud_token_data|.
+CreditCardCloudTokenData CloudTokenDataFromSpecifics(
+    const sync_pb::WalletCreditCardCloudTokenData& cloud_token_data) {
+  CreditCardCloudTokenData result;
+  result.masked_card_id = cloud_token_data.masked_card_id();
+  result.suffix = base::UTF8ToUTF16(cloud_token_data.suffix());
+  result.exp_month = cloud_token_data.exp_month();
+  result.exp_year = cloud_token_data.exp_year();
+  result.card_art_url = cloud_token_data.art_fife_url();
+  result.instrument_token = cloud_token_data.instrument_token();
+  return result;
 }
 
 }  // namespace
@@ -306,6 +282,71 @@ void SetAutofillWalletSpecificsFromPaymentsCustomerData(
   mutable_customer_data->set_id(customer_data.customer_id);
 }
 
+void SetAutofillWalletSpecificsFromCreditCardCloudTokenData(
+    const CreditCardCloudTokenData& cloud_token_data,
+    sync_pb::AutofillWalletSpecifics* wallet_specifics,
+    bool enforce_utf8) {
+  wallet_specifics->set_type(
+      AutofillWalletSpecifics::CREDIT_CARD_CLOUD_TOKEN_DATA);
+
+  sync_pb::WalletCreditCardCloudTokenData* mutable_cloud_token_data =
+      wallet_specifics->mutable_cloud_token_data();
+
+  if (enforce_utf8) {
+    mutable_cloud_token_data->set_masked_card_id(
+        GetBase64EncodedId(cloud_token_data.masked_card_id));
+  } else {
+    mutable_cloud_token_data->set_masked_card_id(
+        cloud_token_data.masked_card_id);
+  }
+
+  mutable_cloud_token_data->set_suffix(
+      base::UTF16ToUTF8(cloud_token_data.suffix));
+  mutable_cloud_token_data->set_exp_month(cloud_token_data.exp_month);
+  mutable_cloud_token_data->set_exp_year(cloud_token_data.exp_year);
+  mutable_cloud_token_data->set_art_fife_url(cloud_token_data.card_art_url);
+  mutable_cloud_token_data->set_instrument_token(
+      cloud_token_data.instrument_token);
+}
+
+AutofillProfile ProfileFromSpecifics(
+    const sync_pb::WalletPostalAddress& address) {
+  AutofillProfile profile(AutofillProfile::SERVER_PROFILE, std::string());
+
+  // AutofillProfile stores multi-line addresses with newline separators.
+  std::vector<base::StringPiece> street_address(
+      address.street_address().begin(), address.street_address().end());
+  profile.SetRawInfo(ADDRESS_HOME_STREET_ADDRESS,
+                     base::UTF8ToUTF16(base::JoinString(street_address, "\n")));
+
+  profile.SetRawInfo(COMPANY_NAME, base::UTF8ToUTF16(address.company_name()));
+  profile.SetRawInfo(ADDRESS_HOME_STATE,
+                     base::UTF8ToUTF16(address.address_1()));
+  profile.SetRawInfo(ADDRESS_HOME_CITY, base::UTF8ToUTF16(address.address_2()));
+  profile.SetRawInfo(ADDRESS_HOME_DEPENDENT_LOCALITY,
+                     base::UTF8ToUTF16(address.address_3()));
+  // AutofillProfile doesn't support address_4 ("sub dependent locality").
+  profile.SetRawInfo(ADDRESS_HOME_ZIP,
+                     base::UTF8ToUTF16(address.postal_code()));
+  profile.SetRawInfo(ADDRESS_HOME_SORTING_CODE,
+                     base::UTF8ToUTF16(address.sorting_code()));
+  profile.SetRawInfo(ADDRESS_HOME_COUNTRY,
+                     base::UTF8ToUTF16(address.country_code()));
+  profile.set_language_code(address.language_code());
+
+  // SetInfo instead of SetRawInfo so the constituent pieces will be parsed
+  // for these data types.
+  profile.SetInfo(NAME_FULL, base::UTF8ToUTF16(address.recipient_name()),
+                  profile.language_code());
+  profile.SetInfo(PHONE_HOME_WHOLE_NUMBER,
+                  base::UTF8ToUTF16(address.phone_number()),
+                  profile.language_code());
+
+  profile.GenerateServerProfileIdentifier();
+
+  return profile;
+}
+
 void CopyRelevantWalletMetadataFromDisk(
     const AutofillTable& table,
     std::vector<CreditCard>* cards_from_server) {
@@ -337,14 +378,15 @@ void PopulateWalletTypesFromSyncData(
     const syncer::EntityChangeList& entity_data,
     std::vector<CreditCard>* wallet_cards,
     std::vector<AutofillProfile>* wallet_addresses,
-    std::vector<PaymentsCustomerData>* customer_data) {
+    std::vector<PaymentsCustomerData>* customer_data,
+    std::vector<CreditCardCloudTokenData>* cloud_token_data) {
   std::map<std::string, std::string> ids;
 
-  for (const syncer::EntityChange& change : entity_data) {
-    DCHECK(change.data().specifics.has_autofill_wallet());
+  for (const std::unique_ptr<syncer::EntityChange>& change : entity_data) {
+    DCHECK(change->data().specifics.has_autofill_wallet());
 
     const sync_pb::AutofillWalletSpecifics& autofill_specifics =
-        change.data().specifics.autofill_wallet();
+        change->data().specifics.autofill_wallet();
 
     switch (autofill_specifics.type()) {
       case sync_pb::AutofillWalletSpecifics::MASKED_CREDIT_CARD:
@@ -367,6 +409,10 @@ void PopulateWalletTypesFromSyncData(
       case sync_pb::AutofillWalletSpecifics::CUSTOMER_DATA:
         customer_data->push_back(
             CustomerDataFromSpecifics(autofill_specifics.customer_data()));
+        break;
+      case sync_pb::AutofillWalletSpecifics::CREDIT_CARD_CLOUD_TOKEN_DATA:
+        cloud_token_data->push_back(
+            CloudTokenDataFromSpecifics(autofill_specifics.cloud_token_data()));
         break;
       case sync_pb::AutofillWalletSpecifics::UNKNOWN:
         // Just ignore new entry types that the client doesn't know about.

@@ -5,21 +5,20 @@
 #include "third_party/blink/renderer/core/html/media/autoplay_policy.h"
 
 #include "build/build_config.h"
+#include "third_party/blink/public/mojom/autoplay/autoplay.mojom-blink.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
-#include "third_party/blink/public/platform/autoplay.mojom-blink.h"
-#include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_media_player.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_settings.h"
-#include "third_party/blink/public/web/web_user_media_client.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/element_visibility_observer.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/media/autoplay_uma_helper.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
@@ -37,20 +36,6 @@ const char kErrorAutoplayFuncUnified[] =
     "https://goo.gl/xX8pDD";
 const char kErrorAutoplayFuncMobile[] =
     "play() can only be initiated by a user gesture.";
-
-// Returns whether |document| is whitelisted for autoplay. If true, the user
-// gesture lock will be initilized as false, indicating that the element is
-// allowed to autoplay unmuted without user gesture.
-bool IsDocumentWhitelisted(const Document& document) {
-  DCHECK(document.GetSettings());
-
-  const String& web_app_scope = document.GetSettings()->GetWebAppScope();
-  if (web_app_scope.IsNull() || web_app_scope.IsEmpty())
-    return false;
-
-  DCHECK_EQ(KURL(web_app_scope).GetString(), web_app_scope);
-  return document.Url().GetString().StartsWith(web_app_scope);
-}
 
 // Return true if and only if the document settings specifies media playback
 // requires user gesture on the element.
@@ -79,7 +64,7 @@ AutoplayPolicy::Type AutoplayPolicy::GetAutoplayPolicyForDocument(
   if (!document.GetSettings())
     return Type::kNoUserGestureRequired;
 
-  if (IsDocumentWhitelisted(document))
+  if (document.IsInWebAppScope())
     return Type::kNoUserGestureRequired;
 
   if (DocumentHasUserExceptionFlag(document))
@@ -108,7 +93,7 @@ bool AutoplayPolicy::IsDocumentAllowedToPlay(const Document& document) {
   for (Frame* frame = document.GetFrame(); frame;
        frame = frame->Tree().Parent()) {
     if (frame->HasBeenActivated() ||
-        frame->HasReceivedUserGestureBeforeNavigation()) {
+        frame->HadStickyUserActivationBeforeNavigation()) {
       return true;
     }
 
@@ -158,19 +143,8 @@ bool AutoplayPolicy::DocumentShouldAutoplayMutedVideos(
 
 // static
 bool AutoplayPolicy::DocumentIsCapturingUserMedia(const Document& document) {
-  if (!document.GetFrame())
-    return false;
-
-  WebFrame* web_frame = WebFrame::FromFrame(document.GetFrame());
-  if (!web_frame)
-    return false;
-
-  WebLocalFrame* frame = web_frame->ToWebLocalFrame();
-  if (!frame || !frame->Client())
-    return false;
-
-  if (WebUserMediaClient* media_client = frame->Client()->UserMediaClient())
-    return media_client->IsCapturing();
+  if (auto* local_frame = document.GetFrame())
+    return local_frame->IsCapturingMedia();
 
   return false;
 }
@@ -178,7 +152,7 @@ bool AutoplayPolicy::DocumentIsCapturingUserMedia(const Document& document) {
 AutoplayPolicy::AutoplayPolicy(HTMLMediaElement* element)
     : locked_pending_user_gesture_(false),
       element_(element),
-      autoplay_uma_helper_(AutoplayUmaHelper::Create(element)) {
+      autoplay_uma_helper_(MakeGarbageCollected<AutoplayUmaHelper>(element)) {
   locked_pending_user_gesture_ =
       ComputeLockPendingUserGestureRequired(element->GetDocument());
 }
@@ -201,7 +175,15 @@ void AutoplayPolicy::DidMoveToNewDocument(Document& old_document) {
 }
 
 bool AutoplayPolicy::IsEligibleForAutoplayMuted() const {
-  return element_->IsHTMLVideoElement() && element_->muted() &&
+  if (!IsA<HTMLVideoElement>(element_.Get()))
+    return false;
+
+  if (RuntimeEnabledFeatures::VideoAutoFullscreenEnabled() &&
+      !element_->FastHasAttribute(html_names::kPlaysinlineAttr)) {
+    return false;
+  }
+
+  return !element_->EffectiveMediaVolume() &&
          DocumentShouldAutoplayMutedVideos(element_->GetDocument());
 }
 
@@ -209,27 +191,26 @@ void AutoplayPolicy::StartAutoplayMutedWhenVisible() {
   // We might end up in a situation where the previous
   // observer didn't had time to fire yet. We can avoid
   // creating a new one in this case.
-  if (autoplay_visibility_observer_)
+  if (autoplay_intersection_observer_)
     return;
 
-  autoplay_visibility_observer_ =
-      MakeGarbageCollected<ElementVisibilityObserver>(
-          element_,
-          WTF::BindRepeating(&AutoplayPolicy::OnVisibilityChangedForAutoplay,
-                             WrapWeakPersistent(this)));
-  autoplay_visibility_observer_->Start();
+  autoplay_intersection_observer_ = IntersectionObserver::Create(
+      {}, {IntersectionObserver::kMinimumThreshold}, &element_->GetDocument(),
+      WTF::BindRepeating(&AutoplayPolicy::OnIntersectionChangedForAutoplay,
+                         WrapWeakPersistent(this)));
+  autoplay_intersection_observer_->observe(element_);
 }
 
 void AutoplayPolicy::StopAutoplayMutedWhenVisible() {
-  if (!autoplay_visibility_observer_)
+  if (!autoplay_intersection_observer_)
     return;
 
-  autoplay_visibility_observer_->Stop();
-  autoplay_visibility_observer_ = nullptr;
+  autoplay_intersection_observer_->disconnect();
+  autoplay_intersection_observer_ = nullptr;
 }
 
 bool AutoplayPolicy::RequestAutoplayUnmute() {
-  DCHECK(!element_->muted());
+  DCHECK_NE(0, element_->EffectiveMediaVolume());
   bool was_autoplaying_muted = IsAutoplayingMutedInternal(true);
 
   TryUnlockingUserGesture();
@@ -238,7 +219,8 @@ bool AutoplayPolicy::RequestAutoplayUnmute() {
     if (IsGestureNeededForPlayback()) {
       if (IsUsingDocumentUserActivationRequiredPolicy()) {
         element_->GetDocument().AddConsoleMessage(ConsoleMessage::Create(
-            kJSMessageSource, kWarningMessageLevel, kWarningUnmuteFailed));
+            mojom::ConsoleMessageSource::kJavaScript,
+            mojom::ConsoleMessageLevel::kWarning, kWarningUnmuteFailed));
       }
 
       autoplay_uma_helper_->RecordAutoplayUnmuteStatus(
@@ -294,11 +276,11 @@ bool AutoplayPolicy::IsAutoplayingMutedInternal(bool muted) const {
 }
 
 bool AutoplayPolicy::IsOrWillBeAutoplayingMuted() const {
-  return IsOrWillBeAutoplayingMutedInternal(element_->muted());
+  return IsOrWillBeAutoplayingMutedInternal(!element_->EffectiveMediaVolume());
 }
 
 bool AutoplayPolicy::IsOrWillBeAutoplayingMutedInternal(bool muted) const {
-  if (!element_->IsHTMLVideoElement() ||
+  if (!IsA<HTMLVideoElement>(element_.Get()) ||
       !DocumentShouldAutoplayMutedVideos(element_->GetDocument())) {
     return false;
   }
@@ -324,16 +306,9 @@ bool AutoplayPolicy::IsGestureNeededForPlayback() const {
   if (!IsLockedPendingUserGesture())
     return false;
 
-  // We want to allow muted video to autoplay if:
-  // - the flag is enabled;
-  // - Autoplay is enabled in settings;
-  if (element_->IsHTMLVideoElement() && element_->muted() &&
-      DocumentShouldAutoplayMutedVideos(element_->GetDocument()) &&
-      IsAutoplayAllowedPerSettings()) {
-    return false;
-  }
-
-  return true;
+  // We want to allow muted video to autoplay if the element is allowed to
+  // autoplay muted.
+  return !IsEligibleForAutoplayMuted();
 }
 
 String AutoplayPolicy::GetPlayErrorMessage() const {
@@ -353,7 +328,9 @@ void AutoplayPolicy::EnsureAutoplayInitiatedSet() {
   autoplay_initiated_ = false;
 }
 
-void AutoplayPolicy::OnVisibilityChangedForAutoplay(bool is_visible) {
+void AutoplayPolicy::OnIntersectionChangedForAutoplay(
+    const HeapVector<Member<IntersectionObserverEntry>>& entries) {
+  bool is_visible = (entries.back()->intersectionRatio() > 0);
   if (!is_visible) {
     if (element_->can_autoplay_ && element_->Autoplay()) {
       element_->PauseInternal();
@@ -389,7 +366,7 @@ void AutoplayPolicy::MaybeSetAutoplayInitiated() {
   for (Frame* frame = document.GetFrame(); frame;
        frame = frame->Tree().Parent()) {
     if (frame->HasBeenActivated() ||
-        frame->HasReceivedUserGestureBeforeNavigation()) {
+        frame->HadStickyUserActivationBeforeNavigation()) {
       autoplay_initiated_ = false;
       break;
     }
@@ -398,24 +375,15 @@ void AutoplayPolicy::MaybeSetAutoplayInitiated() {
   }
 }
 
-bool AutoplayPolicy::IsAutoplayAllowedPerSettings() const {
-  LocalFrame* frame = element_->GetDocument().GetFrame();
-  if (!frame)
-    return false;
-  if (auto* settings_client = frame->GetContentSettingsClient())
-    return settings_client->AllowAutoplay(true /* default_value */);
-  return true;
-}
-
 bool AutoplayPolicy::ShouldAutoplay() {
-  if (element_->GetDocument().IsSandboxed(kSandboxAutomaticFeatures))
+  if (element_->GetDocument().IsSandboxed(WebSandboxFlags::kAutomaticFeatures))
     return false;
   return element_->can_autoplay_ && element_->paused_ && element_->Autoplay();
 }
 
 void AutoplayPolicy::Trace(Visitor* visitor) {
   visitor->Trace(element_);
-  visitor->Trace(autoplay_visibility_observer_);
+  visitor->Trace(autoplay_intersection_observer_);
   visitor->Trace(autoplay_uma_helper_);
 }
 

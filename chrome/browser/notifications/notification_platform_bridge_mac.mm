@@ -41,7 +41,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "third_party/blink/public/platform/modules/notifications/web_notification_constants.h"
+#include "third_party/blink/public/common/notifications/notification_constants.h"
 #include "third_party/crashpad/crashpad/client/crashpad_client.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/message_center/public/cpp/notification.h"
@@ -123,6 +123,12 @@ base::string16 CreateNotificationTitle(
 
 bool IsPersistentNotification(
     const message_center::Notification& notification) {
+  // TODO(crbug.com/1007418): Remove this and find a way to show alert style
+  // notifications in 10.15 and above. At least show them as banners until then
+  // as a temporary workaround.
+  if (base::mac::IsAtLeastOS10_15())
+    return false;
+
   return notification.never_timeout() ||
          notification.type() == message_center::NOTIFICATION_TYPE_PROGRESS;
 }
@@ -249,11 +255,10 @@ void NotificationPlatformBridgeMac::Display(
     [builder setIcon:notification.icon().ToNSImage()];
   }
 
-  [builder setShowSettingsButton:(notification_type !=
-                                  NotificationHandler::Type::EXTENSION)];
+  [builder setShowSettingsButton:(notification.should_show_settings_button())];
   std::vector<message_center::ButtonInfo> buttons = notification.buttons();
   if (!buttons.empty()) {
-    DCHECK_LE(buttons.size(), blink::kWebNotificationMaxActions);
+    DCHECK_LE(buttons.size(), blink::kNotificationMaxActions);
     NSString* buttonOne = base::SysUTF16ToNSString(buttons[0].title);
     NSString* buttonTwo = nullptr;
     if (buttons.size() > 1)
@@ -375,16 +380,16 @@ void NotificationPlatformBridgeMac::ProcessNotificationResponse(
     action_index = button_index.intValue;
   }
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {content::BrowserThread::UI},
-      base::Bind(DoProcessNotificationResponse,
-                 static_cast<NotificationCommon::Operation>(
-                     operation.unsignedIntValue),
-                 static_cast<NotificationHandler::Type>(
-                     notification_type.unsignedIntValue),
-                 profile_id, [is_incognito boolValue],
-                 GURL(notification_origin), notification_id, action_index,
-                 base::nullopt /* reply */, true /* by_user */));
+      base::BindOnce(DoProcessNotificationResponse,
+                     static_cast<NotificationCommon::Operation>(
+                         operation.unsignedIntValue),
+                     static_cast<NotificationHandler::Type>(
+                         notification_type.unsignedIntValue),
+                     profile_id, [is_incognito boolValue],
+                     GURL(notification_origin), notification_id, action_index,
+                     base::nullopt /* reply */, true /* by_user */));
 }
 
 // static
@@ -415,7 +420,7 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
   if (button_index.intValue <
           notification_constants::kNotificationInvalidButtonIndex ||
       button_index.intValue >=
-          static_cast<int>(blink::kWebNotificationMaxActions)) {
+          static_cast<int>(blink::kNotificationMaxActions)) {
     LOG(ERROR) << "Invalid number of buttons supplied "
                << button_index.intValue;
     return false;
@@ -462,7 +467,7 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
 - (void)userNotificationCenter:(NSUserNotificationCenter*)center
        didActivateNotification:(NSUserNotification*)notification {
   NSDictionary* notificationResponse =
-      [NotificationResponseBuilder buildDictionary:notification];
+      [NotificationResponseBuilder buildActivatedDictionary:notification];
   NotificationPlatformBridgeMac::ProcessNotificationResponse(
       notificationResponse);
 }
@@ -476,9 +481,23 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
 - (void)userNotificationCenter:(NSUserNotificationCenter*)center
                didDismissAlert:(NSUserNotification*)notification {
   NSDictionary* notificationResponse =
-      [NotificationResponseBuilder buildDictionary:notification];
+      [NotificationResponseBuilder buildDismissedDictionary:notification];
   NotificationPlatformBridgeMac::ProcessNotificationResponse(
       notificationResponse);
+}
+
+// Overriden from _NSUserNotificationCenterDelegatePrivate.
+// Emitted when a user closes a notification from the notification center.
+// This is an undocumented method introduced in 10.8 according to
+// https://bugzilla.mozilla.org/show_bug.cgi?id=852648#c21
+- (void)userNotificationCenter:(NSUserNotificationCenter*)center
+    didRemoveDeliveredNotifications:(NSArray*)notifications {
+  for (NSUserNotification* notification in notifications) {
+    NSDictionary* notificationResponse =
+        [NotificationResponseBuilder buildDismissedDictionary:notification];
+    NotificationPlatformBridgeMac::ProcessNotificationResponse(
+        notificationResponse);
+  }
 }
 
 - (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
@@ -491,44 +510,44 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
 
 @implementation AlertDispatcherImpl {
   // The connection to the XPC server in charge of delivering alerts.
-  base::scoped_nsobject<NSXPCConnection> xpcConnection_;
+  base::scoped_nsobject<NSXPCConnection> _xpcConnection;
 
   // YES if the remote object has had |-setMachExceptionPort:| called
   // since the service was last started, interrupted, or invalidated.
   // If NO, then -serviceProxy will set the exception port.
-  BOOL setExceptionPort_;
+  BOOL _setExceptionPort;
 }
 
 - (instancetype)init {
   if ((self = [super init])) {
-    xpcConnection_.reset([[NSXPCConnection alloc]
+    _xpcConnection.reset([[NSXPCConnection alloc]
         initWithServiceName:
             [NSString
                 stringWithFormat:notification_constants::kAlertXPCServiceName,
                                  [base::mac::OuterBundle() bundleIdentifier]]]);
-    xpcConnection_.get().remoteObjectInterface =
+    _xpcConnection.get().remoteObjectInterface =
         [NSXPCInterface interfaceWithProtocol:@protocol(NotificationDelivery)];
 
-    xpcConnection_.get().interruptionHandler = ^{
+    _xpcConnection.get().interruptionHandler = ^{
       // We will be getting this handler both when the XPC server crashes or
       // when it decides to close the connection.
       LOG(WARNING) << "AlertNotificationService: XPC connection interrupted.";
       RecordXPCEvent(INTERRUPTED);
-      setExceptionPort_ = NO;
+      _setExceptionPort = NO;
     };
 
-    xpcConnection_.get().invalidationHandler = ^{
+    _xpcConnection.get().invalidationHandler = ^{
       // This means that the connection should be recreated if it needs
       // to be used again.
       LOG(WARNING) << "AlertNotificationService: XPC connection invalidated.";
       RecordXPCEvent(INVALIDATED);
-      setExceptionPort_ = NO;
+      _setExceptionPort = NO;
     };
 
-    xpcConnection_.get().exportedInterface =
+    _xpcConnection.get().exportedInterface =
         [NSXPCInterface interfaceWithProtocol:@protocol(NotificationReply)];
-    xpcConnection_.get().exportedObject = self;
-    [xpcConnection_ resume];
+    _xpcConnection.get().exportedObject = self;
+    [_xpcConnection resume];
   }
 
   return self;
@@ -577,7 +596,7 @@ getDisplayedAlertsForProfileId:(NSString*)profileId
     for (NSString* alert in alerts)
       displayedNotifications.insert(base::SysNSStringToUTF8(alert));
 
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(copyable_callback, std::move(displayedNotifications),
                        true /* supports_synchronization */));
@@ -600,15 +619,15 @@ getDisplayedAlertsForProfileId:(NSString*)profileId
 // to going directly through the connection, since this will ensure that the
 // service has its exception port configured for crash reporting.
 - (id<NotificationDelivery>)serviceProxy {
-  id<NotificationDelivery> proxy = [xpcConnection_ remoteObjectProxy];
+  id<NotificationDelivery> proxy = [_xpcConnection remoteObjectProxy];
 
-  if (!setExceptionPort_) {
+  if (!_setExceptionPort) {
     base::mac::ScopedMachSendRight exceptionPort(
         crash_reporter::GetCrashpadClient().GetHandlerMachPort());
     base::scoped_nsobject<CrXPCMachPort> xpcPort(
         [[CrXPCMachPort alloc] initWithMachSendRight:std::move(exceptionPort)]);
     [proxy setMachExceptionPort:xpcPort];
-    setExceptionPort_ = YES;
+    _setExceptionPort = YES;
   }
 
   return proxy;

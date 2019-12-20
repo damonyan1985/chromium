@@ -35,8 +35,8 @@ class DistilledContentStore {
   virtual void LoadContent(const ArticleEntry& entry,
                            LoadCallback callback) = 0;
 
-  DistilledContentStore() {};
-  virtual ~DistilledContentStore() {};
+  DistilledContentStore() {}
+  virtual ~DistilledContentStore() {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DistilledContentStore);
@@ -79,7 +79,6 @@ class InMemoryContentStore : public DistilledContentStore {
 
   typedef base::MRUCache<std::string,
                          std::unique_ptr<DistilledArticleProto, CacheDeletor>>
-
       ContentMap;
   typedef std::unordered_map<std::string, std::string> UrlMap;
 
@@ -87,6 +86,6 @@ class InMemoryContentStore : public DistilledContentStore {
   UrlMap url_to_id_;
 };
 
-}  // dom_distiller
+}  // namespace dom_distiller
 
 #endif  // COMPONENTS_DOM_DISTILLER_CORE_DOM_DISTILLER_CONTENT_CACHE_H_

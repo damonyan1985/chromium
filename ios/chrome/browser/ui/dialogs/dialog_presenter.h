@@ -13,9 +13,6 @@
 class GURL;
 @class AlertCoordinator;
 
-// Accessibility identifier added to the text field of JavaScript prompts.
-extern NSString* const kJavaScriptDialogTextFieldAccessibiltyIdentifier;
-
 namespace web {
 class WebState;
 }
@@ -96,8 +93,8 @@ class WebState;
 - (void)dialogPresenter:(DialogPresenter*)presenter
     willShowDialogForWebState:(web::WebState*)webState;
 
-// Whether the delegate is presenting another View Controller.
-@property(nonatomic, assign) BOOL dialogPresenterDelegateIsPresenting;
+// Whether |presenter| should present a dialog.
+- (BOOL)shouldDialogPresenterPresentDialog:(DialogPresenter*)presenter;
 
 @end
 

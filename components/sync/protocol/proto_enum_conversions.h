@@ -11,6 +11,7 @@
 #include "components/sync/protocol/reading_list_specifics.pb.h"
 #include "components/sync/protocol/session_specifics.pb.h"
 #include "components/sync/protocol/sync.pb.h"
+#include "components/sync/protocol/web_app_specifics.pb.h"
 
 // Keep this file in sync with the .proto files in this directory.
 //
@@ -76,25 +77,23 @@ const char* ProtoEnumToString(
 const char* ProtoEnumToString(sync_pb::UserConsentTypes::ConsentStatus status);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseDetected::
-        SafeBrowsingStatus::ReportingPopulation
-            safe_browsing_reporting_population);
+    sync_pb::GaiaPasswordReuse::PasswordReuseDetected::SafeBrowsingStatus::
+        ReportingPopulation safe_browsing_reporting_population);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-        PasswordReuseDialogInteraction::InteractionResult interaction_result);
+    sync_pb::GaiaPasswordReuse::PasswordReuseDialogInteraction::
+        InteractionResult interaction_result);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        LookupResult lookup_result);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::LookupResult
+        lookup_result);
 
 const char* ProtoEnumToString(
-    sync_pb::UserEventSpecifics::GaiaPasswordReuse::PasswordReuseLookup::
-        ReputationVerdict verdict);
+    sync_pb::GaiaPasswordReuse::PasswordReuseLookup::ReputationVerdict verdict);
 
 // TODO(markusheintz): Remove.
-const char* ProtoEnumToString(sync_pb::UserEventSpecifics::GaiaPasswordReuse::
-                                  PasswordCaptured::EventTrigger trigger);
+const char* ProtoEnumToString(
+    sync_pb::GaiaPasswordReuse::PasswordCaptured::EventTrigger trigger);
 
 const char* ProtoEnumToString(
     sync_pb::UserEventSpecifics::GaiaPasswordCaptured::EventTrigger trigger);
@@ -112,7 +111,25 @@ const char* ProtoEnumToString(
     sync_pb::WalletMetadataSpecifics::Type wallet_metadata_type);
 
 const char* ProtoEnumToString(
-    sync_pb::WifiCredentialSpecifics::SecurityClass security_class);
+    sync_pb::WebAppSpecifics::UserDisplayMode user_display_mode);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::SecurityType security_type);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::AutomaticallyConnectOption
+        automatically_connect_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::IsPreferredOption
+        is_preferred_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::MeteredOption metered_option);
+
+const char* ProtoEnumToString(
+    sync_pb::WifiConfigurationSpecificsData::ProxyConfiguration::ProxyOption
+        proxy_option);
 
 }  // namespace syncer
 

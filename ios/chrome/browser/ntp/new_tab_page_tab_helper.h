@@ -6,12 +6,18 @@
 #define IOS_CHROME_BROWSER_NTP_NEW_TAB_PAGE_TAB_HELPER_H_
 
 #import <UIKit/UIKit.h>
+#include <memory>
 
 #include "base/macros.h"
-#include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_state/web_state_user_data.h"
+#include "base/timer/timer.h"
+#include "ios/web/public/web_state_observer.h"
+#import "ios/web/public/web_state_user_data.h"
 
 @protocol NewTabPageTabHelperDelegate;
+
+namespace web {
+class NavigationItem;
+}
 
 // NewTabPageTabHelper which manages a single NTP per tab.
 class NewTabPageTabHelper : public web::WebStateObserver,
@@ -31,7 +37,16 @@ class NewTabPageTabHelper : public web::WebStateObserver,
   // WebStateObserver callback.
   void Deactivate();
 
+  // Sometimes the underlying ios/web page used for the NTP (about://newtab)
+  // takes a long time to load.  Loading any page before the newtab is committed
+  // will leave ios/web in a bad state.  See: crbug.com/925304 for more context.
+  // Remove this when ios/web supports queueing multiple loads during this
+  // state.
+  bool IgnoreLoadRequests() const;
+
  private:
+  friend class web::WebStateUserData<NewTabPageTabHelper>;
+
   NewTabPageTabHelper(web::WebState* web_state,
                       id<NewTabPageTabHelperDelegate> delegate);
 
@@ -47,10 +62,18 @@ class NewTabPageTabHelper : public web::WebStateObserver,
 
   // Sets the NTP's NavigationItem title and virtualURL to the appropriate
   // string and chrome://newtab respectively.
-  void UpdatePendingItem();
+  void UpdateItem(web::NavigationItem* item);
 
   // Returns true if an |url| is either chrome://newtab or about://newtab.
   bool IsNTPURL(const GURL& url);
+
+  // Sets the |ignore_load_requests_| flag to YES and starts the ignore load
+  // timer.
+  void EnableIgnoreLoadRequests();
+
+  // Sets the |ignore_load_requests_| flag to NO and stops the ignore load
+  // timer.
+  void DisableIgnoreLoadRequests();
 
   // Used to present and dismiss the NTP.
   __weak id<NewTabPageTabHelperDelegate> delegate_ = nil;
@@ -60,6 +83,15 @@ class NewTabPageTabHelper : public web::WebStateObserver,
 
   // |YES| if the current tab helper is active.
   BOOL active_;
+
+  // |YES| if the NTP's underlying ios/web page is still loading.
+  BOOL ignore_load_requests_ = NO;
+
+  // Ensure the ignore_load_requests_ flag is never set to NO for more than
+  // |kMaximumIgnoreLoadRequestsTime| seconds.
+  std::unique_ptr<base::OneShotTimer> ignore_load_requests_timer_ = nullptr;
+
+  WEB_STATE_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(NewTabPageTabHelper);
 };

@@ -26,8 +26,11 @@ struct ConfigurationParams {
   ConfigurationParams();
   ConfigurationParams(sync_pb::SyncEnums::GetUpdatesOrigin origin,
                       ModelTypeSet types_to_download,
-                      const base::Closure& ready_task);
-  ConfigurationParams(const ConfigurationParams& other);
+                      base::OnceClosure ready_task);
+  ConfigurationParams(const ConfigurationParams&) = delete;
+  ConfigurationParams(ConfigurationParams&& other);
+  ConfigurationParams& operator=(const ConfigurationParams&) = delete;
+  ConfigurationParams& operator=(ConfigurationParams&&);
   ~ConfigurationParams();
 
   // Origin for the configuration.
@@ -35,16 +38,7 @@ struct ConfigurationParams {
   // The types that should be downloaded.
   ModelTypeSet types_to_download;
   // Callback to invoke on configuration completion.
-  base::Closure ready_task;
-};
-
-struct ClearParams {
-  explicit ClearParams(const base::Closure& report_success_task);
-  ClearParams(const ClearParams& other);
-  ~ClearParams();
-
-  // Callback to invoke on successful completion.
-  base::Closure report_success_task;
+  base::OnceClosure ready_task;
 };
 
 // A class to schedule syncer tasks intelligently.
@@ -56,10 +50,6 @@ class SyncScheduler : public SyncCycle::Delegate {
     // specific type only, and not continue syncing until we are moved into
     // normal mode.
     CONFIGURATION_MODE,
-    // This mode is used to issue a clear server data command.  The scheduler
-    // may only transition to this mode from the CONFIGURATION_MODE.  When in
-    // this mode, the only schedulable operation is |SchedulerClearServerData|.
-    CLEAR_SERVER_DATA_MODE,
     // Resumes polling and allows nudges, drops configuration tasks.  Runs
     // through entire sync cycle.
     NORMAL_MODE,
@@ -84,12 +74,7 @@ class SyncScheduler : public SyncCycle::Delegate {
   // configuration task could not execute. |params.ready_task| will still be
   // called when configuration finishes.
   // Note: must already be in CONFIGURATION mode.
-  virtual void ScheduleConfiguration(const ConfigurationParams& params) = 0;
-
-  // Schedules clear of server data in preparation for transitioning to
-  // passphrase encryption. The scheduler must be in CLEAR_SERVER_DATA_MODE
-  // before calling this method.
-  virtual void ScheduleClearServerData(const ClearParams& params) = 0;
+  virtual void ScheduleConfiguration(ConfigurationParams params) = 0;
 
   // Request that the syncer avoid starting any new tasks and prepare for
   // shutdown.

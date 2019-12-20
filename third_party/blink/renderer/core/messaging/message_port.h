@@ -37,13 +37,14 @@
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
 
+struct BlinkTransferableMessage;
 class ExceptionState;
 class ExecutionContext;
 class PostMessageOptions;
@@ -57,14 +58,12 @@ class CORE_EXPORT MessagePort : public EventTargetWithInlineData,
   USING_GARBAGE_COLLECTED_MIXIN(MessagePort);
 
  public:
-  static MessagePort* Create(ExecutionContext&);
-
   explicit MessagePort(ExecutionContext&);
   ~MessagePort() override;
 
   void postMessage(ScriptState*,
                    const ScriptValue& message,
-                   Vector<ScriptValue>& transfer,
+                   HeapVector<ScriptValue>& transfer,
                    ExceptionState&);
   void postMessage(ScriptState*,
                    const ScriptValue& message,
@@ -138,6 +137,7 @@ class CORE_EXPORT MessagePort : public EventTargetWithInlineData,
   bool Accept(mojo::Message*) override;
   void ResetMessageCount();
   bool ShouldYieldAfterNewMessage();
+  Event* CreateMessageEvent(BlinkTransferableMessage& message);
 
   std::unique_ptr<mojo::Connector> connector_;
   int messages_in_current_task_ = 0;

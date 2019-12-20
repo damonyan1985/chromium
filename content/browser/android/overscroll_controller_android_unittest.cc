@@ -10,8 +10,8 @@
 #include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "ui/android/overscroll_glow.h"
 #include "ui/android/overscroll_refresh.h"
 #include "ui/android/resources/resource_manager_impl.h"
@@ -43,13 +43,11 @@ class MockCompositor : public WindowAndroidCompositor {
   MOCK_METHOD0(GetFrameSinkId, viz::FrameSinkId());
   void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) override {}
   void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) override {}
-  std::unique_ptr<ui::CompositorLock> GetCompositorLock(
-      ui::CompositorLockClient* client,
-      base::TimeDelta timeout) override {
-    return nullptr;
-  }
   bool IsDrawingFirstVisibleFrame() const override { return false; }
   void SetVSyncPaused(bool paused) override {}
+  void OnUpdateRefreshRate(float refresh_rate) override {}
+  void OnUpdateSupportedRefreshRates(
+      const std::vector<float>& supported_refresh_rates) override {}
 };
 
 class MockGlowClient : public OverscrollGlowClient {

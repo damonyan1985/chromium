@@ -34,7 +34,7 @@
 #include "chrome/browser/sync_file_system/syncable_file_system_util.h"
 #include "components/drive/drive_api_util.h"
 #include "google_apis/drive/drive_api_parser.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/common/file_system/file_system_util.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
@@ -203,7 +203,8 @@ SyncStatusCode OpenDatabase(const base::FilePath& path,
                             leveldb::Env* env_override,
                             std::unique_ptr<LevelDBWrapper>* db_out,
                             bool* created) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(db_out);
   DCHECK(created);
   DCHECK(path.IsAbsolute());
@@ -232,7 +233,8 @@ SyncStatusCode OpenDatabase(const base::FilePath& path,
 
 SyncStatusCode MigrateDatabaseIfNeeded(LevelDBWrapper* db) {
   // See metadata_database_index.cc for the database schema.
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   DCHECK(db);
   std::string value;
   leveldb::Status status = db->Get(kDatabaseVersionKey, &value);
@@ -1291,16 +1293,13 @@ SyncStatusCode MetadataDatabase::SweepDirtyTrackers(
   return WriteToDatabase();
 }
 
-MetadataDatabase::MetadataDatabase(
-    const base::FilePath& database_path,
-    bool enable_on_disk_index,
-    leveldb::Env* env_override)
+MetadataDatabase::MetadataDatabase(const base::FilePath& database_path,
+                                   bool enable_on_disk_index,
+                                   leveldb::Env* env_override)
     : database_path_(database_path),
       env_override_(env_override),
       enable_on_disk_index_(enable_on_disk_index),
-      largest_known_change_id_(0),
-      weak_ptr_factory_(this) {
-}
+      largest_known_change_id_(0) {}
 
 SyncStatusCode MetadataDatabase::Initialize() {
   SyncStatusCode status = SYNC_STATUS_UNKNOWN;
@@ -1422,7 +1421,7 @@ void MetadataDatabase::MaybeAddTrackersForNewFile(
       if (!parent_tracker.active())
         continue;
 
-      if (base::ContainsKey(parents_to_exclude, parent_tracker.tracker_id()))
+      if (base::Contains(parents_to_exclude, parent_tracker.tracker_id()))
         continue;
 
       CreateTrackerForParentAndFileMetadata(
@@ -1659,7 +1658,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpTrackers() {
 
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
     base::FilePath path = BuildDisplayPathForTracker(tracker);
-    dict->SetString("tracker_id", base::Int64ToString(tracker_id));
+    dict->SetString("tracker_id", base::NumberToString(tracker_id));
     dict->SetString("path", path.AsUTF8Unsafe());
     dict->SetString("file_id", tracker.file_id());
     TrackerKind tracker_kind = tracker.tracker_kind();
@@ -1684,7 +1683,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpTrackers() {
       dict->SetString("md5", details.md5());
       dict->SetString("etag", details.etag());
       dict->SetString("missing", details.missing() ? "true" : "false");
-      dict->SetString("change_id", base::Int64ToString(details.change_id()));
+      dict->SetString("change_id", base::NumberToString(details.change_id()));
     }
     trackers->Append(std::move(dict));
   }
@@ -1728,7 +1727,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpMetadata() {
       dict->SetString("md5", details.md5());
       dict->SetString("etag", details.etag());
       dict->SetString("missing", details.missing() ? "true" : "false");
-      dict->SetString("change_id", base::Int64ToString(details.change_id()));
+      dict->SetString("change_id", base::NumberToString(details.change_id()));
 
       std::vector<base::StringPiece> parents;
       for (int i = 0; i < details.parent_folder_ids_size(); ++i)

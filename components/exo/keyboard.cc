@@ -4,13 +4,19 @@
 
 #include "components/exo/keyboard.h"
 
+#include "ash/accessibility/accessibility_controller_impl.h"
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
+#include "ash/keyboard/ui/keyboard_util.h"
 #include "ash/public/cpp/app_types.h"
+#include "ash/shell.h"
 #include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/exo/input_trace.h"
 #include "components/exo/keyboard_delegate.h"
 #include "components/exo/keyboard_device_configuration_delegate.h"
 #include "components/exo/seat.h"
 #include "components/exo/shell_surface.h"
+#include "components/exo/shell_surface_util.h"
 #include "components/exo/surface.h"
 #include "components/exo/wm_helper.h"
 #include "ui/aura/client/aura_constants.h"
@@ -19,8 +25,6 @@
 #include "ui/base/ime/input_method.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
-#include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/widget/widget.h"
 
 namespace exo {
@@ -57,6 +61,10 @@ bool ProcessAccelerator(Surface* surface, const ui::KeyEvent* event) {
 }
 
 bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
+  // When IME is blocked, Exo can handle any key events.
+  if (WMHelper::GetInstance()->IsImeBlocked(focus->window()))
+    return false;
+
   // Check if IME consumed the event, to avoid it to be doubly processed.
   // First let us see whether IME is active and is in text input mode.
   views::Widget* widget =
@@ -116,7 +124,10 @@ bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
 
 bool IsVirtualKeyboardEnabled() {
   return keyboard::GetAccessibilityKeyboardEnabled() ||
-         keyboard::GetTouchKeyboardEnabled();
+         keyboard::GetTouchKeyboardEnabled() ||
+         (keyboard::KeyboardUIController::HasInstance() &&
+          keyboard::KeyboardUIController::Get()->IsEnableFlagSet(
+              keyboard::KeyboardEnableFlag::kCommandLineEnabled));
 }
 
 bool IsReservedAccelerator(const ui::KeyEvent* event) {
@@ -157,11 +168,10 @@ Keyboard::Keyboard(KeyboardDelegate* delegate, Seat* seat)
     : delegate_(delegate),
       seat_(seat),
       expiration_delay_for_pending_key_acks_(base::TimeDelta::FromMilliseconds(
-          kExpirationDelayForPendingKeyAcksMs)),
-      weak_ptr_factory_(this) {
+          kExpirationDelayForPendingKeyAcksMs)) {
   AddEventHandler();
   seat_->AddObserver(this);
-  keyboard::KeyboardController::Get()->AddObserver(this);
+  keyboard::KeyboardUIController::Get()->AddObserver(this);
   OnSurfaceFocused(seat_->GetFocusedSurface());
 }
 
@@ -172,7 +182,7 @@ Keyboard::~Keyboard() {
     focus_->RemoveSurfaceObserver(this);
   RemoveEventHandler();
   seat_->RemoveObserver(this);
-  keyboard::KeyboardController::Get()->RemoveObserver(this);
+  keyboard::KeyboardUIController::Get()->RemoveObserver(this);
 }
 
 bool Keyboard::HasDeviceConfigurationDelegate() const {
@@ -204,7 +214,16 @@ void Keyboard::SetNeedKeyboardKeyAcks(bool need_acks) {
 }
 
 bool Keyboard::AreKeyboardKeyAcksNeeded() const {
-  return are_keyboard_key_acks_needed_;
+  // Keyboard class doesn't need key acks while the spoken feedback is enabled.
+  // While the spoken feedback is enabled, a key event is sent to both of a
+  // wayland client and Chrome to give a chance to work to Chrome OS's
+  // shortcuts.
+  return are_keyboard_key_acks_needed_
+         // TODO(yhanada): Remove this once ARC++ can send ack with a serial
+         // correctly while ChromeVox is on.
+         && !ash::Shell::Get()
+                 ->accessibility_controller()
+                 ->spoken_feedback_enabled();
 }
 
 void Keyboard::AckKeyboardKey(uint32_t serial, bool handled) {
@@ -227,6 +246,16 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
   // Ignore synthetic key repeat events.
   if (event->is_repeat())
     return;
+
+  // If the event target is not an exo::Surface, let another handler process the
+  // event. This check may not be necessary once https://crbug.com/624168 is
+  // resolved.
+  if (!GetShellMainSurface(static_cast<aura::Window*>(event->target())) &&
+      !Surface::AsSurface(static_cast<aura::Window*>(event->target()))) {
+    return;
+  }
+
+  TRACE_EXO_INPUT_EVENT(event);
 
   // Process reserved accelerators before sending it to client.
   if (ProcessAcceleratorIfReserved(focus_, event)) {
@@ -267,7 +296,7 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
           physical_code != ui::DomCode::NONE) {
         uint32_t serial =
             delegate_->OnKeyboardKey(event->time_stamp(), event->code(), true);
-        if (are_keyboard_key_acks_needed_) {
+        if (AreKeyboardKeyAcksNeeded()) {
           pending_key_acks_.insert(
               {serial,
                {*event, base::TimeTicks::Now() +
@@ -289,7 +318,7 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
         // client to track the state of the physical keyboard.
         uint32_t serial =
             delegate_->OnKeyboardKey(event->time_stamp(), it->second, false);
-        if (are_keyboard_key_acks_needed_) {
+        if (AreKeyboardKeyAcksNeeded()) {
           pending_key_acks_.insert(
               {serial,
                {*event, base::TimeTicks::Now() +
@@ -335,7 +364,7 @@ void Keyboard::OnSurfaceFocused(Surface* gained_focus) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// keyboard::KeyboardControllerObserver overrides:
+// ash::KeyboardControllerObserver overrides:
 
 void Keyboard::OnKeyboardEnabledChanged(bool enabled) {
   if (device_configuration_delegate_) {

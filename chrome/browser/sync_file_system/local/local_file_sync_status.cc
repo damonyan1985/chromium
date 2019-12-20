@@ -7,7 +7,7 @@
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "content/public/browser/browser_thread.h"
-#include "storage/common/fileapi/file_system_util.h"
+#include "storage/common/file_system/file_system_util.h"
 
 using storage::FileSystemURL;
 using storage::FileSystemURLSet;
@@ -19,7 +19,7 @@ namespace {
 using OriginAndType = LocalFileSyncStatus::OriginAndType;
 
 OriginAndType GetOriginAndType(const storage::FileSystemURL& url) {
-  return std::make_pair(url.origin(), url.type());
+  return std::make_pair(url.origin().GetURL(), url.type());
 }
 
 base::FilePath NormalizePath(const base::FilePath& path) {
@@ -60,7 +60,7 @@ bool ContainsChildOrParent(const Container& paths,
 
   // Check if any ancestor of |normalized_path| is in |writing_|.
   while (true) {
-    if (base::ContainsKey(paths, normalized_path))
+    if (base::Contains(paths, normalized_path))
       return true;
 
     if (storage::VirtualPath::IsRootPath(normalized_path))

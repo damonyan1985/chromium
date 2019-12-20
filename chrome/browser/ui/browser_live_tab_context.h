@@ -11,6 +11,8 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/sessions/core/live_tab_context.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "ui/base/ui_base_types.h"
 
 class Browser;
@@ -40,6 +42,13 @@ class BrowserLiveTabContext : public sessions::LiveTabContext {
   sessions::LiveTab* GetLiveTabAt(int index) const override;
   sessions::LiveTab* GetActiveLiveTab() const override;
   bool IsTabPinned(int index) const override;
+  base::Optional<tab_groups::TabGroupId> GetTabGroupForTab(
+      int index) const override;
+  tab_groups::TabGroupVisualData* GetVisualDataForGroup(
+      tab_groups::TabGroupId group) const override;
+  void SetVisualDataForGroup(
+      tab_groups::TabGroupId group,
+      tab_groups::TabGroupVisualData visual_data) override;
   const gfx::Rect GetRestoredBounds() const override;
   ui::WindowShowState GetRestoredState() const override;
   std::string GetWorkspace() const override;
@@ -49,6 +58,8 @@ class BrowserLiveTabContext : public sessions::LiveTabContext {
       int tab_index,
       int selected_navigation,
       const std::string& extension_app_id,
+      base::Optional<tab_groups::TabGroupId> group,
+      const tab_groups::TabGroupVisualData group_visual_data,
       bool select,
       bool pin,
       bool from_last_session,
@@ -56,6 +67,7 @@ class BrowserLiveTabContext : public sessions::LiveTabContext {
       const std::string& user_agent_override) override;
   sessions::LiveTab* ReplaceRestoredTab(
       const std::vector<sessions::SerializedNavigationEntry>& navigations,
+      base::Optional<tab_groups::TabGroupId> group,
       int selected_navigation,
       bool from_last_session,
       const std::string& extension_app_id,

@@ -10,6 +10,7 @@
 
 #include "base/component_export.h"
 #include "base/optional.h"
+#include "base/timer/timer.h"
 
 class GURL;
 
@@ -20,9 +21,13 @@ namespace util {
 // Enumeration of deep link types.
 enum class DeepLinkType {
   kUnsupported,
+  kAlarmTimer,
   kChromeSettings,
   kFeedback,
+  kLists,
+  kNotes,
   kOnboarding,
+  kProactiveSuggestions,
   kQuery,
   kReminders,
   kScreenshot,
@@ -32,12 +37,48 @@ enum class DeepLinkType {
 };
 
 // Enumeration of deep link parameters.
+// Examples of usage in comments. Note that actual Assistant deeplinks are
+// prefixed w/ "googleassistant"; "ga" is only used here to avoid line wrapping.
 enum class DeepLinkParam {
-  kId,
-  kPage,
-  kQuery,
-  kRelaunch,
+  kAction,      // ga://proactive-suggestions?action=cardClick
+  kCategory,    // ga://proactive-suggestions?category=1
+  kClientId,    // ga://reminders?action=edit&clientId=1
+  kDurationMs,  // ga://alarm-timer?action=addTimeToTimer&durationMs=60000
+  kHref,      // ga://proactive-suggestions?action=cardClick&href=https://g.co/
+  kIndex,     // ga://proactive-suggestions?action=cardClick&index=1
+  kId,        // ga://alarm-timer?action=addTimeToTimer&id=1
+  kPage,      // ga://settings?page=googleAssistant
+  kQuery,     // ga://send-query?query=weather
+  kRelaunch,  // ga://onboarding?relaunch=true
+  kVeId,      // ga://proactive-suggestions?action=cardClick&veId=1
 };
+
+// Enumeration of alarm/timer deep link actions.
+enum class AlarmTimerAction {
+  kAddTimeToTimer,
+  kStopRinging,
+};
+
+// Enumeration of proactive suggestions deep link actions.
+enum class ProactiveSuggestionsAction {
+  kCardClick,
+  kEntryPointClick,
+  kEntryPointClose,
+  kViewImpression,
+};
+
+// Enumeration of reminder deep link actions.
+enum class ReminderAction {
+  kCreate,
+  kEdit,
+};
+
+// Returns a deep link to perform an alarm/timer action.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<GURL> CreateAlarmTimerDeepLink(
+    AlarmTimerAction action,
+    base::Optional<std::string> alarm_timer_id,
+    base::Optional<base::TimeDelta> duration);
 
 // Returns a deep link to send an Assistant query.
 COMPONENT_EXPORT(ASSISTANT_UTIL)
@@ -62,10 +103,62 @@ base::Optional<std::string> GetDeepLinkParam(
     const std::map<std::string, std::string>& params,
     DeepLinkParam param);
 
+// Returns AlarmTimerAction from the given parameters. If the desired
+// parameter is not found or is not an AlarmTimerAction, an empty value is
+// returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<AlarmTimerAction> GetDeepLinkParamAsAlarmTimerAction(
+    const std::map<std::string, std::string>& params);
+
 // Returns a specific bool |param| from the given parameters. If the desired
 // parameter is not found or is not a bool, an empty value is returned.
 COMPONENT_EXPORT(ASSISTANT_UTIL)
 base::Optional<bool> GetDeepLinkParamAsBool(
+    const std::map<std::string, std::string>& params,
+    DeepLinkParam param);
+
+// Returns a specific GURL |param| from the given parameters. If the desired
+// parameter is not found, an absent value is returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<GURL> GetDeepLinkParamAsGURL(
+    const std::map<std::string, std::string>& params,
+    DeepLinkParam param);
+
+// Returns a specific int |param| from the given parameters. If the desired
+// parameter is not found or is not an int, an empty value is returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<int32_t> GetDeepLinkParamAsInt(
+    const std::map<std::string, std::string>& params,
+    DeepLinkParam param);
+
+// Returns a specific int64 |param| from the given parameters. If the desired
+// parameter is not found or is not an int64, an empty value is returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<int64_t> GetDeepLinkParamAsInt64(
+    const std::map<std::string, std::string>& params,
+    DeepLinkParam param);
+
+// Returns a specific ProactiveSuggestionsAction |param| from the given
+// parameters. If the desired parameter is not found, an empty value is
+// returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<ProactiveSuggestionsAction>
+GetDeepLinkParamAsProactiveSuggestionsAction(
+    const std::map<std::string, std::string>& params,
+    DeepLinkParam param);
+
+// Returns a specific ReminderAction |param| from the given parameters. If the
+// desired parameter is not found, an empty value is returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<ReminderAction> GetDeepLinkParamAsRemindersAction(
+    const std::map<std::string, std::string> params,
+    DeepLinkParam param);
+
+// Returns TimeDelta from the given parameters. If the desired parameter is not
+// found, can't convert to TimeDelta or not a time type parameter, an empty
+// value is returned.
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+base::Optional<base::TimeDelta> GetDeepLinkParamAsTimeDelta(
     const std::map<std::string, std::string>& params,
     DeepLinkParam param);
 
@@ -80,10 +173,14 @@ bool IsDeepLinkType(const GURL& url, DeepLinkType type);
 // Returns true if the specified |url| is a deep link, false otherwise.
 COMPONENT_EXPORT(ASSISTANT_UTIL) bool IsDeepLinkUrl(const GURL& url);
 
-// Returns the URL for the specified Assistant reminder |id|. If id is absent,
-// the returned URL will be for top-level Assistant Reminders.
+// Returns the Assistant URL for the deep link of the specified |type|. A return
+// value will only be present if the deep link type is one of {kLists, kNotes,
+// or kReminders}. If |id| is absent, the returned URL will be for the top-level
+// Assistant URL. Otherwise, the URL will correspond to the resource identified
+// by |id|.
 COMPONENT_EXPORT(ASSISTANT_UTIL)
-GURL GetAssistantRemindersUrl(const base::Optional<std::string>& id);
+base::Optional<GURL> GetAssistantUrl(DeepLinkType type,
+                                     const base::Optional<std::string>& id);
 
 // Returns the URL for the specified Chrome Settings |page|. If page is absent
 // or not allowed, the URL will be for top-level Chrome Settings.
@@ -108,7 +205,9 @@ base::Optional<GURL> GetWebUrl(
 COMPONENT_EXPORT(ASSISTANT_UTIL) bool IsWebDeepLink(const GURL& deep_link);
 
 // Returns true if the specified deep link |type| is a web deep link.
-COMPONENT_EXPORT(ASSISTANT_UTIL) bool IsWebDeepLinkType(DeepLinkType type);
+COMPONENT_EXPORT(ASSISTANT_UTIL)
+bool IsWebDeepLinkType(DeepLinkType type,
+                       const std::map<std::string, std::string>& params);
 
 }  // namespace util
 }  // namespace assistant

@@ -4,7 +4,6 @@
 
 #include "components/sync/driver/data_type_controller.h"
 
-#include "components/sync/base/data_type_histogram.h"
 #include "components/sync/syncable/user_share.h"
 
 namespace syncer {
@@ -12,11 +11,6 @@ namespace syncer {
 DataTypeController::DataTypeController(ModelType type) : type_(type) {}
 
 DataTypeController::~DataTypeController() {}
-
-// static
-bool DataTypeController::IsUnrecoverableResult(ConfigureResult result) {
-  return (result == UNRECOVERABLE_ERROR);
-}
 
 // static
 bool DataTypeController::IsSuccessfulResult(ConfigureResult result) {
@@ -45,17 +39,13 @@ std::string DataTypeController::StateToString(State state) {
   return "Invalid";
 }
 
-bool DataTypeController::ReadyForStart() const {
-  return true;
+DataTypeController::PreconditionState DataTypeController::GetPreconditionState()
+    const {
+  return PreconditionState::kPreconditionsMet;
 }
 
 bool DataTypeController::CalledOnValidThread() const {
   return sequence_checker_.CalledOnValidSequence();
-}
-
-std::unique_ptr<SyncEncryptionHandler::Observer>
-DataTypeController::GetEncryptionObserverProxy() {
-  return nullptr;
 }
 
 }  // namespace syncer

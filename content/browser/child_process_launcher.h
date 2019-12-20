@@ -10,7 +10,6 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/kill.h"
 #include "base/process/process.h"
@@ -58,10 +57,11 @@ static_assert(static_cast<int>(LAUNCH_RESULT_START) >
 struct ChildProcessLauncherPriority {
   ChildProcessLauncherPriority(bool visible,
                                bool has_media_stream,
+                               bool has_foreground_service_worker,
+                               bool has_only_low_priority_frames,
                                unsigned int frame_depth,
                                bool intersects_viewport,
-                               bool boost_for_pending_views,
-                               bool should_boost_for_pending_views
+                               bool boost_for_pending_views
 #if defined(OS_ANDROID)
                                ,
                                ChildProcessImportance importance
@@ -69,10 +69,11 @@ struct ChildProcessLauncherPriority {
                                )
       : visible(visible),
         has_media_stream(has_media_stream),
+        has_foreground_service_worker(has_foreground_service_worker),
+        has_only_low_priority_frames(has_only_low_priority_frames),
         frame_depth(frame_depth),
         intersects_viewport(intersects_viewport),
-        boost_for_pending_views(boost_for_pending_views),
-        should_boost_for_pending_views(should_boost_for_pending_views)
+        boost_for_pending_views(boost_for_pending_views)
 #if defined(OS_ANDROID)
         ,
         importance(importance)
@@ -81,10 +82,7 @@ struct ChildProcessLauncherPriority {
   }
 
   // Returns true if the child process is backgrounded.
-  bool is_background() const {
-    return !visible && !has_media_stream &&
-           !(should_boost_for_pending_views && boost_for_pending_views);
-  }
+  bool is_background() const;
 
   bool operator==(const ChildProcessLauncherPriority& other) const;
   bool operator!=(const ChildProcessLauncherPriority& other) const {
@@ -104,6 +102,15 @@ struct ChildProcessLauncherPriority {
   // content.
   bool has_media_stream;
 
+  // |has_foreground_service_worker| is true when the process has a service
+  // worker that may need to service timely events from other, possibly visible,
+  // processes.
+  bool has_foreground_service_worker;
+
+  // True if this ChildProcessLauncher has a non-zero number of frames attached
+  // to it and they're all low priority.
+  bool has_only_low_priority_frames;
+
   // |frame_depth| is the depth of the shallowest frame this process is
   // responsible for which has |visible| visibility. It only makes sense to
   // compare this property for two ChildProcessLauncherPriority instances with
@@ -122,14 +129,6 @@ struct ChildProcessLauncherPriority {
   // during navigation).
   bool boost_for_pending_views;
 
-  // True iff |boost_for_pending_views| should be considered in
-  // |is_background()|. This needs to be a separate parameter as opposed to
-  // having the experiment set |boost_for_pending_views == false| when
-  // |!should_boost_for_pending_views| as that would result in different
-  // |is_background()| logic than before and defeat the purpose of the
-  // experiment. TODO(gab): Remove this field when the
-  // BoostRendererPriorityForPendingViews desktop experiment is over.
-  bool should_boost_for_pending_views;
 #if defined(OS_ANDROID)
   ChildProcessImportance importance;
 #endif
@@ -148,6 +147,10 @@ class CONTENT_EXPORT ChildProcessLauncher {
 
     virtual void OnProcessLaunchFailed(int error_code) {}
 
+#if defined(OS_ANDROID)
+    // Whether the process can use pre-warmed up connection.
+    virtual bool CanUseWarmUpConnection();
+#endif
    protected:
     virtual ~Client() {}
   };
@@ -161,6 +164,12 @@ class CONTENT_EXPORT ChildProcessLauncher {
   // If |process_error_callback| is provided, it will be called if a Mojo error
   // is encountered when processing messages from the child process. This
   // callback must be safe to call from any thread.
+  //
+  // |files_to_preload| is a map of key names to file paths. These files will be
+  // opened by the browser process and corresponding file descriptors inherited
+  // by the new child process, accessible using the corresponding key via some
+  // platform-specific mechanism (such as base::FileDescriptorStore on POSIX).
+  // Currently only supported on POSIX platforms.
   ChildProcessLauncher(
       std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
       std::unique_ptr<base::CommandLine> cmd_line,
@@ -168,6 +177,7 @@ class CONTENT_EXPORT ChildProcessLauncher {
       Client* client,
       mojo::OutgoingInvitation mojo_invitation,
       const mojo::ProcessErrorCallback& process_error_callback,
+      std::map<std::string, base::FilePath> files_to_preload,
       bool terminate_on_shutdown = true);
   ~ChildProcessLauncher();
 
@@ -206,16 +216,10 @@ class CONTENT_EXPORT ChildProcessLauncher {
   // previous  client.
   Client* ReplaceClientForTest(Client* client);
 
-  // Sets the files that should be mapped when a new child process is created
-  // for the service |service_name|.
-  static void SetRegisteredFilesForService(
-      const std::string& service_name,
-      std::map<std::string, base::FilePath> required_files);
-
-  // Resets all files registered by |SetRegisteredFilesForService|. Used to
-  // support multiple shell context creation in unit_tests.
-  static void ResetRegisteredFilesForTesting();
-
+#if defined(OS_ANDROID)
+  // Dumps the stack of the child process without crashing it.
+  void DumpProcessStack();
+#endif
  private:
   friend class internal::ChildProcessLauncherHelper;
 
@@ -224,7 +228,6 @@ class CONTENT_EXPORT ChildProcessLauncher {
               int error_code);
 
   Client* client_;
-  BrowserThread::ID client_thread_id_;
 
   // The process associated with this ChildProcessLauncher. Set in Notify by
   // ChildProcessLauncherHelper once the process was started.
@@ -242,7 +245,7 @@ class CONTENT_EXPORT ChildProcessLauncher {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<ChildProcessLauncher> weak_factory_;
+  base::WeakPtrFactory<ChildProcessLauncher> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ChildProcessLauncher);
 };

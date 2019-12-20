@@ -7,10 +7,9 @@
 
 #include "third_party/blink/renderer/core/animation/animation_timeline.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline_options.h"
-#include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/animation/timing.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/dom/element.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -39,15 +38,23 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
                                 ScrollTimelineOptions*,
                                 ExceptionState&);
 
-  ScrollTimeline(Element*,
+  ScrollTimeline(Document*,
+                 Element*,
                  ScrollDirection,
                  CSSPrimitiveValue*,
                  CSSPrimitiveValue*,
-                 double);
+                 double,
+                 Timing::FillMode);
 
   // AnimationTimeline implementation.
-  double currentTime(bool& is_null) final;
   bool IsScrollTimeline() const override { return true; }
+  // ScrollTimeline is not active if scrollSource is null, does not currently
+  // have a CSS layout box, or if its layout box is not a scroll container.
+  // https://github.com/WICG/scroll-animations/issues/31
+  bool IsActive() const override;
+  base::Optional<base::TimeDelta> InitialStartTimeForAnimations() override;
+
+  void ScheduleNextService() override;
 
   // IDL API implementation.
   Element* scrollSource();
@@ -55,6 +62,7 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
   String startScrollOffset();
   String endScrollOffset();
   void timeRange(DoubleOrScrollTimelineAutoKeyword&);
+  String fill();
 
   // Returns the Node that should actually have the ScrollableArea (if one
   // exists). This can differ from |scrollSource| when |scroll_source_| is the
@@ -63,6 +71,7 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
   Node* ResolvedScrollSource() const { return resolved_scroll_source_; }
 
   ScrollDirection GetOrientation() const { return orientation_; }
+  Timing::FillMode GetFillMode() const { return fill_; }
 
   void GetCurrentAndMaxOffset(const LayoutBox*,
                               double& current_offset,
@@ -74,17 +83,15 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
 
   // Must be called when this ScrollTimeline is attached/detached from an
   // animation.
-  void AttachAnimation();
-  void DetachAnimation();
+  void AnimationAttached(Animation*) override;
+  void AnimationDetached(Animation*) override;
 
   void Trace(blink::Visitor*) override;
 
-  // For the AnimationWorklet origin trial, we need to automatically composite
-  // elements that are targets of ScrollTimelines (http://crbug.com/776533). We
-  // expose a static lookup method to enable this.
-  //
-  // TODO(crbug.com/839341): Remove once WorkletAnimations can run on main.
   static bool HasActiveScrollTimeline(Node* node);
+
+ protected:
+  base::Optional<base::TimeDelta> CurrentTimeInternal() override;
 
  private:
   // Use |scroll_source_| only to implement the web-exposed API but use
@@ -96,13 +103,15 @@ class CORE_EXPORT ScrollTimeline final : public AnimationTimeline {
   Member<CSSPrimitiveValue> start_scroll_offset_;
   Member<CSSPrimitiveValue> end_scroll_offset_;
   double time_range_;
+  Timing::FillMode fill_;
 };
 
-DEFINE_TYPE_CASTS(ScrollTimeline,
-                  AnimationTimeline,
-                  value,
-                  value->IsScrollTimeline(),
-                  value.IsScrollTimeline());
+template <>
+struct DowncastTraits<ScrollTimeline> {
+  static bool AllowFrom(const AnimationTimeline& value) {
+    return value.IsScrollTimeline();
+  }
+};
 
 }  // namespace blink
 

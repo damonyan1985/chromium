@@ -26,18 +26,9 @@ DISPLAY_EXPORT extern const char kUseFirstDisplayAsInternal[];
 
 #if defined(OS_CHROMEOS)
 DISPLAY_EXPORT extern const char kEnableUnifiedDesktop[];
+DISPLAY_EXPORT extern const char kEnableUseHDRTransferFunction[];
 #endif
 
 }  // namespace switches
-
-namespace features {
-
-DISPLAY_EXPORT extern const base::Feature kHighDynamicRange;
-
-#if defined(OS_CHROMEOS)
-DISPLAY_EXPORT extern const base::Feature kUseMonitorColorSpace;
-#endif
-
-}  // namespace features
 
 #endif  // UI_DISPLAY_DISPLAY_SWITCHES_H_

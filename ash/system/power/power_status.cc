@@ -10,14 +10,15 @@
 #include "ash/public/cpp/power_utils.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/style/ash_color_provider.h"
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/time_formatting.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/numerics/ranges.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/display/display.h"
@@ -45,17 +46,13 @@ const int kMinVisualChargeLevel = 1;
 // The color of the battery's badge (bolt, unreliable, X).
 const SkColor kBatteryBadgeColor = gfx::kGoogleGrey900;
 
-// The color used for the battery's badge and charged color when the battery
-// charge level is critically low and the device is not plugged in.
-const SkColor kBatteryAlertColor = gfx::kGoogleRedDark600;
-
 class BatteryImageSource : public gfx::CanvasImageSource {
  public:
   BatteryImageSource(const PowerStatus::BatteryImageInfo& info,
                      int height,
                      SkColor bg_color,
                      SkColor fg_color)
-      : gfx::CanvasImageSource(gfx::Size(height, height), false),
+      : gfx::CanvasImageSource(gfx::Size(height, height)),
         info_(info),
         bg_color_(bg_color),
         fg_color_(fg_color) {}
@@ -101,17 +98,20 @@ class BatteryImageSource : public gfx::CanvasImageSource {
     float charge_level =
         std::floor(info_.charge_percent / 100.0 * icon_bounds.height());
     const float min_charge_level = dsf * kMinVisualChargeLevel;
-    charge_level = std::max(std::min(charge_level, icon_bounds.height()),
-                            min_charge_level);
+    charge_level = base::ClampToRange(charge_level, min_charge_level,
+                                      icon_bounds.height());
 
     const float charge_y = icon_bounds.bottom() - charge_level;
     gfx::RectF clip_rect(0, charge_y, size().width() * dsf,
                          size().height() * dsf);
     canvas->ClipRect(clip_rect);
 
+    const SkColor alert_color = AshColorProvider::Get()->GetContentLayerColor(
+        AshColorProvider::ContentLayerType::kIconRed,
+        AshColorProvider::AshColorMode::kDark);
     const bool use_alert_color =
         charge_level == min_charge_level && info_.alert_if_low;
-    flags.setColor(use_alert_color ? kBatteryAlertColor : fg_color_);
+    flags.setColor(use_alert_color ? alert_color : fg_color_);
     canvas->DrawPath(path, flags);
 
     canvas->Restore();
@@ -119,7 +119,7 @@ class BatteryImageSource : public gfx::CanvasImageSource {
     // Paint the badge over top of the battery, if applicable.
     if (info_.icon_badge) {
       const SkColor badge_color =
-          use_alert_color ? kBatteryAlertColor : kBatteryBadgeColor;
+          use_alert_color ? alert_color : kBatteryBadgeColor;
       PaintVectorIcon(canvas, *info_.icon_badge, badge_color);
     }
   }
@@ -197,7 +197,7 @@ bool PowerStatus::BatteryImageInfo::ApproximatelyEqual(
   }
 
   // Otherwise, consider close values such as 42% and 45% as about the same.
-  return icon_badge == o.icon_badge && o.alert_if_low == o.alert_if_low &&
+  return icon_badge == o.icon_badge && alert_if_low == o.alert_if_low &&
          std::abs(charge_percent - o.charge_percent) < 5;
 }
 
@@ -240,9 +240,7 @@ void PowerStatus::RemoveObserver(Observer* observer) {
 }
 
 void PowerStatus::RequestStatusUpdate() {
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->RequestStatusUpdate();
+  chromeos::PowerManagerClient::Get()->RequestStatusUpdate();
 }
 
 bool PowerStatus::IsBatteryPresent() const {
@@ -278,11 +276,23 @@ bool PowerStatus::IsBatteryTimeBeingCalculated() const {
   return proto_.is_calculating_battery_time();
 }
 
-base::TimeDelta PowerStatus::GetBatteryTimeToEmpty() const {
+base::Optional<base::TimeDelta> PowerStatus::GetBatteryTimeToEmpty() const {
+  // powerd omits the field if no battery is present and sends -1 if it couldn't
+  // compute a reasonable estimate.
+  if (!proto_.has_battery_time_to_empty_sec() ||
+      proto_.battery_time_to_empty_sec() < 0) {
+    return base::nullopt;
+  }
   return base::TimeDelta::FromSeconds(proto_.battery_time_to_empty_sec());
 }
 
-base::TimeDelta PowerStatus::GetBatteryTimeToFull() const {
+base::Optional<base::TimeDelta> PowerStatus::GetBatteryTimeToFull() const {
+  // powerd omits the field if no battery is present and sends -1 if it couldn't
+  // compute a reasonable estimate.
+  if (!proto_.has_battery_time_to_full_sec() ||
+      proto_.battery_time_to_full_sec() < 0) {
+    return base::nullopt;
+  }
   return base::TimeDelta::FromSeconds(proto_.battery_time_to_full_sec());
 }
 
@@ -384,12 +394,12 @@ base::string16 PowerStatus::GetAccessibleNameString(
       IsBatteryCharging()
           ? IDS_ASH_STATUS_TRAY_BATTERY_PERCENT_CHARGING_ACCESSIBLE
           : IDS_ASH_STATUS_TRAY_BATTERY_PERCENT_ACCESSIBLE,
-      base::IntToString16(GetRoundedBatteryPercent()));
+      base::NumberToString16(GetRoundedBatteryPercent()));
   if (!full_description)
     return battery_percentage_accessible;
 
   base::string16 battery_time_accessible = base::string16();
-  const base::TimeDelta time =
+  const base::Optional<base::TimeDelta> time =
       IsBatteryCharging() ? GetBatteryTimeToFull() : GetBatteryTimeToEmpty();
 
   if (IsUsbChargerConnected()) {
@@ -398,13 +408,13 @@ base::string16 PowerStatus::GetAccessibleNameString(
   } else if (IsBatteryTimeBeingCalculated()) {
     battery_time_accessible = l10n_util::GetStringUTF16(
         IDS_ASH_STATUS_TRAY_BATTERY_CALCULATING_ACCESSIBLE);
-  } else if (power_utils::ShouldDisplayBatteryTime(time) &&
+  } else if (time && power_utils::ShouldDisplayBatteryTime(*time) &&
              !IsBatteryDischargingOnLinePower()) {
     int hour = 0, min = 0;
-    power_utils::SplitTimeIntoHoursAndMinutes(time, &hour, &min);
+    power_utils::SplitTimeIntoHoursAndMinutes(*time, &hour, &min);
     base::string16 minute =
-        min < 10 ? base::ASCIIToUTF16("0") + base::IntToString16(min)
-                 : base::IntToString16(min);
+        min < 10 ? base::ASCIIToUTF16("0") + base::NumberToString16(min)
+                 : base::NumberToString16(min);
     battery_time_accessible = l10n_util::GetStringFUTF16(
         IsBatteryCharging()
             ? IDS_ASH_STATUS_TRAY_BATTERY_TIME_UNTIL_FULL_ACCESSIBLE
@@ -432,14 +442,15 @@ std::pair<base::string16, base::string16> PowerStatus::GetStatusStrings()
       status =
           l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_BATTERY_CALCULATING);
     } else {
-      base::TimeDelta time = IsBatteryCharging() ? GetBatteryTimeToFull()
+      base::Optional<base::TimeDelta> time = IsBatteryCharging()
+                                                 ? GetBatteryTimeToFull()
                                                  : GetBatteryTimeToEmpty();
-      if (power_utils::ShouldDisplayBatteryTime(time) &&
+      if (time && power_utils::ShouldDisplayBatteryTime(*time) &&
           !IsBatteryDischargingOnLinePower()) {
         base::string16 duration;
-        if (!base::TimeDurationFormat(time, base::DURATION_WIDTH_NUMERIC,
+        if (!base::TimeDurationFormat(*time, base::DURATION_WIDTH_NUMERIC,
                                       &duration))
-          LOG(ERROR) << "Failed to format duration " << time;
+          LOG(ERROR) << "Failed to format duration " << *time;
         status = l10n_util::GetStringFUTF16(
             IsBatteryCharging()
                 ? IDS_ASH_STATUS_TRAY_BATTERY_TIME_UNTIL_FULL_SHORT
@@ -470,16 +481,12 @@ base::string16 PowerStatus::GetInlinedStatusString() const {
 }
 
 PowerStatus::PowerStatus() {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->RequestStatusUpdate();
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
+  chromeos::PowerManagerClient::Get()->RequestStatusUpdate();
 }
 
 PowerStatus::~PowerStatus() {
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 }
 
 void PowerStatus::SetProtoForTesting(

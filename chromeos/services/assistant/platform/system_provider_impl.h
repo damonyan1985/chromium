@@ -5,21 +5,30 @@
 #ifndef CHROMEOS_SERVICES_ASSISTANT_PLATFORM_SYSTEM_PROVIDER_IMPL_H_
 #define CHROMEOS_SERVICES_ASSISTANT_PLATFORM_SYSTEM_PROVIDER_IMPL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/component_export.h"
 #include "base/macros.h"
 #include "libassistant/shared/public/platform_system.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/battery_monitor.mojom.h"
 #include "services/device/public/mojom/battery_status.mojom.h"
 
 namespace chromeos {
 namespace assistant {
 
+class PowerManagerProviderImpl;
+
 class COMPONENT_EXPORT(ASSISTANT_SERVICE) SystemProviderImpl
     : public assistant_client::SystemProvider {
  public:
-  explicit SystemProviderImpl(device::mojom::BatteryMonitorPtr battery_monitor);
+  // Acceptable to pass in |nullptr| for |power_manager_provider| when no
+  // platform power manager provider is available.
+  SystemProviderImpl(
+      std::unique_ptr<PowerManagerProviderImpl> power_manager_provider,
+      mojo::PendingRemote<device::mojom::BatteryMonitor> battery_monitor);
   ~SystemProviderImpl() override;
 
   // assistant_client::SystemProvider implementation:
@@ -36,7 +45,9 @@ class COMPONENT_EXPORT(ASSISTANT_SERVICE) SystemProviderImpl
 
   void FlushForTesting();
 
-  device::mojom::BatteryMonitorPtr battery_monitor_;
+  std::unique_ptr<PowerManagerProviderImpl> power_manager_provider_;
+
+  mojo::Remote<device::mojom::BatteryMonitor> battery_monitor_;
   device::mojom::BatteryStatusPtr current_battery_status_;
 
   DISALLOW_COPY_AND_ASSIGN(SystemProviderImpl);

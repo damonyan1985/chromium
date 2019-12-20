@@ -9,8 +9,6 @@
 #include "base/command_line.h"
 #include "base/run_loop.h"
 #include "base/strings/string_tokenizer.h"
-#include "base/task/task_scheduler/task_scheduler.h"
-#include "base/test/scoped_task_environment.h"
 #include "base/test/test_discardable_memory_allocator.h"
 #include "build/build_config.h"
 #include "content/common/content_switches_internal.h"
@@ -21,7 +19,6 @@
 #include "third_party/blink/public/platform/web_cache.h"
 #include "third_party/blink/public/platform/web_runtime_features.h"
 #include "third_party/blink/public/web/blink.h"
-#include "url/url_util.h"
 
 #if defined(OS_WIN)
 #include "ui/display/win/dpi.h"
@@ -38,12 +35,8 @@ namespace {
 class TestEnvironment {
  public:
   TestEnvironment()
-#if !defined(OS_ANDROID)
-      // On Android, Java pumps UI messages.
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI)
-#endif
-  {
+      : blink_test_support_(
+            TestBlinkWebUnitTestSupport::SchedulerType::kRealScheduler) {
     base::DiscardableMemoryAllocator::SetInstance(
         &discardable_memory_allocator_);
   }
@@ -52,12 +45,9 @@ class TestEnvironment {
 
   // This returns when both the main thread and the TaskSchedules queues are
   // empty.
-  void RunUntilIdle() { scoped_task_environment_.RunUntilIdle(); }
+  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-
-  // Must be instantiated after ScopedTaskEnvironment.
   TestBlinkWebUnitTestSupport blink_test_support_;
   TestContentClientInitializer content_initializer_;
   base::TestDiscardableMemoryAllocator discardable_memory_allocator_;
@@ -90,10 +80,6 @@ void SetUpBlinkTestEnvironment() {
   display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
 
-  // Explicitly initialize the GURL library before spawning any threads.
-  // Otherwise crash may happend when different threads try to create a GURL
-  // at same time.
-  url::Initialize();
   test_environment = new TestEnvironment;
 }
 

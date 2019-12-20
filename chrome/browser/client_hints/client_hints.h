@@ -6,52 +6,55 @@
 #define CHROME_BROWSER_CLIENT_HINTS_CLIENT_HINTS_H_
 
 #include <memory>
+#include <string>
 
 #include "base/memory/ref_counted.h"
 #include "base/optional.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/client_hints_controller_delegate.h"
+#include "content/public/browser/web_contents_receiver_set.h"
+#include "content/public/browser/web_contents_user_data.h"
 
 class GURL;
 
-namespace content {
-class BrowserContext;
-}
-
-namespace net {
-class HttpRequestHeaders;
-}
-
 namespace client_hints {
 
-namespace internal {
-
-// Returns |rtt| after adding host-specific random noise, and rounding it as
-// per the NetInfo spec to improve privacy.
-unsigned long RoundRtt(const std::string& host,
-                       const base::Optional<base::TimeDelta>& rtt);
-
-// Returns downlink (in Mbps) after adding host-specific random noise to
-// |downlink_kbps| (which is in Kbps), and rounding it as per the NetInfo spec
-// to improve privacy.
-double RoundKbpsToMbps(const std::string& host,
-                       const base::Optional<int32_t>& downlink_kbps);
-
-}  // namespace internal
-
 class ClientHints : public KeyedService,
-                    public content::ClientHintsControllerDelegate {
+                    public content::ClientHintsControllerDelegate,
+                    public content::WebContentsUserData<ClientHints> {
  public:
   explicit ClientHints(content::BrowserContext* context);
+  explicit ClientHints(content::WebContents* tab);
   ~ClientHints() override;
 
   // content::ClientHintsControllerDelegate:
-  void GetAdditionalNavigationRequestClientHintsHeaders(
+  network::NetworkQualityTracker* GetNetworkQualityTracker() override;
+
+  void GetAllowedClientHintsFromSource(
       const GURL& url,
-      net::HttpRequestHeaders* additional_headers) override;
+      blink::WebEnabledClientHints* client_hints) override;
+
+  bool IsJavaScriptAllowed(const GURL& url) override;
+
+  std::string GetAcceptLanguageString() override;
+
+  blink::UserAgentMetadata GetUserAgentMetadata() override;
+
+  void PersistClientHints(
+      const url::Origin& primary_origin,
+      const std::vector<blink::mojom::WebClientHintsType>& client_hints,
+      base::TimeDelta expiration_duration) override;
 
  private:
-  content::BrowserContext* context_;
+  content::BrowserContext* GetContext();
+
+  friend class content::WebContentsUserData<ClientHints>;
+  content::BrowserContext* context_ = nullptr;
+  std::unique_ptr<
+      content::WebContentsFrameReceiverSet<client_hints::mojom::ClientHints>>
+      receiver_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(ClientHints);
 };

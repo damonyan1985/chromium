@@ -22,18 +22,34 @@ class CONTENT_EXPORT SyntheticTouchDriver : public SyntheticPointerDriver {
   void DispatchEvent(SyntheticGestureTarget* target,
                      const base::TimeTicks& timestamp) override;
 
-  void Press(float x,
-             float y,
-             int index,
-             SyntheticPointerActionParams::Button button =
-                 SyntheticPointerActionParams::Button::LEFT,
-             int key_modifiers = 0) override;
-  void Move(float x, float y, int index, int key_modifiers = 0) override;
+  void Press(
+      float x,
+      float y,
+      int index,
+      SyntheticPointerActionParams::Button button =
+          SyntheticPointerActionParams::Button::LEFT,
+      int key_modifiers = 0,
+      float width = 40.f,
+      float height = 40.f,
+      float rotation_angle = 0.f,
+      float force = 1.f,
+      const base::TimeTicks& timestamp = base::TimeTicks::Now()) override;
+  void Move(float x,
+            float y,
+            int index,
+            int key_modifiers = 0,
+            float width = 40.f,
+            float height = 40.f,
+            float rotation_angle = 0.f,
+            float force = 1.f) override;
   void Release(int index,
                SyntheticPointerActionParams::Button button =
                    SyntheticPointerActionParams::Button::LEFT,
                int key_modifiers = 0) override;
-  void Cancel(int index = 0) override;
+  void Cancel(int index = 0,
+              SyntheticPointerActionParams::Button button =
+                  SyntheticPointerActionParams::Button::LEFT,
+              int key_modifiers = 0) override;
   void Leave(int index = 0) override;
 
   bool UserInputCheck(

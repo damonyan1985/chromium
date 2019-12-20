@@ -21,6 +21,12 @@ class Widget;
 // Crostini, and interal apps.
 class AppWindowBase : public ui::BaseWindow {
  public:
+  enum class FullScreenMode {
+    kNotDefined,  // Fullscreen mode was not defined.
+    kActive,      // Fullscreen is activated for an app.
+    kNonActive,   // Fullscreen was not activated for an app.
+  };
+
   AppWindowBase(const ash::ShelfID& shelf_id, views::Widget* widget);
 
   virtual ~AppWindowBase() {}
@@ -36,6 +42,12 @@ class AppWindowBase : public ui::BaseWindow {
   views::Widget* widget() const { return widget_; }
 
   AppWindowLauncherItemController* controller() const { return controller_; }
+
+  virtual void SetDescription(
+      const std::string& title,
+      const std::vector<uint8_t>& unsafe_icon_data_png) {}
+
+  virtual void SetFullscreenMode(FullScreenMode mode) {}
 
   // ui::BaseWindow:
   bool IsActive() const override;
@@ -58,8 +70,8 @@ class AppWindowBase : public ui::BaseWindow {
   void Restore() override;
   void SetBounds(const gfx::Rect& bounds) override;
   void FlashFrame(bool flash) override;
-  bool IsAlwaysOnTop() const override;
-  void SetAlwaysOnTop(bool always_on_top) override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
+  void SetZOrderLevel(ui::ZOrderLevel order) override;
 
  private:
   ash::ShelfID shelf_id_;

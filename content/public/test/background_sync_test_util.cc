@@ -8,7 +8,7 @@
 #include "base/run_loop.h"
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
-#include "content/browser/background_sync/background_sync_context.h"
+#include "content/browser/background_sync/background_sync_context_impl.h"
 #include "content/browser/background_sync/background_sync_manager.h"
 #include "content/browser/background_sync/background_sync_network_observer.h"
 #include "content/browser/storage_partition_impl.h"
@@ -23,10 +23,10 @@ namespace background_sync_test_util {
 
 namespace {
 
-void SetOnlineOnIOThread(
-    const scoped_refptr<BackgroundSyncContext>& sync_context,
+void SetOnlineOnCoreThread(
+    const scoped_refptr<BackgroundSyncContextImpl>& sync_context,
     bool online) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
 
   BackgroundSyncManager* sync_manager = sync_context->background_sync_manager();
   BackgroundSyncNetworkObserver* network_observer =
@@ -54,10 +54,10 @@ void SetIgnoreNetworkChanges(bool ignore) {
 
 // static
 void SetOnline(WebContents* web_contents, bool online) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
+  RunOrPostTaskOnThread(
+      FROM_HERE, ServiceWorkerContext::GetCoreThreadId(),
       base::BindOnce(
-          &SetOnlineOnIOThread,
+          &SetOnlineOnCoreThread,
           base::Unretained(
               GetStoragePartition(web_contents)->GetBackgroundSyncContext()),
           online));

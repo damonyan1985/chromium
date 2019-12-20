@@ -4,6 +4,8 @@
 
 #include "remoting/host/basic_desktop_environment.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
@@ -14,6 +16,7 @@
 #include "remoting/host/desktop_capturer_proxy.h"
 #include "remoting/host/file_transfer/local_file_operations.h"
 #include "remoting/host/input_injector.h"
+#include "remoting/host/keyboard_layout_monitor.h"
 #include "remoting/host/mouse_cursor_monitor_proxy.h"
 #include "remoting/host/screen_controls.h"
 #include "remoting/protocol/capability_names.h"
@@ -53,8 +56,7 @@ std::unique_ptr<AudioCapturer> BasicDesktopEnvironment::CreateAudioCapturer() {
 std::unique_ptr<InputInjector> BasicDesktopEnvironment::CreateInputInjector() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  return InputInjector::Create(input_task_runner(), ui_task_runner(),
-                               system_input_injector_factory());
+  return InputInjector::Create(input_task_runner(), ui_task_runner());
 }
 
 std::unique_ptr<ScreenControls>
@@ -70,9 +72,15 @@ BasicDesktopEnvironment::CreateMouseCursorMonitor() {
                                                    desktop_capture_options());
 }
 
+std::unique_ptr<KeyboardLayoutMonitor>
+BasicDesktopEnvironment::CreateKeyboardLayoutMonitor(
+    base::RepeatingCallback<void(const protocol::KeyboardLayout&)> callback) {
+  return KeyboardLayoutMonitor::Create(std::move(callback), input_task_runner_);
+}
+
 std::unique_ptr<FileOperations>
 BasicDesktopEnvironment::CreateFileOperations() {
-  return std::make_unique<LocalFileOperations>();
+  return std::make_unique<LocalFileOperations>(ui_task_runner_);
 }
 
 std::string BasicDesktopEnvironment::GetCapabilities() const {
@@ -90,8 +98,8 @@ std::unique_ptr<webrtc::DesktopCapturer>
 BasicDesktopEnvironment::CreateVideoCapturer() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  std::unique_ptr<DesktopCapturerProxy> result(
-      new DesktopCapturerProxy(video_capture_task_runner_));
+  std::unique_ptr<DesktopCapturerProxy> result(new DesktopCapturerProxy(
+      video_capture_task_runner_, client_session_control_));
   result->CreateCapturer(desktop_capture_options());
   return std::move(result);
 }
@@ -101,13 +109,13 @@ BasicDesktopEnvironment::BasicDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory,
+    base::WeakPtr<ClientSessionControl> client_session_control,
     const DesktopEnvironmentOptions& options)
     : caller_task_runner_(caller_task_runner),
       video_capture_task_runner_(video_capture_task_runner),
       input_task_runner_(input_task_runner),
       ui_task_runner_(ui_task_runner),
-      system_input_injector_factory_(system_input_injector_factory),
+      client_session_control_(client_session_control),
       options_(options) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 #if defined(USE_X11)
@@ -129,13 +137,11 @@ BasicDesktopEnvironmentFactory::BasicDesktopEnvironmentFactory(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-    ui::SystemInputInjectorFactory* system_input_injector_factory)
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
     : caller_task_runner_(caller_task_runner),
       video_capture_task_runner_(video_capture_task_runner),
       input_task_runner_(input_task_runner),
-      ui_task_runner_(ui_task_runner),
-      system_input_injector_factory_(system_input_injector_factory) {}
+      ui_task_runner_(ui_task_runner) {}
 
 BasicDesktopEnvironmentFactory::~BasicDesktopEnvironmentFactory() = default;
 

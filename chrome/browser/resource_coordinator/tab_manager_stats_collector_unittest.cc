@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop_current.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -25,6 +26,7 @@
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/performance_manager/embedder/performance_manager_registry.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/web_contents_tester.h"
@@ -107,6 +109,8 @@ class TabManagerStatsCollectorTest
 
   std::unique_ptr<WebContents> CreateWebContentsForUKM(ukm::SourceId id) {
     std::unique_ptr<WebContents> contents(CreateTestWebContents());
+    performance_manager::PerformanceManagerRegistry::GetInstance()
+        ->CreatePageNodeForWebContents(contents.get());
     ResourceCoordinatorTabHelper::CreateForWebContents(contents.get());
     ResourceCoordinatorTabHelper::FromWebContents(contents.get())
         ->SetUkmSourceIdForTest(id);
@@ -464,16 +468,16 @@ TEST_P(TabManagerStatsCollectorParameterizedTest, HistogramsTabCount) {
                                                                            : 0);
 }
 
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     TabManagerStatsCollectorTabSwitchTest,
     ::testing::Values(std::make_pair(false,   // Session restore
                                      false),  // Background tab opening
                       std::make_pair(true, false),
                       std::make_pair(false, true),
                       std::make_pair(true, true)));
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     TabManagerStatsCollectorParameterizedTest,
     ::testing::Values(std::make_pair(false,   // Session restore
                                      false),  // Background tab opening
@@ -626,7 +630,7 @@ TEST_F(TabManagerStatsCollectorTest, PeriodicSamplingWorks) {
   // tab strip in order to be tracked by the TabManager.
   auto window = std::make_unique<TestBrowserWindow>();
   Browser::CreateParams params(profile(), true);
-  params.type = Browser::TYPE_TABBED;
+  params.type = Browser::TYPE_NORMAL;
   params.window = window.get();
   auto browser = std::make_unique<Browser>(params);
   TabStripModel* tab_strip = browser->tab_strip_model();

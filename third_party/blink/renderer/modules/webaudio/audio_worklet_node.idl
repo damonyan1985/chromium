@@ -5,12 +5,11 @@
 // See https://webaudio.github.io/web-audio-api/#audioworkletnode
 
 [
+    Exposed=Window,
     ActiveScriptWrappable,
-    Constructor(BaseAudioContext context, DOMString name, optional AudioWorkletNodeOptions options),
-    ConstructorCallWith=ScriptState,
-    MeasureAs=AudioWorkletNodeConstructor,
-    RaisesException=Constructor
+    MeasureAs=AudioWorkletNodeConstructor
 ] interface AudioWorkletNode : AudioNode {
+    [CallWith=ScriptState, RaisesException] constructor(BaseAudioContext context, DOMString name, optional AudioWorkletNodeOptions options);
     readonly attribute AudioParamMap parameters;
     readonly attribute MessagePort port;
     attribute EventHandler onprocessorerror;

@@ -31,14 +31,14 @@ class FirstRunView : public views::View,
   FirstRunActor* GetActor();
 
   // Overriden from views::View.
-  void Layout() override;
   void RequestFocus() override;
 
   content::WebContents* GetWebContents();
 
  private:
   // Overriden from content::WebContentsDelegate.
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
+  bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                         const content::ContextMenuParams& params) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
@@ -54,4 +54,3 @@ class FirstRunView : public views::View,
 }  // namespace chromeos
 
 #endif  // CHROME_BROWSER_CHROMEOS_FIRST_RUN_FIRST_RUN_VIEW_H_
-

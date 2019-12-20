@@ -4,7 +4,7 @@
 
 #include "ios/testing/embedded_test_server_handlers.h"
 
-#include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
@@ -26,8 +26,7 @@ namespace {
 std::string ExtractUlrSpecFromQuery(
     const net::test_server::HttpRequest& request) {
   GURL request_url = request.GetURL();
-  std::string spec;
-  net::UnescapeBinaryURLComponent(request_url.query(), &spec);
+  std::string spec = net::UnescapeBinaryURLComponent(request_url.query_piece());
 
   // Escape the URL spec.
   GURL url(spec);
@@ -40,31 +39,30 @@ class DownloadResponse : public net::test_server::BasicHttpResponse {
  public:
   DownloadResponse(int length) : length_(length) {}
 
-  void SendResponse(
-      const net::test_server::SendBytesCallback& send,
-      const net::test_server::SendCompleteCallback& done) override {
+  void SendResponse(const net::test_server::SendBytesCallback& send,
+                    net::test_server::SendCompleteCallback done) override {
     send.Run(base::StringPrintf("HTTP/1.1 200 OK\r\n"
                                 "Content-Type:%s\r\n\r\n"
                                 "Content-Length:%d\r\n\r\n",
                                 kTestDownloadMimeType, length_),
-             base::BindRepeating(&DownloadResponse::Send, send, done, length_));
+             base::BindOnce(&DownloadResponse::Send, send, std::move(done),
+                            length_));
   }
 
  private:
   // Sends "0" |count| times.
   static void Send(const net::test_server::SendBytesCallback& send,
-                   const net::test_server::SendCompleteCallback& done,
+                   net::test_server::SendCompleteCallback done,
                    int count) {
     if (!count) {
-      done.Run();
+      std::move(done).Run();
       return;
     }
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindRepeating(send, "0",
-                            base::BindRepeating(&DownloadResponse::Send, send,
-                                                done, count - 1)));
+        FROM_HERE, base::BindOnce(send, "0",
+                                  base::BindOnce(&DownloadResponse::Send, send,
+                                                 std::move(done), count - 1)));
   }
 
   int length_ = 0;
@@ -78,9 +76,28 @@ std::unique_ptr<net::test_server::HttpResponse> HandleIFrame(
     const net::test_server::HttpRequest& request) {
   auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_content_type("text/html");
-  http_response->set_content(base::StringPrintf(
-      "<html><head></head><body><iframe src='%s'></iframe></body></html>",
-      ExtractUlrSpecFromQuery(request).c_str()));
+  http_response->set_content(
+      base::StringPrintf("<html><head></head><body><iframe "
+                         "src='%s'></iframe>Main frame text</body></html>",
+                         ExtractUlrSpecFromQuery(request).c_str()));
+  return std::move(http_response);
+}
+
+// Returns a page with |html|.
+std::unique_ptr<net::test_server::HttpResponse> HandlePageWithHtml(
+    const std::string& html,
+    const net::test_server::HttpRequest& request) {
+  auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
+  http_response->set_content_type("text/html");
+  http_response->set_content(html);
+  return std::move(http_response);
+}
+
+std::unique_ptr<net::test_server::HttpResponse> HandlePageWithContents(
+    const net::test_server::HttpRequest& request) {
+  auto http_response = std::make_unique<net::test_server::BasicHttpResponse>();
+  http_response->set_content_type("text/html");
+  http_response->set_content(request.GetURL().query());
   return std::move(http_response);
 }
 

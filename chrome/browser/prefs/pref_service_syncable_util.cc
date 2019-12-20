@@ -17,19 +17,11 @@ sync_preferences::PrefServiceSyncable* PrefServiceSyncableFromProfile(
       profile->GetPrefs());
 }
 
-sync_preferences::PrefServiceSyncable* PrefServiceSyncableIncognitoFromProfile(
-    Profile* profile) {
-  return static_cast<sync_preferences::PrefServiceSyncable*>(
-      profile->GetOffTheRecordPrefs());
-}
-
 std::unique_ptr<sync_preferences::PrefServiceSyncable>
 CreateIncognitoPrefServiceSyncable(
     sync_preferences::PrefServiceSyncable* pref_service,
-    PrefStore* incognito_extension_pref_store,
-    std::unique_ptr<PrefValueStore::Delegate> delegate) {
-
+    PrefStore* incognito_extension_pref_store) {
   return pref_service->CreateIncognitoPrefService(
       incognito_extension_pref_store,
-      prefs::GetIncognitoPersistentPrefsWhitelist(), std::move(delegate));
+      prefs::GetIncognitoPersistentPrefsWhitelist());
 }

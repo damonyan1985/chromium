@@ -27,7 +27,11 @@ class Encryptor;
 // all callbacks to the thread on which the GCMStoreImpl is created.
 class GCM_EXPORT GCMStoreImpl : public GCMStore {
  public:
+  // |remove_account_mappings_with_email_key| indicates whether account mappings
+  // having email as account key should be removed while loading. This is
+  // required during the migration of account identifier from email to Gaia ID.
   GCMStoreImpl(const base::FilePath& path,
+               bool remove_account_mappings_with_email_key,
                scoped_refptr<base::SequencedTaskRunner> blocking_task_runner,
                std::unique_ptr<Encryptor> encryptor);
   ~GCMStoreImpl() override;
@@ -90,7 +94,7 @@ class GCM_EXPORT GCMStoreImpl : public GCMStore {
   // Sets the account information related to device to account mapping.
   void AddAccountMapping(const AccountMapping& account_mapping,
                          const UpdateCallback& callback) override;
-  void RemoveAccountMapping(const std::string& account_id,
+  void RemoveAccountMapping(const CoreAccountId& account_id,
                             const UpdateCallback& callback) override;
 
   // Sets last token fetch time.
@@ -146,7 +150,7 @@ class GCM_EXPORT GCMStoreImpl : public GCMStore {
   scoped_refptr<Backend> backend_;
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
 
-  base::WeakPtrFactory<GCMStoreImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<GCMStoreImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GCMStoreImpl);
 };

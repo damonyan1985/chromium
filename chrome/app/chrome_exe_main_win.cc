@@ -15,6 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/process/memory.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
@@ -27,12 +28,12 @@
 #include "chrome/app/main_dll_loader_win.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/browser/win/chrome_process_finder.h"
+#include "chrome/chrome_elf/chrome_elf_main.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "chrome/install_static/install_util.h"
 #include "chrome/install_static/user_data_dir.h"
-#include "chrome_elf/chrome_elf_main.h"
 #include "components/crash/content/app/crash_switches.h"
 #include "components/crash/content/app/crashpad.h"
 #include "components/crash/content/app/fallback_crash_handling_win.h"
@@ -177,6 +178,10 @@ int main() {
   install_static::InitializeFromPrimaryModule();
   SignalInitializeCrashReporting();
 
+  // Done here to ensure that OOMs that happen early in process initialization
+  // are correctly signaled to the OS.
+  base::EnableTerminationOnOutOfMemory();
+
   // Initialize the CommandLine singleton from the environment.
   base::CommandLine::Init(0, nullptr);
   const base::CommandLine* command_line =
@@ -216,7 +221,9 @@ int main() {
   // The exit manager is in charge of calling the dtors of singletons.
   base::AtExitManager exit_manager;
 
-  base::win::EnableHighDPISupport();
+  // Only enable High DPI support for browser and GPU process.
+  if (process_type.empty() || process_type == switches::kGpuProcess)
+    base::win::EnableHighDPISupport();
 
   if (AttemptFastNotify(*command_line))
     return 0;
@@ -229,5 +236,12 @@ int main() {
   int rc = loader->Launch(instance, exe_entry_point_ticks);
   loader->RelaunchChromeBrowserWithNewCommandLineIfNeeded();
   delete loader;
+
+  // Process shutdown is hard and some process types have been crashing during
+  // shutdown. TerminateProcess is safer and faster.
+  if (process_type == switches::kUtilityProcess ||
+      process_type == switches::kPpapiPluginProcess) {
+    TerminateProcess(GetCurrentProcess(), rc);
+  }
   return rc;
 }

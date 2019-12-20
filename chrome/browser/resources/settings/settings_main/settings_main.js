@@ -75,13 +75,9 @@ Polymer({
 
     /**
      * Dictionary defining page visibility.
-     * @type {!GuestModePageVisibility}
+     * @type {!PageVisibility}
      */
     pageVisibility: Object,
-
-    showAndroidApps: Boolean,
-
-    havePlayStoreApp: Boolean,
   },
 
   /** @private */
@@ -166,6 +162,7 @@ Polymer({
     const overscroll = Math.max(0, this.offsetParent.clientHeight - distance);
     this.setOverscroll_(overscroll);
     section.scrollIntoView();
+    section.focus();
   },
 
   /**
@@ -228,13 +225,11 @@ Polymer({
   },
 
   /**
-   * @private
-   * @param {boolean} inSearchMode Whether a search operation is in progress or
-   *     previous search results are being displayed.
-   * @param {boolean} showingSubpage Whether a subpage is being shown.
    * @return {boolean}
+   * @private
    */
-  showManagedHeader_: function(inSearchMode, showingSubpage) {
-    return !inSearchMode && !showingSubpage;
+  showManagedHeader_: function() {
+    return !this.inSearchMode_ && !this.showingSubpage_ &&
+        !this.showPages_.about;
   },
 });

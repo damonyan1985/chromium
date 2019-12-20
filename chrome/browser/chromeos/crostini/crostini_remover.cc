@@ -70,19 +70,18 @@ void CrostiniRemover::StopVmFinished(CrostiniResult result) {
   }
 
   CrostiniRegistryServiceFactory::GetForProfile(profile_)->ClearApplicationList(
-      vm_name_);
+      vm_name_, "");
   CrostiniMimeTypesServiceFactory::GetForProfile(profile_)->ClearMimeTypes(
-      vm_name_);
+      vm_name_, "");
   CrostiniManager::GetForProfile(profile_)->DestroyDiskImage(
       base::FilePath(vm_name_),
-      vm_tools::concierge::StorageLocation::STORAGE_CRYPTOHOME_ROOT,
       base::BindOnce(&CrostiniRemover::DestroyDiskImageFinished, this));
 }
 
-void CrostiniRemover::DestroyDiskImageFinished(CrostiniResult result) {
+void CrostiniRemover::DestroyDiskImageFinished(bool success) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (result != CrostiniResult::SUCCESS) {
-    std::move(callback_).Run(result);
+  if (!success) {
+    std::move(callback_).Run(CrostiniResult::DESTROY_DISK_IMAGE_FAILED);
     return;
   }
   // Only set kCrostiniEnabled to false once cleanup is completely finished.

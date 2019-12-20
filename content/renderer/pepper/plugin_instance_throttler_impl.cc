@@ -13,7 +13,7 @@
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/render_frame_impl.h"
 #include "ppapi/shared_impl/ppapi_constants.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/web_rect.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_plugin_container.h"
@@ -68,8 +68,7 @@ PluginInstanceThrottlerImpl::PluginInstanceThrottlerImpl(
           base::TimeDelta::FromMilliseconds(
               kAudioThrottledFrameTimeoutMilliseconds),
           this,
-          &PluginInstanceThrottlerImpl::EngageThrottle),
-      weak_factory_(this) {}
+          &PluginInstanceThrottlerImpl::EngageThrottle) {}
 
 PluginInstanceThrottlerImpl::~PluginInstanceThrottlerImpl() {
   for (auto& observer : observer_list_)
@@ -171,8 +170,9 @@ void PluginInstanceThrottlerImpl::Initialize(
     // is disabled.
     frame->RegisterPeripheralPlugin(
         content_origin,
-        base::Bind(&PluginInstanceThrottlerImpl::MarkPluginEssential,
-                   weak_factory_.GetWeakPtr(), UNTHROTTLE_METHOD_BY_WHITELIST));
+        base::BindOnce(&PluginInstanceThrottlerImpl::MarkPluginEssential,
+                       weak_factory_.GetWeakPtr(),
+                       UNTHROTTLE_METHOD_BY_WHITELIST));
   }
 }
 

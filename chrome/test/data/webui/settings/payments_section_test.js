@@ -7,11 +7,17 @@ cr.define('settings_payments_section', function() {
     test('testAutofillExtensionIndicator', function() {
       // Initializing with fake prefs
       const section = document.createElement('settings-payments-section');
-      section.prefs = {autofill: {credit_card_enabled: {}}};
+      section.prefs = {
+        autofill: {credit_card_enabled: {}, credit_card_fido_auth_enabled: {}}
+      };
       document.body.appendChild(section);
 
       assertFalse(!!section.$$('#autofillExtensionIndicator'));
-      section.set('prefs.autofill.credit_card_enabled.extensionId', 'test-id');
+      section.set(
+          'prefs.autofill.credit_card_enabled.extensionId', 'test-id-1');
+      section.set(
+          'prefs.autofill.credit_card_fido_auth_enabled.extensionId',
+          'test-id-2');
       Polymer.dom.flush();
 
       assertTrue(!!section.$$('#autofillExtensionIndicator'));
@@ -19,21 +25,10 @@ cr.define('settings_payments_section', function() {
   });
 
   suite('PaymentsSection', function() {
-    /** @type {settings.SyncBrowserProxy} */
-    let syncBrowserProxy = null;
-
     setup(function() {
-      syncBrowserProxy = new TestSyncBrowserProxy();
-      settings.SyncBrowserProxyImpl.instance_ = syncBrowserProxy;
       PolymerTest.clearBody();
       loadTimeData.overrideValues({
         migrationEnabled: true,
-        hasGooglePaymentsAccount: true,
-        upstreamEnabled: true,
-        isUsingSecondaryPassphrase: false,
-        uploadToGoogleActive: true,
-        userEmailDomainAllowed: true,
-        splitCreditCardList: false
       });
     });
 
@@ -58,29 +53,6 @@ cr.define('settings_payments_section', function() {
     }
 
     /**
-     * Creates the payments autofill section for the given lists.
-     * @param {!Array<!chrome.autofillPrivate.CreditCardEntry>} localCreditCards
-     * @param {!Array<!chrome.autofillPrivate.CreditCardEntry>}
-     *     serverCreditCards
-     * @return {!Object}
-     */
-    function createSplitPaymentsSection(localCreditCards, serverCreditCards) {
-      loadTimeData.overrideValues({splitCreditCardList: true});
-
-      // Override the PaymentsManagerImpl for testing.
-      const paymentsManager = new TestPaymentsManager();
-      paymentsManager.data.localCreditCards = localCreditCards;
-      paymentsManager.data.serverCreditCards = serverCreditCards;
-      PaymentsManagerImpl.instance_ = paymentsManager;
-
-      const section = document.createElement('settings-payments-section');
-      document.body.appendChild(section);
-      Polymer.dom.flush();
-
-      return section;
-    }
-
-    /**
      * Creates the Edit Credit Card dialog.
      * @param {!chrome.autofillPrivate.CreditCardEntry} creditCardItem
      * @return {!Object}
@@ -94,35 +66,28 @@ cr.define('settings_payments_section', function() {
       return section;
     }
 
-    /**
-     * Returns an array containing the local credit card items.
-     * @return {!Array<!chrome.autofillPrivate.CreditCardEntry>}
-     */
-    function getLocalListItems() {
-      return document.body.querySelector('settings-payments-section')
-          .shadowRoot.querySelectorAll(
-              '#localCreditCardList settings-credit-card-list-entry');
+    // Fakes the existence of a platform authenticator.
+    function addFakePlatformAuthenticator() {
+      if (!window.PublicKeyCredential) {
+        window.PublicKeyCredential = {};
+      }
+      window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable =
+          function() {
+        return new Promise(callback => {
+          callback(true);
+        });
+      };
     }
 
-    /**
-     * Returns an array containing the server credit card items.
-     * @return {!Array<!chrome.autofillPrivate.CreditCardEntry>}
-     */
-    function getServerListItems() {
-      return document.body.querySelector('settings-payments-section')
-          .shadowRoot.querySelectorAll(
-              '#serverCreditCardList settings-credit-card-list-entry');
-    }
 
     /**
-     * Makes sure that the number of actual local and server credit cards
-     * match the given expectations.
-     * @param {number} expectedServer
-     * @param {number} expectedLocal
+     * Returns an array containing the local and server credit card items.
+     * @return {!Array<!chrome.autofillPrivate.CreditCardEntry>}
      */
-    function assertCreditCards(expectedLocal, expectedServer) {
-      assertEquals(expectedLocal, getLocalListItems().length);
-      assertEquals(expectedServer, getServerListItems().length);
+    function getLocalAndServerListItems() {
+      return document.body.querySelector('settings-payments-section')
+          .$$('#creditCardList')
+          .shadowRoot.querySelectorAll('settings-credit-card-list-entry');
     }
 
     /**
@@ -131,7 +96,7 @@ cr.define('settings_payments_section', function() {
      * @return {?HTMLElement}
      */
     function getCardRowShadowRoot(cardList) {
-      const row = cardList.querySelector('settings-credit-card-list-entry');
+      const row = cardList.$$('settings-credit-card-list-entry');
       assertTrue(!!row);
       return row.shadowRoot;
     }
@@ -142,13 +107,10 @@ cr.define('settings_payments_section', function() {
 
       const creditCardList = section.$$('#creditCardList');
       assertTrue(!!creditCardList);
-      assertEquals(
-          0,
-          creditCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
+      assertEquals(0, getLocalAndServerListItems().length);
 
-      assertFalse(section.$$('#noCreditCardsLabel').hidden);
-      assertTrue(section.$$('#creditCardsHeading').hidden);
+      assertFalse(creditCardList.$$('#noCreditCardsLabel').hidden);
+      assertTrue(creditCardList.$$('#creditCardsHeading').hidden);
       assertFalse(section.$$('#autofillCreditCardToggle').disabled);
       assertFalse(section.$$('#addCreditCard').disabled);
     });
@@ -175,13 +137,10 @@ cr.define('settings_payments_section', function() {
           creditCards, {credit_card_enabled: {value: true}});
       const creditCardList = section.$$('#creditCardList');
       assertTrue(!!creditCardList);
-      assertEquals(
-          creditCards.length,
-          creditCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
+      assertEquals(creditCards.length, getLocalAndServerListItems().length);
 
-      assertTrue(section.$$('#noCreditCardsLabel').hidden);
-      assertFalse(section.$$('#creditCardsHeading').hidden);
+      assertTrue(creditCardList.$$('#noCreditCardsLabel').hidden);
+      assertFalse(creditCardList.$$('#creditCardsHeading').hidden);
       assertFalse(section.$$('#autofillCreditCardToggle').disabled);
       assertFalse(section.$$('#addCreditCard').disabled);
     });
@@ -207,7 +166,7 @@ cr.define('settings_payments_section', function() {
       const menuButton = rowShadowRoot.querySelector('#creditCardMenu');
       assertTrue(!!menuButton);
       const outlinkButton =
-          rowShadowRoot.querySelector('paper-icon-button-light.icon-external');
+          rowShadowRoot.querySelector('cr-icon-button.icon-external');
       assertFalse(!!outlinkButton);
     });
 
@@ -219,7 +178,7 @@ cr.define('settings_payments_section', function() {
       const menuButton = rowShadowRoot.querySelector('#creditCardMenu');
       assertFalse(!!menuButton);
       const outlinkButton =
-          rowShadowRoot.querySelector('paper-icon-button-light.icon-external');
+          rowShadowRoot.querySelector('cr-icon-button.icon-external');
       assertTrue(!!outlinkButton);
     });
 
@@ -364,7 +323,7 @@ cr.define('settings_payments_section', function() {
       const creditCard = FakeDataMaker.emptyCreditCardEntry();
       const creditCardDialog = createCreditCardDialog(creditCard);
 
-      return test_util.whenAttributeIs(creditCardDialog.$.dialog, 'open', '')
+      test_util.whenAttributeIs(creditCardDialog.$.dialog, 'open', '')
           .then(function() {
             test_util.eventToPromise('save-credit-card', creditCardDialog)
               .then(function() {
@@ -393,12 +352,7 @@ cr.define('settings_payments_section', function() {
       creditCard.metadata.isCached = undefined;
 
       const section = createPaymentsSection([creditCard], {});
-      const creditCardList = section.$$('#creditCardList');
-      assertTrue(!!creditCardList);
-      assertEquals(
-          1,
-          creditCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
+      assertEquals(1, getLocalAndServerListItems().length);
 
       // Local credit cards will show the overflow menu.
       const rowShadowRoot = getCardRowShadowRoot(section.$$('#creditCardList'));
@@ -427,12 +381,7 @@ cr.define('settings_payments_section', function() {
       creditCard.metadata.isCached = true;
 
       const section = createPaymentsSection([creditCard], {});
-      const creditCardList = section.$$('#creditCardList');
-      assertTrue(!!creditCardList);
-      assertEquals(
-          1,
-          creditCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
+      assertEquals(1, getLocalAndServerListItems().length);
 
       // Cached remote CCs will show overflow menu.
       const rowShadowRoot = getCardRowShadowRoot(section.$$('#creditCardList'));
@@ -461,12 +410,7 @@ cr.define('settings_payments_section', function() {
       creditCard.metadata.isCached = false;
 
       const section = createPaymentsSection([creditCard], {});
-      const creditCardList = section.$$('#creditCardList');
-      assertTrue(!!creditCardList);
-      assertEquals(
-          1,
-          creditCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
+      assertEquals(1, getLocalAndServerListItems().length);
 
       // No overflow menu when not cached.
       const rowShadowRoot = getCardRowShadowRoot(section.$$('#creditCardList'));
@@ -474,183 +418,8 @@ cr.define('settings_payments_section', function() {
       assertFalse(!!rowShadowRoot.querySelector('#creditCardMenu'));
     });
 
-    test('verifyLocalCreditCardInSplitSettings', function() {
-      // Create a local credit card.
-      const localCard = FakeDataMaker.creditCardEntry();
-      assertTrue(localCard.metadata.isLocal);
-
-      const section = createSplitPaymentsSection([localCard], []);
-      assertCreditCards(1 /*expectedLocal*/, 0 /*expectedServer*/);
-
-      // Make sure the button is a dropdown and not an outlink.
-      const rowShadowRoot =
-          getCardRowShadowRoot(section.$$('#localCreditCardList'));
-      const menuButton = rowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-      const outlinkButton =
-          rowShadowRoot.querySelector('paper-icon-button-light.icon-external');
-      assertFalse(!!outlinkButton);
-    });
-
-    test('verifyMaskedServerCreditCardInSplitSettings', function() {
-      // Create a server credit card.
-      const maskedServerCard = FakeDataMaker.creditCardEntry();
-      maskedServerCard.metadata.isLocal = false;
-      maskedServerCard.metadata.isCached = false;
-
-      const section = createSplitPaymentsSection([], [maskedServerCard]);
-      assertCreditCards(0 /*expectedLocal*/, 1 /*expectedServer*/);
-
-      // Make sure the button is an outlink and not a dropdown.
-      const rowShadowRoot =
-          getCardRowShadowRoot(section.$$('#serverCreditCardList'));
-      const menuButton = rowShadowRoot.querySelector('#creditCardMenu');
-      assertFalse(!!menuButton);
-      const outlinkButton =
-          rowShadowRoot.querySelector('paper-icon-button-light.icon-external');
-      assertTrue(!!outlinkButton);
-    });
-
-    test('verifyUnmaskedServerCreditCardInSplitSettings', function() {
-      // Create a full (unmasked) server credit card.
-      const fullServerCard = FakeDataMaker.creditCardEntry();
-      fullServerCard.metadata.isLocal = false;
-      fullServerCard.metadata.isCached = true;
-
-      const section =
-          createSplitPaymentsSection([fullServerCard], [fullServerCard]);
-
-      // Make sure the card is present in the two sections.
-      assertCreditCards(1 /*expectedLocal*/, 1 /*expectedServer*/);
-
-      // Make sure the button is a dropdown and not an outlink for both the
-      // local and server sections.
-      const localRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#localCreditCardList'));
-      menuButton = localRowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-      outlinkButton = localRowShadowRoot.querySelector(
-          'paper-icon-button-light.icon-external');
-      assertFalse(!!outlinkButton);
-
-      const serverRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#serverCreditCardList'));
-      menuButton = serverRowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-      outlinkButton = serverRowShadowRoot.querySelector(
-          'paper-icon-button-light.icon-external');
-      assertFalse(!!outlinkButton);
-    });
-
-    test('verifyLocalCreditCardMenu_SplitSettings', function() {
-      // Create a local credit card.
-      const creditCard = FakeDataMaker.creditCardEntry();
-      assertTrue(creditCard.metadata.isLocal);
-
-      const section = createSplitPaymentsSection([creditCard], []);
-      const localCreditCardList = section.$$('#localCreditCardList');
-      assertTrue(!!localCreditCardList);
-      assertEquals(
-          1,
-          localCreditCardList
-              .querySelectorAll('settings-credit-card-list-entry')
-              .length);
-
-      // Local credit cards will show the overflow menu.
-      const localRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#localCreditCardList'));
-      assertFalse(!!localRowShadowRoot.querySelector('#remoteCreditCardLink'));
-      const menuButton = localRowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-
-      // Make sure only the two expected options are in the menu.
-      menuButton.click();
-      Polymer.dom.flush();
-      const menu = section.$.creditCardSharedMenu;
-      assertFalse(menu.querySelector('#menuEditCreditCard').hidden);
-      assertFalse(menu.querySelector('#menuRemoveCreditCard').hidden);
-      assertTrue(menu.querySelector('#menuClearCreditCard').hidden);
-      menu.close();
-      Polymer.dom.flush();
-    });
-
-    test('verifyCachedCreditCardMenu_SplitSettings', function() {
-      // Create a full (cached) credit card.
-      const fullServerCard = FakeDataMaker.creditCardEntry();
-      fullServerCard.metadata.isLocal = false;
-      fullServerCard.metadata.isCached = true;
-
-      const section =
-          createSplitPaymentsSection([fullServerCard], [fullServerCard]);
-
-      // Make sure the card is present in the two sections.
-      assertCreditCards(1 /*expectedLocal*/, 1 /*expectedServer*/);
-
-      // Make sure the button in the local section is a menu.
-      const localRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#localCreditCardList'));
-      assertFalse(!!localRowShadowRoot.querySelector('#remoteCreditCardLink'));
-      menuButton = localRowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-      outlinkButton = localRowShadowRoot.querySelector(
-          'paper-icon-button-light.icon-external');
-      assertFalse(!!outlinkButton);
-
-      // Make sure only the two expected options are in the menu.
-      menuButton.click();
-      Polymer.dom.flush();
-      menu = section.$.creditCardSharedMenu;
-      assertFalse(menu.querySelector('#menuEditCreditCard').hidden);
-      assertTrue(menu.querySelector('#menuRemoveCreditCard').hidden);
-      assertFalse(menu.querySelector('#menuClearCreditCard').hidden);
-      menu.close();
-      Polymer.dom.flush();
-
-      // Make sure the button in the local section is also a menu.
-      const serverRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#serverCreditCardList'));
-      assertFalse(!!serverRowShadowRoot.querySelector('#remoteCreditCardLink'));
-      menuButton = serverRowShadowRoot.querySelector('#creditCardMenu');
-      assertTrue(!!menuButton);
-      outlinkButton = serverRowShadowRoot.querySelector(
-          'paper-icon-button-light.icon-external');
-      assertFalse(!!outlinkButton);
-
-      // Make sure only the two expected options are in the menu.
-      menuButton.click();
-      Polymer.dom.flush();
-      menu = section.$.creditCardSharedMenu;
-      assertFalse(menu.querySelector('#menuEditCreditCard').hidden);
-      assertTrue(menu.querySelector('#menuRemoveCreditCard').hidden);
-      assertFalse(menu.querySelector('#menuClearCreditCard').hidden);
-      menu.close();
-      Polymer.dom.flush();
-    });
-
-    test('verifyNotCachedCreditCardMenu_SplitSettings', function() {
-      // Create a masked (not cached) credit card.
-      const maskedCard = FakeDataMaker.creditCardEntry();
-      maskedCard.metadata.isLocal = false;
-      maskedCard.metadata.isCached = false;
-
-      const section = createSplitPaymentsSection([], [maskedCard]);
-      const serverCardList = section.$$('#serverCreditCardList');
-      assertTrue(!!serverCardList);
-      assertEquals(
-          1,
-          serverCardList.querySelectorAll('settings-credit-card-list-entry')
-              .length);
-
-      // No overflow menu when not cached.
-      const serverRowShadowRoot =
-          getCardRowShadowRoot(section.$$('#serverCreditCardList'));
-      assertTrue(!!serverRowShadowRoot.querySelector('#remoteCreditCardLink'));
-      assertFalse(!!serverRowShadowRoot.querySelector('#creditCardMenu'));
-    });
-
     test('verifyMigrationButtonNotShownIfMigrationNotEnabled', function() {
-      // Mock the Google Payments account. Disable the migration experimental
-      // flag. Won't show migration button.
+      // Mock prerequisites are not met.
       loadTimeData.overrideValues({migrationEnabled: false});
 
       // Add one migratable credit card.
@@ -659,195 +428,30 @@ cr.define('settings_payments_section', function() {
       const section = createPaymentsSection(
           [creditCard], {credit_card_enabled: {value: true}});
 
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but migration experimental flag is
-      // not enabled, verify migration button is hidden.
       assertTrue(section.$$('#migrateCreditCards').hidden);
     });
 
-    test('verifyMigrationButtonNotShownIfNotSignedIn', function() {
+    test('verifyMigrationButtonNotShownIfCreditCardDisabled', function() {
       // Add one migratable credit card.
       const creditCard = FakeDataMaker.creditCardEntry();
       creditCard.metadata.isMigratable = true;
+      // Mock credit card save toggle is turned off by users.
       const section = createPaymentsSection(
-          [creditCard], {credit_card_enabled: {value: true}});
+          [creditCard], {credit_card_enabled: {value: false}});
 
-      // Simulate not Signed-in status. Won't show migration button.
-      sync_test_util.simulateSyncStatus({
-        signedIn: false,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but not signed in, verify migration
-      // button is hidden.
       assertTrue(section.$$('#migrateCreditCards').hidden);
     });
 
-    test('verifyMigrationButtonNotShownIfNotSynced', function() {
+    test('verifyMigrationButtonNotShownIfNoCardIsMigratable', function() {
       // Add one migratable credit card.
       const creditCard = FakeDataMaker.creditCardEntry();
-      creditCard.metadata.isMigratable = true;
-      const section = createPaymentsSection(
-          [creditCard], {credit_card_enabled: {value: true}});
-
-      // Simulate not Synced status. Won't show migration button.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: false,
-      });
-
-      // All migration requirements are met but not Synced, verify migration
-      // button is hidden.
-      assertTrue(section.$$('#migrateCreditCards').hidden);
-    });
-
-    test('verifyMigrationButtonNotShownIfNoMigratableCard', function() {
-      // Add one credit card but not migratable. Won't show migration button.
-      const creditCard = FakeDataMaker.creditCardEntry();
+      // Mock credit card is not valid.
       creditCard.metadata.isMigratable = false;
       const section = createPaymentsSection(
           [creditCard], {credit_card_enabled: {value: true}});
 
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but no migratable credi card, verify
-      // migration button is hidden.
       assertTrue(section.$$('#migrateCreditCards').hidden);
     });
-
-    test('verifyMigrationButtonNotShownWhenCreditCardDisabled', function() {
-      // Add one migratable credit card.
-      const creditCard = FakeDataMaker.creditCardEntry();
-      creditCard.metadata.isMigratable = true;
-      const section = createPaymentsSection(
-          [creditCard], {credit_card_enabled: {value: false}});
-
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but credit card is disable, verify
-      // migration button is hidden.
-      assertTrue(section.$$('#migrateCreditCards').hidden);
-    });
-
-    test('verifyMigrationButtonNotShownIfNoGooglePaymentsAccount', function() {
-      // Mocks no Google payments account. Won't show migration button.
-      loadTimeData.overrideValues({hasGooglePaymentsAccount: false});
-
-      // Add one migratable credit card.
-      const creditCard = FakeDataMaker.creditCardEntry();
-      creditCard.metadata.isMigratable = true;
-      const section = createPaymentsSection(
-          [creditCard], {credit_card_enabled: {value: true}});
-
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but no Google Payments account,
-      // verify migration button is hidden.
-      assertTrue(section.$$('#migrateCreditCards').hidden);
-    });
-
-    test('verifyMigrationButtonNotShownIfAutofillUpstreamDisabled', function() {
-      loadTimeData.overrideValues({upstreamEnabled: false});
-
-      // Add one migratable credit card.
-      const creditCard = FakeDataMaker.creditCardEntry();
-      creditCard.metadata.isMigratable = true;
-      const section = createPaymentsSection(
-          [creditCard], {credit_card_enabled: {value: true}});
-
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met but Autofill Upstream is disabled,
-      // verify migration button is hidden.
-      assertTrue(section.$$('#migrateCreditCards').hidden);
-    });
-
-    test(
-        'verifyMigrationButtonNotShownIfUserHasSecondaryPassphrase',
-        function() {
-          loadTimeData.overrideValues({isUsingSecondaryPassphrase: true});
-
-          // Add one migratable credit card.
-          const creditCard = FakeDataMaker.creditCardEntry();
-          creditCard.metadata.isMigratable = true;
-          const section = createPaymentsSection(
-              [creditCard], {credit_card_enabled: {value: true}});
-
-          // Simulate Signed-in and Synced status.
-          sync_test_util.simulateSyncStatus({
-            signedIn: true,
-            syncSystemEnabled: true,
-          });
-
-          // All migration requirements are met but the user has a secondary
-          // passphrase, verify migration button is hidden.
-          assertTrue(section.$$('#migrateCreditCards').hidden);
-        });
-
-    test(
-        'verifyMigrationButtonNotShownIfUploadToGoogleStateIsInactive',
-        function() {
-          loadTimeData.overrideValues({uploadToGoogleActive: false});
-
-          // Add one migratable credit card.
-          const creditCard = FakeDataMaker.creditCardEntry();
-          creditCard.metadata.isMigratable = true;
-          const section = createPaymentsSection(
-              [creditCard], {credit_card_enabled: {value: true}});
-
-          // Simulate Signed-in and Synced status.
-          sync_test_util.simulateSyncStatus({
-            signedIn: true,
-            syncSystemEnabled: true,
-          });
-
-          // All migration requirements are met but upload to Google is
-          // inactive, verify migration button is hidden.
-          assertTrue(section.$$('#migrateCreditCards').hidden);
-        });
-
-    test(
-        'verifyMigrationButtonNotShownIfUserEmailDomainIsNotAllowed',
-        function() {
-          loadTimeData.overrideValues({userEmailDomainAllowed: false});
-
-          // Add one migratable credit card.
-          const creditCard = FakeDataMaker.creditCardEntry();
-          creditCard.metadata.isMigratable = true;
-          const section = createPaymentsSection(
-              [creditCard], {credit_card_enabled: {value: true}});
-
-          // Simulate Signed-in and Synced status.
-          sync_test_util.simulateSyncStatus({
-            signedIn: true,
-            syncSystemEnabled: true,
-          });
-
-          // All migration requirements are met but the user's email domain is
-          // not allowed, verify migration button is hidden.
-          assertTrue(section.$$('#migrateCreditCards').hidden);
-        });
 
     test('verifyMigrationButtonShown', function() {
       // Add one migratable credit card.
@@ -856,14 +460,51 @@ cr.define('settings_payments_section', function() {
       const section = createPaymentsSection(
           [creditCard], {credit_card_enabled: {value: true}});
 
-      // Simulate Signed-in and Synced status.
-      sync_test_util.simulateSyncStatus({
-        signedIn: true,
-        syncSystemEnabled: true,
-      });
-
-      // All migration requirements are met, verify migration button is shown.
       assertFalse(section.$$('#migrateCreditCards').hidden);
+    });
+
+    test('verifyFIDOAuthToggleShownIfUserIsVerifiable', function() {
+      // Set |fidoAuthenticationAvailableForAutofill| to true.
+      loadTimeData.overrideValues(
+          {fidoAuthenticationAvailableForAutofill: true});
+      addFakePlatformAuthenticator();
+      const section =
+          createPaymentsSection([], {credit_card_enabled: {value: true}});
+
+      assertTrue(!!section.$$('#autofillCreditCardFIDOAuthToggle'));
+    });
+
+    test('verifyFIDOAuthToggleNotShownIfUserIsNotVerifiable', function() {
+      // Set |fidoAuthenticationAvailableForAutofill| to false.
+      loadTimeData.overrideValues(
+          {fidoAuthenticationAvailableForAutofill: false});
+      const section =
+          createPaymentsSection([], {credit_card_enabled: {value: true}});
+      assertFalse(!!section.$$('#autofillCreditCardFIDOAuthToggle'));
+    });
+
+    test('verifyFIDOAuthToggleCheckedIfOptedIn', function() {
+      // Set FIDO auth pref value to true.
+      loadTimeData.overrideValues(
+          {fidoAuthenticationAvailableForAutofill: true});
+      addFakePlatformAuthenticator();
+      const section = createPaymentsSection([], {
+        credit_card_enabled: {value: true},
+        credit_card_fido_auth_enabled: {value: true}
+      });
+      assertTrue(section.$$('#autofillCreditCardFIDOAuthToggle').checked);
+    });
+
+    test('verifyFIDOAuthToggleUncheckedIfOptedOut', function() {
+      // Set FIDO auth pref value to false.
+      loadTimeData.overrideValues(
+          {fidoAuthenticationAvailableForAutofill: true});
+      addFakePlatformAuthenticator();
+      const section = createPaymentsSection([], {
+        credit_card_enabled: {value: true},
+        credit_card_fido_auth_enabled: {value: false}
+      });
+      assertFalse(section.$$('#autofillCreditCardFIDOAuthToggle').checked);
     });
   });
 });

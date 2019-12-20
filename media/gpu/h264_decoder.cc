@@ -27,6 +27,7 @@ H264Decoder::H264Accelerator::Status H264Decoder::H264Accelerator::SetStream(
 }
 
 H264Decoder::H264Decoder(std::unique_ptr<H264Accelerator> accelerator,
+                         VideoCodecProfile profile,
                          const VideoColorSpace& container_color_space)
     : state_(kNeedStreamMetadata),
       container_color_space_(container_color_space),
@@ -34,6 +35,8 @@ H264Decoder::H264Decoder(std::unique_ptr<H264Accelerator> accelerator,
       max_pic_num_(0),
       max_long_term_frame_idx_(0),
       max_num_reorder_frames_(0),
+      // TODO(hiroh): Set profile to UNKNOWN.
+      profile_(profile),
       accelerator_(std::move(accelerator)) {
   DCHECK(accelerator_);
   Reset();
@@ -446,20 +449,17 @@ void H264Decoder::ConstructReferencePicListsB(
 }
 
 // See 8.2.4
-int H264Decoder::PicNumF(const scoped_refptr<H264Picture>& pic) {
-  if (!pic)
-    return -1;
-
-  if (!pic->long_term)
-    return pic->pic_num;
+int H264Decoder::PicNumF(const H264Picture& pic) {
+  if (!pic.long_term)
+    return pic.pic_num;
   else
     return max_pic_num_;
 }
 
 // See 8.2.4
-int H264Decoder::LongTermPicNumF(const scoped_refptr<H264Picture>& pic) {
-  if (pic->ref && pic->long_term)
-    return pic->long_term_pic_num;
+int H264Decoder::LongTermPicNumF(const H264Picture& pic) {
+  if (pic.ref && pic.long_term)
+    return pic.long_term_pic_num;
   else
     return 2 * (max_long_term_frame_idx_ + 1);
 }
@@ -469,7 +469,7 @@ int H264Decoder::LongTermPicNumF(const scoped_refptr<H264Picture>& pic) {
 static void ShiftRightAndInsert(H264Picture::Vector* v,
                                 int from,
                                 int to,
-                                const scoped_refptr<H264Picture>& pic) {
+                                scoped_refptr<H264Picture> pic) {
   // Security checks, do not disable in Debug mode.
   CHECK(from <= to);
   CHECK(to <= std::numeric_limits<int>::max() - 2);
@@ -484,7 +484,7 @@ static void ShiftRightAndInsert(H264Picture::Vector* v,
   for (int i = to + 1; i > from; --i)
     (*v)[i] = (*v)[i - 1];
 
-  (*v)[from] = pic;
+  (*v)[from] = std::move(pic);
 }
 
 bool H264Decoder::ModifyReferencePicList(const H264SliceHeader* slice_hdr,
@@ -573,7 +573,9 @@ bool H264Decoder::ModifyReferencePicList(const H264SliceHeader* slice_hdr,
 
         for (int src = ref_idx_lx, dst = ref_idx_lx;
              src <= num_ref_idx_lX_active_minus1 + 1; ++src) {
-          if (PicNumF((*ref_pic_listx)[src]) != pic_num_lx)
+          auto* src_pic = (*ref_pic_listx)[src].get();
+          int src_pic_num_lx = src_pic ? PicNumF(*src_pic) : -1;
+          if (src_pic_num_lx != pic_num_lx)
             (*ref_pic_listx)[dst++] = (*ref_pic_listx)[src];
         }
         break;
@@ -594,7 +596,7 @@ bool H264Decoder::ModifyReferencePicList(const H264SliceHeader* slice_hdr,
 
         for (int src = ref_idx_lx, dst = ref_idx_lx;
              src <= num_ref_idx_lX_active_minus1 + 1; ++src) {
-          if (LongTermPicNumF((*ref_pic_listx)[src]) !=
+          if (LongTermPicNumF(*(*ref_pic_listx)[src]) !=
               static_cast<int>(list_mod->long_term_pic_num))
             (*ref_pic_listx)[dst++] = (*ref_pic_listx)[src];
         }
@@ -964,7 +966,7 @@ bool H264Decoder::FinishPicture(scoped_refptr<H264Picture> pic) {
       return false;
     }
 
-    dpb_.StorePic(pic);
+    dpb_.StorePic(std::move(pic));
   }
 
   return true;
@@ -1071,12 +1073,17 @@ bool H264Decoder::ProcessSPS(int sps_id, bool* need_new_buffers) {
     return false;
   }
 
-  if ((pic_size_ != new_pic_size) || (dpb_.max_num_pics() != max_dpb_size)) {
+  VideoCodecProfile new_profile =
+      H264Parser::ProfileIDCToVideoCodecProfile(sps->profile_idc);
+  if (pic_size_ != new_pic_size || dpb_.max_num_pics() != max_dpb_size ||
+      profile_ != new_profile) {
     if (!Flush())
       return false;
-    DVLOG(1) << "Codec level: " << level << ", DPB size: " << max_dpb_size
+    DVLOG(1) << "Codec profile: " << GetProfileName(new_profile)
+             << ", level: " << level << ", DPB size: " << max_dpb_size
              << ", Picture size: " << new_pic_size.ToString();
     *need_new_buffers = true;
+    profile_ = new_profile;
     pic_size_ = new_pic_size;
     dpb_.set_max_num_pics(max_dpb_size);
   }
@@ -1224,13 +1231,13 @@ H264Decoder::H264Accelerator::Status H264Decoder::ProcessCurrentSlice() {
     }                                              \
   } while (0)
 
-void H264Decoder::SetStream(int32_t id,
-                            const uint8_t* ptr,
-                            size_t size,
-                            const DecryptConfig* decrypt_config) {
+void H264Decoder::SetStream(int32_t id, const DecoderBuffer& decoder_buffer) {
+  const uint8_t* ptr = decoder_buffer.data();
+  const size_t size = decoder_buffer.data_size();
+  const DecryptConfig* decrypt_config = decoder_buffer.decrypt_config();
+
   DCHECK(ptr);
   DCHECK(size);
-
   DVLOG(4) << "New input stream id: " << id << " at: " << (void*)ptr
            << " size: " << size;
   stream_id_ = id;
@@ -1378,7 +1385,7 @@ H264Decoder::DecodeResult H264Decoder::Decode() {
           ref_pic_list_b0_.clear();
           ref_pic_list_b1_.clear();
 
-          return kAllocateNewSurfaces;
+          return kConfigChange;
         }
         break;
       }
@@ -1417,18 +1424,22 @@ gfx::Size H264Decoder::GetPicSize() const {
   return pic_size_;
 }
 
+gfx::Rect H264Decoder::GetVisibleRect() const {
+  return visible_rect_;
+}
+
+VideoCodecProfile H264Decoder::GetProfile() const {
+  return profile_;
+}
+
 size_t H264Decoder::GetRequiredNumOfPictures() const {
   constexpr size_t kPicsInPipeline = limits::kMaxVideoFrames + 1;
   return GetNumReferenceFrames() + kPicsInPipeline;
 }
 
 size_t H264Decoder::GetNumReferenceFrames() const {
-  // Use the maximum number of pictures in the Decoded Picture Buffer plus one
-  // for the one being currently egressed.
-  // Another +1 is experimentally needed for high-to-high resolution changes.
-  // TODO(mcasas): Figure out why +2 instead of +1, see crbug.com/909926 and
-  // http://crrev.com/c/1363807/9/media/gpu/h264_decoder.cc#1449.
-  return dpb_.max_num_pics() + 2;
+  // Use the maximum number of pictures in the Decoded Picture Buffer.
+  return dpb_.max_num_pics();
 }
 
 // static

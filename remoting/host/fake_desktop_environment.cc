@@ -8,14 +8,16 @@
 
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/desktop_capturer_proxy.h"
+#include "remoting/host/fake_keyboard_layout_monitor.h"
 #include "remoting/host/file_transfer/file_operations.h"
 #include "remoting/host/input_injector.h"
+#include "remoting/host/keyboard_layout_monitor.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/fake_desktop_capturer.h"
 
 namespace remoting {
 
-FakeInputInjector::FakeInputInjector() : weak_factory_(this) {}
+FakeInputInjector::FakeInputInjector() {}
 FakeInputInjector::~FakeInputInjector() = default;
 
 void FakeInputInjector::Start(
@@ -57,9 +59,7 @@ void FakeScreenControls::SetScreenResolution(
 FakeDesktopEnvironment::FakeDesktopEnvironment(
     scoped_refptr<base::SingleThreadTaskRunner> capture_thread,
     const DesktopEnvironmentOptions& options)
-    : capture_thread_(std::move(capture_thread)),
-      options_(options),
-      weak_factory_(this) {}
+    : capture_thread_(std::move(capture_thread)), options_(options) {}
 
 FakeDesktopEnvironment::~FakeDesktopEnvironment() = default;
 
@@ -90,7 +90,7 @@ FakeDesktopEnvironment::CreateVideoCapturer() {
     fake_capturer->set_frame_generator(frame_generator_);
 
   std::unique_ptr<DesktopCapturerProxy> result(
-      new DesktopCapturerProxy(capture_thread_));
+      new DesktopCapturerProxy(capture_thread_, nullptr));
   result->set_capturer(std::move(fake_capturer));
   return std::move(result);
 }
@@ -98,6 +98,12 @@ FakeDesktopEnvironment::CreateVideoCapturer() {
 std::unique_ptr<webrtc::MouseCursorMonitor>
 FakeDesktopEnvironment::CreateMouseCursorMonitor() {
   return std::make_unique<FakeMouseCursorMonitor>();
+}
+
+std::unique_ptr<KeyboardLayoutMonitor>
+FakeDesktopEnvironment::CreateKeyboardLayoutMonitor(
+    base::RepeatingCallback<void(const protocol::KeyboardLayout&)> callback) {
+  return std::make_unique<FakeKeyboardLayoutMonitor>();
 }
 
 std::unique_ptr<FileOperations> FakeDesktopEnvironment::CreateFileOperations() {

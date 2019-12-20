@@ -26,22 +26,19 @@ PepperTrueTypeFontHost::PepperTrueTypeFontHost(
     PP_Resource resource,
     const SerializedTrueTypeFontDesc& desc)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
-      initialize_completed_(false),
-      weak_factory_(this) {
+      initialize_completed_(false) {
   font_ = PepperTrueTypeFont::Create();
-  // Initialize the font on a TaskScheduler thread. This must complete before
+  // Initialize the font on a ThreadPool thread. This must complete before
   // using |font_|.
-  task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
+  task_runner_ = base::CreateSequencedTaskRunner(
+      {base::ThreadPool(), base::MayBlock(), base::TaskPriority::BEST_EFFORT});
   SerializedTrueTypeFontDesc* actual_desc =
       new SerializedTrueTypeFontDesc(desc);
   base::PostTaskAndReplyWithResult(
-      task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&PepperTrueTypeFont::Initialize, font_, actual_desc),
-      base::Bind(&PepperTrueTypeFontHost::OnInitializeComplete,
-                 weak_factory_.GetWeakPtr(),
-                 base::Owned(actual_desc)));
+      task_runner_.get(), FROM_HERE,
+      base::BindOnce(&PepperTrueTypeFont::Initialize, font_, actual_desc),
+      base::BindOnce(&PepperTrueTypeFontHost::OnInitializeComplete,
+                     weak_factory_.GetWeakPtr(), base::Owned(actual_desc)));
 }
 
 PepperTrueTypeFontHost::~PepperTrueTypeFontHost() {
@@ -73,13 +70,11 @@ int32_t PepperTrueTypeFontHost::OnHostMsgGetTableTags(
   // Get font data on a thread that allows slow blocking operations.
   std::vector<uint32_t>* tags = new std::vector<uint32_t>();
   base::PostTaskAndReplyWithResult(
-      task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&PepperTrueTypeFont::GetTableTags, font_, tags),
-      base::Bind(&PepperTrueTypeFontHost::OnGetTableTagsComplete,
-                 weak_factory_.GetWeakPtr(),
-                 base::Owned(tags),
-                 context->MakeReplyMessageContext()));
+      task_runner_.get(), FROM_HERE,
+      base::BindOnce(&PepperTrueTypeFont::GetTableTags, font_, tags),
+      base::BindOnce(&PepperTrueTypeFontHost::OnGetTableTagsComplete,
+                     weak_factory_.GetWeakPtr(), base::Owned(tags),
+                     context->MakeReplyMessageContext()));
 
   return PP_OK_COMPLETIONPENDING;
 }
@@ -96,18 +91,12 @@ int32_t PepperTrueTypeFontHost::OnHostMsgGetTable(HostMessageContext* context,
   // Get font data on a thread that allows slow blocking operations.
   std::string* data = new std::string();
   base::PostTaskAndReplyWithResult(
-      task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&PepperTrueTypeFont::GetTable,
-                 font_,
-                 table,
-                 offset,
-                 max_data_length,
-                 data),
-      base::Bind(&PepperTrueTypeFontHost::OnGetTableComplete,
-                 weak_factory_.GetWeakPtr(),
-                 base::Owned(data),
-                 context->MakeReplyMessageContext()));
+      task_runner_.get(), FROM_HERE,
+      base::BindOnce(&PepperTrueTypeFont::GetTable, font_, table, offset,
+                     max_data_length, data),
+      base::BindOnce(&PepperTrueTypeFontHost::OnGetTableComplete,
+                     weak_factory_.GetWeakPtr(), base::Owned(data),
+                     context->MakeReplyMessageContext()));
 
   return PP_OK_COMPLETIONPENDING;
 }

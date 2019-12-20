@@ -4,13 +4,17 @@
 
 #include "chromeos/components/drivefs/drivefs_search.h"
 
+#include <utility>
+
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
-#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_clock.h"
+#include "base/test/task_environment.h"
 #include "chromeos/components/drivefs/mojom/drivefs.mojom-test-utils.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "net/base/mock_network_change_notifier.h"
+#include "chromeos/components/drivefs/mojom/drivefs.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,7 +26,7 @@ using testing::_;
 class MockDriveFs : public mojom::DriveFsInterceptorForTesting,
                     public mojom::SearchQuery {
  public:
-  MockDriveFs() : search_binding_(this) {}
+  MockDriveFs() = default;
 
   DriveFs* GetForwardingInterface() override {
     NOTREACHED();
@@ -30,12 +34,11 @@ class MockDriveFs : public mojom::DriveFsInterceptorForTesting,
   }
 
   MOCK_CONST_METHOD1(OnStartSearchQuery, void(const mojom::QueryParameters&));
-  void StartSearchQuery(mojom::SearchQueryRequest query,
+  void StartSearchQuery(mojo::PendingReceiver<mojom::SearchQuery> receiver,
                         mojom::QueryParametersPtr query_params) override {
-    if (search_binding_.is_bound())
-      search_binding_.Unbind();
+    search_receiver_.reset();
     OnStartSearchQuery(*query_params);
-    search_binding_.Bind(std::move(query));
+    search_receiver_.Bind(std::move(receiver));
   }
 
   MOCK_METHOD1(OnGetNextPage,
@@ -49,17 +52,22 @@ class MockDriveFs : public mojom::DriveFsInterceptorForTesting,
   }
 
  private:
-  mojo::Binding<mojom::SearchQuery> search_binding_;
+  mojo::Receiver<mojom::SearchQuery> search_receiver_{this};
   DISALLOW_COPY_AND_ASSIGN(MockDriveFs);
 };
 
 class DriveFsSearchTest : public testing::Test {
  public:
-  DriveFsSearchTest() { clock_.SetNow(base::Time::Now()); }
+  DriveFsSearchTest()
+      : network_connection_tracker_(
+            network::TestNetworkConnectionTracker::CreateInstance()) {
+    clock_.SetNow(base::Time::Now());
+  }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_;
-  net::test::MockNetworkChangeNotifier network_;
+  base::test::TaskEnvironment task_environment_;
+  std::unique_ptr<network::TestNetworkConnectionTracker>
+      network_connection_tracker_;
   MockDriveFs mock_drivefs_;
   base::SimpleTestClock clock_;
 };
@@ -96,10 +104,11 @@ MATCHER_P5(MatchQuery, source, text, title, shared, offline, "") {
       return false;
   }
   return arg.shared_with_me == shared && arg.available_offline == offline;
-};
+}
 
 TEST_F(DriveFsSearchTest, Search) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
   EXPECT_CALL(mock_drivefs_, OnStartSearchQuery(_));
   EXPECT_CALL(mock_drivefs_, OnGetNextPage(_))
@@ -125,7 +134,8 @@ TEST_F(DriveFsSearchTest, Search) {
 }
 
 TEST_F(DriveFsSearchTest, Search_Fail) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
   EXPECT_CALL(mock_drivefs_, OnStartSearchQuery(_));
   EXPECT_CALL(mock_drivefs_, OnGetNextPage(_))
@@ -149,10 +159,11 @@ TEST_F(DriveFsSearchTest, Search_Fail) {
 }
 
 TEST_F(DriveFsSearchTest, Search_OnlineToOffline) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
-  network_.SetConnectionType(
-      net::NetworkChangeNotifier::ConnectionType::CONNECTION_NONE);
+  network_connection_tracker_->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_NONE);
 
   EXPECT_CALL(mock_drivefs_, OnStartSearchQuery(_));
   EXPECT_CALL(mock_drivefs_, OnGetNextPage(_))
@@ -178,7 +189,8 @@ TEST_F(DriveFsSearchTest, Search_OnlineToOffline) {
 }
 
 TEST_F(DriveFsSearchTest, Search_OnlineToOfflineFallback) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
   EXPECT_CALL(mock_drivefs_,
               OnStartSearchQuery(
@@ -214,7 +226,8 @@ TEST_F(DriveFsSearchTest, Search_OnlineToOfflineFallback) {
 }
 
 TEST_F(DriveFsSearchTest, Search_SharedWithMeCaching) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
   EXPECT_CALL(mock_drivefs_,
               OnStartSearchQuery(
@@ -294,7 +307,8 @@ TEST_F(DriveFsSearchTest, Search_SharedWithMeCaching) {
 }
 
 TEST_F(DriveFsSearchTest, Search_NoErrorCaching) {
-  DriveFsSearch search(&mock_drivefs_, &clock_);
+  DriveFsSearch search(&mock_drivefs_, network_connection_tracker_.get(),
+                       &clock_);
 
   EXPECT_CALL(mock_drivefs_,
               OnStartSearchQuery(

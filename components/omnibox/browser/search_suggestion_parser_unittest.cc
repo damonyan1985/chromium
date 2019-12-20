@@ -7,6 +7,7 @@
 #include "base/json/json_reader.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -29,8 +30,9 @@ TEST(SearchSuggestionParserTest, DeserializeMalformedJsonIsInvalid) {
 
 TEST(SearchSuggestionParserTest, DeserializeJsonData) {
   std::string json_data = R"([{"one": 1}])";
-  std::unique_ptr<base::Value> manifest_value =
+  base::Optional<base::Value> manifest_value =
       base::JSONReader::Read(json_data);
+  ASSERT_TRUE(manifest_value);
   std::unique_ptr<base::Value> result =
       SearchSuggestionParser::DeserializeJsonData(json_data);
   ASSERT_TRUE(result);
@@ -84,7 +86,8 @@ TEST(SearchSuggestionParserTest, ParseEmptyValueIsInvalid) {
 
 TEST(SearchSuggestionParserTest, ParseNonSuggestionValueIsInvalid) {
   std::string json_data = R"([{"one": 1}])";
-  std::unique_ptr<base::Value> root_val = base::JSONReader::Read(json_data);
+  base::Optional<base::Value> root_val = base::JSONReader::Read(json_data);
+  ASSERT_TRUE(root_val);
   AutocompleteInput input;
   TestSchemeClassifier scheme_classifier;
   int default_result_relevance = 0;
@@ -119,7 +122,8 @@ TEST(SearchSuggestionParserTest, ParseSuggestResults) {
         "google:suggesttype": ["QUERY", "ENTITY"],
         "google:verbatimrelevance": 851
       }])";
-  std::unique_ptr<base::Value> root_val = base::JSONReader::Read(json_data);
+  base::Optional<base::Value> root_val = base::JSONReader::Read(json_data);
+  ASSERT_TRUE(root_val);
   TestSchemeClassifier scheme_classifier;
   AutocompleteInput input(base::ASCIIToUTF16("chris"),
                           metrics::OmniboxEventProto::NTP, scheme_classifier);
@@ -150,4 +154,32 @@ TEST(SearchSuggestionParserTest, ParseSuggestResults) {
     ASSERT_EQ("#424242", suggestion_result.image_dominant_color());
     ASSERT_EQ("http://example.com/a.png", suggestion_result.image_url());
   }
+}
+
+TEST(SearchSuggestionParserTest, SuggestClassification) {
+  AutocompleteMatch::ACMatchClassification none_classification(
+      0, AutocompleteMatch::ACMatchClassification::NONE);
+
+  SearchSuggestionParser::SuggestResult result(
+      base::ASCIIToUTF16("foobar"), AutocompleteMatchType::SEARCH_SUGGEST, 0,
+      false, 400, true, base::string16());
+  AutocompleteMatch::ValidateClassifications(result.match_contents(),
+                                             result.match_contents_class());
+
+  // Re-classify the match contents, as the ZeroSuggestProvider does.
+  result.ClassifyMatchContents(true, base::string16());
+  AutocompleteMatch::ValidateClassifications(result.match_contents(),
+                                             result.match_contents_class());
+
+  // Make sure that searching text-not-found still gives valid classifications,
+  // if we don't allow the code to bold everything.
+  result.ClassifyMatchContents(false, base::ASCIIToUTF16("apple"));
+  AutocompleteMatch::ValidateClassifications(result.match_contents(),
+                                             result.match_contents_class());
+
+  // Make sure that searching text-not-found still gives valid classifications,
+  // if we don't allow the code to bold everything.
+  result.ClassifyMatchContents(true, base::ASCIIToUTF16("foobar"));
+  AutocompleteMatch::ValidateClassifications(result.match_contents(),
+                                             result.match_contents_class());
 }

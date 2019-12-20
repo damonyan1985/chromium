@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/macros.h"
@@ -37,10 +38,6 @@ struct GFX_EXPORT TextRunHarfBuzz {
   // default-constructed gfx::Font is expensive, but it will always be replaced.
   explicit TextRunHarfBuzz(const Font& template_font);
   ~TextRunHarfBuzz();
-
-  // Returns the index of the first glyph that corresponds to the character at
-  // |pos|.
-  size_t CharToGlyph(size_t pos) const;
 
   // Returns the corresponding glyph range of the given character range.
   // |range| is in text-space (0 corresponds to |GetDisplayText()[0]|). Returned
@@ -80,14 +77,25 @@ struct GFX_EXPORT TextRunHarfBuzz {
     FontParams& operator=(const FontParams& other);
     bool operator==(const FontParams& other) const;
 
-    // Populate |render_params|, |font_size| and |baseline_offset| based on
+    // Populates |render_params|, |font_size| and |baseline_offset| based on
     // |font|.
     void ComputeRenderParamsFontSizeAndBaselineOffset();
 
-    // Populate |font|, |skia_face|, and |render_params|. Return false if
-    // |skia_face| is nullptr.
-    bool SetFontAndRenderParams(const Font& font,
-                                const FontRenderParams& render_params);
+    // Populates |font|, |skia_face|, and |render_params|. Returns false if
+    // |skia_face| is nullptr. Takes |font|'s family name and rematches this
+    // family and the run's weight and style properties to find a new font.
+    bool SetRenderParamsRematchFont(const Font& font,
+                                    const FontRenderParams& render_params);
+
+    // Populates |font|, |skia_face|, and |render_params|. Returns false if
+    // |skia_face| is nullptr. Does not perform rematching but extracts an
+    // SkTypeface from the underlying PlatformFont of font. Use this method when
+    // configuring the |TextRunHarfBuzz| for shaping with fallback fonts, where
+    // it is important to keep the underlying font handle of platform font and
+    // not perform rematching as in |SetRenderParamsRematchFont|.
+    bool SetRenderParamsOverrideSkiaFaceFromFont(
+        const Font& font,
+        const FontRenderParams& render_params);
 
     struct Hash {
       size_t operator()(const FontParams& key) const;
@@ -119,7 +127,6 @@ struct GFX_EXPORT TextRunHarfBuzz {
     ShapeOutput& operator=(ShapeOutput&& other);
 
     float width = 0.0;
-    float preceding_run_widths = 0.0;
     std::vector<uint16_t> glyphs;
     std::vector<SkPoint> positions;
     // Note that in the context of TextRunHarfBuzz, |glyph_to_char| is indexed
@@ -206,20 +213,16 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   ~RenderTextHarfBuzz() override;
 
   // RenderText:
-  std::unique_ptr<RenderText> CreateInstanceOfSameType() const override;
-  bool MultilineSupported() const override;
   const base::string16& GetDisplayText() override;
   Size GetStringSize() override;
   SizeF GetStringSizeF() override;
+  Size GetLineSize(const SelectionModel& caret) override;
+  float TotalLineWidth() override;
   SelectionModel FindCursorPosition(const Point& point,
                                     const Point& drag_origin) override;
-  bool IsSelectionSupported() const override;
-  std::vector<FontSpan> GetFontSpansForTesting() override;
   std::vector<Rect> GetSubstringBounds(const Range& range) override;
-  Range GetCursorSpan(const Range& text_range) override;
-
-  // ICU grapheme iterator for the layout text. Can be null in case of an error.
-  base::i18n::BreakIterator* GetGraphemeIterator();
+  RangeF GetCursorSpan(const Range& text_range) override;
+  size_t GetLineContainingCaret(const SelectionModel& caret) override;
 
  protected:
   // RenderText:
@@ -230,13 +233,14 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   SelectionModel AdjacentWordSelectionModel(
       const SelectionModel& selection,
       VisualCursorDirection direction) override;
-  size_t TextIndexToDisplayIndex(size_t index) override;
-  size_t DisplayIndexToTextIndex(size_t index) override;
-  bool IsValidCursorIndex(size_t index) override;
+  SelectionModel AdjacentLineSelectionModel(
+      const SelectionModel& selection,
+      VisualCursorDirection direction) override;
   void OnLayoutTextAttributeChanged(bool text_changed) override;
   void OnDisplayTextAttributeChanged() override;
   void EnsureLayout() override;
-  void DrawVisualText(internal::SkiaTextRenderer* renderer) override;
+  void DrawVisualText(internal::SkiaTextRenderer* renderer,
+                      const Range& selection) override;
 
  private:
   friend class test::RenderTextTestApi;
@@ -298,7 +302,6 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   const internal::TextRunList* GetRunList() const override;
   bool GetDecoratedTextForRange(const Range& range,
                                 DecoratedText* decorated_text) override;
-  void SetGlyphWidthForTest(float test_width) override;
 
   // Text run list for |layout_text_| and |display_text_|.
   // |display_run_list_| is created only when the text is elided.
@@ -307,7 +310,6 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
 
   bool update_layout_run_list_ : 1;
   bool update_display_run_list_ : 1;
-  bool update_grapheme_iterator_ : 1;
   bool update_display_text_ : 1;
 
   // ICU grapheme iterator for the layout text. Use GetGraphemeIterator()
@@ -317,8 +319,8 @@ class GFX_EXPORT RenderTextHarfBuzz : public RenderText {
   // The total size of the layouted text.
   SizeF total_size_;
 
-  // Fixed width of glyphs. This should only be set in test environments.
-  float glyph_width_for_test_;
+  // The process application locale used to configure text rendering.
+  std::string locale_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderTextHarfBuzz);
 };

@@ -5,13 +5,16 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CORE_DOM_DISTILLER_FEATURES_H_
 #define COMPONENTS_DOM_DISTILLER_CORE_DOM_DISTILLER_FEATURES_H_
 
+#include "base/feature_list.h"
+
 namespace dom_distiller {
 
-// Returns true when flag enable-dom-distiller is set or enabled from Finch.
-bool IsEnableDomDistillerSet();
+extern const base::Feature kReaderMode;
 
-// Returns true when flag enable-sync-articles is set or enabled from Finch.
-bool IsEnableSyncArticlesSet();
+// Returns true when flag enable-dom-distiller is set or enabled from Finch.
+bool IsDomDistillerEnabled();
+
+bool ShouldStartDistillabilityService();
 
 }  // namespace dom_distiller
 

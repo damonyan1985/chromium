@@ -12,17 +12,17 @@
 #include "base/compiler_specific.h"
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#include "components/browser_sync/profile_sync_service_mock.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/driver/mock_sync_service.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #include "ios/chrome/browser/sync/profile_sync_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #include "ios/chrome/browser/sync/sync_setup_service_mock.h"
 #import "ios/chrome/browser/ui/settings/cells/byo_textfield_item.h"
-#import "ios/chrome/browser/ui/settings/cells/card_multiline_item.h"
 #import "ios/chrome/browser/ui/settings/passphrase_table_view_controller_test.h"
 #import "ios/chrome/browser/ui/settings/sync/utils/sync_util.h"
+#import "ios/chrome/browser/ui/table_view/cells/table_view_text_item.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -79,7 +79,7 @@ class SyncEncryptionPassphraseTableViewControllerTest
     // will by default return false.  GetSyncServiceState(), however, returns an
     // enum, and thus always needs its default value set.
     TurnSyncErrorOff();
-  };
+  }
 
   void TearDown() override {
     [SyncController() stopObserving];
@@ -105,7 +105,7 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest, TestModel) {
   EXPECT_EQ(1, NumberOfSections());
   EXPECT_EQ(2, NumberOfItemsInSection(0));
   // Passphrase message item.
-  CardMultilineItem* item = GetTableViewItem(0, 0);
+  TableViewTextItem* item = GetTableViewItem(0, 0);
   EXPECT_NSEQ(l10n_util::GetNSString(IDS_SYNC_ENTER_GOOGLE_PASSPHRASE_BODY),
               item.text);
   // Passphrase items.
@@ -117,7 +117,7 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest,
        TestConstructorDestructor) {
   CreateController();
   CheckController();
-  EXPECT_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  EXPECT_CALL(*fake_sync_service_->GetMockUserSettings(),
               SetDecryptionPassphrase(_))
       .Times(0);
   // Simulate the view appearing.
@@ -141,11 +141,11 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest,
       SyncController();
   EXPECT_CALL(*fake_sync_service_, AddObserver(_)).Times(AtLeast(1));
   EXPECT_CALL(*fake_sync_service_, RemoveObserver(_)).Times(AtLeast(1));
-  EXPECT_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  EXPECT_CALL(*fake_sync_service_->GetMockUserSettings(),
               SetDecryptionPassphrase(_));
   [[sync_controller passphrase] setText:@"decodeme"];
   // Set the return value for setting the passphrase to failure.
-  ON_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  ON_CALL(*fake_sync_service_->GetMockUserSettings(),
           SetDecryptionPassphrase(_))
       .WillByDefault(Return(false));
   [sync_controller signInPressed];
@@ -157,11 +157,11 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest,
       SyncController();
   EXPECT_CALL(*fake_sync_service_, AddObserver(_)).Times(AtLeast(1));
   EXPECT_CALL(*fake_sync_service_, RemoveObserver(_)).Times(AtLeast(1));
-  EXPECT_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  EXPECT_CALL(*fake_sync_service_->GetMockUserSettings(),
               SetDecryptionPassphrase(_));
   [[sync_controller passphrase] setText:@"decodeme"];
   // Set the return value for setting the passphrase to success.
-  ON_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  ON_CALL(*fake_sync_service_->GetMockUserSettings(),
           SetDecryptionPassphrase(_))
       .WillByDefault(Return(true));
   [sync_controller signInPressed];
@@ -177,7 +177,7 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest,
   EXPECT_EQ([nav_controller_ topViewController], sync_controller);
 
   // Set up the fake sync service to still require the passphrase.
-  ON_CALL(*fake_sync_service_->GetUserSettingsMock(), IsPassphraseRequired())
+  ON_CALL(*fake_sync_service_->GetMockUserSettings(), IsPassphraseRequired())
       .WillByDefault(Return(true));
   [sync_controller onSyncStateChanged];
   // The controller should only reload. Because there is text in the passphrase
@@ -195,9 +195,9 @@ TEST_F(SyncEncryptionPassphraseTableViewControllerTest,
   EXPECT_EQ([nav_controller_ topViewController], sync_controller);
 
   // Set up the fake sync service to have accepted the passphrase.
-  ON_CALL(*fake_sync_service_->GetUserSettingsMock(), IsPassphraseRequired())
+  ON_CALL(*fake_sync_service_->GetMockUserSettings(), IsPassphraseRequired())
       .WillByDefault(Return(false));
-  ON_CALL(*fake_sync_service_->GetUserSettingsMock(),
+  ON_CALL(*fake_sync_service_->GetMockUserSettings(),
           IsUsingSecondaryPassphrase())
       .WillByDefault(Return(true));
   [sync_controller onSyncStateChanged];

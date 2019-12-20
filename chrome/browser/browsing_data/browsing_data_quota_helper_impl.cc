@@ -19,6 +19,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/storage_partition.h"
 #include "storage/browser/quota/quota_manager.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/origin.h"
 
 using blink::mojom::StorageType;
@@ -35,7 +36,7 @@ void BrowsingDataQuotaHelperImpl::StartFetching(FetchResultCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!callback.is_null());
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&BrowsingDataQuotaHelperImpl::FetchQuotaInfoOnIOThread,
                      this, std::move(callback)));
@@ -43,7 +44,7 @@ void BrowsingDataQuotaHelperImpl::StartFetching(FetchResultCallback callback) {
 
 void BrowsingDataQuotaHelperImpl::RevokeHostQuota(const std::string& host) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&BrowsingDataQuotaHelperImpl::RevokeHostQuotaOnIOThread,
                      this, host));
@@ -51,9 +52,7 @@ void BrowsingDataQuotaHelperImpl::RevokeHostQuota(const std::string& host) {
 
 BrowsingDataQuotaHelperImpl::BrowsingDataQuotaHelperImpl(
     storage::QuotaManager* quota_manager)
-    : BrowsingDataQuotaHelper(),
-      quota_manager_(quota_manager),
-      weak_factory_(this) {
+    : BrowsingDataQuotaHelper(), quota_manager_(quota_manager) {
   DCHECK(quota_manager);
 }
 
@@ -161,8 +160,8 @@ void BrowsingDataQuotaHelperImpl::OnGetHostsUsageComplete(
     result.push_back(info);
   }
 
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           base::BindOnce(std::move(callback), result));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(std::move(callback), result));
 }
 
 void BrowsingDataQuotaHelperImpl::RevokeHostQuotaOnIOThread(

@@ -6,7 +6,7 @@
 
 #include "chrome/common/net/safe_search_util.h"
 #include "components/variations/net/variations_http_headers.h"
-#include "services/network/public/cpp/features.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/extension_urls.h"
@@ -25,11 +25,11 @@ void GoogleURLLoaderThrottle::DetachFromCurrentSequence() {}
 void GoogleURLLoaderThrottle::WillStartRequest(
     network::ResourceRequest* request,
     bool* defer) {
-  if (!is_off_the_record_ &&
-      variations::ShouldAppendVariationHeaders(request->url) &&
-      !dynamic_params_.variation_ids_header.empty()) {
-    request->client_data_header = dynamic_params_.variation_ids_header;
-  }
+  variations::AppendVariationsHeaderWithCustomValue(
+      request->url,
+      is_off_the_record_ ? variations::InIncognito::kYes
+                         : variations::InIncognito::kNo,
+      dynamic_params_.variation_ids_header, request);
 
   if (dynamic_params_.force_safe_search) {
     GURL new_url;
@@ -59,18 +59,17 @@ void GoogleURLLoaderThrottle::WillStartRequest(
 
 void GoogleURLLoaderThrottle::WillRedirectRequest(
     net::RedirectInfo* redirect_info,
-    const network::ResourceResponseHead& /* response_head */,
+    const network::mojom::URLResponseHead& response_head,
     bool* /* defer */,
     std::vector<std::string>* to_be_removed_headers,
     net::HttpRequestHeaders* modified_headers) {
-  if (!variations::ShouldAppendVariationHeaders(redirect_info->new_url))
-    to_be_removed_headers->push_back(variations::kClientDataHeader);
+  variations::RemoveVariationsHeaderIfNeeded(*redirect_info, response_head,
+                                             to_be_removed_headers);
 
   // URLLoaderThrottles can only change the redirect URL when the network
   // service is enabled. The non-network service path handles this in
   // ChromeNetworkDelegate.
-  if (dynamic_params_.force_safe_search &&
-      base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+  if (dynamic_params_.force_safe_search) {
     safe_search_util::ForceGoogleSafeSearch(redirect_info->new_url,
                                             &redirect_info->new_url);
   }
@@ -95,7 +94,7 @@ void GoogleURLLoaderThrottle::WillRedirectRequest(
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 void GoogleURLLoaderThrottle::WillProcessResponse(
     const GURL& response_url,
-    network::ResourceResponseHead* response_head,
+    network::mojom::URLResponseHead* response_head,
     bool* defer) {
   // Built-in additional protection for the chrome web store origin.
   GURL webstore_url(extension_urls::GetWebstoreLaunchURL());

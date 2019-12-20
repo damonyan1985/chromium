@@ -7,8 +7,10 @@
 #include <string.h>
 
 #include "base/bind.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "chromeos/dbus/biod/biod_client.h"
+#include "dbus/object_path.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/device/fingerprint/fingerprint.h"
 #include "services/device/public/mojom/fingerprint.mojom.h"
 
@@ -17,7 +19,7 @@ namespace device {
 namespace {
 
 chromeos::BiodClient* GetBiodClient() {
-  return chromeos::DBusThreadManager::Get()->GetBiodClient();
+  return chromeos::BiodClient::Get();
 }
 
 // Helper functions to convert between dbus and mojo types. The dbus type comes
@@ -62,7 +64,8 @@ device::mojom::ScanResult ToMojom(biod::ScanResult type) {
 
 }  // namespace
 
-FingerprintChromeOS::FingerprintChromeOS() : weak_ptr_factory_(this) {
+FingerprintChromeOS::FingerprintChromeOS() {
+  CHECK(GetBiodClient());
   GetBiodClient()->AddObserver(this);
 }
 
@@ -92,7 +95,7 @@ void FingerprintChromeOS::GetRecordsForUser(
 void FingerprintChromeOS::RunGetRecordsForUser(
     const std::string& user_id,
     GetRecordsForUserCallback callback) {
-  chromeos::DBusThreadManager::Get()->GetBiodClient()->GetRecordsForUser(
+  GetBiodClient()->GetRecordsForUser(
       user_id,
       base::BindOnce(&FingerprintChromeOS::OnGetRecordsForUser,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
@@ -104,8 +107,8 @@ void FingerprintChromeOS::StartEnrollSession(const std::string& user_id,
     return;
 
   GetBiodClient()->EndAuthSession(
-      base::Bind(&FingerprintChromeOS::OnCloseAuthSessionForEnroll,
-                 weak_ptr_factory_.GetWeakPtr(), user_id, label));
+      base::BindOnce(&FingerprintChromeOS::OnCloseAuthSessionForEnroll,
+                     weak_ptr_factory_.GetWeakPtr(), user_id, label));
 }
 
 void FingerprintChromeOS::OnCloseAuthSessionForEnroll(
@@ -117,8 +120,8 @@ void FingerprintChromeOS::OnCloseAuthSessionForEnroll(
 
   GetBiodClient()->StartEnrollSession(
       user_id, label,
-      base::Bind(&FingerprintChromeOS::OnStartEnrollSession,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&FingerprintChromeOS::OnStartEnrollSession,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FingerprintChromeOS::CancelCurrentEnrollSession(
@@ -162,8 +165,8 @@ void FingerprintChromeOS::StartAuthSession() {
                             weak_ptr_factory_.GetWeakPtr()));
   } else {
     GetBiodClient()->StartAuthSession(
-        base::Bind(&FingerprintChromeOS::OnStartAuthSession,
-                   weak_ptr_factory_.GetWeakPtr()));
+        base::BindOnce(&FingerprintChromeOS::OnStartAuthSession,
+                       weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -172,8 +175,8 @@ void FingerprintChromeOS::OnCloseEnrollSessionForAuth(bool result) {
     return;
 
   GetBiodClient()->StartAuthSession(
-      base::Bind(&FingerprintChromeOS::OnStartAuthSession,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&FingerprintChromeOS::OnStartAuthSession,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void FingerprintChromeOS::EndCurrentAuthSession(
@@ -200,10 +203,12 @@ void FingerprintChromeOS::RequestType(RequestTypeCallback callback) {
 }
 
 void FingerprintChromeOS::AddFingerprintObserver(
-    mojom::FingerprintObserverPtr observer) {
-  observer.set_connection_error_handler(
-      base::Bind(&FingerprintChromeOS::OnFingerprintObserverDisconnected,
-                 base::Unretained(this), observer.get()));
+    mojo::PendingRemote<mojom::FingerprintObserver> pending_observer) {
+  mojo::Remote<mojom::FingerprintObserver> observer(
+      std::move(pending_observer));
+  observer.set_disconnect_handler(
+      base::BindOnce(&FingerprintChromeOS::OnFingerprintObserverDisconnected,
+                     base::Unretained(this), observer.get()));
   observers_.push_back(std::move(observer));
 }
 
@@ -329,9 +334,10 @@ void FingerprintChromeOS::StartNextRequest() {
 }
 
 // static
-void Fingerprint::Create(device::mojom::FingerprintRequest request) {
-  mojo::MakeStrongBinding(std::make_unique<FingerprintChromeOS>(),
-                          std::move(request));
+void Fingerprint::Create(
+    mojo::PendingReceiver<device::mojom::Fingerprint> receiver) {
+  mojo::MakeSelfOwnedReceiver(std::make_unique<FingerprintChromeOS>(),
+                              std::move(receiver));
 }
 
 }  // namespace device

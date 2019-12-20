@@ -9,6 +9,8 @@
 #include "base/stl_util.h"
 #include "chrome/browser/media/router/presentation/local_presentation_manager.h"
 #include "chrome/browser/media/router/test/test_helper.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -27,16 +29,11 @@ const char kPresentationUrl[] = "http://www.example.com/presentation.html";
 
 class MockReceiverConnectionAvailableCallback {
  public:
-  void OnReceiverConnectionAvailable(
-      PresentationInfoPtr presentation_info,
-      content::PresentationConnectionPtr controller_conn,
-      content::PresentationConnectionRequest receiver_conn_request) {
-    OnReceiverConnectionAvailableRaw(*presentation_info, controller_conn.get());
-  }
-
-  MOCK_METHOD2(OnReceiverConnectionAvailableRaw,
-               void(const PresentationInfo&,
-                    blink::mojom::PresentationConnection*));
+  MOCK_METHOD3(
+      OnReceiverConnectionAvailable,
+      void(PresentationInfoPtr,
+           mojo::PendingRemote<blink::mojom::PresentationConnection>,
+           mojo::PendingReceiver<blink::mojom::PresentationConnection>));
 };
 
 class LocalPresentationManagerTest : public ::testing::Test {
@@ -55,37 +52,41 @@ class LocalPresentationManagerTest : public ::testing::Test {
 
   void VerifyControllerSize(size_t expected,
                             const std::string& presentationId) {
-    EXPECT_TRUE(
-        base::ContainsKey(manager_.local_presentations_, presentationId));
+    EXPECT_TRUE(base::Contains(manager_.local_presentations_, presentationId));
     EXPECT_EQ(expected, manager_.local_presentations_[presentationId]
                             ->pending_controllers_.size());
   }
 
-  void RegisterController(const std::string& presentation_id,
-                          content::PresentationConnectionPtr controller) {
+  void RegisterController(
+      const std::string& presentation_id,
+      mojo::PendingRemote<blink::mojom::PresentationConnection> controller) {
     RegisterController(
         PresentationInfo(GURL(kPresentationUrl), presentation_id),
         render_frame_host_id_, std::move(controller));
   }
 
-  void RegisterController(const content::GlobalFrameRoutingId& render_frame_id,
-                          content::PresentationConnectionPtr controller) {
+  void RegisterController(
+      const content::GlobalFrameRoutingId& render_frame_id,
+      mojo::PendingRemote<blink::mojom::PresentationConnection> controller) {
     RegisterController(presentation_info_, render_frame_id,
                        std::move(controller));
   }
 
-  void RegisterController(content::PresentationConnectionPtr controller) {
+  void RegisterController(
+      mojo::PendingRemote<blink::mojom::PresentationConnection> controller) {
     RegisterController(presentation_info_, render_frame_host_id_,
                        std::move(controller));
   }
 
-  void RegisterController(const PresentationInfo& presentation_info,
-                          const content::GlobalFrameRoutingId& render_frame_id,
-                          content::PresentationConnectionPtr controller) {
-    content::PresentationConnectionRequest receiver_conn_request;
+  void RegisterController(
+      const PresentationInfo& presentation_info,
+      const content::GlobalFrameRoutingId& render_frame_id,
+      mojo::PendingRemote<blink::mojom::PresentationConnection> controller) {
+    mojo::PendingReceiver<blink::mojom::PresentationConnection>
+        receiver_conn_receiver;
     manager()->RegisterLocalPresentationController(
         presentation_info, render_frame_id, std::move(controller),
-        std::move(receiver_conn_request), route_);
+        std::move(receiver_conn_receiver), route_);
   }
 
   void RegisterReceiver(
@@ -126,7 +127,7 @@ class LocalPresentationManagerTest : public ::testing::Test {
 };
 
 TEST_F(LocalPresentationManagerTest, RegisterUnregisterController) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   RegisterController(std::move(controller));
   VerifyPresentationsSize(1);
   UnregisterController();
@@ -153,10 +154,10 @@ TEST_F(LocalPresentationManagerTest, UnregisterNonexistentReceiver) {
 
 TEST_F(LocalPresentationManagerTest,
        RegisterMultipleControllersSamePresentation) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(content::GlobalFrameRoutingId(1, 1),
                      std::move(controller1));
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(content::GlobalFrameRoutingId(1, 2),
                      std::move(controller2));
   VerifyPresentationsSize(1);
@@ -164,34 +165,34 @@ TEST_F(LocalPresentationManagerTest,
 
 TEST_F(LocalPresentationManagerTest,
        RegisterMultipleControllersDifferentPresentations) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(kPresentationId, std::move(controller1));
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(kPresentationId2, std::move(controller2));
   VerifyPresentationsSize(2);
 }
 
 TEST_F(LocalPresentationManagerTest,
        RegisterControllerThenReceiverInvokesCallback) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   MockReceiverConnectionAvailableCallback receiver_callback;
 
   VerifyPresentationsSize(0);
 
   RegisterController(std::move(controller));
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _));
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _));
   RegisterReceiver(receiver_callback);
 }
 
 TEST_F(LocalPresentationManagerTest,
        UnregisterReceiverFromConnectedPresentation) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   MockReceiverConnectionAvailableCallback receiver_callback;
 
   VerifyPresentationsSize(0);
 
   RegisterController(std::move(controller));
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _));
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _));
   RegisterReceiver(receiver_callback);
   UnregisterReceiver();
 
@@ -200,13 +201,13 @@ TEST_F(LocalPresentationManagerTest,
 
 TEST_F(LocalPresentationManagerTest,
        UnregisterControllerFromConnectedPresentation) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   MockReceiverConnectionAvailableCallback receiver_callback;
 
   VerifyPresentationsSize(0);
 
   RegisterController(std::move(controller));
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _));
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _));
   RegisterReceiver(receiver_callback);
   UnregisterController();
 
@@ -215,13 +216,13 @@ TEST_F(LocalPresentationManagerTest,
 
 TEST_F(LocalPresentationManagerTest,
        UnregisterReceiverThenControllerFromConnectedPresentation) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   MockReceiverConnectionAvailableCallback receiver_callback;
 
   VerifyPresentationsSize(0);
 
   RegisterController(std::move(controller));
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _));
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _));
   RegisterReceiver(receiver_callback);
   UnregisterReceiver();
   UnregisterController();
@@ -231,13 +232,13 @@ TEST_F(LocalPresentationManagerTest,
 
 TEST_F(LocalPresentationManagerTest,
        UnregisterControllerThenReceiverFromConnectedPresentation) {
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   MockReceiverConnectionAvailableCallback receiver_callback;
 
   VerifyPresentationsSize(0);
 
   RegisterController(std::move(controller));
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _));
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _));
   RegisterReceiver(receiver_callback);
   UnregisterController();
   UnregisterReceiver();
@@ -247,46 +248,46 @@ TEST_F(LocalPresentationManagerTest,
 
 TEST_F(LocalPresentationManagerTest,
        RegisterTwoControllersThenReceiverInvokesCallbackTwice) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(content::GlobalFrameRoutingId(1, 1),
                      std::move(controller1));
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(content::GlobalFrameRoutingId(1, 2),
                      std::move(controller2));
 
   MockReceiverConnectionAvailableCallback receiver_callback;
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _))
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _))
       .Times(2);
   RegisterReceiver(receiver_callback);
 }
 
 TEST_F(LocalPresentationManagerTest,
        RegisterControllerReceiverConontrollerInvokesCallbackTwice) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(content::GlobalFrameRoutingId(1, 1),
                      std::move(controller1));
 
   MockReceiverConnectionAvailableCallback receiver_callback;
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _))
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _))
       .Times(2);
   RegisterReceiver(receiver_callback);
 
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(content::GlobalFrameRoutingId(1, 2),
                      std::move(controller2));
 }
 
 TEST_F(LocalPresentationManagerTest,
        UnregisterFirstControllerFromeConnectedPresentation) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(content::GlobalFrameRoutingId(1, 1),
                      std::move(controller1));
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(content::GlobalFrameRoutingId(1, 2),
                      std::move(controller2));
 
   MockReceiverConnectionAvailableCallback receiver_callback;
-  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailableRaw(_, _))
+  EXPECT_CALL(receiver_callback, OnReceiverConnectionAvailable(_, _, _))
       .Times(2);
   RegisterReceiver(receiver_callback);
   UnregisterController(content::GlobalFrameRoutingId(1, 1));
@@ -296,19 +297,19 @@ TEST_F(LocalPresentationManagerTest,
 }
 
 TEST_F(LocalPresentationManagerTest, TwoPresentations) {
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(kPresentationId, std::move(controller1));
 
   MockReceiverConnectionAvailableCallback receiver_callback1;
-  EXPECT_CALL(receiver_callback1, OnReceiverConnectionAvailableRaw(_, _))
+  EXPECT_CALL(receiver_callback1, OnReceiverConnectionAvailable(_, _, _))
       .Times(1);
   RegisterReceiver(kPresentationId, receiver_callback1);
 
-  content::PresentationConnectionPtr controller2;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller2;
   RegisterController(kPresentationId2, std::move(controller2));
 
   MockReceiverConnectionAvailableCallback receiver_callback2;
-  EXPECT_CALL(receiver_callback2, OnReceiverConnectionAvailableRaw(_, _))
+  EXPECT_CALL(receiver_callback2, OnReceiverConnectionAvailable(_, _, _))
       .Times(1);
   RegisterReceiver(kPresentationId2, receiver_callback2);
 
@@ -320,7 +321,7 @@ TEST_F(LocalPresentationManagerTest, TwoPresentations) {
 
 TEST_F(LocalPresentationManagerTest, TestIsLocalPresentation) {
   EXPECT_FALSE(manager()->IsLocalPresentation(kPresentationId));
-  content::PresentationConnectionPtr controller1;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller1;
   RegisterController(kPresentationId, std::move(controller1));
   EXPECT_TRUE(manager()->IsLocalPresentation(kPresentationId));
 }
@@ -330,7 +331,7 @@ TEST_F(LocalPresentationManagerTest, TestRegisterAndGetRoute) {
   MediaRoute route("route_1", source, "sink_1", "", false, false);
 
   EXPECT_FALSE(manager()->GetRoute(kPresentationId));
-  content::PresentationConnectionPtr controller;
+  mojo::PendingRemote<blink::mojom::PresentationConnection> controller;
   RegisterController(std::move(controller));
 
   auto* actual_route = manager()->GetRoute(kPresentationId);

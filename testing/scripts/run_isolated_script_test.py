@@ -54,7 +54,12 @@ KNOWN_ISOLATED_SCRIPT_TEST_RUNNERS = {'run_web_tests.py'}
 # Known typ test runners this script wraps. They need a different argument name
 # when selecting which tests to run.
 # TODO(dpranke): Detect if the wrapped test suite uses typ better.
-KNOWN_TYP_TEST_RUNNERS = {'run_blinkpy_tests.py', 'metrics_python_tests.py'}
+KNOWN_TYP_TEST_RUNNERS = {
+    'run_blinkpy_tests.py',
+    'metrics_python_tests.py',
+    'run_mac_signing_tests.py',
+    'run_polymer_tools_tests.py',
+}
 
 
 class IsolatedScriptTestAdapter(common.BaseIsolatedScriptArgsAdapter):
@@ -76,7 +81,7 @@ class IsolatedScriptTestAdapter(common.BaseIsolatedScriptArgsAdapter):
     return ['--isolated-script-test-output=%s' % output]
 
   def generate_test_launcher_retry_limit_args(self, retry_limit):
-    return ['--isolated-script-test-retry-limit=%d' % retry_limit]
+    return ['--isolated-script-test-launcher-retry-limit=%d' % retry_limit]
 
   def generate_test_repeat_args(self, repeat_count):
     return ['--isolated-script-test-repeat=%d' % repeat_count]

@@ -9,7 +9,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -22,7 +22,7 @@ class CannedBrowsingDataIndexedDBHelperTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 };
 
@@ -32,7 +32,7 @@ TEST_F(CannedBrowsingDataIndexedDBHelperTest, Empty) {
       new CannedBrowsingDataIndexedDBHelper(IndexedDBContext()));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddIndexedDB(origin);
+  helper->Add(url::Origin::Create(origin));
   ASSERT_FALSE(helper->empty());
   helper->Reset();
   ASSERT_TRUE(helper->empty());
@@ -46,24 +46,24 @@ TEST_F(CannedBrowsingDataIndexedDBHelperTest, Delete) {
       new CannedBrowsingDataIndexedDBHelper(IndexedDBContext()));
 
   EXPECT_TRUE(helper->empty());
-  helper->AddIndexedDB(origin1);
-  helper->AddIndexedDB(origin2);
-  EXPECT_EQ(2u, helper->GetIndexedDBCount());
+  helper->Add(url::Origin::Create(origin1));
+  helper->Add(url::Origin::Create(origin2));
+  EXPECT_EQ(2u, helper->GetCount());
   helper->DeleteIndexedDB(origin2);
-  EXPECT_EQ(1u, helper->GetIndexedDBCount());
+  EXPECT_EQ(1u, helper->GetCount());
 }
 
 TEST_F(CannedBrowsingDataIndexedDBHelperTest, IgnoreExtensionsAndDevTools) {
   const GURL origin1("chrome-extension://abcdefghijklmnopqrstuvwxyz/");
-  const GURL origin2("chrome-devtools://abcdefghijklmnopqrstuvwxyz/");
+  const GURL origin2("devtools://abcdefghijklmnopqrstuvwxyz/");
 
   scoped_refptr<CannedBrowsingDataIndexedDBHelper> helper(
       new CannedBrowsingDataIndexedDBHelper(IndexedDBContext()));
 
   ASSERT_TRUE(helper->empty());
-  helper->AddIndexedDB(origin1);
+  helper->Add(url::Origin::Create(origin1));
   ASSERT_TRUE(helper->empty());
-  helper->AddIndexedDB(origin2);
+  helper->Add(url::Origin::Create(origin2));
   ASSERT_TRUE(helper->empty());
 }
 

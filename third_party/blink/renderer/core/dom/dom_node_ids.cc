@@ -8,7 +8,13 @@
 
 namespace blink {
 
-DEFINE_WEAK_IDENTIFIER_MAP(Node, DOMNodeId);
+DEFINE_WEAK_IDENTIFIER_MAP(Node, DOMNodeId)
+
+// static
+DOMNodeId DOMNodeIds::ExistingIdForNode(Node* node) {
+  return node ? WeakIdentifierMap<Node, DOMNodeId>::ExistingIdentifier(node)
+              : kInvalidDOMNodeId;
+}
 
 // static
 DOMNodeId DOMNodeIds::IdForNode(Node* node) {

@@ -17,7 +17,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/browsing_data/browsing_data_quota_helper.h"
-#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom-forward.h"
 
 namespace storage {
 class QuotaManager;
@@ -72,7 +72,7 @@ class BrowsingDataQuotaHelperImpl : public BrowsingDataQuotaHelper {
 
   scoped_refptr<storage::QuotaManager> quota_manager_;
 
-  base::WeakPtrFactory<BrowsingDataQuotaHelperImpl> weak_factory_;
+  base::WeakPtrFactory<BrowsingDataQuotaHelperImpl> weak_factory_{this};
 
   friend class BrowsingDataQuotaHelper;
   friend class BrowsingDataQuotaHelperTest;

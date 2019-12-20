@@ -4,8 +4,10 @@
 
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader.h"
 
+#include "base/test/scoped_feature_list.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_url_loader_mock_factory.h"
@@ -34,6 +36,7 @@
 #include "third_party/blink/renderer/platform/loader/testing/mock_fetch_context.h"
 #include "third_party/blink/renderer/platform/loader/testing/test_loader_factory.h"
 #include "third_party/blink/renderer/platform/loader/testing/test_resource_fetcher_properties.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 
@@ -42,7 +45,7 @@ namespace blink {
 namespace {
 
 class TestModuleScriptLoaderClient final
-    : public GarbageCollectedFinalized<TestModuleScriptLoaderClient>,
+    : public GarbageCollected<TestModuleScriptLoaderClient>,
       public ModuleScriptLoaderClient {
   USING_GARBAGE_COLLECTED_MIXIN(TestModuleScriptLoaderClient);
 
@@ -88,7 +91,8 @@ class ModuleScriptLoaderTestModulator final : public DummyModulator {
       requests_.emplace_back(request, TextPosition::MinimumPosition());
     }
   }
-  Vector<ModuleRequest> ModuleRequestsFromScriptModule(ScriptModule) override {
+  Vector<ModuleRequest> ModuleRequestsFromModuleRecord(
+      v8::Local<v8::Module>) override {
     return requests_;
   }
 
@@ -124,6 +128,7 @@ class ModuleScriptLoaderTest : public PageTestBase {
 
  public:
   ModuleScriptLoaderTest();
+  void SetUp() override;
 
   void InitializeForDocument();
   void InitializeForWorklet();
@@ -135,6 +140,11 @@ class ModuleScriptLoaderTest : public PageTestBase {
   void TestFetchInvalidURL(ModuleScriptCustomFetchType,
                            TestModuleScriptLoaderClient*);
   void TestFetchURL(ModuleScriptCustomFetchType, TestModuleScriptLoaderClient*);
+  void TestFetchDataURLJSONModule(ModuleScriptCustomFetchType custom_fetch_type,
+                                  TestModuleScriptLoaderClient* client);
+  void TestFetchDataURLInvalidJSONModule(
+      ModuleScriptCustomFetchType custom_fetch_type,
+      TestModuleScriptLoaderClient* client);
 
   ModuleScriptLoaderTestModulator* GetModulator() { return modulator_.Get(); }
 
@@ -142,6 +152,12 @@ class ModuleScriptLoaderTest : public PageTestBase {
     static_cast<scheduler::FakeTaskRunner*>(fetcher_->GetTaskRunner().get())
         ->RunUntilIdle();
   }
+
+ private:
+  const base::TickClock* GetTickClock() override {
+    return platform_->test_task_runner()->GetMockTickClock();
+  }
+  base::test::ScopedFeatureList scoped_feature_list_;
 
  protected:
   const KURL url_;
@@ -155,9 +171,14 @@ class ModuleScriptLoaderTest : public PageTestBase {
   Persistent<WorkletGlobalScope> global_scope_;
 };
 
+void ModuleScriptLoaderTest::SetUp() {
+  PageTestBase::SetUp(IntSize(500, 500));
+}
+
 ModuleScriptLoaderTest::ModuleScriptLoaderTest()
     : url_("https://example.test"),
       security_origin_(SecurityOrigin::Create(url_)) {
+  scoped_feature_list_.InitAndEnableFeature(blink::features::kJSONModules);
   platform_->AdvanceClockSeconds(1.);  // For non-zero DocumentParserTimings
 }
 
@@ -166,7 +187,7 @@ void ModuleScriptLoaderTest::InitializeForDocument() {
   auto* properties =
       MakeGarbageCollected<TestResourceFetcherProperties>(security_origin_);
   fetcher_ = MakeGarbageCollected<ResourceFetcher>(
-      ResourceFetcherInit(*properties, fetch_context,
+      ResourceFetcherInit(properties->MakeDetachable(), fetch_context,
                           base::MakeRefCounted<scheduler::FakeTaskRunner>(),
                           MakeGarbageCollected<TestLoaderFactory>()));
   modulator_ = MakeGarbageCollected<ModuleScriptLoaderTestModulator>(
@@ -178,33 +199,61 @@ void ModuleScriptLoaderTest::InitializeForWorklet() {
   auto* properties =
       MakeGarbageCollected<TestResourceFetcherProperties>(security_origin_);
   fetcher_ = MakeGarbageCollected<ResourceFetcher>(
-      ResourceFetcherInit(*properties, fetch_context,
+      ResourceFetcherInit(properties->MakeDetachable(), fetch_context,
                           base::MakeRefCounted<scheduler::FakeTaskRunner>(),
                           MakeGarbageCollected<TestLoaderFactory>()));
   reporting_proxy_ = std::make_unique<MockWorkerReportingProxy>();
   auto creation_params = std::make_unique<GlobalScopeCreationParams>(
       url_, mojom::ScriptType::kModule,
-      OffMainThreadWorkerScriptFetchOption::kEnabled, "UserAgent",
-      nullptr /* web_worker_fetch_context */, Vector<CSPHeaderAndType>(),
-      network::mojom::ReferrerPolicy::kDefault, security_origin_.get(),
-      true /* is_secure_context */, HttpsState::kModern,
-      nullptr /* worker_clients */, mojom::IPAddressSpace::kLocal,
-      nullptr /* origin_trial_token */, base::UnguessableToken::Create(),
-      nullptr /* worker_settings */, kV8CacheOptionsDefault,
+      OffMainThreadWorkerScriptFetchOption::kEnabled, "GlobalScopeName",
+      "UserAgent", nullptr /* web_worker_fetch_context */,
+      Vector<CSPHeaderAndType>(), network::mojom::ReferrerPolicy::kDefault,
+      security_origin_.get(), true /* is_secure_context */, HttpsState::kModern,
+      nullptr /* worker_clients */, nullptr /* content_settings_client */,
+      network::mojom::IPAddressSpace::kLocal, nullptr /* origin_trial_token */,
+      base::UnguessableToken::Create(), nullptr /* worker_settings */,
+      kV8CacheOptionsDefault,
       MakeGarbageCollected<WorkletModuleResponsesMap>());
   global_scope_ = MakeGarbageCollected<WorkletGlobalScope>(
       std::move(creation_params), *reporting_proxy_, &GetFrame());
-  global_scope_->ScriptController()->InitializeContextIfNeeded("Dummy Context",
-                                                               NullURL());
+  global_scope_->ScriptController()->Initialize(NullURL());
   modulator_ = MakeGarbageCollected<ModuleScriptLoaderTestModulator>(
       global_scope_->ScriptController()->GetScriptState());
 }
+// TODO(nhiroki): Add tests for workers.
 
 void ModuleScriptLoaderTest::TestFetchDataURL(
     ModuleScriptCustomFetchType custom_fetch_type,
     TestModuleScriptLoaderClient* client) {
-  ModuleScriptLoaderRegistry* registry = ModuleScriptLoaderRegistry::Create();
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
   KURL url("data:text/javascript,export default 'grapes';");
+  ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
+                            fetcher_, ModuleGraphLevel::kTopLevelModuleFetch,
+                            GetModulator(), custom_fetch_type, registry,
+                            client);
+}
+
+void ModuleScriptLoaderTest::TestFetchDataURLJSONModule(
+    ModuleScriptCustomFetchType custom_fetch_type,
+    TestModuleScriptLoaderClient* client) {
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
+  KURL url(
+      "data:application/"
+      "json,{\"1\":{\"name\":\"MIKE\",\"surname\":\"TAYLOR\"},\"2\":{\"name\":"
+      "\"TOM\",\"surname\":\"JERRY\"}}");
+  ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
+                            fetcher_, ModuleGraphLevel::kTopLevelModuleFetch,
+                            GetModulator(), custom_fetch_type, registry,
+                            client);
+}
+
+void ModuleScriptLoaderTest::TestFetchDataURLInvalidJSONModule(
+    ModuleScriptCustomFetchType custom_fetch_type,
+    TestModuleScriptLoaderClient* client) {
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
+  KURL url(
+      "data:application/"
+      "json,{{{");
   ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
                             fetcher_, ModuleGraphLevel::kTopLevelModuleFetch,
                             GetModulator(), custom_fetch_type, registry,
@@ -224,6 +273,36 @@ TEST_F(ModuleScriptLoaderTest, FetchDataURL) {
   ASSERT_TRUE(client->GetModuleScript());
   EXPECT_FALSE(client->GetModuleScript()->HasEmptyRecord());
   EXPECT_FALSE(client->GetModuleScript()->HasParseError());
+}
+
+TEST_F(ModuleScriptLoaderTest, FetchDataURLJSONModule) {
+  InitializeForDocument();
+  TestModuleScriptLoaderClient* client =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLJSONModule(ModuleScriptCustomFetchType::kNone, client);
+
+  // TODO(leszeks): This should finish synchronously, but currently due
+  // to the script resource/script streamer interaction, it does not.
+  RunUntilIdle();
+  EXPECT_TRUE(client->WasNotifyFinished());
+  ASSERT_TRUE(client->GetModuleScript());
+  EXPECT_FALSE(client->GetModuleScript()->HasEmptyRecord());
+  EXPECT_FALSE(client->GetModuleScript()->HasParseError());
+}
+
+TEST_F(ModuleScriptLoaderTest, FetchDataURLInvalidJSONModule) {
+  InitializeForDocument();
+  TestModuleScriptLoaderClient* client =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLInvalidJSONModule(ModuleScriptCustomFetchType::kNone, client);
+
+  // TODO(leszeks): This should finish synchronously, but currently due
+  // to the script resource/script streamer interaction, it does not.
+  RunUntilIdle();
+  EXPECT_TRUE(client->WasNotifyFinished());
+  ASSERT_TRUE(client->GetModuleScript());
+  EXPECT_TRUE(client->GetModuleScript()->HasEmptyRecord());
+  EXPECT_TRUE(client->GetModuleScript()->HasParseError());
 }
 
 TEST_F(ModuleScriptLoaderTest, FetchDataURL_OnWorklet) {
@@ -257,10 +336,76 @@ TEST_F(ModuleScriptLoaderTest, FetchDataURL_OnWorklet) {
   EXPECT_FALSE(client2->GetModuleScript()->HasParseError());
 }
 
+TEST_F(ModuleScriptLoaderTest, FetchDataURLJSONModule_OnWorklet) {
+  InitializeForWorklet();
+  TestModuleScriptLoaderClient* client1 =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLJSONModule(ModuleScriptCustomFetchType::kWorkletAddModule,
+                             client1);
+
+  EXPECT_FALSE(client1->WasNotifyFinished())
+      << "ModuleScriptLoader should finish asynchronously.";
+  RunUntilIdle();
+
+  EXPECT_TRUE(client1->WasNotifyFinished());
+  ASSERT_TRUE(client1->GetModuleScript());
+  EXPECT_FALSE(client1->GetModuleScript()->HasEmptyRecord());
+  EXPECT_FALSE(client1->GetModuleScript()->HasParseError());
+
+  // Try to fetch the same URL again in order to verify the case where
+  // WorkletModuleResponsesMap serves a cache.
+  TestModuleScriptLoaderClient* client2 =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLJSONModule(ModuleScriptCustomFetchType::kWorkletAddModule,
+                             client2);
+
+  EXPECT_FALSE(client2->WasNotifyFinished())
+      << "ModuleScriptLoader should finish asynchronously.";
+  RunUntilIdle();
+
+  EXPECT_TRUE(client2->WasNotifyFinished());
+  ASSERT_TRUE(client2->GetModuleScript());
+  EXPECT_FALSE(client2->GetModuleScript()->HasEmptyRecord());
+  EXPECT_FALSE(client2->GetModuleScript()->HasParseError());
+}
+
+TEST_F(ModuleScriptLoaderTest, FetchDataURLInvalidJSONModule_OnWorklet) {
+  InitializeForWorklet();
+  TestModuleScriptLoaderClient* client1 =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLInvalidJSONModule(
+      ModuleScriptCustomFetchType::kWorkletAddModule, client1);
+
+  EXPECT_FALSE(client1->WasNotifyFinished())
+      << "ModuleScriptLoader should finish asynchronously.";
+  RunUntilIdle();
+
+  EXPECT_TRUE(client1->WasNotifyFinished());
+  ASSERT_TRUE(client1->GetModuleScript());
+  EXPECT_TRUE(client1->GetModuleScript()->HasEmptyRecord());
+  EXPECT_TRUE(client1->GetModuleScript()->HasParseError());
+
+  // Try to fetch the same URL again in order to verify the case where
+  // WorkletModuleResponsesMap serves a cache.
+  TestModuleScriptLoaderClient* client2 =
+      MakeGarbageCollected<TestModuleScriptLoaderClient>();
+  TestFetchDataURLInvalidJSONModule(
+      ModuleScriptCustomFetchType::kWorkletAddModule, client2);
+
+  EXPECT_FALSE(client2->WasNotifyFinished())
+      << "ModuleScriptLoader should finish asynchronously.";
+  RunUntilIdle();
+
+  EXPECT_TRUE(client2->WasNotifyFinished());
+  ASSERT_TRUE(client2->GetModuleScript());
+  EXPECT_TRUE(client2->GetModuleScript()->HasEmptyRecord());
+  EXPECT_TRUE(client2->GetModuleScript()->HasParseError());
+}
+
 void ModuleScriptLoaderTest::TestInvalidSpecifier(
     ModuleScriptCustomFetchType custom_fetch_type,
     TestModuleScriptLoaderClient* client) {
-  ModuleScriptLoaderRegistry* registry = ModuleScriptLoaderRegistry::Create();
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
   KURL url("data:text/javascript,import 'invalid';export default 'grapes';");
   GetModulator()->SetModuleRequests({"invalid"});
   ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
@@ -304,7 +449,7 @@ TEST_F(ModuleScriptLoaderTest, InvalidSpecifier_OnWorklet) {
 void ModuleScriptLoaderTest::TestFetchInvalidURL(
     ModuleScriptCustomFetchType custom_fetch_type,
     TestModuleScriptLoaderClient* client) {
-  ModuleScriptLoaderRegistry* registry = ModuleScriptLoaderRegistry::Create();
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
   KURL url;
   EXPECT_FALSE(url.IsValid());
   ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
@@ -347,7 +492,7 @@ void ModuleScriptLoaderTest::TestFetchURL(
   url_test_helpers::RegisterMockedURLLoad(
       url, test::CoreTestDataPath("module.js"), "text/javascript");
 
-  ModuleScriptLoaderRegistry* registry = ModuleScriptLoaderRegistry::Create();
+  auto* registry = MakeGarbageCollected<ModuleScriptLoaderRegistry>();
   ModuleScriptLoader::Fetch(ModuleScriptFetchRequest::CreateForTest(url),
                             fetcher_, ModuleGraphLevel::kTopLevelModuleFetch,
                             GetModulator(), custom_fetch_type, registry,

@@ -16,10 +16,15 @@
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/system/system_monitor.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/midi/midi_service.h"
+#include "media/midi/task_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_WIN)
+#include "media/midi/midi_manager_win.h"
+#endif  // defined(OS_WIN)
 
 namespace midi {
 
@@ -30,8 +35,7 @@ using mojom::Result;
 
 class FakeMidiManager : public MidiManager {
  public:
-  explicit FakeMidiManager(MidiService* service)
-      : MidiManager(service), weak_factory_(this) {}
+  explicit FakeMidiManager(MidiService* service) : MidiManager(service) {}
 
   ~FakeMidiManager() override = default;
 
@@ -63,14 +67,14 @@ class FakeMidiManager : public MidiManager {
  private:
   bool initialized_ = false;
 
-  base::WeakPtrFactory<FakeMidiManager> weak_factory_;
+  base::WeakPtrFactory<FakeMidiManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMidiManager);
 };
 
 class FakeMidiManagerFactory : public MidiService::ManagerFactory {
  public:
-  FakeMidiManagerFactory() : weak_factory_(this) {}
+  FakeMidiManagerFactory() {}
   ~FakeMidiManagerFactory() override = default;
 
   std::unique_ptr<MidiManager> Create(MidiService* service) override {
@@ -98,7 +102,7 @@ class FakeMidiManagerFactory : public MidiService::ManagerFactory {
 
  private:
   base::WeakPtr<FakeMidiManager> manager_ = nullptr;
-  base::WeakPtrFactory<FakeMidiManagerFactory> weak_factory_;
+  base::WeakPtrFactory<FakeMidiManagerFactory> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FakeMidiManagerFactory);
 };
@@ -217,7 +221,7 @@ class MidiManagerTest : public ::testing::Test {
   base::WeakPtr<FakeMidiManagerFactory> factory() { return factory_; }
 
  private:
-  base::test::ScopedTaskEnvironment env_;
+  base::test::TaskEnvironment env_;
   base::WeakPtr<FakeMidiManagerFactory> factory_;
   std::unique_ptr<MidiService> service_;
 
@@ -315,40 +319,79 @@ TEST_F(MidiManagerTest, AbortSession) {
   run_loop.RunUntilIdle();
 }
 
+class PlatformMidiManagerTest : public ::testing::Test {
+ public:
+  PlatformMidiManagerTest()
+      : client_(std::make_unique<FakeMidiManagerClient>()),
+        service_(std::make_unique<MidiService>()) {
+    //
+  }
+
+  ~PlatformMidiManagerTest() override {
+    service_->Shutdown();
+    base::RunLoop run_loop;
+    run_loop.RunUntilIdle();
+  }
+
+  MidiService* service() { return service_.get(); }
+
+  void StartSession() { service_->StartSession(client_.get()); }
+  void EndSession() { service_->EndSession(client_.get()); }
+  Result WaitForResult() { return client_->WaitForResult(); }
+
+  // This #ifdef needs to be identical to the one in media/midi/midi_manager.cc.
+  // Do not change the condition for disabling this test.
+  bool IsSupported() {
+#if !defined(OS_MACOSX) && !defined(OS_WIN) && \
+    !(defined(USE_ALSA) && defined(USE_UDEV)) && !defined(OS_ANDROID)
+    return false;
+#else
+    return true;
+#endif
+  }
+
+ private:
+  // SystemMonitor is needed on Windows.
+  base::SystemMonitor system_monitor;
+
+  base::test::TaskEnvironment env_;
+
+  std::unique_ptr<FakeMidiManagerClient> client_;
+  std::unique_ptr<MidiService> service_;
+
+  DISALLOW_COPY_AND_ASSIGN(PlatformMidiManagerTest);
+};
+
 #if defined(OS_ANDROID)
 // The test sometimes fails on Android. https://crbug.com/844027
 #define MAYBE_CreatePlatformMidiManager DISABLED_CreatePlatformMidiManager
 #else
 #define MAYBE_CreatePlatformMidiManager CreatePlatformMidiManager
 #endif
-TEST_F(MidiManagerTest, MAYBE_CreatePlatformMidiManager) {
-  // SystemMonitor is needed on Windows.
-  base::SystemMonitor system_monitor;
+TEST_F(PlatformMidiManagerTest, MAYBE_CreatePlatformMidiManager) {
+  StartSession();
+  Result result = WaitForResult();
 
-  std::unique_ptr<FakeMidiManagerClient> client =
-      std::make_unique<FakeMidiManagerClient>();
-
-  // Use own MidiService instance to construct a real platform dependent
-  // MidiManager instance.
-  std::unique_ptr<MidiService> service = std::make_unique<MidiService>();
-  service->StartSession(client.get());
-
-  Result result = client->WaitForResult();
-  // This #ifdef needs to be identical to the one in media/midi/midi_manager.cc.
-  // Do not change the condition for disabling this test.
-#if !defined(OS_MACOSX) && !defined(OS_WIN) && \
-    !(defined(USE_ALSA) && defined(USE_UDEV)) && !defined(OS_ANDROID)
-  EXPECT_EQ(Result::NOT_SUPPORTED, result);
-#elif defined(USE_ALSA)
+#if defined(USE_ALSA)
   // Temporary until http://crbug.com/371230 is resolved.
   EXPECT_TRUE(result == Result::OK || result == Result::INITIALIZATION_ERROR);
 #else
-  EXPECT_EQ(Result::OK, result);
+  EXPECT_EQ(IsSupported() ? Result::OK : Result::NOT_SUPPORTED, result);
 #endif
+}
 
-  service->Shutdown();
-  base::RunLoop run_loop;
-  run_loop.RunUntilIdle();
+TEST_F(PlatformMidiManagerTest, InstanceIdOverflow) {
+  service()->task_service()->OverflowInstanceIdForTesting();
+#if defined(OS_WIN)
+  MidiManagerWin::OverflowInstanceIdForTesting();
+#endif  // defined(OS_WIN)
+
+  StartSession();
+  EXPECT_EQ(
+      IsSupported() ? Result::INITIALIZATION_ERROR : Result::NOT_SUPPORTED,
+      WaitForResult());
+
+  EndSession();
 }
 
 }  // namespace

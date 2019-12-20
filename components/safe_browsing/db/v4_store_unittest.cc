@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/safe_browsing/db/v4_store.h"
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
@@ -11,7 +12,7 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
 #include "components/safe_browsing/db/v4_store.pb.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "crypto/sha2.h"
 #include "testing/platform_test.h"
 
@@ -75,7 +76,7 @@ class V4StoreTest : public PlatformTest {
   base::ScopedTempDir temp_dir_;
   base::FilePath store_path_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   std::unique_ptr<V4Store> updated_store_;
 };
 
@@ -758,10 +759,11 @@ TEST_F(V4StoreTest, TestRemovalsWithRiceEncodingSucceeds) {
 
   bool called_back = false;
   UpdatedStoreReadyCallback store_ready_callback =
-      base::Bind(&V4StoreTest::UpdatedStoreReady, base::Unretained(this),
-                 &called_back, true /* expect_store */);
+      base::BindOnce(&V4StoreTest::UpdatedStoreReady, base::Unretained(this),
+                     &called_back, true /* expect_store */);
   EXPECT_FALSE(base::PathExists(store.store_path_));
-  store.ApplyUpdate(std::move(lur), task_runner_, store_ready_callback);
+  store.ApplyUpdate(std::move(lur), task_runner_,
+                    std::move(store_ready_callback));
   EXPECT_TRUE(base::PathExists(store.store_path_));
 
   task_runner_->RunPendingTasks();
@@ -857,8 +859,8 @@ TEST_F(V4StoreTest, FullUpdateFailsChecksumSynchronously) {
   V4Store store(task_runner_, store_path_);
   bool called_back = false;
   UpdatedStoreReadyCallback store_ready_callback =
-      base::Bind(&V4StoreTest::UpdatedStoreReady, base::Unretained(this),
-                 &called_back, false /* expect_store */);
+      base::BindOnce(&V4StoreTest::UpdatedStoreReady, base::Unretained(this),
+                     &called_back, false /* expect_store */);
   EXPECT_FALSE(base::PathExists(store.store_path_));
   EXPECT_FALSE(store.HasValidData());  // Never actually read from disk.
 
@@ -866,7 +868,8 @@ TEST_F(V4StoreTest, FullUpdateFailsChecksumSynchronously) {
   std::unique_ptr<ListUpdateResponse> lur(new ListUpdateResponse);
   lur->set_response_type(ListUpdateResponse::FULL_UPDATE);
   lur->mutable_checksum()->set_sha256(std::string(crypto::kSHA256Length, 0));
-  store.ApplyUpdate(std::move(lur), task_runner_, store_ready_callback);
+  store.ApplyUpdate(std::move(lur), task_runner_,
+                    std::move(store_ready_callback));
   // The update should fail synchronously and not create a store file.
   EXPECT_FALSE(base::PathExists(store.store_path_));
 

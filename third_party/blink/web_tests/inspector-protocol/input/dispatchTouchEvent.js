@@ -32,10 +32,10 @@
       }
     }
 
-    window.addEventListener('touchstart', logEvent);
-    window.addEventListener('touchend', logEvent);
-    window.addEventListener('touchmove', logEvent);
-    window.addEventListener('touchcancel', logEvent);
+    window.addEventListener('touchstart', logEvent, {passive: false});
+    window.addEventListener('touchend', logEvent, {passive: false});
+    window.addEventListener('touchmove', logEvent, {passive: false});
+    window.addEventListener('touchcancel', logEvent, {passive: false});
   `);
 
   async function dispatchEvent(params) {
@@ -157,13 +157,6 @@
     }]
   });
   await dispatchEvent({
-    type: 'touchEnd',
-    touchPoints: [{
-      x: 100,
-      y: 100
-    }]
-  });
-  await dispatchEvent({
     type: 'touchCancel',
     touchPoints: [{
       x: 100,
@@ -221,6 +214,100 @@
   });
   await dispatchEvent({
     type: 'touchCancel',
+    touchPoints: []
+  });
+
+  testRunner.log('\n------- Sequence ------');
+  await dispatchEvent({
+    type: 'touchStart',
+    touchPoints: [{
+      x: 100,
+      y: 100,
+      id: 1
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchStart',
+    touchPoints: [{
+      x: 100,
+      y: 100,
+      id: 1
+    }, {
+      x: 150,
+      y: 100,
+      id: 2
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchMove',
+    touchPoints: [{
+      x: 100,
+      y: 150,
+      id: 1
+    }, {
+      x: 150,
+      y: 150,
+      id: 2
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchEnd',
+    touchPoints: []
+  });
+
+  testRunner.log('\n------- Sequence ------');
+  await dispatchEvent({
+    type: 'touchStart',
+    touchPoints: [{
+      x: 100,
+      y: 100,
+      id: 1
+    }, {
+      x: 150,
+      y: 100,
+      id: 2
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchCancel',
+    touchPoints: []
+  });
+
+  testRunner.log('\n------- Sequence ------');
+  await dispatchEvent({
+    type: 'touchStart',
+    touchPoints: [{
+      x: 100,
+      y: 100,
+      id: 1
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchStart',
+    touchPoints: [{
+      x: 150,
+      y: 100,
+      id: 2
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchMove',
+    touchPoints: [{
+      x: 100,
+      y: 150,
+      id: 1
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchEnd',
+    touchPoints: [{
+      x: 150,
+      y: 100,
+      id: 2
+    }]
+  });
+  await dispatchEvent({
+    type: 'touchEnd',
     touchPoints: []
   });
 

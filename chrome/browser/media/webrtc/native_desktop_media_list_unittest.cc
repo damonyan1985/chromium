@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
 #include <utility>
 #include <vector>
 
@@ -17,16 +18,19 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/media/webrtc/desktop_media_list_observer.h"
+#include "chrome/browser/media/webrtc/desktop_media_list.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
+#include "ui/views/widget/widget.h"
+
+#if defined(USE_AURA)
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
-#include "ui/views/widget/widget.h"
+#endif
 
 using content::DesktopMediaID;
 using testing::_;
@@ -54,6 +58,7 @@ class MockObserver : public DesktopMediaListObserver {
   MOCK_METHOD2(OnSourceNameChanged, void(DesktopMediaList* list, int index));
   MOCK_METHOD2(OnSourceThumbnailChanged,
                void(DesktopMediaList* list, int index));
+  MOCK_METHOD1(OnAllSourcesFound, void(DesktopMediaList* list));
 };
 
 class FakeScreenCapturer : public webrtc::DesktopCapturer {
@@ -68,7 +73,6 @@ class FakeScreenCapturer : public webrtc::DesktopCapturer {
     DCHECK(callback_);
     std::unique_ptr<webrtc::DesktopFrame> frame(
         new webrtc::BasicDesktopFrame(webrtc::DesktopSize(10, 10)));
-    memset(frame->data(), 0, frame->stride() * frame->size().height());
     callback_->OnCaptureResult(webrtc::DesktopCapturer::Result::SUCCESS,
                                std::move(frame));
   }
@@ -91,9 +95,7 @@ class FakeScreenCapturer : public webrtc::DesktopCapturer {
 
 class FakeWindowCapturer : public webrtc::DesktopCapturer {
  public:
-  FakeWindowCapturer()
-      : callback_(NULL) {
-  }
+  FakeWindowCapturer() : callback_(nullptr) {}
   ~FakeWindowCapturer() override {}
 
   void SetWindowList(const SourceList& list) {
@@ -189,7 +191,7 @@ class NativeDesktopMediaListTest : public ChromeViewsTestBase {
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.native_widget = new views::DesktopNativeWidgetAura(widget.get());
     params.bounds = gfx::Rect(0, 0, 20, 20);
-    widget->Init(params);
+    widget->Init(std::move(params));
     widget->Show();
     return widget;
   }
@@ -213,9 +215,9 @@ class NativeDesktopMediaListTest : public ChromeViewsTestBase {
 #endif
 
     // Get the aura window's id.
-    DesktopMediaID aura_id = DesktopMediaID::RegisterAuraWindow(
+    DesktopMediaID aura_id = DesktopMediaID::RegisterNativeWindow(
         DesktopMediaID::TYPE_WINDOW, aura_window);
-    native_aura_id_map_[window.id] = aura_id.aura_id;
+    native_aura_id_map_[window.id] = aura_id.window_id;
 
     window_list_.push_back(window);
   }
@@ -308,7 +310,7 @@ class NativeDesktopMediaListTest : public ChromeViewsTestBase {
       EXPECT_EQ(model_->GetSource(i).id.id, native_id);
 #if defined(USE_AURA)
       if (i >= aura_window_first_index)
-        EXPECT_EQ(model_->GetSource(i).id.aura_id,
+        EXPECT_EQ(model_->GetSource(i).id.window_id,
                   native_aura_id_map_[native_id]);
 #endif
     }
@@ -403,7 +405,7 @@ TEST_F(NativeDesktopMediaListTest, AddAuraWindow) {
   int native_id = window_list_.back().id;
   EXPECT_EQ(model_->GetSource(index).id.type, DesktopMediaID::TYPE_WINDOW);
   EXPECT_EQ(model_->GetSource(index).id.id, native_id);
-  EXPECT_EQ(model_->GetSource(index).id.aura_id,
+  EXPECT_EQ(model_->GetSource(index).id.window_id,
             native_aura_id_map_[native_id]);
 }
 #endif  // defined(ENABLE_AURA_WINDOW_TESTS)

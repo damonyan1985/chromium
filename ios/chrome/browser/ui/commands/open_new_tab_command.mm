@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
 
 #include "base/logging.h"
-#include "ios/web/public/referrer.h"
+#include "ios/web/public/navigation/referrer.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,6 +14,7 @@
 
 @implementation OpenNewTabCommand {
   GURL _URL;
+  GURL _virtualURL;
   web::Referrer _referrer;
 }
 
@@ -36,16 +37,31 @@
 }
 
 - (instancetype)initWithURL:(const GURL&)URL
+                 virtualURL:(const GURL&)virtualURL
                    referrer:(const web::Referrer&)referrer
                 inIncognito:(BOOL)inIncognito
                inBackground:(BOOL)inBackground
                    appendTo:(OpenPosition)append {
   if ((self = [self initInIncognito:inIncognito inBackground:inBackground])) {
     _URL = URL;
+    _virtualURL = virtualURL;
     _referrer = referrer;
     _appendTo = append;
   }
   return self;
+}
+
+- (instancetype)initWithURL:(const GURL&)URL
+                   referrer:(const web::Referrer&)referrer
+                inIncognito:(BOOL)inIncognito
+               inBackground:(BOOL)inBackground
+                   appendTo:(OpenPosition)append {
+  return [self initWithURL:URL
+                virtualURL:GURL::EmptyGURL()
+                  referrer:referrer
+               inIncognito:inIncognito
+              inBackground:inBackground
+                  appendTo:append];
 }
 
 - (instancetype)initFromChrome:(const GURL&)URL {
@@ -86,6 +102,10 @@
 
 - (const GURL&)URL {
   return _URL;
+}
+
+- (const GURL&)virtualURL {
+  return _virtualURL;
 }
 
 - (const web::Referrer&)referrer {

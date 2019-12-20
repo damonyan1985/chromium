@@ -21,8 +21,8 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/mock_download_manager.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -248,7 +248,7 @@ class DownloadMetadataManagerTestBase : public ::testing::Test {
       downloads->push_back(zero_item_.get());
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   NiceMock<MockDownloadMetadataManager> manager_;
   TestingProfile profile_;
   NiceMock<content::MockDownloadManager> download_manager_;
@@ -381,7 +381,7 @@ TEST_P(GetDetailsTest, GetDownloadDetails) {
   ShutdownDownloadManager();
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     DownloadMetadataManager,
     GetDetailsTest,
     testing::Combine(
@@ -520,7 +520,7 @@ TEST_P(SetRequestTest, SetRequest) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     DownloadMetadataManager,
     SetRequestTest,
     testing::Combine(testing::Values("absent", "this", "other", "unknown"),

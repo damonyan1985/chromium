@@ -9,8 +9,6 @@
 
 #include "base/macros.h"
 
-class BrowserView;
-
 namespace content {
 class WebContents;
 }  // namespace content
@@ -55,13 +53,12 @@ class TopControlsSlideController {
   // Returns true while gesture scrolls are in progress.
   virtual bool IsTopControlsGestureScrollInProgress() const = 0;
 
+  // Returns true while the top controls are sliding up or down, and hasn't
+  // reached a final steady state.
+  virtual bool IsTopControlsSlidingInProgress() const = 0;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(TopControlsSlideController);
 };
-
-// If the feature is enabled, returns an instance of the controller, otherwise
-// returns nullptr.
-std::unique_ptr<TopControlsSlideController> CreateTopControlsSlideController(
-    BrowserView* browser_view);
 
 #endif  // CHROME_BROWSER_UI_VIEWS_FRAME_TOP_CONTROLS_SLIDE_CONTROLLER_H_

@@ -5,6 +5,7 @@
 #include "chrome/test/base/chrome_test_launcher.h"
 
 #include "base/command_line.h"
+#include "base/test/launcher/test_launcher.h"
 #include "build/build_config.h"
 #include "chrome/test/base/chrome_test_suite.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -15,9 +16,16 @@
 #if defined(USE_AURA)
 #include "ui/aura/test/ui_controls_factory_aura.h"
 #include "ui/base/test/ui_controls_aura.h"
+#if defined(USE_OZONE) && defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 #if defined(USE_X11)
 #include "ui/views/test/ui_controls_factory_desktop_aurax11.h"
 #endif
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "ash/test/ui_controls_factory_ash.h"
 #endif
 
 #if defined(OS_WIN)
@@ -33,34 +41,29 @@ class InteractiveUITestSuite : public ChromeTestSuite {
  protected:
   // ChromeTestSuite overrides:
   void Initialize() override {
-    // Browser tests are expected not to tear-down various globals.
+    // Browser tests are expected not to tear-down various globals and may
+    // complete with the thread priority being above NORMAL.
     base::TestSuite::DisableCheckForLeakedGlobals();
+    base::TestSuite::DisableCheckForThreadPriorityAtTestEnd();
 
     ChromeTestSuite::Initialize();
 
-    // Only allow ui_controls to be used in interactive_ui_tests, since they
-    // depend on focus and can't be sharded.
-    ui_controls::EnableUIControls();
-
 #if defined(OS_CHROMEOS)
-    // Do not InstallUIControlsAura in ChromeOS, it will be installed in
-    // InProcessBrowserTest::PreRunTestOnMainThread().
-#elif defined(USE_AURA)
-#if defined(OS_WIN)
+    ui_controls::InstallUIControlsAura(ash::test::CreateAshUIControls());
+#elif defined(OS_WIN)
     com_initializer_.reset(new base::win::ScopedCOMInitializer());
-#endif
-
-#if defined(OS_LINUX)
-#if defined(USE_OZONE)
-    NOTIMPLEMENTED();
-#else
+    ui_controls::InstallUIControlsAura(
+        aura::test::CreateUIControlsAura(nullptr));
+#elif defined(USE_OZONE) && defined(OS_LINUX)
+    ui::OzonePlatform::InitParams params;
+    params.single_process = true;
+    ui::OzonePlatform::InitializeForUI(params);
+#elif defined(OS_LINUX)
     ui_controls::InstallUIControlsAura(
         views::test::CreateUIControlsDesktopAura());
-#endif  // defined(USE_OZONE)
 #else
-    ui_controls::InstallUIControlsAura(aura::test::CreateUIControlsAura(NULL));
-#endif  // defined(OS_LINUX)
-#endif  // defined(USE_AURA)
+    ui_controls::EnableUIControls();
+#endif
   }
 
   void Shutdown() override {
@@ -103,14 +106,9 @@ class InteractiveUITestLauncherDelegate : public ChromeTestLauncherDelegate {
   }
 
 #if defined(OS_MACOSX)
-  std::unique_ptr<content::TestState> PreRunTest(
-      base::CommandLine* command_line,
-      base::TestLauncher::LaunchOptions* test_launch_options) override {
-    auto test_state = ChromeTestLauncherDelegate::PreRunTest(
-        command_line, test_launch_options);
+  void PreRunTest() override {
     // Clear currently pressed modifier keys (if any) before the test starts.
     ui_test_utils::ClearKeyEventModifiers();
-    return test_state;
   }
 
   void PostRunTest(base::TestResult* test_result) override {
@@ -146,9 +144,6 @@ int main(int argc, char** argv) {
       switches::kOverrideUseSoftwareGLForTests);
 #endif
 
-  // TODO(sky): this causes a crash in an autofill test on macosx, figure out
-  // why: http://crbug.com/641969.
-#if !defined(OS_MACOSX)
   // Without this it's possible for the first browser to start up in the
   // background, generally because the last test did something that causes the
   // test to run in the background. Most interactive ui tests assume they are in
@@ -157,7 +152,6 @@ int main(int argc, char** argv) {
   // foreground.
   InProcessBrowserTest::set_global_browser_set_up_function(
       &ui_test_utils::BringBrowserWindowToFront);
-#endif
 
   // Run interactive_ui_tests serially, they do not support running in parallel.
   size_t parallel_jobs = 1U;

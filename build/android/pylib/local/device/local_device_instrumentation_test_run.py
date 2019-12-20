@@ -13,6 +13,7 @@ import re
 import sys
 import time
 
+from devil import base_error
 from devil.android import crash_handler
 from devil.android import device_errors
 from devil.android import device_temp_file
@@ -20,6 +21,7 @@ from devil.android import flag_changer
 from devil.android.sdk import shared_prefs
 from devil.android import logcat_monitor
 from devil.android.tools import system_app
+from devil.android.tools import webview_app
 from devil.utils import reraiser_thread
 from incremental_install import installer
 from pylib import constants
@@ -77,6 +79,9 @@ EXTRA_TRACE_FILE = ('org.chromium.base.test.BaseJUnit4ClassRunner.TraceFile')
 _EXTRA_TEST_LIST = (
     'org.chromium.base.test.BaseChromiumAndroidJUnitRunner.TestList')
 
+_EXTRA_PACKAGE_UNDER_TEST = ('org.chromium.chrome.test.pagecontroller.rules.'
+                             'ChromeUiApplicationTestRule.PackageUnderTest')
+
 FEATURE_ANNOTATION = 'Feature'
 RENDER_TEST_FEATURE_ANNOTATION = 'RenderTest'
 
@@ -128,6 +133,7 @@ class LocalDeviceInstrumentationTestRun(
     self._flag_changers = {}
     self._replace_package_contextmanager = None
     self._shared_prefs_to_restore = []
+    self._use_webview_contextmanager = None
 
   #override
   def TestPackage(self):
@@ -163,32 +169,54 @@ class LocalDeviceInstrumentationTestRun(
 
         steps.append(replace_package)
 
-      def install_helper(apk, permissions):
+      if self._test_instance.use_webview_provider:
+        @trace_event.traced
+        def use_webview_provider(dev):
+          # We need the context manager to be applied before modifying any
+          # shared preference files in case the replacement APK needs to be
+          # set up, and it needs to be applied while the test is running.
+          # Thus, it needs to be applied early during setup, but must still be
+          # applied during _RunTest, which isn't possible using 'with' without
+          # applying the context manager up in test_runner. Instead, we
+          # manually invoke its __enter__ and __exit__ methods in setup and
+          # teardown.
+          self._use_webview_contextmanager = webview_app.UseWebViewProvider(
+              dev, self._test_instance.use_webview_provider)
+          # Pylint is not smart enough to realize that this field has
+          # an __enter__ method, and will complain loudly.
+          # pylint: disable=no-member
+          self._use_webview_contextmanager.__enter__()
+          # pylint: enable=no-member
+
+        steps.append(use_webview_provider)
+
+      def install_helper(apk, modules=None, fake_modules=None,
+                         permissions=None):
+
         @instrumentation_tracing.no_tracing
-        @trace_event.traced("apk_path")
-        def install_helper_internal(d, apk_path=apk.path):
+        @trace_event.traced
+        def install_helper_internal(d, apk_path=None):
           # pylint: disable=unused-argument
-          d.Install(apk, permissions=permissions)
+          logging.info('Start Installing %s', apk.path)
+          d.Install(
+              apk,
+              modules=modules,
+              fake_modules=fake_modules,
+              permissions=permissions)
+          logging.info('Finished Installing %s', apk.path)
+
         return install_helper_internal
 
       def incremental_install_helper(apk, json_path, permissions):
-        @trace_event.traced("apk_path")
-        def incremental_install_helper_internal(d, apk_path=apk.path):
-          # pylint: disable=unused-argument
-          installer.Install(d, json_path, apk=apk, permissions=permissions)
-        return incremental_install_helper_internal
 
-      if self._test_instance.apk_under_test:
-        permissions = self._test_instance.apk_under_test.GetPermissions()
-        if self._test_instance.apk_under_test_incremental_install_json:
-          steps.append(incremental_install_helper(
-                           self._test_instance.apk_under_test,
-                           self._test_instance.
-                               apk_under_test_incremental_install_json,
-                           permissions))
-        else:
-          steps.append(install_helper(self._test_instance.apk_under_test,
-                                      permissions))
+        @trace_event.traced
+        def incremental_install_helper_internal(d, apk_path=None):
+          # pylint: disable=unused-argument
+          logging.info('Start Incremental Installing %s', apk.path)
+          installer.Install(d, json_path, apk=apk, permissions=permissions)
+          logging.info('Finished Incremental Installing %s', apk.path)
+
+        return incremental_install_helper_internal
 
       permissions = self._test_instance.test_apk.GetPermissions()
       if self._test_instance.test_apk_incremental_install_json:
@@ -198,11 +226,29 @@ class LocalDeviceInstrumentationTestRun(
                              test_apk_incremental_install_json,
                          permissions))
       else:
-        steps.append(install_helper(self._test_instance.test_apk,
-                                    permissions))
+        steps.append(
+            install_helper(
+                self._test_instance.test_apk, permissions=permissions))
 
-      steps.extend(install_helper(apk, None)
-                   for apk in self._test_instance.additional_apks)
+      steps.extend(
+          install_helper(apk) for apk in self._test_instance.additional_apks)
+
+      # The apk under test needs to be installed last since installing other
+      # apks after will unintentionally clear the fake module directory.
+      # TODO(wnwen): Make this more robust, fix crbug.com/1010954.
+      if self._test_instance.apk_under_test:
+        permissions = self._test_instance.apk_under_test.GetPermissions()
+        if self._test_instance.apk_under_test_incremental_install_json:
+          steps.append(
+              incremental_install_helper(
+                  self._test_instance.apk_under_test,
+                  self._test_instance.apk_under_test_incremental_install_json,
+                  permissions))
+        else:
+          steps.append(
+              install_helper(self._test_instance.apk_under_test,
+                             self._test_instance.modules,
+                             self._test_instance.fake_modules, permissions))
 
       @trace_event.traced
       def set_debug_app(dev):
@@ -255,9 +301,10 @@ class LocalDeviceInstrumentationTestRun(
         host_device_tuples_substituted = [
             (h, local_device_test_run.SubstituteDeviceRoot(d, device_root))
             for h, d in host_device_tuples]
-        logging.info('instrumentation data deps:')
+        logging.info('Pushing data dependencies.')
         for h, d in host_device_tuples_substituted:
-          logging.info('%r -> %r', h, d)
+          logging.debug('  %r -> %r', h, d)
+        local_device_environment.place_nomedia_on_device(dev, device_root)
         dev.PushChangedFiles(host_device_tuples_substituted,
                              delete_device_stale=True)
         if not host_device_tuples_substituted:
@@ -348,8 +395,16 @@ class LocalDeviceInstrumentationTestRun(
       for pref_to_restore in self._shared_prefs_to_restore:
         pref_to_restore.Commit(force_commit=True)
 
+      # Context manager exit handlers are applied in reverse order
+      # of the enter handlers
+      if self._use_webview_contextmanager:
+        # See pylint-related comment above with __enter__()
+        # pylint: disable=no-member
+        self._use_webview_contextmanager.__exit__(*sys.exc_info())
+        # pylint: enable=no-member
+
       if self._replace_package_contextmanager:
-        # See pylint-related commend above with __enter__()
+        # See pylint-related comment above with __enter__()
         # pylint: disable=no-member
         self._replace_package_contextmanager.__exit__(*sys.exc_info())
         # pylint: enable=no-member
@@ -363,9 +418,8 @@ class LocalDeviceInstrumentationTestRun(
         if self._test_instance.package_info:
           cmdline_file = self._test_instance.package_info.cmdline_file
         else:
-          logging.warning(
-              'No PackageInfo found, falling back to using flag file %s',
-              cmdline_file)
+          raise Exception('No PackageInfo found but'
+                          '--use-apk-under-test-flags-file is specified.')
       self._flag_changers[str(device)] = flag_changer.FlagChanger(
           device, cmdline_file)
 
@@ -393,14 +447,23 @@ class LocalDeviceInstrumentationTestRun(
   def _RunTest(self, device, test):
     extras = {}
 
+    # Provide package name under test for apk_under_test.
+    if self._test_instance.apk_under_test:
+      package_name = self._test_instance.apk_under_test.GetPackageName()
+      extras[_EXTRA_PACKAGE_UNDER_TEST] = package_name
+
     flags_to_add = []
     test_timeout_scale = None
     if self._test_instance.coverage_directory:
-      coverage_basename = '%s.ec' % ('%s_group' % test[0]['method']
-          if isinstance(test, list) else test['method'])
+      coverage_basename = '%s.exec' % (
+          '%s_%s_group' % (test[0]['class'], test[0]['method']) if isinstance(
+              test, list) else '%s_%s' % (test['class'], test['method']))
       extras['coverage'] = 'true'
       coverage_directory = os.path.join(
           device.GetExternalStoragePath(), 'chrome', 'test', 'coverage')
+      if not device.PathExists(coverage_directory):
+        device.RunShellCommand(['mkdir', '-p', coverage_directory],
+                               check_return=True)
       coverage_device_file = os.path.join(
           coverage_directory, coverage_basename)
       extras['coverageFile'] = coverage_device_file
@@ -498,13 +561,14 @@ class LocalDeviceInstrumentationTestRun(
     with ui_capture_dir:
       with self._env.output_manager.ArchivedTempfile(
           stream_name, 'logcat') as logcat_file:
+        logmon = None
         try:
           with logcat_monitor.LogcatMonitor(
               device.adb,
               filter_specs=local_device_environment.LOGCAT_FILTERS,
               output_file=logcat_file.name,
-              transform_func=self._test_instance.MaybeDeobfuscateLines
-              ) as logmon:
+              transform_func=self._test_instance.MaybeDeobfuscateLines,
+              check_error=False) as logmon:
             with _LogTestEndpoints(device, test_name):
               with contextlib_ext.Optional(
                   trace_event.trace(test_name),
@@ -512,7 +576,8 @@ class LocalDeviceInstrumentationTestRun(
                 output = device.StartInstrumentation(
                     target, raw=True, extras=extras, timeout=timeout, retries=0)
         finally:
-          logmon.Close()
+          if logmon:
+            logmon.Close()
 
       if logcat_file.Link():
         logging.info('Logcat saved to %s', logcat_file.Link())
@@ -545,11 +610,14 @@ class LocalDeviceInstrumentationTestRun(
 
       def handle_coverage_data():
         if self._test_instance.coverage_directory:
-          device.PullFile(coverage_directory,
-              self._test_instance.coverage_directory)
-          device.RunShellCommand(
-              'rm -f %s' % posixpath.join(coverage_directory, '*'),
-              check_return=True, shell=True)
+          try:
+            if not os.path.exists(self._test_instance.coverage_directory):
+              os.makedirs(self._test_instance.coverage_directory)
+            device.PullFile(coverage_device_file,
+                            self._test_instance.coverage_directory)
+            device.RemovePath(coverage_device_file, True)
+          except (OSError, base_error.BaseError) as e:
+            logging.warning('Failed to handle coverage data after tests: %s', e)
 
       def handle_render_test_data():
         if _IsRenderTest(test):
